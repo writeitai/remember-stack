@@ -41,6 +41,9 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import P1ChunkText
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import ProviderCallError
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
@@ -54,6 +57,8 @@ from rememberstack.surfaces import QueryEngine
 from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("54000000-0000-0000-0000-000000000001")
@@ -80,21 +85,23 @@ class _NullSearchIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
-    ) -> tuple[str, ...]:
+        documents: object = None,
+        time: object = None,
+    ) -> P1SearchIds:
         """Never called."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
         """Never called."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple[str, ...]:
+    def search_chunks(self, **_: object) -> P1SearchIds:
         """Never called."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
         """Never called."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
         """Never called."""
@@ -102,9 +109,9 @@ class _NullSearchIndex:
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Never called."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
 
 class _FakeAuth:
@@ -277,7 +284,8 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
         "facts_context",
         "combined_context",
     }
-    assert mcp_names == registry_names == expected
+    assert mcp_names - {"adjacent_chunks"} == registry_names == expected
+    assert "adjacent_chunks" in mcp_names
     assert api_names == registry_names
     # and the tool carries its JSON-Schema input contract
     tool = next(t for t in tools if t["name"] == "resolve_entity")
@@ -516,8 +524,10 @@ def test_operation_provider_failure_is_a_generic_503(
 ) -> None:
     """Provider details stay private while callers receive a retryable status."""
 
-    def fail_operation(*, name: str, arguments: dict[str, object]) -> None:
-        del name, arguments
+    def fail_operation(
+        *, name: str, arguments: dict[str, object], layers: object = None
+    ) -> None:
+        del name, arguments, layers
         raise ProviderCallError("private synthetic provider response")
 
     monkeypatch.setattr(deployment.surface, "run", fail_operation)

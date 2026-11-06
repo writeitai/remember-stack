@@ -9,6 +9,7 @@ search. Source deletion purges ``{doc_id}/{content_hash}/conversion-checkpoints`
 import hashlib
 import re
 
+from rememberstack.core.storage_routing import storage_class_for_internal
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.ports.object_store import ObjectStorePort
@@ -40,7 +41,9 @@ class ObjectStoreLaneCheckpoints:
         """Write once. An occupied key means a prior attempt already persisted."""
         try:
             self._store.write_bytes(
-                key=self._key(lane=lane, fingerprint=fingerprint), content=payload
+                key=self._key(lane=lane, fingerprint=fingerprint),
+                content=payload,
+                storage_class=storage_class_for_internal(),
             )
         except ObjectAlreadyExistsError:
             return

@@ -1,0 +1,1070 @@
+{
+  "deployment_processing_layers_rows": 0,
+  "executor": {
+    "claims_and_sources_context": {
+      "aggregate": null,
+      "changes": [],
+      "chunks": [
+        {
+          "char_end": 90,
+          "char_start": 0,
+          "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+          "chunk_text": "Alice works for Acme; the harbour tariff is forty crowns",
+          "context_prefix": null,
+          "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+          "document_title": "tariff policy",
+          "effective": [],
+          "published_at": null,
+          "representation_id": "<uuid-2>",
+          "section_role": "body",
+          "served_version": true,
+          "source_kind": "upload",
+          "source_modified_at": "2025-01-01T00:00:00Z",
+          "version_id": "<uuid-1>"
+        }
+      ],
+      "dropped_by_hydration": 0,
+      "edges": [],
+      "entities": [],
+      "evidence": [
+        {
+          "asserted_at": "2025-01-01T00:00:00Z",
+          "char_end": 56,
+          "char_start": 0,
+          "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+          "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+          "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+          "claim_valid_from": null,
+          "claim_valid_kind": null,
+          "claim_valid_precision": "unknown",
+          "claim_valid_until": null,
+          "corroboration_count": 1,
+          "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+          "document_title": "tariff policy",
+          "effective": [],
+          "evidence_spans": [
+            {
+              "char_end": 56,
+              "char_start": 0
+            }
+          ],
+          "grouped_claim_ids": [
+            "d1430000-0000-0000-0000-0000000c1a01"
+          ],
+          "is_attributed": false,
+          "is_current_testimony": true,
+          "occurrences": [],
+          "representation_id": null,
+          "source_kind": "upload",
+          "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+          "version_id": null
+        }
+      ],
+      "evidence_totals": [],
+      "excluded_unstamped": 0,
+      "fact_evidence": [],
+      "facts": [],
+      "freshness": {
+        "k": null,
+        "p1_believed_at_horizon": null,
+        "p1_written_inline": true,
+        "pg_live_ts": "2025-06-01T12:00:00Z",
+        "scope_pending": null
+      },
+      "grain": "evidence",
+      "negative": null,
+      "nodes": [],
+      "pages": [],
+      "paths": [],
+      "ranking": [],
+      "sources": [],
+      "temporal_scope": {
+        "believed_at": "2025-06-01T12:00:00Z",
+        "evaluated_at": "2025-06-01T12:00:00Z",
+        "identity_regime": "current",
+        "mode": "current"
+      },
+      "transcript": [],
+      "truncation": {
+        "continuation": null,
+        "estimated_total": 2,
+        "reason": null,
+        "returned": 2,
+        "total_is_exact": true,
+        "truncated": false
+      }
+    },
+    "combined_context": {
+      "claims_and_sources": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [
+          {
+            "char_end": 90,
+            "char_start": 0,
+            "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+            "chunk_text": "Alice works for Acme; the harbour tariff is forty crowns",
+            "context_prefix": null,
+            "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+            "document_title": "tariff policy",
+            "effective": [],
+            "published_at": null,
+            "representation_id": "<uuid-2>",
+            "section_role": "body",
+            "served_version": true,
+            "source_kind": "upload",
+            "source_modified_at": "2025-01-01T00:00:00Z",
+            "version_id": "<uuid-1>"
+          }
+        ],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [
+          {
+            "asserted_at": "2025-01-01T00:00:00Z",
+            "char_end": 56,
+            "char_start": 0,
+            "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+            "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+            "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+            "claim_valid_from": null,
+            "claim_valid_kind": null,
+            "claim_valid_precision": "unknown",
+            "claim_valid_until": null,
+            "corroboration_count": 1,
+            "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+            "document_title": "tariff policy",
+            "effective": [],
+            "evidence_spans": [
+              {
+                "char_end": 56,
+                "char_start": 0
+              }
+            ],
+            "grouped_claim_ids": [
+              "d1430000-0000-0000-0000-0000000c1a01"
+            ],
+            "is_attributed": false,
+            "is_current_testimony": true,
+            "occurrences": [],
+            "representation_id": null,
+            "source_kind": "upload",
+            "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+            "version_id": null
+          }
+        ],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2025-06-01T12:00:00Z",
+          "scope_pending": null
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2025-06-01T12:00:00Z",
+          "evaluated_at": "2025-06-01T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": {
+          "continuation": null,
+          "estimated_total": 2,
+          "reason": null,
+          "returned": 2,
+          "total_is_exact": true,
+          "truncated": false
+        }
+      },
+      "contract": "ContextBundle/v2",
+      "facts": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [
+          {
+            "asserted_at": "2025-01-01T00:00:00Z",
+            "char_end": 56,
+            "char_start": 0,
+            "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+            "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+            "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+            "claim_valid_from": null,
+            "claim_valid_kind": null,
+            "claim_valid_precision": "unknown",
+            "claim_valid_until": null,
+            "corroboration_count": null,
+            "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+            "document_title": "tariff policy",
+            "effective": [],
+            "evidence_spans": [
+              {
+                "char_end": 56,
+                "char_start": 0
+              }
+            ],
+            "grouped_claim_ids": [],
+            "is_attributed": false,
+            "is_current_testimony": true,
+            "occurrences": [],
+            "representation_id": null,
+            "source_kind": "upload",
+            "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+            "version_id": null
+          }
+        ],
+        "evidence_totals": [
+          {
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "fact_kind": "relation",
+            "returned": 1,
+            "stance": "supports",
+            "total": 1
+          },
+          {
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "fact_kind": "relation",
+            "returned": 0,
+            "stance": "contradicts",
+            "total": 0
+          }
+        ],
+        "excluded_unstamped": 0,
+        "fact_evidence": [
+          {
+            "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "fact_kind": "relation",
+            "stance": "supports"
+          }
+        ],
+        "facts": [
+          {
+            "contradiction": null,
+            "contradiction_group": null,
+            "evidence_count": 1,
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "kind": "relation",
+            "label": "Alice works for Acme.",
+            "support": "current",
+            "temporal_match": "confirmed",
+            "validity": {
+              "ingested_at": "2025-01-01T00:00:00Z",
+              "invalidated_at": null,
+              "valid_from": "2025-01-01T00:00:00Z",
+              "valid_precision": "open",
+              "valid_until": null
+            }
+          }
+        ],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2025-06-01T12:00:00Z",
+          "scope_pending": null
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2025-06-01T12:00:00Z",
+          "evaluated_at": "2025-06-01T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": {
+          "continuation": null,
+          "estimated_total": 1,
+          "reason": null,
+          "returned": 1,
+          "total_is_exact": true,
+          "truncated": false
+        }
+      }
+    },
+    "facts_context": {
+      "aggregate": null,
+      "changes": [],
+      "chunks": [],
+      "dropped_by_hydration": 0,
+      "edges": [],
+      "entities": [],
+      "evidence": [
+        {
+          "asserted_at": "2025-01-01T00:00:00Z",
+          "char_end": 56,
+          "char_start": 0,
+          "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+          "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+          "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+          "claim_valid_from": null,
+          "claim_valid_kind": null,
+          "claim_valid_precision": "unknown",
+          "claim_valid_until": null,
+          "corroboration_count": null,
+          "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+          "document_title": "tariff policy",
+          "effective": [],
+          "evidence_spans": [
+            {
+              "char_end": 56,
+              "char_start": 0
+            }
+          ],
+          "grouped_claim_ids": [],
+          "is_attributed": false,
+          "is_current_testimony": true,
+          "occurrences": [],
+          "representation_id": null,
+          "source_kind": "upload",
+          "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+          "version_id": null
+        }
+      ],
+      "evidence_totals": [
+        {
+          "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+          "fact_kind": "relation",
+          "returned": 1,
+          "stance": "supports",
+          "total": 1
+        },
+        {
+          "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+          "fact_kind": "relation",
+          "returned": 0,
+          "stance": "contradicts",
+          "total": 0
+        }
+      ],
+      "excluded_unstamped": 0,
+      "fact_evidence": [
+        {
+          "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+          "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+          "fact_kind": "relation",
+          "stance": "supports"
+        }
+      ],
+      "facts": [
+        {
+          "contradiction": null,
+          "contradiction_group": null,
+          "evidence_count": 1,
+          "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+          "kind": "relation",
+          "label": "Alice works for Acme.",
+          "support": "current",
+          "temporal_match": "confirmed",
+          "validity": {
+            "ingested_at": "2025-01-01T00:00:00Z",
+            "invalidated_at": null,
+            "valid_from": "2025-01-01T00:00:00Z",
+            "valid_precision": "open",
+            "valid_until": null
+          }
+        }
+      ],
+      "freshness": {
+        "k": null,
+        "p1_believed_at_horizon": null,
+        "p1_written_inline": true,
+        "pg_live_ts": "2025-06-01T12:00:00Z",
+        "scope_pending": null
+      },
+      "grain": "fact",
+      "negative": null,
+      "nodes": [],
+      "pages": [],
+      "paths": [],
+      "ranking": [],
+      "sources": [],
+      "temporal_scope": {
+        "believed_at": "2025-06-01T12:00:00Z",
+        "evaluated_at": "2025-06-01T12:00:00Z",
+        "identity_regime": "current",
+        "mode": "current"
+      },
+      "transcript": [],
+      "truncation": {
+        "continuation": null,
+        "estimated_total": 1,
+        "reason": null,
+        "returned": 1,
+        "total_is_exact": true,
+        "truncated": false
+      }
+    },
+    "resolve_entity": {
+      "aggregate": null,
+      "changes": [],
+      "chunks": [],
+      "dropped_by_hydration": 0,
+      "edges": [],
+      "entities": [
+        {
+          "canonical_name": "Alice",
+          "context_hits": 0,
+          "entity_id": "d1430000-0000-0000-0000-0000000a1ce1",
+          "tier": "T0"
+        }
+      ],
+      "evidence": [],
+      "evidence_totals": [],
+      "excluded_unstamped": 0,
+      "fact_evidence": [],
+      "facts": [],
+      "freshness": {
+        "k": null,
+        "p1_believed_at_horizon": null,
+        "p1_written_inline": true,
+        "pg_live_ts": "<wallclock>",
+        "scope_pending": null
+      },
+      "grain": "fact",
+      "negative": null,
+      "nodes": [],
+      "pages": [],
+      "paths": [],
+      "ranking": [],
+      "sources": [],
+      "temporal_scope": {
+        "believed_at": "<wallclock>",
+        "evaluated_at": "<wallclock>",
+        "identity_regime": "current",
+        "mode": "current"
+      },
+      "transcript": [],
+      "truncation": null
+    }
+  },
+  "http": {
+    "claims_and_sources_context": {
+      "body": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [
+          {
+            "char_end": 90,
+            "char_start": 0,
+            "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+            "chunk_text": "Alice works for Acme; the harbour tariff is forty crowns",
+            "context_prefix": null,
+            "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+            "document_title": "tariff policy",
+            "effective": [],
+            "published_at": null,
+            "representation_id": "<uuid-2>",
+            "section_role": "body",
+            "served_version": true,
+            "source_kind": "upload",
+            "source_modified_at": "2025-01-01T00:00:00Z",
+            "version_id": "<uuid-1>"
+          }
+        ],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [
+          {
+            "asserted_at": "2025-01-01T00:00:00Z",
+            "char_end": 56,
+            "char_start": 0,
+            "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+            "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+            "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+            "claim_valid_from": null,
+            "claim_valid_kind": null,
+            "claim_valid_precision": "unknown",
+            "claim_valid_until": null,
+            "corroboration_count": 1,
+            "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+            "document_title": "tariff policy",
+            "effective": [],
+            "evidence_spans": [
+              {
+                "char_end": 56,
+                "char_start": 0
+              }
+            ],
+            "grouped_claim_ids": [
+              "d1430000-0000-0000-0000-0000000c1a01"
+            ],
+            "is_attributed": false,
+            "is_current_testimony": true,
+            "occurrences": [],
+            "representation_id": null,
+            "source_kind": "upload",
+            "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+            "version_id": null
+          }
+        ],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "<wallclock>",
+          "scope_pending": null
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "<wallclock>",
+          "evaluated_at": "<wallclock>",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": {
+          "continuation": null,
+          "estimated_total": 2,
+          "reason": null,
+          "returned": 2,
+          "total_is_exact": true,
+          "truncated": false
+        }
+      },
+      "status": 200
+    },
+    "combined_context": {
+      "body": {
+        "claims_and_sources": {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [
+            {
+              "char_end": 90,
+              "char_start": 0,
+              "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+              "chunk_text": "Alice works for Acme; the harbour tariff is forty crowns",
+              "context_prefix": null,
+              "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+              "document_title": "tariff policy",
+              "effective": [],
+              "published_at": null,
+              "representation_id": "<uuid-2>",
+              "section_role": "body",
+              "served_version": true,
+              "source_kind": "upload",
+              "source_modified_at": "2025-01-01T00:00:00Z",
+              "version_id": "<uuid-1>"
+            }
+          ],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [
+            {
+              "asserted_at": "2025-01-01T00:00:00Z",
+              "char_end": 56,
+              "char_start": 0,
+              "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+              "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+              "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+              "claim_valid_from": null,
+              "claim_valid_kind": null,
+              "claim_valid_precision": "unknown",
+              "claim_valid_until": null,
+              "corroboration_count": 1,
+              "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+              "document_title": "tariff policy",
+              "effective": [],
+              "evidence_spans": [
+                {
+                  "char_end": 56,
+                  "char_start": 0
+                }
+              ],
+              "grouped_claim_ids": [
+                "d1430000-0000-0000-0000-0000000c1a01"
+              ],
+              "is_attributed": false,
+              "is_current_testimony": true,
+              "occurrences": [],
+              "representation_id": null,
+              "source_kind": "upload",
+              "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+              "version_id": null
+            }
+          ],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "<wallclock>",
+            "scope_pending": null
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "<wallclock>",
+            "evaluated_at": "<wallclock>",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": {
+            "continuation": null,
+            "estimated_total": 2,
+            "reason": null,
+            "returned": 2,
+            "total_is_exact": true,
+            "truncated": false
+          }
+        },
+        "contract": "ContextBundle/v2",
+        "facts": {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [
+            {
+              "asserted_at": "2025-01-01T00:00:00Z",
+              "char_end": 56,
+              "char_start": 0,
+              "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+              "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+              "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+              "claim_valid_from": null,
+              "claim_valid_kind": null,
+              "claim_valid_precision": "unknown",
+              "claim_valid_until": null,
+              "corroboration_count": null,
+              "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+              "document_title": "tariff policy",
+              "effective": [],
+              "evidence_spans": [
+                {
+                  "char_end": 56,
+                  "char_start": 0
+                }
+              ],
+              "grouped_claim_ids": [],
+              "is_attributed": false,
+              "is_current_testimony": true,
+              "occurrences": [],
+              "representation_id": null,
+              "source_kind": "upload",
+              "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+              "version_id": null
+            }
+          ],
+          "evidence_totals": [
+            {
+              "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+              "fact_kind": "relation",
+              "returned": 1,
+              "stance": "supports",
+              "total": 1
+            },
+            {
+              "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+              "fact_kind": "relation",
+              "returned": 0,
+              "stance": "contradicts",
+              "total": 0
+            }
+          ],
+          "excluded_unstamped": 0,
+          "fact_evidence": [
+            {
+              "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+              "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+              "fact_kind": "relation",
+              "stance": "supports"
+            }
+          ],
+          "facts": [
+            {
+              "contradiction": null,
+              "contradiction_group": null,
+              "evidence_count": 1,
+              "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+              "kind": "relation",
+              "label": "Alice works for Acme.",
+              "support": "current",
+              "temporal_match": "confirmed",
+              "validity": {
+                "ingested_at": "2025-01-01T00:00:00Z",
+                "invalidated_at": null,
+                "valid_from": "2025-01-01T00:00:00Z",
+                "valid_precision": "open",
+                "valid_until": null
+              }
+            }
+          ],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "<wallclock>",
+            "scope_pending": null
+          },
+          "grain": "fact",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "<wallclock>",
+            "evaluated_at": "<wallclock>",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": {
+            "continuation": null,
+            "estimated_total": 1,
+            "reason": null,
+            "returned": 1,
+            "total_is_exact": true,
+            "truncated": false
+          }
+        }
+      },
+      "status": 200
+    },
+    "facts_context": {
+      "body": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [
+          {
+            "asserted_at": "2025-01-01T00:00:00Z",
+            "char_end": 56,
+            "char_start": 0,
+            "chunk_id": "d1430000-0000-0000-0000-0000000c4c01",
+            "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+            "claim_text": "Alice works for Acme; the harbour tariff is forty crowns",
+            "claim_valid_from": null,
+            "claim_valid_kind": null,
+            "claim_valid_precision": "unknown",
+            "claim_valid_until": null,
+            "corroboration_count": null,
+            "doc_id": "d1430000-0000-0000-0000-0000000d0c01",
+            "document_title": "tariff policy",
+            "effective": [],
+            "evidence_spans": [
+              {
+                "char_end": 56,
+                "char_start": 0
+              }
+            ],
+            "grouped_claim_ids": [],
+            "is_attributed": false,
+            "is_current_testimony": true,
+            "occurrences": [],
+            "representation_id": null,
+            "source_kind": "upload",
+            "source_span": "Alice works for Acme; the harbour tariff is forty crowns",
+            "version_id": null
+          }
+        ],
+        "evidence_totals": [
+          {
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "fact_kind": "relation",
+            "returned": 1,
+            "stance": "supports",
+            "total": 1
+          },
+          {
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "fact_kind": "relation",
+            "returned": 0,
+            "stance": "contradicts",
+            "total": 0
+          }
+        ],
+        "excluded_unstamped": 0,
+        "fact_evidence": [
+          {
+            "claim_id": "d1430000-0000-0000-0000-0000000c1a01",
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "fact_kind": "relation",
+            "stance": "supports"
+          }
+        ],
+        "facts": [
+          {
+            "contradiction": null,
+            "contradiction_group": null,
+            "evidence_count": 1,
+            "fact_id": "d1430000-0000-0000-0000-0000000fac71",
+            "kind": "relation",
+            "label": "Alice works for Acme.",
+            "support": "current",
+            "temporal_match": "confirmed",
+            "validity": {
+              "ingested_at": "2025-01-01T00:00:00Z",
+              "invalidated_at": null,
+              "valid_from": "2025-01-01T00:00:00Z",
+              "valid_precision": "open",
+              "valid_until": null
+            }
+          }
+        ],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "<wallclock>",
+          "scope_pending": null
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "<wallclock>",
+          "evaluated_at": "<wallclock>",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": {
+          "continuation": null,
+          "estimated_total": 1,
+          "reason": null,
+          "returned": 1,
+          "total_is_exact": true,
+          "truncated": false
+        }
+      },
+      "status": 200
+    },
+    "resolve_entity": {
+      "body": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [
+          {
+            "canonical_name": "Alice",
+            "context_hits": 0,
+            "entity_id": "d1430000-0000-0000-0000-0000000a1ce1",
+            "tier": "T0"
+          }
+        ],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "<wallclock>",
+          "scope_pending": null
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "<wallclock>",
+          "evaluated_at": "<wallclock>",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "status": 200
+    }
+  },
+  "processing_layer_gaps_rows": 0,
+  "readiness": {
+    "build_revision": "",
+    "capabilities": {
+      "live_graph": {
+        "built_at": null,
+        "checked_at": "<wallclock>",
+        "published_at": null,
+        "ready": true,
+        "reason": "ready",
+        "required": false,
+        "version": null
+      },
+      "p1": {
+        "built_at": null,
+        "checked_at": "<wallclock>",
+        "published_at": null,
+        "ready": true,
+        "reason": "ready",
+        "required": false,
+        "version": null
+      },
+      "p3": {
+        "built_at": null,
+        "checked_at": "<wallclock>",
+        "published_at": null,
+        "ready": false,
+        "reason": "corpus_snapshot_incomplete",
+        "required": false,
+        "version": null
+      },
+      "pipeline": {
+        "built_at": null,
+        "checked_at": "<wallclock>",
+        "published_at": null,
+        "ready": false,
+        "reason": "stage_incomplete",
+        "required": true,
+        "version": null
+      }
+    },
+    "document_binding_generation": "document-t0-v1",
+    "model_bindings": {},
+    "ready": false,
+    "versions": [
+      {
+        "ready": false,
+        "stages": [
+          {
+            "component_version": "e0-convert-2026.08",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "convert",
+            "status": "missing"
+          },
+          {
+            "component_version": "e0-structure-2026.07h:d79-wave2",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "structure",
+            "status": "missing"
+          },
+          {
+            "component_version": "e1-chunker-2026.10a:whitespace-tokens:anchored:owner-runs:blockizer-heading-metadata:eligibility-cuts:source-origins-1",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "chunk",
+            "status": "missing"
+          },
+          {
+            "component_version": "e1-embed-2026.10:e1-chunker-2026.10a:whitespace-tokens:anchored:owner-runs:blockizer-heading-metadata:eligibility-cuts:source-origins-1",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "embed_chunk",
+            "status": "missing"
+          },
+          {
+            "component_version": "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:assertion-clarity-4:d122-source-references-1:d131-anaphora-1:d134-selfref-1:source-origins-1",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "extract_claims",
+            "status": "missing"
+          },
+          {
+            "component_version": "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:assertion-clarity-4:d122-source-references-1:d131-anaphora-1:d134-selfref-1:source-origins-1",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "ground_claims",
+            "status": "missing"
+          },
+          {
+            "component_version": "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:d123-context-refs-2:both-lists-1:t4-format-1:nested-fields-1",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "normalize_relations",
+            "status": "succeeded"
+          },
+          {
+            "component_version": "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:d123-context-refs-2:both-lists-1:t4-format-1:nested-fields-1:relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1:obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "adjudicate_observations",
+            "status": "missing"
+          },
+          {
+            "component_version": "fact-followup-2026.09:mutable-window-1",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "adjudicate_supersession",
+            "status": "missing"
+          },
+          {
+            "component_version": "p1-embed-claims-2026.07",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "embed_claim",
+            "status": "missing"
+          },
+          {
+            "component_version": "reconcile-2026.07",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "reconcile",
+            "status": "missing"
+          },
+          {
+            "component_version": "p1-fact-label-2026.09b:clean-temporal+qwen/qwen3-embedding-8b",
+            "defer_reason": null,
+            "finished_at": null,
+            "stage": "label_relation",
+            "status": "missing"
+          }
+        ],
+        "version_id": "<uuid-1>"
+      }
+    ]
+  }
+}

@@ -136,6 +136,7 @@ class _Corpus:
         self.merge: dict[str, UUID] = {}
         self.fact: dict[str, UUID] = {}
         self.crossref: dict[str, UUID] = {}
+        self.period: dict[str, UUID] = {}
         self.artifact: dict[str, UUID] = {}
         self.currency_event: dict[str, UUID] = {}
         self.adjudication: dict[str, UUID] = {}
@@ -235,26 +236,79 @@ class _Corpus:
         # a second chunk coordinate inside the cited lineage, so the knowledge
         # page cites two coordinates of one lineage and both resolve to a claim
         self._extra_chunk(connection=connection, key="kcited.v1", suffix="b")
+        # D140: references are made by source versions through an active
+        # reference generation
+        generations: dict[str, UUID] = {}
+        for version_key in ("primary.v2", "forgotten.v1"):
+            generation_id = uuid4()
+            generations[version_key] = generation_id
+            connection.execute(
+                text(
+                    "INSERT INTO document_reference_generations (generation_id,"
+                    " deployment_id, doc_id, version_id, origin, input_hash,"
+                    " request_seq, artifact_uri, status)"
+                    " SELECT :generation, :deployment, v.doc_id, v.version_id,"
+                    " 'supplied', :hash, 1, 'mem://artifacts/refs.ndjson', 'active'"
+                    " FROM document_versions v WHERE v.version_id = :version"
+                ),
+                {
+                    "generation": generation_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "hash": f"refs-{version_key}",
+                    "version": self.version[version_key],
+                },
+            )
         for key, source, target in (
-            ("resolved", "primary", "second"),
-            ("unresolved", "primary", None),
-            ("from_forgotten", "forgotten", "primary"),
+            ("resolved", "primary.v2", "second"),
+            ("unresolved", "primary.v2", None),
+            ("from_forgotten", "forgotten.v1", "primary"),
         ):
             crossref_id = uuid4()
             self.crossref[key] = crossref_id
             connection.execute(
                 text(
                     "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
-                    " from_doc_id, to_doc_id, kind, raw_citation, context, resolved)"
-                    " VALUES (:crossref, :deployment, :source, :target, 'cites',"
-                    " 'raw citation text', 'surrounding context', :resolved)"
+                    " from_doc_id, from_version_id, generation_id, to_doc_id, kind,"
+                    " origin, raw_citation, context, resolved)"
+                    " SELECT :crossref, :deployment, v.doc_id, v.version_id,"
+                    " :generation, :target, 'cites', 'supplied', 'raw citation text',"
+                    " 'surrounding context', :resolved"
+                    " FROM document_versions v WHERE v.version_id = :version"
                 ),
                 {
                     "crossref": crossref_id,
                     "deployment": _DEPLOYMENT_ID,
-                    "source": self.doc[source],
+                    "version": self.version[source],
+                    "generation": generations[source],
                     "target": None if target is None else self.doc[target],
                     "resolved": target is not None,
+                },
+            )
+        # D140: declared effective periods, one of them retracted
+        for key, version_key, start, retracted in (
+            ("primary.v1", "primary.v1", _PAST, False),
+            ("primary.v2", "primary.v2", _MID, False),
+            ("forgotten.v1", "forgotten.v1", _PAST, False),
+            ("second.retracted", "second.v1", _PAST, True),
+        ):
+            period_id = uuid4()
+            self.period[key] = period_id
+            connection.execute(
+                text(
+                    "INSERT INTO document_effective_periods (period_id,"
+                    " deployment_id, doc_id, version_id, effective_from,"
+                    " declared_at, declared_by, retracted_at)"
+                    " SELECT :period, :deployment, v.doc_id, v.version_id, :start,"
+                    " :declared, 'period_api', :retracted"
+                    " FROM document_versions v WHERE v.version_id = :version"
+                ),
+                {
+                    "period": period_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "version": self.version[version_key],
+                    "start": start,
+                    "declared": _PAST,
+                    "retracted": _MID if retracted else None,
                 },
             )
 
@@ -1194,6 +1248,26 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.chunks_live"
             " WHERE chunk_id = :chunk)",
             {"chunk": corpus.chunk["primary.v1"]},
+        ),
+        "chunks_all_versions_live.ready_version_chunk_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.chunks_all_versions_live"
+            " WHERE chunk_id = :chunk AND section_id IS NOT NULL)",
+            {"chunk": corpus.chunk["primary.v1"]},
+        ),
+        "chunks_all_versions_live.deleted_version_chunk_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.chunks_all_versions_live"
+            " WHERE chunk_id = :chunk)",
+            {"chunk": corpus.chunk["primary.vdel"]},
+        ),
+        "document_effective_periods_live.live_declaration_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.document_effective_periods_live"
+            " WHERE period_id = :period AND effective_until = :next)",
+            {"period": corpus.period["primary.v1"], "next": _MID},
+        ),
+        "document_effective_periods_live.retracted_declaration_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM"
+            f" {schema}.document_effective_periods_live WHERE period_id = :period)",
+            {"period": corpus.period["second.retracted"]},
         ),
         "claims_visible_history.superseded_testimony_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_visible_history"

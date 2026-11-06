@@ -831,3 +831,47 @@ def test_client_sdk_models_support_valid_precision_and_temporal_match() -> None:
     assert len(bundle.facts.facts) == 1
     assert bundle.facts.facts[0].temporal_match is TemporalMatch.CONFIRMED
     assert bundle.facts.facts[0].validity.valid_precision is ClaimValidPrecision.DAY
+
+
+@pytest.mark.parametrize(
+    "diagnostics, accepted",
+    [
+        ({"retryable": True, "request_id": "fixture-request"}, True),
+        ({"retryable": "yes"}, False),
+        ({"retryable": None}, False),
+        ({"request_id": 42}, False),
+        ({"extra": "unknown"}, False),
+    ],
+)
+def test_query_error_diagnostics_are_typed_and_never_retried(
+    diagnostics: dict[str, object], accepted: bool
+) -> None:
+    """D140 preserves typed diagnostic hints but sends the request only once."""
+    requests: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        """Return one structured query failure with the selected diagnostics."""
+        requests.append(request)
+        return httpx.Response(
+            503,
+            json={
+                "detail": {
+                    "code": "pg_unavailable",
+                    "message": "offline",
+                    **diagnostics,
+                }
+            },
+        )
+
+    with MemoryClient(
+        client=httpx.Client(
+            transport=httpx.MockTransport(answer), base_url="http://fixture.test"
+        )
+    ) as client:
+        with pytest.raises(MemoryApiError) as caught:
+            client.query_sql(sql="SELECT 1")
+    assert len(requests) == 1
+    assert caught.value.status_code == 503
+    assert caught.value.code == ("pg_unavailable" if accepted else None)
+    assert caught.value.retryable is (True if accepted else None)
+    assert caught.value.request_id == ("fixture-request" if accepted else None)

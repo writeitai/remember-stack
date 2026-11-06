@@ -46,24 +46,59 @@ The client is synchronous. There is no async client yet
 | `RateLimited` | exception | [Errors](#errors) |
 | `StoredKeyRefused` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
+| `LayerUnavailable` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
+| `ClaimOccurrence` | model | [Models](#models) |
 | `ClaimValidPrecision` | enum | [Models](#models) |
 | `ConnectorCreate` | model | [Models](#models) |
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
+| `DeclaredEffectivePeriod` | model | [Models](#models) |
 | `DeploymentBuildInfo` | model | [`deployment_build_info`](#deployment_build_info) |
 | `DocumentDeletion` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
+| `DocumentReference` | model | [Models](#models) |
+| `DocumentReferenceSource` | model | [Models](#models) |
+| `DocumentReferencesPage` | model | [Models](#models) |
+| `DocumentReferencesRequest` | model | [Models](#models) |
+| `DocumentReferencesTooBroad` | model | [Models](#models) |
+| `DocumentReferenceTarget` | model | [Models](#models) |
+| `DocumentSearchFilters` | model | [Models](#models) |
+| `DocumentSearchPage` | model | [Models](#models) |
+| `DocumentSearchRequest` | model | [Models](#models) |
+| `DocumentSearchResult` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
+| `EffectiveInterval` | model | [Models](#models) |
+| `EffectivePeriodInput` | model | [Models](#models) |
+| `EffectivePeriodsSet` | model | [Models](#models) |
+| `EffectiveTimeCleared` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
+| `MatchingEdition` | model | [Models](#models) |
+| `NamedReferenceTarget` | model | [Models](#models) |
 | `NegativeKind` | enum | [Result types](/docs/reference/result-types#negativekind) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
+| `ProcessingLayer` | enum | [Models](#models) |
+| `ProcessingLayerStates` | model | [Models](#models) |
 | `QueryResultDict` | dict subclass | [Models](#models) |
 | `ReadinessRequirements` | model | [Models](#models) |
+| `ReadTime` | type alias | [Models](#models) |
+| `ReferenceGeneration` | model | [Models](#models) |
+| `ReferenceGenerations` | model | [Models](#models) |
+| `ReferenceInput` | model | [Models](#models) |
+| `ReferenceItemError` | model | [Models](#models) |
+| `ReferencesSet` | model | [Models](#models) |
+| `ReferenceTarget` | model | [Models](#models) |
+| `ReferenceWindow` | model | [Models](#models) |
+| `ScopePending` | model | [Models](#models) |
+| `SectionAmendment` | model | [Models](#models) |
+| `SectionHistoryPage` | model | [Models](#models) |
+| `SectionHistoryRequest` | model | [Models](#models) |
+| `SectionHistoryRow` | model | [Models](#models) |
+| `SectionHistorySection` | model | [Models](#models) |
 | `TemporalMatch` | enum | [Models](#models) |
 | `ToolDescriptor` | model | [Models](#models) |
 | `VersionPipelineReadiness` | model | [Models](#models) |
@@ -134,11 +169,12 @@ client asks remember.dev which address serves the project, checks that the
 key covers it and that the address is `https`, and then talks to that
 address directly; memory traffic never passes through remember.dev's
 console. The answer is reused for 10 minutes. If the address stops answering,
-the client asks again for the same project and retries the request once when
-the address changed. A read retries after a connection failure, a `421`, or a
-`404` that is not the engine's; a write (ingest, delete, connectors) retries
-only when it never reached the server: a connection error, a connect
-timeout, or a `421`.
+the client asks again for the same project. Only a classified read retries
+once when the address changed, after a network failure, `421`, or a `404` that
+is not the engine's error envelope. This includes read-only POST requests such
+as SQL queries, graphs and readiness. Writes are never repeated, including
+connect errors and `421`; movement refreshes their mapping for the next call.
+Timeouts never cause re-resolution or replay.
 When the project cannot be resolved it raises `ProjectResolutionError`; it
 never falls back to a local engine.
 
@@ -251,6 +287,10 @@ Client.ingest_file(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
+    version_key: str | None = None,
+    effective_from: datetime | None = None,
+    effective_until: datetime | None = None,
 ) -> IngestedVersion
 ```
 
@@ -291,8 +331,16 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`pipeline_readiness`](#pipeline_readiness) | `POST /readiness` | `PipelineReadinessReport` |
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
+| [`processing_layers`](#processing_layers) | `GET /processing-layers` | `ProcessingLayerStates` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
+| [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
+| [`set_effective_periods`](#set_effective_periods) | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` | `EffectivePeriodsSet` |
+| [`clear_effective_time`](#clear_effective_time) | `DELETE /documents/{doc_id}/effective-periods` | `EffectiveTimeCleared` |
+| [`set_references`](#set_references) | `PUT /documents/{doc_id}/versions/{version_id}/references` | `ReferencesSet` |
+| [`reference_generations`](#reference_generations) | `GET /documents/{doc_id}/versions/{version_id}/references` | `ReferenceGenerations` |
+| [`section_history`](#section_history) | `GET /documents/{doc_id}/sections/{section_key}/history` | `SectionHistoryPage` |
+| [`document_references`](#document_references) | `POST /documents/references` | `DocumentReferencesPage` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
 | [`facts_context`](#facts_context) | `POST /operations/facts_context` | `Envelope` |
@@ -347,6 +395,10 @@ MemoryClient.ingest(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
+    version_key: str | None = None,
+    effective_from: datetime | None = None,
+    effective_until: datetime | None = None,
 ) -> IngestedVersion
 ```
 
@@ -366,13 +418,21 @@ results.
 | `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
 | `versioning_mode` | `"snapshot"` (default) or `"living"`. `"living"` requires `source_kind`/`source_ref`. See [Updating a source](/docs/concepts/updating-sources). |
 | `source_version_ref` | The source system's own revision label. Requires `source_kind`/`source_ref`. |
+| `source_path` | Where the file lives at its source, such as a folder path or a URL. Recorded with the version's names; sending the same bytes again with a different `filename`, `title` or `source_path` records the new name without creating a version. See [File names, titles and paths](/docs/reference/http-api/ingest#file-names-titles-and-paths). |
+| `version_key` | Your permanent name for this version, unique within the document (1 to 512 characters). A key new to the document always creates a version; the latest version's key is accepted again only with the same bytes. Requires `source_kind`/`source_ref`. See [Versions in force](/docs/reference/http-api/ingest#versions-in-force). |
+| `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
+| `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
 
 Raises `ValueError` when:
 
 - only one of `source_kind` and `source_ref` is given;
-- `source_modified_at`, `source_version_ref` or `versioning_mode="living"` is
-  given without `source_kind`/`source_ref`;
-- `source_modified_at` is naive or not UTC;
+- `source_modified_at`, `source_version_ref`, `versioning_mode="living"`,
+  `version_key`, `effective_from` or `effective_until` is given without
+  `source_kind`/`source_ref`;
+- `source_modified_at`, `effective_from` or `effective_until` is naive or not
+  UTC;
+- `effective_until` is given without `effective_from`, or is not later than
+  it, or a period is given with `versioning_mode="living"`;
 - neither `source` nor `content` is given;
 - bytes are given without `filename`.
 
@@ -380,7 +440,10 @@ Reading a path can raise `OSError`: `FileNotFoundError` when it does not
 exist, whether given as `Path` or `str`.
 
 Returns [`IngestedVersion`](#models). `created` is `False` when these exact
-bytes were already stored for this document; no new processing starts.
+bytes were already stored for this document; no new processing starts. A
+`version_key` that names another version, or a start that another version
+already declares, raises `MemoryApiError` with `status_code` 409; a period
+on a `living` document raises it with 422.
 
 ```python
 from datetime import UTC, datetime
@@ -475,6 +538,22 @@ info = memory.deployment_build_info()
 print(info.build_revision, info.model_bindings.get("claim_extraction"))
 ```
 
+#### `processing_layers`
+
+```python
+MemoryClient.processing_layers() -> ProcessingLayerStates
+```
+
+Returns the state of each switchable
+[processing layer](/docs/concepts/pipeline#processing-layers): `claims` and
+`facts`, each `"enabled"`, `"backfilling"` or `"disabled"`.
+
+```python
+layers = memory.processing_layers()
+if layers.facts == "disabled":
+    answer = memory.claims_and_sources_context("harbour tariff")
+```
+
 #### `list_documents`
 
 ```python
@@ -503,6 +582,49 @@ while True:
     if page.cursor is None:
         break
     cursor = page.cursor
+```
+
+#### `search_documents`
+
+```python
+MemoryClient.search_documents(
+    query: str | None = None,
+    *,
+    filters: DocumentSearchFilters | None = None,
+    versions: Literal["current", "all"] = "current",
+    k: int = 20,
+    cursor: str | None = None,
+    time: ReadTime | None = None,
+) -> DocumentSearchPage
+```
+
+Finds documents by the names they were stored under, their general metadata
+and their text, and returns a
+[`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage).
+`filters` is a
+[`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters)
+(`from remember import DocumentSearchFilters`): `family`, `authors`,
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
+and `doc_ids`. With a `query` the results are ranked and not paged; without
+one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
+`query`, a date without a timezone, or `k` outside 1 to 200 raises
+`pydantic.ValidationError` before any request. A malformed cursor raises
+`MemoryApiError` with `status_code` 400. `time` decides which editions of a
+document with declared effective periods are candidates (default: the ones
+in force now); it takes the same values as in [`search_chunks`](#search_chunks).
+What matches, and how, is in
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("audit report")
+emails = memory.search_documents(
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+)
+if len(emails.people_matched) > 1:
+    print("several people matched:", emails.people_matched)
 ```
 
 #### `delete_document`
@@ -534,6 +656,134 @@ except MemoryApiError as error:
         raise
 ```
 
+### Versions in force, sections and references
+
+What these methods are for, with a worked example:
+[Read a document as of a date](/docs/guides/versions-in-force).
+
+#### `set_effective_periods`
+
+```python
+MemoryClient.set_effective_periods(
+    *,
+    doc_id: UUID | str,
+    version_id: UUID | str,
+    periods: Sequence[EffectivePeriodInput],
+) -> EffectivePeriodsSet
+```
+
+Replaces the periods during which one version's text is in force.
+`periods` is the version's complete set: each `EffectivePeriodInput` has
+`effective_from` and an optional `effective_until`, both timezone-aware UTC
+`datetime` values (or ISO 8601 strings with a zero offset). Periods not
+listed are withdrawn and new ones declared, in one step. An empty sequence
+leaves the version with no period while the document keeps reading by
+period. Needs a `write` credential. Raises `pydantic.ValidationError`
+before any request for an end not after its start, two periods with the
+same start, or more than 1,000 periods; `MemoryApiError` with
+`status_code` 409 when another version declares the same start, 422 for a
+`living` document, 404 for an unknown document or version. See
+[`PUT …/effective-periods`](/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_ideffective-periods).
+
+#### `clear_effective_time`
+
+```python
+MemoryClient.clear_effective_time(*, doc_id: UUID | str) -> EffectiveTimeCleared
+```
+
+Withdraws every declared period of a document and returns it to "the newest
+processed version is current". `cleared_at` is `None` when the document had
+no declared periods. Needs a `write` credential. Raises `MemoryApiError`
+with `status_code` 404 for an unknown or deleted document.
+
+#### `set_references`
+
+```python
+MemoryClient.set_references(
+    *,
+    doc_id: UUID | str,
+    version_id: UUID | str,
+    references: Sequence[ReferenceInput],
+) -> ReferencesSet
+```
+
+Replaces one version's supplied references, sent as NDJSON. `ReferenceInput`
+has `kind`, `from_section_key`, `target` (a `ReferenceTarget` with
+`source_kind`, `source_ref`, `version_key`, `section_key`), `binding`,
+`change_effective_from`, `change_date_known`, `source_label` and `context`;
+its rules are checked when you build it. `outcome` is `created`,
+`unchanged` or `pending_cancelled`. Needs a `write` credential. Raises
+`MemoryApiError` with `status_code` 404, 413 (over 64 MiB) or 422. See
+[`PUT …/references`](/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences).
+
+#### `reference_generations`
+
+```python
+MemoryClient.reference_generations(
+    *, doc_id: UUID | str, version_id: UUID | str
+) -> ReferenceGenerations
+```
+
+Returns the version's reference generations, newest first, each with its
+`status` (`pending`, `active`, `rejected`, `superseded`) and `errors`.
+
+#### `section_history`
+
+```python
+MemoryClient.section_history(
+    *,
+    doc_id: UUID | str,
+    section_key: str,
+    time: ReadTime | None = None,
+    k: int = 50,
+    cursor: str | None = None,
+) -> SectionHistoryPage
+```
+
+Follows one keyed section across the document's versions. `time` defaults
+to `{"mode": "history"}`. Each row is a version with its `effective`
+intervals and a `status` of `present`, `absent`, `not_indexed` or
+`processing`. Raises `pydantic.ValidationError` for a malformed key or `k`
+outside 1 to 200, and `MemoryApiError` with `status_code` 404 for an
+unknown or deleted document. `section_history_request(request=…)` sends a
+prepared `SectionHistoryRequest`. See
+[`GET …/sections/{section_key}/history`](/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
+
+```python
+page = memory.section_history(doc_id=doc_id, section_key="per-diem")
+```
+
+#### `document_references`
+
+```python
+MemoryClient.document_references(
+    *,
+    chunk_id: UUID | str | None = None,
+    doc_id: UUID | str | None = None,
+    section_key: str | None = None,
+    direction: Literal["outgoing", "incoming", "both"] = "both",
+    kinds: Sequence[ReferenceKind] | None = None,
+    time: ReadTime | None = None,
+    k: int = 50,
+    cursor: str | None = None,
+) -> DocumentReferencesPage
+```
+
+Lists what a passage (`chunk_id`) or a document or section (`doc_id`, with
+an optional `section_key`) references, and what references it, each
+reference resolved against the target versions in force during its source
+window. Give exactly one of `chunk_id` and `doc_id`; `pydantic.ValidationError`
+otherwise. Raises `MemoryApiError` with `status_code` 404 for an unknown
+document or passage. `document_references_request(request=…)` sends a
+prepared `DocumentReferencesRequest`. See
+[`POST /documents/references`](/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+```python
+page = memory.document_references(doc_id=doc_id, section_key="approvals", direction="outgoing")
+for row in page.rows:
+    print(row.kind, row.status, row.named_target.source_ref)
+```
+
 ### Assured operations
 
 The four assured operations are the recommended way to ask the memory a
@@ -559,9 +809,16 @@ for op in memory.list_operations():
 
 ```python
 MemoryClient.run_operation(
-    *, name: str, arguments: Mapping[str, object] | None = None
+    *,
+    name: str,
+    arguments: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> Envelope | ContextBundleV2
 ```
+
+`layers` narrows the processing layers the operation may read (any of
+`"sources"`, `"claims"`, `"facts"`; default every layer the deployment
+serves). See [Narrowing a read to layers](/docs/concepts/retrieval#narrowing-a-read-to-layers).
 
 Runs one operation by name with its JSON arguments. Returns a
 `ContextBundleV2` when the response is a combined bundle, otherwise an
@@ -586,6 +843,8 @@ result = memory.run_operation(
 MemoryClient.facts_context(
     query: str,
     *,
+    k: int | None = None,
+    candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     hops: int | None = None,
     predicate: str | None = None,
@@ -612,14 +871,29 @@ for fact in facts.facts:
     print(fact.label, fact.validity.valid_from, fact.validity.valid_until)
 ```
 
+
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
+
 #### `claims_and_sources_context`
 
 ```python
-MemoryClient.claims_and_sources_context(query: str) -> Envelope
+MemoryClient.claims_and_sources_context(
+    query: str,
+    *,
+    k: int | None = None,
+    candidate_k: int | None = None,
+    time: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
+) -> Envelope
 ```
 
 Returns what sources said about `query` (claims) and the matching source
-passages (chunks). `query` is 1 to 8,192 characters.
+passages (chunks). `query` is 1 to 8,192 characters. `time` takes the same
+values as in `facts_context`; for documents with declared effective periods
+it reads only the text in force for that scope (default: now). See
+[Assured operations](/docs/reference/assured-operations#claims_and_sources_context).
 
 ```python
 said = memory.claims_and_sources_context("Why was the cutover date moved?")
@@ -627,22 +901,37 @@ for claim in said.evidence:
     print(claim.claim_text, claim.asserted_at, claim.document_title)
 ```
 
+
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
+
 #### `combined_context`
 
 ```python
 MemoryClient.combined_context(
-    query: str, *, time: Mapping[str, object] | None = None
+    query: str,
+    *,
+    k: int | None = None,
+    candidate_k: int | None = None,
+    time: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> ContextBundleV2
 ```
 
 Runs `claims_and_sources_context` and `facts_context` together and returns
 both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
-`time` takes the same values as in `facts_context`.
+`time` takes the same values as in `facts_context` and applies to both.
 
 ```python
 bundle = memory.combined_context("What did Ravi decide about invoicing?")
 print(len(bundle.facts.facts), len(bundle.claims_and_sources.evidence))
 ```
+
+
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
 
 #### `resolve_entity`
 
@@ -744,22 +1033,58 @@ print([s.title for s in cited.sources])
 
 ```python
 MemoryClient.search_claims(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
+    time: ReadTime | None = None,
 ) -> Envelope
 ```
 
 Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
+`documents` keeps only claims found in matching document versions (each still
+cites the passage it was first extracted from), with the same fields
+as [`search_documents`](#search_documents); a filtered search is sent as
+`POST /search/claims`. `time` reads only text in force for the scope; a
+search with `time` is sent as `POST` too. See
+[Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents)
+and [Reading text as of a date](/docs/reference/http-api/search#reading-text-as-of-a-date).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+hits = memory.search_claims(
+    query="Project X",
+    channel="bm25",
+    documents=DocumentSearchFilters(authors=("alice@acme.com",)),
+)
+```
 
 #### `search_chunks`
 
 ```python
 MemoryClient.search_chunks(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
+    time: ReadTime | None = None,
 ) -> Envelope
 ```
 
-Searches source passages. Same arguments and bounds as `search_claims`.
+Searches source passages. Same arguments and bounds as `search_claims`;
+`documents` keeps passages whose document matches, and `time` passages of
+versions in force for the scope.
+
+`time` is a `ReadTime`: a dict or model with `mode` `current`, `at` (with
+`at`), `overlap` (with `from` and `to`) or `history`, for example
+`{"mode": "at", "at": "2026-02-01T00:00:00Z"}`. Omitted, it is `current`. A
+document without declared effective periods reads its served version under
+every mode.
 
 ```python
 hits = memory.search_chunks(query="invoice numbering", k=5, channel="bm25")
@@ -856,6 +1181,7 @@ MemoryClient.query_sql(
     sql: str,
     parameters: list[object] | tuple[object, ...] = (),
     max_rows: int | None = None,
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -886,7 +1212,10 @@ for row in res.rows:
 
 ```python
 MemoryClient.explain_sql(
-    *, sql: str, parameters: list[object] | tuple[object, ...] = ()
+    *,
+    sql: str,
+    parameters: list[object] | tuple[object, ...] = (),
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -959,6 +1288,7 @@ MemoryClient.run_saved_query(
     parameters: list[object] | tuple[object, ...] = (),
     version: int | None = None,
     max_rows: int | None = None,
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -1012,6 +1342,7 @@ Raised by every memory-client method when a request fails.
 
 | Attribute | Meaning |
 |---|---|
+| `retryable`, `request_id` | Optional typed server diagnostics; they do not authorize automatic replay. |
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
 | `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` (`rate_limited` or `concurrency_limited`); otherwise `None`. |
@@ -1051,6 +1382,14 @@ Raised on the first request when the key came from the credential file and
 the address came from `base_url` or `REMEMBER_API_URL` and is not an address
 that key may be sent to ([Connecting](#connecting)). Pass the key as
 `api_key` or in `REMEMBER_API_KEY` to use it there.
+
+### LayerUnavailable
+
+A `MemoryApiError` (`status_code` 409, `code` `layer_unavailable`) raised when
+a read needs a [processing layer](/docs/concepts/pipeline#processing-layers)
+the deployment does not process. `layer` is `"claims"` or `"facts"`. Check
+[`processing_layers`](#processing_layers) and use a read the deployment
+serves.
 
 ### PipelineDeadLettered
 
@@ -1101,7 +1440,7 @@ models below are Pydantic models (frozen) unless noted.
 |---|---|
 | `Envelope` | The result of every retrieval call: `grain`, `temporal_scope`, `entities`, `facts`, `evidence`, `chunks`, `sources`, graph fields, `truncation`, `negative`, `freshness` and more. |
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
-| `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`). |
+| `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`), `version_key` (str or `None`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
 | `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
@@ -1110,11 +1449,20 @@ models below are Pydantic models (frozen) unless noted.
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
 | `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
+| `ProcessingLayer` | String enum: `sources`, `claims`, `facts`. |
+| `ProcessingLayerStates` | The result of `processing_layers`: `claims` and `facts`, each `enabled`, `backfilling` or `disabled`. |
 | `CapabilityReadiness` | `required`, `ready`, `checked_at`, `reason`, `version`, `built_at`, `published_at`. |
 | `ToolDescriptor` | One operation's descriptor: `name`, `description`, `input_schema`, `result_schema`, `result_contract`, `output_grain`, `answer_intent`, `mutates`, `version`, `implementation_plan_hash`. |
 | `QueryResultDict` | A `dict` holding a `QueryResult/v1` response, with three read-only attributes: `rows` (list of rows; each row is a list of column values in column order), `columns` (list of `{"name", "type", "nullable"}` dicts) and `truncated` (bool). |
 | `ClaimValidPrecision` | String enum: how narrow a stated validity window is. `unknown`, `instant`, `day`, `month`, `quarter`, `year`, `open`. |
 | `TemporalMatch` | String enum: whether a fact `confirmed` or only `possible` overlapped the query window. |
+| `ReadTime` | The time scope of a text read: `CurrentReadTime`, `AtReadTime`, `OverlapReadTime` or `HistoryReadTime` (in `remember.models`), chosen by `mode`. A dict such as `{"mode": "at", "at": "2026-02-01T00:00:00Z"}` is accepted wherever a `ReadTime` is. |
+| `EffectivePeriodInput`, `EffectivePeriodsSet`, `DeclaredEffectivePeriod`, `EffectiveTimeCleared` | Declaring effective periods and the results of `set_effective_periods` and `clear_effective_time`. |
+| `EffectiveInterval` | One in-force interval: `from_` (sent as `from`), `until`, `until_declared`. |
+| `MatchingEdition`, `ScopePending`, `ClaimOccurrence` | Parts of time-scoped results: an edition that matched `search_documents`, the documents whose edition in force is still processing, and where a claim occurs in a selected version. |
+| `ReferenceInput`, `ReferenceTarget`, `ReferencesSet`, `ReferenceGeneration`, `ReferenceGenerations`, `ReferenceItemError` | Supplying references and reading their generations. |
+| `SectionHistoryRequest`, `SectionHistoryPage`, `SectionHistoryRow`, `SectionHistorySection`, `SectionAmendment` | `section_history`. |
+| `DocumentReferencesRequest`, `DocumentReferencesPage`, `DocumentReference`, `DocumentReferenceSource`, `DocumentReferenceTarget`, `NamedReferenceTarget`, `ReferenceWindow`, `DocumentReferencesTooBroad` | `document_references`. |
 | `ConnectorCreate`, `ConnectorDescriptor` | Connector configuration models. No deployment serves connectors today. `ConnectorCreate` refuses a `configuration` key that looks like a secret (`token`, `password`, `api_key` …) and asks for `credential_ref` instead. |
 
 <Callout type="note">
@@ -1124,3 +1472,11 @@ arrives as a list of values. Pair it with `columns` to get names:
 `[dict(zip([c["name"] for c in res.columns], row)) for row in res.rows]`.
 
 </Callout>
+
+### Windows credential files
+
+Automatic credential-file reads are refused on Windows because the SDK cannot
+prove owner-only access with its current file reader. Supply an explicit API key
+and engine URL instead; no stored file is read when both are supplied. An argument
+or environment signed key without a URL also works: it bypasses the unavailable
+store and discovers its engine through its own issuer.

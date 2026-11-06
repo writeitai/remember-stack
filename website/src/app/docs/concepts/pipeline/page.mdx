@@ -50,6 +50,39 @@ When a new version of a document arrives, unchanged passages reuse their
 earlier work: their conversion, their claims and their vectors. Only what
 changed is processed again.
 
+## Processing layers
+
+<AppliesTo products={["self-hosted"]} />
+
+The stages fall into three layers, each built from the one before:
+
+| Layer | Stages | What it serves |
+|---|---|---|
+| `sources` | `convert`, `structure`, `chunk`, `embed_chunk` | Documents, sections and chunks. Always on. |
+| `claims` | `extract_claims`, `ground_claims`, `embed_claim`, `reconcile` | Claims and claim search. |
+| `facts` | `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `label_relation`, and the full `reconcile` | Entities, facts, the entity graph and knowledge pages. |
+
+Every layer is on by default. A self-hosted operator can switch the facts
+layer off, or both the claims and the facts layer, with
+`REMEMBERSTACK_SELFHOST_FACTS_LAYER` and `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER`
+([Configuration variables](/docs/reference/configuration#processing-layers)),
+for example to load a large corpus as searchable sources first and decide
+later whether it needs facts. `setup` applies the change:
+
+- **Off.** New versions stop at the layer's boundary. Work already started
+  finishes. Retrieval stops reading the layer at once; its data is kept, not
+  deleted.
+- **On again.** Versions that missed the layer are processed in the
+  background, on the backfill lane, oldest first within each document. Work
+  that was done before is reused, so nothing is chunked or embedded twice.
+  A document that is replaced in place (a living source) is processed at its
+  current version only.
+
+`GET /processing-layers` reports each of `claims` and `facts` as `enabled`,
+`backfilling` (on, with versions still to process) or `disabled`. Readiness
+expects only the stages of the enabled layers; the stages of a layer a version
+will never enter read `skipped`.
+
 ## How long it takes
 
 Expect minutes per document, and longer for large ones. Every model-backed

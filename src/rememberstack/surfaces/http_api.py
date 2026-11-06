@@ -48,6 +48,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 from pydantic import SecretBytes
+from pydantic import ValidationError
 from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
 from starlette.concurrency import run_in_threadpool
@@ -57,20 +58,36 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import tool
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
+from remember.models import EffectivePeriodInput
+from remember.models import EffectivePeriodsRequest
+from remember.models import EffectivePeriodsSet
+from remember.models import EffectiveTimeCleared
+from remember.models import ReferenceGenerations
+from remember.models import REFERENCES_BODY_MAX_BYTES
+from remember.models import ReferencesSet
+from remember.models import VERSION_KEY_MAX_LEN
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
 from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
 from rememberstack.model import AdjacentChunksRequest
 from rememberstack.model import AuthenticatedContext
+from rememberstack.model import ChunkNotFoundError
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
+from rememberstack.model import ContentDetectionError
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import DocumentDeletion
@@ -78,6 +95,9 @@ from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentUpload
+from rememberstack.model import DocumentVersionNotFoundError
+from rememberstack.model import EffectivePeriodConflictError
+from rememberstack.model import EffectiveTimeNotSupportedError
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model import ForgottenSourceError
@@ -90,12 +110,25 @@ from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ReadEmbeddingCost
 from rememberstack.model import ReadinessRequirements
+from rememberstack.model import ReferenceBodyError
 from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.model import track_read_embedding_cost
+from rememberstack.model import VersionKeyConflictError
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.model.client import DocumentSearchPage
+from rememberstack.model.client import DocumentSearchRequest
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.client import ProcessingLayerStates
+from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
+from rememberstack.model.client import SECTION_HISTORY_MAX_K
+from rememberstack.model.client import SectionHistoryPage
+from rememberstack.model.client import SectionHistoryRequest
+from rememberstack.model.processing_layers import LayerAdmission
+from rememberstack.model.processing_layers import LayerSelectionError
+from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionRefused
@@ -106,7 +139,10 @@ from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import ProcessingLayersPort
 from rememberstack.surfaces.operation_surface import UnknownOperationError
+from rememberstack.surfaces.operation_surface import unserved_operation_names
+from rememberstack.surfaces.query_engine import disclose_layers
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_engine import RESOLVE_CONTEXT_LIMIT
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -239,6 +275,50 @@ class PipelineReadinessPort(Protocol):
     ) -> PipelineReadinessReport: ...
 
 
+class DocumentSearchPort(Protocol):
+    """Find documents by name, general metadata and content (D134)."""
+
+    def search_documents(
+        self, *, deployment_id: UUID, request: DocumentSearchRequest
+    ) -> DocumentSearchPage: ...
+
+
+class SectionHistoryPort(Protocol):
+    """Follow one keyed section across a lineage's versions (D140 §6.2)."""
+
+    def section_history(
+        self, *, deployment_id: UUID, request: SectionHistoryRequest
+    ) -> SectionHistoryPage:
+        """Read one page, or raise ``DocumentNotFoundError`` / ``ValueError``."""
+        ...
+
+
+class ReferencesPort(Protocol):
+    """Record and inspect one version's supplied references (D140 §6.3)."""
+
+    def set_references(
+        self, *, deployment_id: UUID, doc_id: UUID, version_id: UUID, body: bytes
+    ) -> ReferencesSet:
+        """Record an NDJSON set; ``ReferenceBodyError`` for an invalid line."""
+        ...
+
+    def reference_generations(
+        self, *, deployment_id: UUID, doc_id: UUID, version_id: UUID
+    ) -> ReferenceGenerations:
+        """The version's generations with statuses and errors."""
+        ...
+
+
+class DocumentReferencesPort(Protocol):
+    """Read references across versions and time (D140 §6.2)."""
+
+    def document_references(
+        self, *, deployment_id: UUID, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Read one page, or raise a not-found error or ``ValueError``."""
+        ...
+
+
 class DocumentInventoryPort(Protocol):
     """List the document lineages this deployment holds."""
 
@@ -257,6 +337,27 @@ class DocumentDeletionPort(Protocol):
 
     def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
         """Delete the lineage, or raise ``DocumentNotFoundError`` when absent."""
+        ...
+
+
+class EffectiveTimePort(Protocol):
+    """Declare when document versions are in force, after ingest (D140)."""
+
+    def set_effective_periods(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        version_id: UUID,
+        periods: tuple[EffectivePeriodInput, ...],
+    ) -> EffectivePeriodsSet:
+        """Replace one version's live declarations with ``periods``."""
+        ...
+
+    def clear_effective_time(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> EffectiveTimeCleared:
+        """Retract every declaration of the lineage and leave effective time."""
         ...
 
 
@@ -410,9 +511,15 @@ def build_api(
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
     documents: DocumentInventoryPort | None = None,
+    document_search: DocumentSearchPort | None = None,
+    section_history: SectionHistoryPort | None = None,
+    references: ReferencesPort | None = None,
+    document_references: DocumentReferencesPort | None = None,
     deletion: DocumentDeletionPort | None = None,
+    effective_time: EffectiveTimePort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
+    processing_layers: ProcessingLayersPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
     browser_origins: tuple[str, ...] = (),
@@ -422,7 +529,14 @@ def build_api(
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
     deployment-side connector configuration; `deletion` adds
-    `DELETE /documents/{doc_id}` (D135); `auth` gates every request
+    `DELETE /documents/{doc_id}` (D135); `effective_time` adds
+    `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` and
+    `DELETE /documents/{doc_id}/effective-periods` (D140); `document_search` adds
+    `POST /documents/search` (D134); `section_history` adds
+    `GET /documents/{doc_id}/sections/{section_key}/history` (D140);
+    `references` adds `PUT|GET /documents/{doc_id}/versions/{version_id}/references`
+    and `document_references` adds `POST /documents/references` (D140);
+    `auth` gates every request
     on one perimeter credential; `direct_admission` enforces the per-credential
     and per-deployment rate and in-flight limits after authentication and
     before the spend lease and routing (D136 §7.6); and `spend_lease` holds
@@ -489,6 +603,30 @@ def build_api(
         """Any route whose embedding call fails answers 503, never 500."""
         return JSONResponse(
             status_code=503, content={"detail": "model provider unavailable"}
+        )
+
+    @app.exception_handler(LayerUnavailableError)
+    def layer_unavailable(_request: Request, error: Exception) -> JSONResponse:
+        """D143 §7.2: a read needs a processing layer this deployment does not serve."""
+        assert isinstance(error, LayerUnavailableError)
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "layer_unavailable",
+                    "layer": error.layer.value,
+                    "status": "disabled",
+                    "message": str(error),
+                }
+            },
+        )
+
+    @app.exception_handler(LayerSelectionError)
+    def layer_selection_invalid(_request: Request, error: Exception) -> JSONResponse:
+        """D143 §7.2: the ``layers`` selection cannot be honoured by this read."""
+        return JSONResponse(
+            status_code=422,
+            content={"detail": {"code": "invalid_parameter", "message": str(error)}},
         )
 
     @app.get("/resolve", response_model=Envelope)
@@ -573,22 +711,35 @@ def build_api(
     # for existing clients, which reach the deployment over a private path.
     @app.post("/search/claims", response_model=Envelope)
     def post_search_claims(body: Annotated[SearchRequest, Body()]) -> Envelope:
-        """Claim search — evidence grain, never current-fact truth."""
+        """Claim search — evidence grain, never current-fact truth.
+
+        ``documents`` keeps claims with a live occurrence in a matching
+        document (D134); the returned evidence is the claim's origin, as
+        without a filter. ``time`` (D140) selects claims of documents with
+        declared effective periods through their occurrences in the versions
+        in force for the scope, and returns those occurrences.
+        """
         return engine.search_claims(
             deployment_id=deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
+            **_documents_scope(body),
         )
 
     @app.post("/search/chunks", response_model=Envelope)
     def post_search_chunks(body: Annotated[SearchRequest, Body()]) -> Envelope:
-        """Search live source chunks as separately typed evidence."""
+        """Search live source chunks as separately typed evidence.
+
+        ``documents`` keeps chunks whose document version matches (D134);
+        ``time`` keeps chunks of versions in force for the scope (D140).
+        """
         return engine.search_chunks(
             deployment_id=deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
+            **_documents_scope(body),
         )
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
@@ -620,7 +771,16 @@ def build_api(
         )
 
     if surface is not None:
-        _mount_operations(app=app, surface=surface)
+        _mount_operations(
+            app=app,
+            surface=surface,
+            layers=processing_layers,
+            deployment_id=deployment_id,
+        )
+    if processing_layers is not None:
+        _mount_processing_layers(
+            app=app, layers=processing_layers, deployment_id=deployment_id
+        )
     if open_query is not None:
         _mount_open_query(app=app, open_query=open_query, perimeter=perimeter_dep)
     if ingest is not None:
@@ -644,23 +804,47 @@ def build_api(
         _mount_document_inventory(
             app=app, documents=documents, deployment_id=deployment_id
         )
+    if document_search is not None:
+        _mount_document_search(
+            app=app, search=document_search, deployment_id=deployment_id
+        )
+    if section_history is not None:
+        _mount_section_history(
+            app=app, history=section_history, deployment_id=deployment_id
+        )
+    if references is not None:
+        _mount_references(app=app, references=references, deployment_id=deployment_id)
+    if document_references is not None:
+        _mount_document_references(
+            app=app, references=document_references, deployment_id=deployment_id
+        )
     if deletion is not None:
         _mount_document_deletion(
             app=app, deletion=deletion, deployment_id=deployment_id
         )
+    if effective_time is not None:
+        _mount_effective_time(
+            app=app, effective_time=effective_time, deployment_id=deployment_id
+        )
     if graph is not None:
-        _mount_graph(app=app, graph=graph)
+        _mount_graph(
+            app=app, graph=graph, layers=processing_layers, deployment_id=deployment_id
+        )
     if build_info is not None:
         _mount_build_info(
             app=app,
             build_info=build_info,
             deployment_id=deployment_id,
+            layers=processing_layers,
             tools=_served_tools(
                 operations=surface is not None,
                 open_query=open_query is not None,
                 ingest=ingest is not None,
                 pipeline_readiness=pipeline_readiness is not None,
                 deletion=deletion is not None,
+                document_search=document_search is not None,
+                section_history=section_history is not None,
+                document_references=document_references is not None,
             ),
         )
 
@@ -800,10 +984,11 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
         # named origin ride a session cookie it should never see.
         # OPTIONS is absent deliberately: the middleware answers preflight
         # itself, so listing it would only advertise a method no route serves.
-        # DELETE is listed because `DELETE /documents/{doc_id}` exists; it
-        # grants nothing by itself, since the route still demands a
-        # credential with full write scope.
-        allow_methods=["GET", "POST", "DELETE"],
+        # DELETE and PUT are listed because `DELETE /documents/{doc_id}` and
+        # the D140 effective-period routes exist; they grant nothing by
+        # themselves, since those routes still demand a credential with full
+        # write scope.
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         # Exactly the two headers a browser client sends. `Idempotency-Key`
         # was here for a contract nothing implements — advertising a header no
         # route reads invites a client to rely on it.
@@ -822,6 +1007,9 @@ def _served_tools(
     ingest: bool,
     pipeline_readiness: bool,
     deletion: bool,
+    document_search: bool,
+    section_history: bool,
+    document_references: bool = False,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
@@ -836,8 +1024,15 @@ def _served_tools(
         names.append(PIPELINE_READINESS_TOOL_NAME)
     if deletion:
         names.append(DELETE_DOCUMENT_TOOL_NAME)
+    if document_search:
+        names.append(SEARCH_DOCUMENTS_TOOL_NAME)
+    if section_history:
+        names.append(SECTION_HISTORY_TOOL_NAME)
+    if document_references:
+        names.append(DOCUMENT_REFERENCES_TOOL_NAME)
     if operations:
         names.extend(OPERATION_TOOL_NAMES)
+        names.append(ADJACENT_CHUNKS_TOOL_NAME)
     if open_query:
         names.extend(OPEN_QUERY_TOOL_NAMES)
     return {name: tool(name).tool_version for name in names}
@@ -849,6 +1044,7 @@ def _mount_build_info(
     build_info: BuildInfoPort,
     deployment_id: UUID,
     tools: dict[str, int],
+    layers: ProcessingLayersPort | None,
 ) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
@@ -870,8 +1066,16 @@ def _mount_build_info(
     @app.get("/deployment", response_model=DeploymentBuildInfo)
     def deployment_build_info() -> DeploymentBuildInfo:
         """Report which code, model bindings and tools are serving, before any work."""
+        # D143 §7.4: tools that read only an unserved layer are not listed.
+        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
         return build_info.build_info(deployment_id=deployment_id).model_copy(
-            update={"tools": dict(tools)}
+            update={
+                "tools": {
+                    name: version
+                    for name, version in tools.items()
+                    if name not in unserved
+                }
+            }
         )
 
 
@@ -901,14 +1105,61 @@ def _graph_errors() -> Iterator[None]:
 _TRANSACTION_TIMEOUT: Final = "25P04"
 
 
-def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
-    """Mount the three server-owned graph operations."""
+_LAYERS_HELP: Final = (
+    "D143: the processing layers this request may read (sources, claims,"
+    " facts); default every layer the deployment serves."
+)
+
+
+def _layer_selection(
+    layers: list[ProcessingLayer] | None,
+) -> frozenset[ProcessingLayer] | None:
+    """The request's ``layers`` query parameter as a selection, or None."""
+    return None if layers is None else frozenset(layers)
+
+
+def _require_facts(
+    *, layers: ProcessingLayersPort | None, deployment_id: UUID
+) -> LayerAdmission:
+    """Admit an entity-graph read: refused without facts, disclosed while backfilling."""
+    state = (
+        "enabled"
+        if layers is None
+        else layers.states(deployment_id=deployment_id).facts
+    )
+    if state == "disabled":
+        raise LayerUnavailableError(
+            layer=ProcessingLayer.FACTS,
+            message="this deployment does not process the facts layer",
+        )
+    return LayerAdmission(
+        consulted=_FACTS_LAYER,
+        backfilling=_FACTS_LAYER if state == "backfilling" else frozenset(),
+    )
+
+
+_FACTS_LAYER: Final = frozenset({ProcessingLayer.FACTS})
+
+
+def _mount_graph(
+    *,
+    app: FastAPI,
+    graph: GraphQueryPort,
+    layers: ProcessingLayersPort | None,
+    deployment_id: UUID,
+) -> None:
+    """Mount the three server-owned graph operations.
+
+    The entity graph reads the facts layer; citation paths read sources
+    (D143 §7.2).
+    """
 
     @app.post("/graph/neighborhood", response_model=Envelope)
     def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
+        admission = _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
-            return graph.neighborhood(
+            envelope = graph.neighborhood(
                 entity_id=body.entity_id,
                 hops=body.hops,
                 predicates=body.predicates,
@@ -918,12 +1169,15 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
                 continuation=body.continuation,
                 include_paths=body.include_paths,
             )
+        # D143 §7.3: an empty answer while facts backfill is a boundary.
+        return disclose_layers(envelope=envelope, admission=admission)
 
     @app.post("/graph/path", response_model=Envelope)
     def graph_path(body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
+        admission = _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
-            return graph.path(
+            envelope = graph.path(
                 from_entity_id=body.from_entity_id,
                 to_entity_id=body.to_entity_id,
                 max_hops=body.max_hops,
@@ -931,6 +1185,7 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
                 valid_at=body.valid_at,
                 believed_at=body.believed_at,
             )
+        return disclose_layers(envelope=envelope, admission=admission)
 
     @app.post("/graph/citation-path", response_model=Envelope)
     def graph_citation_path(body: GraphCitationPathRequest) -> Envelope:
@@ -962,6 +1217,9 @@ def _mount_open_query(
     def query_sql(
         body: SqlQueryRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """One sandboxed SQL statement; QueryResult/v1."""
         return _open_call(
@@ -970,6 +1228,7 @@ def _mount_open_query(
                 parameters=body.parameters,
                 max_rows=body.max_rows,
                 principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -977,11 +1236,17 @@ def _mount_open_query(
     def explain_sql(
         body: SqlExplainRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """EXPLAIN one SQL statement without executing it."""
         return _open_call(
             lambda: open_query.explain_sql(
-                sql=body.sql, parameters=body.parameters, principal=principal
+                sql=body.sql,
+                parameters=body.parameters,
+                principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1081,6 +1346,9 @@ def _mount_open_query(
         name: str,
         body: RunSavedQueryRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """Execute one active saved query through the same SQL executor."""
         return _open_call(
@@ -1091,6 +1359,7 @@ def _mount_open_query(
                 parameters=body.parameters,
                 max_rows=body.max_rows,
                 principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1215,6 +1484,257 @@ def _mount_document_inventory(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+def _documents_scope(body: SearchRequest) -> dict[str, Any]:
+    """The D134 ``documents`` and D140 ``time`` keywords, only when present."""
+    scope: dict[str, Any] = {}
+    if body.documents is not None:
+        scope["documents"] = body.documents
+    if body.time is not None:
+        scope["time"] = body.time
+    return scope
+
+
+def _mount_document_search(
+    *, app: FastAPI, search: DocumentSearchPort, deployment_id: UUID
+) -> None:
+    """Expose ``search_documents`` (D134): find files. A read."""
+
+    @app.post(
+        "/documents/search",
+        response_model=DocumentSearchPage,
+        responses={400: {"description": "cursor is malformed"}},
+    )
+    def search_documents(
+        body: Annotated[DocumentSearchRequest, Body()],
+    ) -> DocumentSearchPage:
+        """Find documents by observed name, general metadata and content.
+
+        Each result is a document judged by one version: its current version
+        by default, or with ``versions: all`` the newest live version that
+        matches. With a ``query`` results are ranked and not paged; with
+        filters only they are ordered by declared creation date and paged by
+        ``cursor``, which pins the first call's as-of instant.
+        """
+        try:
+            return search.search_documents(deployment_id=deployment_id, request=body)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _mount_section_history(
+    *, app: FastAPI, history: SectionHistoryPort, deployment_id: UUID
+) -> None:
+    """Expose ``section_history`` (D140 §6.2). A read."""
+
+    @app.get(
+        "/documents/{doc_id}/sections/{section_key:path}/history",
+        response_model=SectionHistoryPage,
+        responses={
+            400: {"description": "cursor is malformed or belongs to another call"},
+            404: {"description": "document_not_found"},
+            422: {"description": "invalid section key or time scope"},
+        },
+    )
+    def section_history(
+        doc_id: UUID,
+        section_key: str,
+        mode: Literal["current", "at", "overlap", "history"] = "history",
+        at: datetime | None = None,
+        from_: Annotated[datetime | None, Query(alias="from")] = None,
+        to: datetime | None = None,
+        k: Annotated[
+            int, Query(ge=1, le=SECTION_HISTORY_MAX_K)
+        ] = SECTION_HISTORY_DEFAULT_K,
+        cursor: Annotated[str | None, Query(min_length=1)] = None,
+    ) -> SectionHistoryPage:
+        """One section key across the document's versions.
+
+        One row per version the time scope selects (``mode``, default
+        ``history``; ``at`` for ``mode=at``, ``from``/``to`` for
+        ``mode=overlap``): the version, its in-force intervals, and the
+        section it holds under the key with ``changed``/``own_changed``
+        against the previous row that held it — or ``absent``,
+        ``not_indexed`` or ``processing``. Ordered by effective start for a
+        periodised document, else by version number; ``cursor`` pages and
+        pins the evaluation and belief instants.
+        """
+        time: dict[str, object] = {"mode": mode}
+        if mode == "at":
+            time["at"] = at
+        elif mode == "overlap":
+            time["from"] = from_
+            time["to"] = to
+        try:
+            request = SectionHistoryRequest.model_validate(
+                {
+                    "doc_id": doc_id,
+                    "section_key": section_key,
+                    "time": time,
+                    "k": k,
+                    "cursor": cursor,
+                }
+            )
+        except ValidationError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=error.errors(include_url=False, include_context=False),
+            ) from error
+        try:
+            return history.section_history(deployment_id=deployment_id, request=request)
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _reference_errors(error: Exception) -> HTTPException:
+    """Map one references refusal to its status and detail."""
+    if isinstance(error, DocumentNotFoundError):
+        return HTTPException(status_code=404, detail="document_not_found")
+    if isinstance(error, DocumentVersionNotFoundError):
+        return HTTPException(status_code=404, detail="version_not_found")
+    if isinstance(error, ReferenceBodyError):
+        return HTTPException(
+            status_code=422,
+            detail={"code": error.code, "line": error.line, "message": error.reason},
+        )
+    raise error
+
+
+_REFERENCE_ERRORS: Final = (
+    DocumentNotFoundError,
+    DocumentVersionNotFoundError,
+    ReferenceBodyError,
+)
+
+
+def _mount_references(
+    *, app: FastAPI, references: ReferencesPort, deployment_id: UUID
+) -> None:
+    """Expose the supplied-reference write (write scope) and its read (D140 §6.3)."""
+
+    @app.put(
+        "/documents/{doc_id}/versions/{version_id}/references",
+        response_model=ReferencesSet,
+        responses={
+            404: {"description": "document_not_found | version_not_found"},
+            413: {"description": "reference_set_too_large (over 64 MiB)"},
+            422: {"description": "invalid_reference_set: the failing line"},
+        },
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/x-ndjson": {
+                        "schema": {"type": "string", "format": "binary"}
+                    }
+                },
+            }
+        },
+    )
+    async def set_references(
+        doc_id: UUID, version_id: UUID, request: Request
+    ) -> ReferencesSet:
+        """Replace one version's supplied references with an NDJSON set.
+
+        One reference per line: ``kind``, ``from_section_key``, ``target``
+        (``source_kind``, ``source_ref``, ``version_key``, ``section_key``),
+        ``binding`` (``floating`` or ``pinned``), ``change_effective_from``
+        and ``change_date_known`` (for ``amends``), ``source_label``,
+        ``context``. The latest PUT wins: an equal set is a retry, a set
+        equal to the active one cancels a newer pending one, and any other
+        set becomes a pending generation the pipeline validates
+        (all-or-nothing against the version's section keys) and activates.
+        A malformed line is 422 naming it; more than 64 MiB is 413.
+        """
+        declared = request.headers.get("content-length")
+        if (
+            declared is not None
+            and declared.isdigit()
+            and int(declared) > REFERENCES_BODY_MAX_BYTES
+        ):
+            raise _references_too_large()
+        received = bytearray()
+        async for chunk in request.stream():
+            received.extend(chunk)
+            if len(received) > REFERENCES_BODY_MAX_BYTES:
+                raise _references_too_large()
+        try:
+            return await run_in_threadpool(
+                references.set_references,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                version_id=version_id,
+                body=bytes(received),
+            )
+        except _REFERENCE_ERRORS as error:
+            raise _reference_errors(error) from error
+
+    @app.get(
+        "/documents/{doc_id}/versions/{version_id}/references",
+        response_model=ReferenceGenerations,
+        responses={404: {"description": "document_not_found | version_not_found"}},
+    )
+    def reference_generations(doc_id: UUID, version_id: UUID) -> ReferenceGenerations:
+        """The version's reference generations, newest first.
+
+        Each generation is ``pending``, ``active``, ``rejected`` (with
+        ``{item, field, reason}`` errors) or ``superseded``.
+        """
+        try:
+            return references.reference_generations(
+                deployment_id=deployment_id, doc_id=doc_id, version_id=version_id
+            )
+        except _REFERENCE_ERRORS as error:
+            raise _reference_errors(error) from error
+
+
+def _references_too_large() -> HTTPException:
+    return HTTPException(
+        status_code=413,
+        detail={
+            "code": "reference_set_too_large",
+            "limit_bytes": REFERENCES_BODY_MAX_BYTES,
+        },
+    )
+
+
+def _mount_document_references(
+    *, app: FastAPI, references: DocumentReferencesPort, deployment_id: UUID
+) -> None:
+    """Expose ``document_references`` (D140 §6.2). A read."""
+
+    @app.post(
+        "/documents/references",
+        response_model=DocumentReferencesPage,
+        responses={
+            400: {"description": "cursor is malformed or belongs to another call"},
+            404: {"description": "document_not_found | chunk_not_found"},
+        },
+    )
+    def document_references(body: DocumentReferencesRequest) -> DocumentReferencesPage:
+        """What a passage, section or document references, and what references it.
+
+        Give ``chunk_id`` or ``doc_id`` (optionally ``section_key``). Each row
+        is one reference in one source window, resolved against the target
+        versions in force then: ``applies_during``, ``concurrent`` and a
+        status (``resolved``, ``target_processing``, ``target_unavailable``,
+        ``target_not_in_force``, ``section_not_in_version``,
+        ``section_not_indexed``, ``pinned_version_unavailable``). ``cursor``
+        pages and pins the evaluation and belief instants.
+        """
+        try:
+            return references.document_references(
+                deployment_id=deployment_id, request=body
+            )
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ChunkNotFoundError as error:
+            raise HTTPException(status_code=404, detail="chunk_not_found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 def _mount_document_deletion(
     *, app: FastAPI, deletion: DocumentDeletionPort, deployment_id: UUID
 ) -> None:
@@ -1251,19 +1771,146 @@ def _mount_document_deletion(
             ) from error
 
 
-def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
+def _effective_time_errors(error: Exception) -> HTTPException:
+    """Map one D140 write refusal to its status and structured detail."""
+    if isinstance(error, DocumentNotFoundError):
+        return HTTPException(status_code=404, detail="document_not_found")
+    if isinstance(error, DocumentVersionNotFoundError):
+        return HTTPException(status_code=404, detail="version_not_found")
+    if isinstance(error, EffectivePeriodConflictError):
+        return HTTPException(
+            status_code=409,
+            detail={
+                "code": "effective_period_conflict",
+                "message": str(error),
+                "version_id": str(error.version_id),
+                "effective_from": error.effective_from.isoformat(),
+            },
+        )
+    if isinstance(error, VersionKeyConflictError):
+        return HTTPException(
+            status_code=409,
+            detail={
+                "code": "version_key_conflict",
+                "message": str(error),
+                "version_id": str(error.version_id),
+                "version_key": error.version_key,
+            },
+        )
+    if isinstance(error, EffectiveTimeNotSupportedError):
+        return HTTPException(
+            status_code=422,
+            detail={"code": "effective_time_requires_snapshot", "message": str(error)},
+        )
+    raise error
+
+
+_EFFECTIVE_TIME_ERRORS: Final = (
+    DocumentNotFoundError,
+    DocumentVersionNotFoundError,
+    EffectivePeriodConflictError,
+    VersionKeyConflictError,
+    EffectiveTimeNotSupportedError,
+)
+
+
+def _mount_effective_time(
+    *, app: FastAPI, effective_time: EffectiveTimePort, deployment_id: UUID
+) -> None:
+    """Expose the D140 period writes. Both require write scope."""
+
+    @app.put(
+        "/documents/{doc_id}/versions/{version_id}/effective-periods",
+        response_model=EffectivePeriodsSet,
+        responses={
+            404: {"description": "document_not_found | version_not_found"},
+            409: {"description": "effective_period_conflict"},
+            422: {"description": "effective_time_requires_snapshot"},
+        },
+    )
+    def set_effective_periods(
+        doc_id: UUID, version_id: UUID, body: EffectivePeriodsRequest
+    ) -> EffectivePeriodsSet:
+        """Replace the periods during which one version's text is in force.
+
+        The body is the version's complete set: declarations not listed are
+        retracted and new ones declared, atomically. A period without
+        ``effective_until`` lasts until the next declared start in the
+        document. An empty set leaves the version with no in-force period and
+        the document keeps its declared effective time (use ``DELETE
+        /documents/{doc_id}/effective-periods`` to leave it). A start already
+        declared for another version of the document is refused with 409, and
+        a ``living`` document with 422. Periods never trigger reprocessing.
+        """
+        try:
+            return effective_time.set_effective_periods(
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                version_id=version_id,
+                periods=body.periods,
+            )
+        except _EFFECTIVE_TIME_ERRORS as error:
+            raise _effective_time_errors(error) from error
+
+    @app.delete(
+        "/documents/{doc_id}/effective-periods",
+        response_model=EffectiveTimeCleared,
+        responses={404: {"description": "document_not_found"}},
+    )
+    def clear_effective_time(doc_id: UUID) -> EffectiveTimeCleared:
+        """Return a document to "the newest processed version is current".
+
+        Every declared period of the document is retracted and the change is
+        recorded, so reads pinned to an earlier instant still see the periods
+        they saw. It is the only way back from declared effective time.
+        """
+        try:
+            return effective_time.clear_effective_time(
+                deployment_id=deployment_id, doc_id=doc_id
+            )
+        except _EFFECTIVE_TIME_ERRORS as error:
+            raise _effective_time_errors(error) from error
+
+
+def _mount_processing_layers(
+    *, app: FastAPI, layers: ProcessingLayersPort, deployment_id: UUID
+) -> None:
+    """Mount ``GET /processing-layers`` (D143 §7.4)."""
+
+    @app.get("/processing-layers", response_model=ProcessingLayerStates)
+    def processing_layers() -> ProcessingLayerStates:
+        """Each switchable layer is enabled, backfilling or disabled."""
+        return layers.states(deployment_id=deployment_id)
+
+
+def _mount_operations(
+    *,
+    app: FastAPI,
+    surface: OperationSurface,
+    layers: ProcessingLayersPort | None,
+    deployment_id: UUID,
+) -> None:
     """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
     @app.get("/operations", response_model=list[ToolDescriptor])
     def list_operations() -> list[ToolDescriptor]:
         """The four assured operations for this deployment."""
-        return list(surface.descriptors())
+        # D143 §7.4: operations that read only an unserved layer are not listed.
+        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
+        return [
+            descriptor
+            for descriptor in surface.descriptors()
+            if descriptor.name not in unserved
+        ]
 
     @app.post("/operations/{name}", response_model=Envelope | ContextBundleV2)
     def run_operation(
         name: str,
         arguments: Annotated[dict[str, object], Body(default_factory=dict)],
         request: Request,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> Envelope | ContextBundleV2:
         """Run one assured operation by name over JSON arguments.
 
@@ -1286,7 +1933,9 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
                     status_code=403, detail="credential may not perform this operation"
                 )
         try:
-            return surface.run(name=name, arguments=arguments)
+            return surface.run(
+                name=name, arguments=arguments, layers=_layer_selection(layers)
+            )
         except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (MissingArgumentError, InvalidArgumentError) as error:
@@ -1427,6 +2076,50 @@ def _mount_ingest(
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                description=(
+                    "Where the file lives at its source (a folder path or URL)."
+                    " Recorded with this version's metadata and observed"
+                    " names, so the document can later be found by it."
+                ),
+            ),
+        ] = None,
+        version_key: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                max_length=VERSION_KEY_MAX_LEN,
+                description=(
+                    "Your immutable key for this version, unique within the"
+                    " document (for example a publisher's edition id). A new"
+                    " key always creates a version; an existing key is"
+                    " accepted only when re-sending the latest version's"
+                    " bytes. Requires source_kind/source_ref."
+                ),
+            ),
+        ] = None,
+        effective_from: Annotated[
+            datetime | None,
+            Query(
+                description=(
+                    "Start (inclusive, UTC) of the period this version's text"
+                    " is in force for. Requires source_kind/source_ref and"
+                    " versioning_mode=snapshot."
+                )
+            ),
+        ] = None,
+        effective_until: Annotated[
+            datetime | None,
+            Query(
+                description=(
+                    "Declared end (exclusive, UTC) of that period; without it"
+                    " the period lasts until the next declared start."
+                )
+            ),
+        ] = None,
         principal_kind: Annotated[
             str | None,
             Header(
@@ -1497,27 +2190,55 @@ def _mount_ingest(
         # An old structural IngestPort has no `ingested_by` keyword; passing it
         # unconditionally would break an unattributed call that used to work.
         attribution = {} if ingested_by is None else {"ingested_by": ingested_by}
-        if source_modified_at is not None and (
-            source_modified_at.tzinfo is None
-            or source_modified_at.utcoffset() != timedelta(0)
+        for name, instant in (
+            ("source_modified_at", source_modified_at),
+            ("effective_from", effective_from),
+            ("effective_until", effective_until),
+        ):
+            if instant is not None and (
+                instant.tzinfo is None or instant.utcoffset() != timedelta(0)
+            ):
+                raise HTTPException(
+                    status_code=422, detail=f"{name} must be timezone-aware UTC"
+                )
+        if effective_until is not None and (
+            effective_from is None or effective_until <= effective_from
         ):
             raise HTTPException(
-                status_code=422, detail="source_modified_at must be timezone-aware UTC"
+                status_code=422,
+                detail="effective_until requires an earlier effective_from",
+            )
+        if effective_from is not None and versioning_mode != "snapshot":
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "effective_time_requires_snapshot",
+                    "message": "effective periods require versioning_mode=snapshot",
+                },
             )
         upload = DocumentUpload(
-            filename=filename, mime=mime, content=content, title=title
+            filename=filename,
+            mime=mime,
+            content=content,
+            title=title,
+            source_path=source_path,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
         if source_kind is None or source_ref is None:
             if (
                 source_modified_at is not None
                 or source_version_ref is not None
                 or versioning_mode != "snapshot"
+                or version_key is not None
+                or effective_from is not None
             ):
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        "source timestamps, revisions, and living mode require"
-                        " source_kind/source_ref"
+                        "source timestamps, revisions, living mode, version keys"
+                        " and effective periods require source_kind/source_ref"
                     ),
                 )
             try:
@@ -1526,6 +2247,8 @@ def _mount_ingest(
                 )
             except ManagedTextClassificationError as error:
                 raise _managed_text_http_error(error=error) from error
+            except ContentDetectionError as error:
+                raise HTTPException(status_code=422, detail=error.code) from error
             except ForgottenSourceError as error:
                 raise _forgotten_source_http_error() from error
         try:
@@ -1542,8 +2265,16 @@ def _mount_ingest(
             )
         except ManagedTextClassificationError as error:
             raise _managed_text_http_error(error=error) from error
+        except ContentDetectionError as error:
+            raise HTTPException(status_code=422, detail=error.code) from error
         except ForgottenSourceError as error:
             raise _forgotten_source_http_error() from error
+        except (
+            EffectivePeriodConflictError,
+            VersionKeyConflictError,
+            EffectiveTimeNotSupportedError,
+        ) as error:
+            raise _effective_time_errors(error) from error
 
 
 def _mount_connectors(
@@ -1846,6 +2577,8 @@ _READ_ROUTES: Final = frozenset(
         ("GET", "/query/space/search"),
         ("GET", "/query/saved"),
         ("GET", "/documents"),
+        ("POST", "/documents/search"),
+        ("POST", "/documents/references"),
     }
 )
 
@@ -1862,6 +2595,24 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
         return ("recipe", parts[1])
     if not all(parts):
         return None
+    if (
+        method == "GET"
+        and len(parts) >= 5
+        and parts[0] == "documents"
+        and parts[2] == "sections"
+        and parts[-1] == "history"
+    ):
+        # /documents/{doc_id}/sections/{section_key}/history (keys may hold '/')
+        return ("search", None)
+    if (
+        method == "GET"
+        and len(parts) == 5
+        and parts[0] == "documents"
+        and parts[2] == "versions"
+        and parts[4] == "references"
+    ):
+        # /documents/{doc_id}/versions/{version_id}/references (D140)
+        return ("search", None)
     if method == "GET" and len(parts) == 3:
         # /chunks/{id}/adjacent, /hydrate/relation/{id}, /transcript/relation/{id}
         if parts[0] == "chunks" and parts[2] == "adjacent":

@@ -137,9 +137,15 @@ def build_document(*, deployment_id: UUID | None = None) -> dict[str, Any]:
         ingest=_Unused(),  # type: ignore[arg-type]
         pipeline_readiness=_Unused(),  # type: ignore[arg-type]
         documents=_Unused(),  # type: ignore[arg-type]
+        document_search=_Unused(),  # type: ignore[arg-type]
+        section_history=_Unused(),  # type: ignore[arg-type]
+        references=_Unused(),  # type: ignore[arg-type]
+        document_references=_Unused(),  # type: ignore[arg-type]
         deletion=_Unused(),  # type: ignore[arg-type]
+        effective_time=_Unused(),  # type: ignore[arg-type]
         graph=_Unused(),  # type: ignore[arg-type]
         build_info=_Unused(),  # type: ignore[arg-type]
+        processing_layers=_Unused(),  # type: ignore[arg-type]
     )
     return app.openapi()
 

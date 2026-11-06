@@ -86,11 +86,43 @@ The retrieval contract in §5 distinguishes confirmed interval matches from
 possible matches when a needed endpoint is unknown. Precision describes dates,
 not a permanent classification of the statement.
 
-The current fact row is authoritative. The ordinary adjudication transcript
-records prior values and the reason for changing them. System timestamps on a
-row alone do not reconstruct every earlier date revision; historical-belief
-queries must use retained revision history where that is part of their contract.
-This amendment does not claim a new historical-belief query API.
+The current fact row is authoritative for the engine's current interpretation.
+The ordinary adjudication transcript records before/after windows for decisions
+that change them, subject to the existing erasure contract.
+
+**Belief-time reads apply current windows.** The shipped
+`facts_as_of(valid_at, believed_at, max_rows)` function selects surviving facts
+by `ingested_at <= believed_at` and not invalidated by that instant, then
+filters and displays each fact's world window **as it stands now**. The graph
+helpers given both instants use the same current-window interpretation and
+also apply their D140 evidence-in-force gates. Neither read reconstructs earlier
+fact-window revisions.
+
+For example, a fact recorded on 1 August says a job began on 1 July. On
+17 September its start is corrected to 15 June. A query with `valid_at =
+2026-06-20` and `believed_at = 2026-08-10` now returns that fact, although the
+window recorded in August excluded 20 June. Shortening a window can instead
+remove a fact from the same past-belief query. Corrections therefore change
+result membership as well as displayed dates. The public documentation of both
+reads states this limitation.
+
+This is an explicit implementation gap against the
+[time-travel requirement](../requirements/requirements_v3.md#knowledge-lifecycle),
+which still requires reconstructing what the engine believed at a past instant.
+Accepting the current limitation does not remove that requirement or claim it
+is fulfilled. Historical-belief queries require retained revision history
+where that is their contract. A per-fact transcript can explain a known fact's
+recorded decisions; it is not a collection-wide historical query and must not
+be described as an equivalent replacement. Hard forget may erase transcript
+payloads, and erased before-images must never be replayed.
+
+This clarification introduces no window-history table, second write path or
+new historical reconstruction API. It does not rule out reconstruction from
+permitted recorded history or select its storage design. The
+[analysis](../analysis/lean_mutable_fact_windows.md#belief-time-query-coverage-2026-11-06)
+separates the current read semantics, the requirement gap and the alternatives.
+The assured fact operations answer current belief only; their `time` selects
+world time and they take no `believed_at` input.
 
 ## 3. Identity and dates are one ordinary adjudication
 
@@ -111,6 +143,20 @@ In particular:
 - High-confidence semantic adjudication can attach evidence, create a distinct
   fact, revise a fact, cap a predecessor, or preserve incompatible testimony.
   Existing confidence thresholds and conservative coexistence rules still apply.
+- A claim that occurs in versions with declared effective periods (D140) is shown
+  with its **in-force intervals** — the union of those versions' intervals — as
+  another dated input, beside the claim's own dates. It can justify or bound a
+  window ("the allowance was 45 per day from 2024-01-01 until 2026-01-01") like any
+  other date; it is not a second window authority. A later change to those periods
+  queues a **window review** of the facts the affected claims support: a keep-or-replace
+  window decision grounded in supplied claims, recorded like any other adjudication
+  ([effective time design §8.2](effective_time_and_section_references_design.md#82-adjudication-input-and-window-review)).
+- Separately from adjudication, fact **reads** under a time scope apply D140's
+  deterministic evidence gate: a fact is returned only if its window matches the
+  scope **and** at least one supporting claim occurs in a version in force for the
+  scope (or in a lineage without declared periods). The gate never changes the
+  window; it prevents an answer that rests solely on an edition not yet or no
+  longer in force.
 
 Relation normalization must stage the assertion before identity selection. It
 must not merge every live `(subject, predicate, object)` triple and ask about

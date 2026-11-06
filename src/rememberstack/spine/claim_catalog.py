@@ -440,14 +440,19 @@ _INSERT_CLAIM = text(
         is_attributed, anchor_ok, window_membership_ok,
         entailment_self_verdict, kept_flagged, extractor_version,
         asserted_at,
-        claim_valid_from, claim_valid_until, claim_valid_precision, claim_valid_kind
+        claim_valid_from, claim_valid_until, claim_valid_precision, claim_valid_kind,
+        own_document_name_span
     ) VALUES (
         :claim_id, :deployment_id, :doc_id, :chunk_id, :section_id,
         :claim_text, :source_span, :char_start, :char_end, :added_context,
         :is_attributed, true, true,
         :entailment_self_verdict, :kept_flagged, :extractor_version,
         :asserted_at,
-        :claim_valid_from, :claim_valid_until, :claim_valid_precision, :claim_valid_kind
+        :claim_valid_from, :claim_valid_until, :claim_valid_precision, :claim_valid_kind,
+        CASE WHEN CAST(:own_document_name_start AS integer) IS NULL THEN NULL
+             ELSE int4range(CAST(:own_document_name_start AS integer),
+                            CAST(:own_document_name_end AS integer))
+        END
     )
     """
 ).bindparams(bindparam("added_context", type_=JSON))
@@ -508,7 +513,9 @@ _SELECT_CLAIMS_FOR_CHUNKS = text(
     """
     SELECT cl.claim_id, cl.deployment_id, cl.doc_id, cl.chunk_id, cl.claim_text,
            cl.is_attributed, cl.extractor_version, cl.asserted_at, cl.claim_valid_from,
-           cl.claim_valid_until, cl.claim_valid_precision::text, cl.claim_valid_kind::text
+           cl.claim_valid_until, cl.claim_valid_precision::text, cl.claim_valid_kind::text,
+           lower(cl.own_document_name_span) AS own_document_name_start,
+           upper(cl.own_document_name_span) AS own_document_name_end
     FROM claims cl
     JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
     WHERE cc.chunk_id = ANY(:chunk_ids)
@@ -520,7 +527,9 @@ _SELECT_CLAIM_FOR_NORMALIZE = text(
     """
     SELECT claim_id, deployment_id, doc_id, chunk_id, claim_text, is_attributed,
            extractor_version, asserted_at, claim_valid_from, claim_valid_until,
-           claim_valid_precision::text, claim_valid_kind::text
+           claim_valid_precision::text, claim_valid_kind::text,
+           lower(own_document_name_span) AS own_document_name_start,
+           upper(own_document_name_span) AS own_document_name_end
     FROM claims
     WHERE claim_id = :claim_id
     """

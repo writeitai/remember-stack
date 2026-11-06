@@ -906,6 +906,13 @@ to the grain where junk is actually identifiable. (C4; D33.)
 
 ## D36. E0 is the document layer — a chain of idempotent sub-workers, not a renumber
 
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The `crossref` sub-worker's rows now belong to a
+> source *version*, may name source and target sections by key, bind their target
+> `floating` or `pinned`, and come either from extraction (`origin = extracted`, the
+> rungs designed here) or from a caller-supplied reference set that this sub-worker
+> materializes (`origin = supplied`). Kinds gain `refers_to`, `amends` and
+> `implements`. The sub-worker chain and its idempotency rule remain binding.
+
 **Decision.** E0 stays a single product layer (*files / structured document*) implemented as a short
 chain of separately-idempotent, separately-observable sub-workers: **ingest** (store raw + hash) →
 **convert** (raw → Markdown) → **structure** (PageIndex tree + roles + spans + summaries + placement
@@ -953,6 +960,17 @@ text lives where it can be mounted.
 change re-converts by version (D7).
 
 ## D38. Configurable raw → Markdown conversion module
+
+**Partially superseded by D139 (2026-09-27).** The example route that extracts a
+digital PDF's text layer or selects OCR only for scanned/complex PDFs is replaced:
+every page of every accepted PDF goes through OCR. D133's registry refinement,
+the pluggable/versioned converter contract, and D57/D65's later contract and
+media refinements remain binding.
+
+**Refined by D133.** The operator-built MIME → converter table is replaced by an
+engine-shipped format registry (family → posture → converter) that deployments
+overlay rather than replace; routing keys are normalized. The pluggable, versioned
+converter module and its contract remain binding.
 
 **Decision.** A pluggable, **configurable** conversion module (a reusable open-source library):
 interface `convert(bytes, mime, hints) -> { markdown, blocks[] }` where `blocks` carry **page +
@@ -1606,6 +1624,10 @@ access-isolation arm; `retrieval_design.md` §9.)
 
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
 
+**Refined by D132.** The original MIME class is decided from bytes before this
+raw routing rule runs. D132 also requires explicit classes on derived, snapshot,
+and internal object writes; D51's hot-media/cold-audit split for originals remains.
+
 **Decision.** The primary consumers are **agentic coding harnesses** (Claude Code, Codex,
 OpenCode). Four surfaces mount read-only where the environment allows: **P3** (navigate first),
 **E0 artifacts** (Markdown + structure + *derived* media — figures, thumbnails, transcripts),
@@ -1714,6 +1736,17 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
+> claims-mode component version that applies the same currency and counting logic but opens no
+> fact follow-ups. In a configured deployment a reconcile computes `living` supersession only once
+> the lineage's current version has complete claim occurrences, and a version's claims tail waits
+> for earlier fact work of its lineage. The currency and counting contract is unchanged.
+
+**Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
+counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
+the count stays `COUNT(DISTINCT doc_id)`. This entry is binding as written.
+
 > **Refined by D73.** The testimony-currency and counting contract stands. Only D54's former
 > K3-eligibility consequence is removed because there is no shipped K3 tier.
 
@@ -1775,6 +1808,17 @@ coordinate is persisted on occurrence records and currency transitions.
 `evidence_lifecycle_design.md` §1/§3; `plan/designs/media_design.md` §6.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
+
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** A `snapshot` lineage's versions may carry declared
+> **effective periods** (when the text is in force). An identical-byte observation that
+> declares a period adds it to the existing version: a period is neither snapshot
+> metadata nor extraction input, so the metadata no-op rule below is untouched.
+> `current_version_id` keeps its meaning (the served version: newest non-deleted version
+> whose processing completed); time-scoped reads select versions by period. `living`
+> lineages cannot declare periods. Versions may carry an immutable caller `version_key`
+> (pinned references address it); `source_version_ref` remains the mutable cursor. The
+> A→B→A case already creates a new version (migration `p3_01_0008` dropped per-lineage
+> content uniqueness); D140 relies on that.
 
 > **Refined by [D135](#d135-a-caller-can-delete-a-document-soft-lineage-grain-finish-or-refuse)
 > (2026-09-23).** Lineage deletion (operator or source-observed) now tombstones every version
@@ -1844,6 +1888,16 @@ denormalized. Refines D37 (identity) and enriches D41 (per-version assertion tim
 identity rules per source kind are a named spike.
 
 ## D56. Content-addressed reuse — the cost of a new version is proportional to the edit
+
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
+> chunk's **text origin time**, recorded once when the chunk is created: the text origin
+> time of the earliest chunk, dated no later than the new version, of a non-deleted version
+> of the lineage with the same
+> date-free reuse identity (own and neighbour block hashes, non-date header facts,
+> toolchain versions), else the new version's source time. It replaces both date header
+> facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
+> freshly extracted from the chunk. Otherwise every dated version missed every key and
+> this decision's cost promise did not hold. Everything else here remains binding.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -2313,6 +2367,10 @@ the person holding the role).
 > measured (CLAUDE.md).
 
 ## D65. Media is an E0 input modality — bound routes, typed source locators, derivation disclosure, and direct media search
+
+**Refined by D133.** The locator union gains `sheet_range`, `table_region`,
+`json_pointer` and `line_range`; `evidence_mode` gains `computed`. The media
+routes, contract shape and every other D65 binding remain.
 
 **Decision.** Standalone images, audio, and video enter the system as **E0 inputs, never a new
 plane or parallel pipeline**: a media file is a source whose testimony reaches the system
@@ -2816,6 +2874,9 @@ D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
+**Refined by D134** (document metadata, people and observed-name rows are deleted with their
+lineage). An earlier D133 container rule here is withdrawn by D138: containers are not expanded.
+
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
 > only P3 has graph-adjacent snapshot prefixes, builders, caches, and pointers.
@@ -3232,6 +3293,12 @@ ingestion mapping, or K mode is a separately named protocol.
 
 ## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and orientation-only
 
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The deterministic heading parser also reads a
+> trailing heading attribute block (`## Title {#key}`): the identifier becomes the
+> section's stable `section_key` and the block is removed from the title. Sections store
+> deterministic own-block and subtree content hashes. Model-anchored fallback sections get no
+> key.
+
 > **D98 amendment (2026-08-27).** The deterministic structure and summary
 > contract survives. Any downstream P2 graph generation/community consequence
 > is superseded; document structure reaches live graph views directly through
@@ -3575,6 +3642,11 @@ its input.
 
 ## D84. Extract work is leased per chunk so Claimify can run in parallel
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> Extract work exists only when the claims layer is entered at `embed_chunk` completion, and
+> the extract barrier opens E3 normalisation only when the facts layer is entered; otherwise it
+> opens the claims tail (`embed_claim`, claims-only `reconcile`).
+
 **Decision (2026-08-07).** Stage `extract_claims` is addressed primarily at
 **chunk** grain: `target_kind = chunk`, `target_id = chunk_id`, same
 `E2_EXTRACTOR_VERSION` Claimify generation as before. After E1 embedding
@@ -3678,6 +3750,13 @@ version normalize completes so later stages and scoring can run. Bumps
 Unknown **predicates** remain D5.
 
 ## D87. Context operations mirror identity, testimony, and fact authorities
+
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The exact-composition rule holds per admitted processing-layer set. When the facts layer is
+> disabled or excluded, the bundle's fact child is a synthetic empty fact-grain envelope with a
+> `boundary` negative, and the evidence child runs only its admitted channels (or is the symmetric
+> synthetic evidence-grain envelope when neither sources nor claims is admitted). With every layer
+> admitted, this entry is binding as written.
 
 > **D114 amendment (2026-09-07).** The three retrieval operation names become
 > `claims_and_sources_context`, `facts_context`, and `combined_context` as one
@@ -3784,6 +3863,9 @@ changes either child still must pass the ordinary evidence gate.
 
 ## D88. E3 normalize work is leased per claim so large documents can normalize in parallel
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The claim normalize fan-out is opened only when the facts layer is entered for the version.
+
 **Decision (2026-08-10).** Stage `normalize_relations` is addressed primarily at
 **claim** grain: `target_kind = claim`, `target_id = claim_id`, same
 `E3_NORMALIZER_VERSION` generation as D86. When the extract barrier would
@@ -3878,6 +3960,10 @@ for an unused benchmark harness.
 **Analysis.** `plan/analysis/fact_context_authority_performance.md`.
 
 ## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
+
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
+> entered; otherwise it opens the claims tail (`embed_claim`, claims-only `reconcile`).
 
 **Decision (2026-08-12).** Stage `adjudicate_observations` under the entity
 fan-out generation is addressed at **version-scoped entity flush units**, not
@@ -4055,6 +4141,14 @@ projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
 
+> **D142 refinement (2026-10-21, proposed).** Ranking and authority
+> confirmation stay in PostgreSQL but run as index-cursor nomination plus
+> primary-key confirmation, continued until `k` eligible rows or a disclosed
+> stop, in one read-only `REPEATABLE READ` ranked-read context instead of one
+> statement; BM25 results are positive matches only; the image pins
+> `pg_textsearch` 1.5.1 or later; index-driven execution requires the D142
+> scaling and quality gates. Everything else below stands.
+>
 > **D98 amendment (2026-08-27).** PostgreSQL 19 replaces the PostgreSQL 18
 > image baseline. P1 remains pgvector/pg_textsearch PostgreSQL state, while the
 > former P2/deep-hydration split is replaced by live graph traversal in the
@@ -4220,6 +4314,9 @@ D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
+**Refined by D134.** When Claimify replaced a self-reference with the document's own name, the
+one reference at that recorded span is not minted or resolved; the claim keeps the name as text. No entity type is introduced.
+
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
 > vertices, not P2 snapshot nodes; no graph generation is implied.
@@ -4304,6 +4401,11 @@ union of all types named X; collapse every edge to unlabeled
 query path, envelope grain, or hydration (D48–D49).
 
 ## D98. The graph is live PostgreSQL 19 SQL/PGQ plus work-bounded frontier traversal
+
+> **D142 amendment (2026-10-21, proposed).** The `pg_textsearch` 1.3.1 pin
+> and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
+> which supports PostgreSQL 19 and fills post-filtered top-k scans; no local
+> patch is carried. The rest of D98 stands.
 
 **Decision (2026-08-27).** Move the reference runtime directly to the latest
 PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98
@@ -5556,6 +5658,13 @@ assertion provenance. Implementation and release remain separate gates.
 
 ## D114. Context operations use literal claims, sources, facts, and composition names
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The exact-composition rule holds per admitted processing-layer set. When the facts layer is
+> disabled or excluded, the bundle's fact child is a synthetic empty fact-grain envelope with a
+> `boundary` negative, and the evidence child runs only its admitted channels (or is the symmetric
+> synthetic evidence-grain envelope when neither sources nor claims is admitted). With every layer
+> admitted, this entry is binding as written.
+
 **Status:** accepted when merged. **Date:** 2026-09-07.
 
 **Context.** D87's boundaries are correct, but `testimony_context` hides that
@@ -5759,6 +5868,10 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
+**Refined by D133 and D138.** Parking applies to recognized families whose converter needs
+an unconfigured provider or is not yet built. Unrecognized bytes are stored and get a card
+(D138); only a declaration the bytes contradict is refused (D132).
+
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
 **Context.** Accepting an unsupported format previously stored it and then
@@ -5840,6 +5953,19 @@ implementation was withdrawn as unneeded for an unreleased product
 Points to observe on real corpora are kept in
 [the watch list](plan/analysis/mutable_fact_windows_watch_list.md).
 
+**Belief-time coverage clarification (2026-11-06).** The shipped
+`facts_as_of` and graph belief-time reads filter and display each fact's current
+world window after selecting its recorded belief interval. Later corrections
+can change which facts a past-belief query returns. This accepted limitation
+is not full historical reconstruction and does not supersede the time-travel
+requirement. Per-fact adjudication transcripts retain permitted before/after
+values but do not replace a historical query across facts. No additional
+history store, write path or reconstruction API is introduced or selected by
+this clarification. Assured fact operations retain current-belief semantics.
+[Design §2](plan/designs/mutable_fact_windows_design.md#2-one-chosen-window-with-honest-precision)
+and the [coverage analysis](plan/analysis/lean_mutable_fact_windows.md#belief-time-query-coverage-2026-11-06)
+state the example, remaining requirement, alternatives and erasure boundary.
+
 **Authority and delivery.** [D118 design](plan/designs/mutable_fact_windows_design.md)
 contains the full concepts, semantics, alternatives, security/recovery obligations
 and explicit supersession map for D106/D107/D110–D113. [Analysis](plan/analysis/lean_mutable_fact_windows.md)
@@ -5850,6 +5976,19 @@ SQL, extraction vocabulary and all evaluator variants remain intact. No schema
 upgrade, benchmark gain, runtime acceptance, merge or release is claimed here.
 
 ## D119. Coherent claims with multi-span evidence and version reuse
+
+**Amended 2026-10-23 — converter origins at model interpretation.** Selection
+and Claimify receive existing converter-origin labels beside verbatim source
+passages and reference-card passages. Mixed targets also surface direct source
+text within those same calls; OCR remains eligible, and labels are not grounding
+words or proof that quoted events happened to the surrounding author. Canonical
+relative origin ranges enter consumed-window reuse identities. Extraction,
+reference, text-origin, chunk-row and embed-delivery generations declare the
+input boundary; packing and the embedding model/policy do not change. Exact
+embedding inputs reuse vectors, including from an earlier processing generation
+of the same document version. Existing stores are not automatically reprocessed.
+See [current extraction design §6](plan/designs/multi_span_claim_extraction_design.md#6-media-provenance-lifecycle-and-recovery)
+and [source-origin analysis](plan/analysis/source-origins-at-extraction-20261023.md).
 
 **Status:** accepted by the user (2026-09-14); runtime implementation proceeds
 through a reviewed PR. No benchmark gain or shipped support is claimed here.
@@ -5927,6 +6066,7 @@ promising billed tokens or a fixed saving.
 [delivery](plan/plans/lean_processing_delivery.md).
 
 ## D122. Share frozen source reference context between extraction chunks
+
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -6063,6 +6203,11 @@ R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
 
 ## D128. GLM ingest variant of the v38 LoCoMo protocol
 
+**Execution selection superseded, 2026-10-23:** current LoCoMo execution uses
+one `full-v39` profile. The historical GLM benchmark branch is removed; its saved
+artifacts remain read-only. The general D127 provider-rotation contract survives.
+See [current benchmark design](plan/designs/locomo_benchmark_design.md).
+
 **Status:** accepted 2026-09-17, binding when merged. Verifying the D127
 rotation fix requires rerunning the exact R14 failure mode -- GLM ingest over
 the shared OpenRouter pool -- as a scoreable protocol run, but v38 ingest pins
@@ -6110,7 +6255,7 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
 
-**Status:** accepted. **Date:** 2026-09-21.
+**Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
 
 **Context.** Arbitrary chunk boundary cutoffs in documents and conversational transcripts frequently split multi-turn dialogues, answers to questions, or lists across chunk boundaries. When callers query `search_chunks` or `claims_and_sources_context`, relevant context from preceding or succeeding chunks often lacks search query keywords and is omitted from top-$K$ candidates. Previously, callers had no direct mechanism to read neighboring chunks for a given chunk, forcing prompt workarounds or leading to missing context (e.g. `conv-42/qa/0094`).
 
@@ -6118,7 +6263,7 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 1. Implement a first-class retrieval primitive `adjacent_chunks(chunk_id, window=1)` on `QueryEngine`.
 2. Given a target `chunk_id`, the engine looks up its `(doc_id, version_id, ordinal)` in `memory_v1.chunks_live` and queries all live chunks within `[ordinal - window, ordinal + window]` for that document version, returning hydrated chunks in document order (`ordinal ASC`).
 3. Bound `window` strictly between 1 and 2 (default 1), preventing context flooding while providing immediate preceding/succeeding dialogue turns.
-4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and does not mint a top-level MCP tool (D50, D83, D87).
+4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and originally did not mint a top-level MCP tool (D50, D83, D87). *(Superseded in part by D137: adjacent_chunks is now exposed in the shared MCP catalogue for surface parity).*
 5. Register `adjacent_chunks` in the benchmark tool catalog (expanding to 22 tools) and execution dispatch table.
 
 **Alternatives and consequences.** Adding an automatic `chunk_window` expansion parameter to `claims_and_sources_context` was rejected because it inflates response token counts indiscriminately across all $K$ candidates. Asymmetric `before`/`after` parameters were rejected in favor of symmetric `window` to minimize LLM cognitive burden and avoid parameter-guessing failures. Existing PostgreSQL index `ix_chunks_doc (deployment_id, doc_id)` prefixes the lookup and per-document row counts are bounded, requiring no schema migrations.
@@ -6147,7 +6292,203 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 **Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
 [analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
 
+## D132. Decide ingest class from bytes and label every object write
+
+**Refined by D133 and D138.** The registry chooses a text format family
+from the filename and declaration only after bytes establish that the input
+is text. Compatible text-bearing families include delimited data, email,
+notebooks, and RTF. For binary families D132 cannot identify, registry hints may still
+select a family and its converter validates the full format. Otherwise unknown
+binary is stored with a binary card rather than refused.
+Recognized binary signatures override filename hints; PDF always remains PDF
+and follows D139's every-page OCR route.
+
+**Status:** accepted. **Date:** 2026-09-23.
+
+**Context.** Declared MIME could select conversion, metering, and storage for a
+contradictory file. D51 labelled raw originals but left derived and private
+object writes unlabelled, which a managed object gateway rejected.
+
+**Decision.** E0 classifies bytes before any raw write or catalog transaction.
+Signatures identify PDF, image, audio, and video; office ZIP member names and
+legacy OLE signatures identify office; strict UTF-8 identifies text. A
+declaration contradicting a recognizable byte class raises a typed client
+error. For formats indistinguishable within a class, the filename and
+declaration select the D133/D138 registry family and posture, while
+legacy OLE needs a declared office subtype. Store the resulting MIME, and use
+it consistently for the conversion route, original storage class, and managed
+text metering. Every object-store write must provide a class: raw media hot,
+other raw originals cold; query-facing derived objects and P3 snapshots hot;
+retry checkpoints and private K transcripts cold. Make the port argument
+required so future omissions fail before storage.
+
+**Alternatives and consequences.** Standard-library signatures and ZIP metadata
+avoid another licence, supply-chain, or wheel-size cost. Generic magic-only
+classification cannot reliably distinguish office ZIPs or UTF-8 text; a native
+libmagic dependency increases deployment and wheel-platform complexity.
+Signatures identify the class but do not replace converter validation of full
+format structure. Binary bytes with no recognized registry family receive the
+D138 binary card rather than an optimistic text or media rate. Existing rows
+retain their recorded MIME under content-hash first-write identity, except
+D117's existing rule: if the stored MIME has no converter route, a same-byte
+re-ingest with a byte-compatible routable family adopts that MIME and releases
+parked conversions for every lineage sharing the bytes. A historical wrong
+class that is already routable requires a dedicated migration and reprocessing plan.
+
+**Authority:** [design](plan/designs/e0_files_design.md),
+[analysis](plan/analysis/content_detection_and_object_classes_20260923.md).
+
+## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
+
+**Partially superseded by D139 (2026-09-27).** Any PDF-family route or
+deployment overlay that would read a text layer instead of OCR, or split PDF
+pages between text extraction and OCR, is replaced by OCR for every page of
+every accepted PDF. The format registry framework, family/posture mapping,
+extraction eligibility, locators, and D138's other refinements remain binding.
+No PDF-specific cost optimization can bypass this route.
+
+**Refined by D138.** Items 1, 3 and 6 remain binding (registry framework, extraction eligibility,
+locators). D138 replaces: the detection order (extension first; unknown bytes get a card), the
+profile content in item 2 (deterministic, search-only, no model call), and **items 4 and 5
+entirely** — `data_query` and container expansion are not part of the system; their reviewed
+designs are proposals (`plan/proposals/data_query.md`, `plan/proposals/container_expansion.md`). D138 also
+replaces item 1's "turn families off": deployments add or override routes, and every file is
+stored.
+
+**Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
+PR #452, which this decision builds on.)
+
+**Context.** Out of the box the engine converts two formats (text, Markdown).
+Routes are an exact lookup on the declared MIME in a table each deployment must
+rebuild by hand, and configuring one route replaces the defaults. The office/HTML
+converter is the thinnest and emits no source map, and the parser extras it needs
+are not installed. The pipeline assumes every file is prose to extract claims
+from, which is wrong for structured data: row-by-row extraction scales model cost
+with rows and still cannot answer aggregations. Containers (archives, email with
+attachments, mailboxes, message exports, documents with embedded images) have no
+way to become several documents.
+
+**Decision.**
+1. An engine-shipped **format registry** maps each format family to detection,
+   canonical MIME types, a **posture**, a converter, provider requirements, a size
+   limit and an opaque cost-class label; one registry-wide alias table maps
+   non-canonical MIME spellings, and originals keep D132's storage-class rule.
+   Deployments overlay it (turn families off, configure providers, lower limits);
+   they never replace it. Detection is byte-first in a fixed precedence (D132's
+   binary classes extended with SQLite, Parquet, Arrow, archives, mail containers;
+   then deterministic structural tests on text). **This refines D132's text-flavour
+   rule:** JSON, NDJSON, delimited and log text route to their own families when
+   their structural test passes. A family needing an unconfigured provider parks
+   (D117); a disabled family is refused.
+2. Four postures: **full** (complete reading), **profile** (a description of a data
+   file — overview, structure, identifying values, formulas — never its rows),
+   **expand** (members become child documents routed on their own), and **card**
+   (a deterministic file card for recognized formats with no reading). Structured
+   families are read fully only within hard bounds (200 rows, 20,000 characters).
+3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
+   structure searchable but not claim-extracted. Converters must change eligibility
+   only at block boundaries (validated at conversion); E1 forces a chunk boundary
+   there and E2 schedules Selection only for eligible chunks.
+4. Profiled tables are stored as normalized Parquet in a new **private store** (a
+   third object-store root no mount, P3 or `hydrate` reads), and a new direct
+   primitive, **`data_query`**, runs one read-only SQL statement over them in DuckDB
+   inside a worker process with no network, OS resource limits, a staged read-only
+   input directory, a separate scratch directory, disabled external access and
+   extensions, and a parent-enforced wall time; a platform that cannot sandbox it
+   answers with a typed `boundary`. It returns its own `DataQueryResult/v1` and is
+   exposed on MCP beside `source_open`.
+5. Expansion is a new E0 sub-worker (`convert → expand → structure`). Children are
+   ordinary E0 lineages keyed by a content- or identifier-based member key (never a
+   position), linked by mutable member records; the parent's immutable
+   representation lists members by stable handle and does not wait for them. A
+   container and its members count as one source (`counting_lineage_id`, refining
+   D54). Delete and hard forget act on the uploaded document and cover every member
+   expanded from it; a member is never deleted or forgotten on its own (refining
+   D74). Bounds apply to the whole tree.
+6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
+7. D133 binds the framework, not individual formats. The family table is the
+   target coverage. **Each family is delivered one at a time through its own
+   family design, implementation and test suite** (fixtures, detection, golden
+   rendering, source map, failures, end-to-end retrieval, performance), and is
+   supported only when all three are merged; until then its uploads are stored
+   and parked (D117).
+
+**Alternatives and consequences.** Full-row extraction for structured data,
+loading rows into PostgreSQL for the open-query sandbox (violates D37), per-format
+query dialects, in-process DuckDB relying on its settings alone, a separate
+conversation-ingest path, and OCR-provider captions instead of image children were
+rejected (analysis §6–§7). Normalized Parquet stores data a second time. The log
+event digest is a documented alternative with an adoption trigger.
+
+**Authority:** [design](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md),
+[delivery order](plan/plans/format_coverage_delivery.md).
+
+## D134. General document metadata, document search, and self-references that name the document
+
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** `search_documents`, like chunk and claim search,
+> gains the shared time scope: for lineages with declared effective periods the scope
+> chooses which versions are judged. Lineages without periods keep the
+> `versions: current | all` behaviour described here.
+
+**Status:** accepted. **Date:** 2026-09-24.
+
+**Context.** Agents ask for files ("find Q3_sales_2025.xlsx"), for files by
+who and when ("emails from Alice"), and for information limited to certain
+files ("everything about Project X from Alice's emails"). Every derived record
+already links to its document, but nothing about a document — author,
+recipients, dates, title — is stored in a filterable form, `GET /documents`
+only pages by status, retrieval has no document search or document filters,
+and a claim like "this report summarizes the 2025 audit" does not say which
+report.
+
+**Decision.**
+1. **General document metadata.** Every version gets the same fields whatever
+   its format — `file_name`, `title`, `authors`, `recipients` (people as name
+   plus address or handle), `created_at`, `modified_at`, `language`,
+   `thread_ref`, `family` — with per-field provenance (source or connector),
+   plus every name a version was observed under (`document_names`), so renames
+   are searchable.
+   Each family design maps its native fields onto them (an email's From is
+   `authors`); family-only fields go in `extra`. Stored in PostgreSQL as
+   `document_metadata` and `document_people`.
+2. **`search_documents`**, a direct retrieval primitive on API, SDK, CLI and
+   MCP: results are documents judged by their current version (or any live
+   version on request), filtered on the general fields, with a query matched
+   on names (file name, title, source path) and content (the document's best
+   `chunk_search` hit — no new search index), and carrying the judged
+   version's metadata and access handles. Ambiguous people matches are listed.
+3. **Document filters on `search`** for chunks, claims (through their live
+   occurrences, refining D80's origin-chunk join so reused claims are tested
+   per version) and facts (through supporting claims), applied before the
+   top-k cut. Only live versions match.
+4. **Self-references name the document.** When a passage refers to its own
+   document, Claimify writes the title (else file name) from the extraction
+   header, which gains the file name (and the extraction reuse key with it),
+   and returns the exact inserted name; the gate stores its span on the claim
+   only when it is one of the document's names, occurs once, and came from the
+   header. Ordinary claims never get the name. Extractor version bumps.
+5. **A document's own name is not an entity.** E3 skips only the reference
+   whose text is exactly that stored span (refining D96's eligibility rule), so same-named files never
+   merge while a person who shares a document's title still resolves. The
+   unused D18-era `documents.document_entity_id` bridge is not used and is removed
+   in a separate cleanup.
+
+**Alternatives and consequences.** Making documents entities bound to their
+lineage (the first D134 draft) was rejected as heavier than the questions
+require and kept as a proposal with an adoption trigger. Per-family metadata
+only, metadata only as Markdown text, appending the file name to every claim,
+and resolving file names as entities were rejected (design §7). Metadata values
+are what sources declare, not verified facts.
+
+**Authority:** [design](plan/designs/document_metadata_and_search_design.md),
+[proposal not chosen](plan/proposals/document_subject_entities.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md) §5.
+
 ## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
+
+**Note (D133, withdrawn by D138).** D133 briefly extended this entry to container members; D138
+removed container expansion, so deletion stays exactly as written here.
 
 **Status:** accepted. **Date:** 2026-09-23.
 
@@ -6216,7 +6557,20 @@ in the engine.
 
 ## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
 
-**Status:** accepted. **Date:** 2026-09-23.
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The served tool list also follows the deployment's processing layers: with the facts layer off,
+> `facts_context` and `resolve_entity` are not listed. Tool schemas and versions are unchanged.
+
+> **Amended by D141 (2026-10-02):** SDKs never replay writes after host movement,
+> including 421/connect errors; re-resolution can update the next independent
+> call. Read retry eligibility comes from the source-owned route classification,
+> not the HTTP method. Structured query errors accept optional validated
+> retryable/request_id diagnostics without granting retry permission. On Windows,
+> argument or environment signed keys with no URL bypass unavailable stored files
+> and route through their issuer, in Python and TypeScript.
+
+
+**Status:** accepted (amended in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-23.
 
 **Context.** On 2026-09-23 the owner approved one credential for every client
 surface of remember.dev — a signed key covering one or more projects with the
@@ -6320,9 +6674,594 @@ credential behind the HTTP transport; keeping environment aliases.
 D108 item 4's authentication, credential-separation and `setup` default
 clauses and its amendment of D92; the metering design's §6 login contract;
 the distribution design's §3.1/§3.4/§4 credential text. Cloud-side
-supersessions are recorded in the companion cloud design.
+supersessions are recorded in the companion cloud design. *(Amended in part by D137:
+adjacent_chunks is added to remember.mcp_tools as an exposed read tool).*
 
 **Authority:** [design](plan/designs/one_key_client_surfaces_design.md),
 [analysis](plan/analysis/one_key_client_surfaces_analysis.md). Companion:
 the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 `design/one-key-one-mcp`).
+
+---
+
+## D137. Conversational section integrity and MCP adjacent_chunks parity
+
+**Status:** accepted. **Date:** 2026-09-25.
+
+**Context.** In multi-turn conversational transcripts and dialogue-heavy documents, two structural fractures impaired recall:
+1. **Fallback section fragmentation in E0:** When documents lack Markdown headings, the E0 fallback structure pass prompts the model for section anchors. The model frequently proposed individual dialogue turns (e.g. Joanna asking "So what's your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62) as section boundaries. Each turn became a single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py`, `_neighbour_text`) inspects surrounding turns only within the *same section* (`same_section_neighbours`), the answering turn was extracted without the question turn in view, defeating cross-turn anaphora resolution (D131) and stranding facts without their question context.
+2. **MCP catalogue surface parity:** While `adjacent_chunks` was implemented across the HTTP API, SDK, CLI, and benchmark harness in D130, D130 excluded it from the shared MCP catalogue (`remember.mcp_tools`, D136) on the grounds that raw primitives should not mint top-level MCP tools. However, in practice coding agents connecting via MCP had no capability to expand dialogue context around a retrieved chunk, creating an artificial capability gap between MCP agents and SDK/CLI callers.
+
+**Decision.**
+1. **Deterministic run-merging of single-block leaf sections in fallback skeletons (`structure_skeleton.py`):**
+   - In `resolve_fallback_skeleton()`, identify runs of contiguous single-block leaf sections (sections with `block_start == block_end` and no child subsections).
+   - If a run is followed by an immediate next leaf section without subsections, the run is merged forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+   - If the run is at the end of the document or followed by a section with subsections, the run collapses into a single merged section starting at `nodes[run_start].block_start` and ending at `nodes[run_end].block_end`.
+   - In all cases, the merged section is titled by the proposal at `run_start` (its first block), so title, heading level, and starting position remain aligned without in-place mutation.
+   - Sections with subsections are never absorbed and never absorb single-block runs, preserving hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
+2. **Fallback prompt guidance (`e0.py`):**
+   - Update `_FALLBACK_PROMPT` to explicitly instruct models that individual conversational turns, rhetorical questions, and brief remarks must not form section headings. Section anchors must represent substantive topic shifts or document sections.
+3. **Skeleton cache invalidation (`e0.py`):**
+   - Bump `E0_SKELETON_VERSION` to `:anchor-v3-depth{MAX_FALLBACK_DEPTH}` and `E0_STRUCTURE_VERSION` to `e0-structure-2026.07h:d79-wave2`. This guarantees that existing documents re-structure under the new integrity rules upon re-ingestion or rebuild.
+4. **First-class MCP tool parity for `adjacent_chunks` (`remember.mcp_tools`, `mcp.py`, `http_api.py`):**
+   - Add `adjacent_chunks` as an exposed read tool in `remember.mcp_tools._definitions.py` with `permission="memory:read"`, `tool_version=1`, `http_route="GET /chunks/{chunk_id}/adjacent"`, and description referencing neighbouring chunks.
+   - Keep `OPERATION_TOOL_NAMES` strictly to the four assured operations (`resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`) to preserve the D50 contract with `AssuredOperationRegistry`.
+   - Expose `adjacent_chunks` in `OperationMcpServer` and `EngineMcpServer` `list_tools()` and dispatch tables.
+   - In `http_api._served_tools`, advertise `adjacent_chunks` whenever operations are composed.
+
+**Consequences.**
+- Question turns and answer turns in dialogue transcripts now usually share the same section in E0 (bounded by non-contiguous section boundaries per Cost 3), allowing E2 claim extraction to resolve cross-turn anaphora and question-affirmations per D131.
+- Re-ingesting existing documents updates their skeleton cache keys via `anchor-v3`.
+- Coding agents connecting over MCP (Claude Code, Cursor, Codex) can call `adjacent_chunks` to read preceding/succeeding passages, matching CLI/SDK parity.
+- Public documentation across `website/` updated to reflect 15 tools (3 write + 4 operations + 1 adjacent_chunks + 7 query).
+
+**Costs and boundaries.**
+1. Flat unnested chapters: If a single-block section such as `PART ONE` is followed by a flat sibling leaf such as `Chapter 1`, the two merge and the section keeps only the `PART ONE` title. Hierarchy protection relies on the model emitting subsections.
+2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and the answer begins the next section, or a single-block turn is stranded at document end without an answer, run-merging does not bridge across multi-block sections. Such cross-boundary dialogue remains a documented boundary of section-scoped context.
+
+**Supersedes.**
+- D130 item 4 in part: supersedes the restriction that `adjacent_chunks` does not mint an MCP tool.
+- D136 item 1 in part: expands `remember.mcp_tools` catalogue with `adjacent_chunks`.
+
+**Authority:** [adjacent_chunks_retrieval_design.md](plan/designs/adjacent_chunks_retrieval_design.md), [e0_files_design.md](plan/designs/e0_files_design.md), [one_key_client_surfaces_design.md](plan/designs/one_key_client_surfaces_design.md). Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).
+
+## D138. Coding-agent-first ingestion of workspace formats
+
+**Partially superseded by D139 (2026-09-27).** The PDF text-layer converter and
+the conditional OCR route in its family design are replaced by OCR on every
+accepted PDF page. Its oversized-file card outcome no longer applies to PDFs:
+an oversized PDF fails conversion with a typed reason and no card. Its other
+family routes, detection order, postures, profiles, cards, and metadata rules
+remain binding.
+
+**Status:** accepted. **Date:** 2026-09-27.
+
+**Context.** D133 bound the format framework but left each family to its own design. A matched
+Workspace-Bench run must ingest whole professional workspaces: 23,268 files across 89 extensions,
+dominated by spreadsheets, PDFs, office documents, code and config. The readers of the result are
+coding agents that open files and compute on them.
+
+**Decision.** Memory is a map for coding agents: it holds prose, and for everything else records
+what the file is, where it is and how it is shaped. One shipped registry routes 20 families by
+extension, then declared MIME, then content; byte detection (D132) may refuse only contradicted
+declarations. Prose (markdown, text, HTML, email, word, presentation, PDF text layer) is read in
+full and claim-extracted. Code, config and logs are read in full but search-only. Spreadsheets,
+delimited files and statistical datasets always get a deterministic, search-only profile
+(structure, types from a 5-row head sample, defined names), never their rows and never a model
+call. Text over 1 MB gets a head/tail profile. Images (without configured providers), media,
+archives (with a bounded member listing) and unknown bytes get cards; oversized files are stored
+and carded. Legacy Office goes through headless LibreOffice. Converters fill D134 metadata.
+Deployment route settings overlay the registry instead of replacing it.
+
+**Alternatives and consequences.** Rendering everything through markitdown, skipping files the
+tasks do not name, path-based ignore rules, and keeping the model-written overview were rejected
+(analysis §7). `data_query` and container expansion leave the system; their reviewed designs are
+proposals with adoption triggers. LibreOffice adds
+several hundred megabytes to the engine image.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[analysis](plan/analysis/coding_agent_first_ingestion_analysis.md).
+
+## D139. Every accepted PDF page goes through OCR
+
+**Status:** accepted. **Date:** 2026-09-27. **Supersedes:** the PDF routing
+clauses of D38, D133 and D138; their other contracts remain binding as noted
+inside those entries.
+
+**Decision.** The PDF family's converter sends **every page of every accepted
+PDF through OCR**, regardless of whether the page has selectable text. The
+format registry and deployment overlays cannot select a PDF text-layer
+extraction route or split pages into text and scan routes. A PDF produces one
+OCR-derived reading with page locators and honest coverage; an unreadable or
+failed page is a visible gap/failure, never a silent text-layer fallback.
+The converter counts pages from the PDF page tree before OCR, without reading
+its text layer. Successful empty pages get page-located, extraction-ineligible
+status markers; a missing page in the OCR response fails conversion with a
+typed reason and no partial reading.
+The PDF has one effective pre-OCR size limit: the lower of the family reading
+limit and the configured provider's input ceiling. Exceeding it leaves the
+original stored but fails the version with a typed limit reason, without a
+card or `document.md` reading.
+
+**Context and alternatives.** The owner restated the explicit requirement on
+2026-09-27: “EVERY PDF and every page goes through OCR. No question asked.”
+The earlier D38 route for digital PDF text extraction and D138's text-layer
+converter with conditional OCR contradict it. Text-layer extraction and a
+per-page text-versus-scan split could save provider cost, but both violate the
+owner's requirement and yield different reading and layout behavior within a
+single document. OCR gives one consistent conversion path across born-digital,
+scanned and mixed PDFs. D115 establishes the analogous always-OCR rule for
+standalone images, not an earlier PDF-specific mandate; no earlier
+PDF-specific owner statement was found in this repo.
+
+**Consequences.** An accepted PDF page is a source page in a valid PDF whose
+structural page count is known and that passed the effective pre-OCR limit for
+OCR processing. The quantity is the
+source page count, including pages with selectable text, successful empty OCR,
+or an OCR response gap; admission failures contribute zero pages. OCR cost
+therefore scales with every accepted page. The engine records only the
+registry's `scan_page` cost class with that quantity; provider-reported
+`pages_processed` is diagnostic evidence, not the billable quantity. The
+separate managed cloud copies the same quantity to a `doc-scan` receipt and
+does not also charge `doc-text` for that PDF. This receipt mapping is a
+required cloud follow-up, not a claim about current cloud behavior.
+Conversion, source mapping and coverage stay in the engine under D60/D61.
+The PDF route needs a configured OCR provider and parks under D117 when it is
+unavailable. Converter and route changes require versioned re-conversion;
+tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[format framework](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/pdf_always_ocr.md).
+
+## D140. Declared effective periods, section keys, and version-aware references
+
+> **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
+> statement" is executed as a predicate of the eligibility (confirmation) step of D142's
+> nominate–confirm–continue loop, before the `k` cut, in one ranked-read snapshot. Scope,
+> occurrence selection, the evidence gate and `scope_pending` semantics are unchanged, except
+> that `scope_pending` gains `complete` (false when a replayed nomination stopped on a bound).
+
+**Status:** accepted when merged. **Date:** 2026-09-30. **Refines:** D36, D55, D56,
+D79, D134 (in-entry notes mark each); D118 is unchanged and gains one adjudication
+input.
+
+**Context.** Many sources publish successive versions of one document, each in force
+for a declared period (policies, price lists, standards editions, contract
+amendments, statutes), and point from one part of a document to a specific part of
+another. On `main` the engine reads only the newest served (ready) version of a
+lineage, has no notion of a version being in force, has no stable identity for a
+section across versions, and has designed but never built cross-references, at
+document grain only. Its D56 reuse key also contains the version's source date, so
+every dated new version is re-extracted in full. The Czech statute book (the LegalIt
+client's e-Sbírka snapshot) motivated the work; nothing in the decision is specific
+to it.
+
+**Decision.**
+1. **Effective periods.** A caller may declare, per version of a `snapshot` lineage,
+   zero or more periods `[effective_from, effective_until)` during which the version's
+   text is in force — at ingest or later. An undeclared end is derived: the next
+   declared start in the lineage known at the belief instant. Declarations are a ledger
+   (retraction for corrections); a duplicate start across versions is a conflict. A
+   lineage becomes periodised with its first declaration and stays so until the caller
+   explicitly clears effective time; both transitions are ledger events, so any past
+   belief instant is reconstructable. Periods are never inferred, never extraction input,
+   and not accepted on `living` lineages. A version may carry a caller `version_key`,
+   assigned only when the version is created: a new key always creates a version; an
+   existing key is accepted only as an idempotent retry of the latest version with the same
+   bytes, and any other observation carrying it is rejected. Current-belief selection reads a
+   per-lineage projection maintained in the writing transaction.
+2. **One time language for text.** Chunk search, claim search,
+   `claims_and_sources_context`, `search_documents` and the new reference operations
+   take the existing `current` / `at` / `overlap` / `history` scope. For periodised
+   lineages it selects the non-deleted ready versions in force; other lineages behave
+   exactly as today. Scoping is a predicate inside the ranked statement, never a filter
+   on finished top-k. Every scoped result addresses the selected version (version-level
+   handles; a P3 path only when it opens that version), and scoped claims are returned
+   through their occurrence in the selected version. `search_documents` keeps lineage
+   grain with a defined representative version and lists every matching edition.
+3. **Evidence gate for facts.** Fact reads under a time scope return a fact only if its
+   D118 window matches and at least one supporting claim occurs in a version the scope
+   selects (or in a lineage without declared periods). The gate is an eligibility
+   predicate applied before every relevance bound (D87). D118 remains the only fact-window
+   authority; declaration changes also enqueue ordinary re-adjudication, with the
+   in-force intervals as an adjudication input. *(Refined 2026-10-21 by the WP-ET.7
+   implementation: there was no mechanism to re-adjudicate evidence already applied, so
+   "re-adjudication" is defined as a **window review** — a per-fact keep-or-replace
+   decision grounded in supplied claims, queued through a per-fact `period_basis`
+   fingerprint when a lineage's periods change or one of its versions completes or is
+   deleted, serialised with adjudication by a per-deployment period fence; a first fact
+   from periodised evidence is adjudicated rather than recorded undated, and a review
+   changes only the window, never the fact's label or vector. Every period-dependent
+   input is read by one SQL statement, and a basis is stored only from such a validated
+   read, so a concurrent period writer leaves a stale basis that its fan-out reviews. An entity
+   profile is re-embedded only when its rendered text changed. **Owner decision
+   (2026-10-22):** that re-embedding is accepted as is. Refreshing a profile whose displayed
+   fact windows changed is a cheap projection refresh of genuinely changed text; it
+   re-processes no document text, so it is outside the incremental-ingestion requirement
+   (CLAUDE.md Rule 4). A date-free embedded profile was considered and rejected: it saves
+   only that embedding call and has no measured matching benefit. See the design §8.2.)*
+4. **Section keys.** A trailing heading attribute `{#key}` gives a section a stable
+   key; sections also store deterministic own-block and subtree hashes.
+   `section_history` lists a key across versions, including absences.
+5. **Text origin time.** One per-chunk date — the text origin time of the earliest
+   matching chunk (date-free reuse identity) in a non-deleted version of the lineage,
+   considering only matches dated no later than the new version, recorded once — replaces the version date in the reuse key, the E2 header and fresh
+   claims' `asserted_at`, so D56's cost-follows-the-edit promise holds for dated
+   versions.
+6. **References.** `document_crossrefs` rows belong to the source version, may name
+   source and target sections by key, bind the target `floating` (a temporal join with
+   the reading window, returning every target version in force and flagging
+   concurrency) or `pinned` (a target `version_key`), address targets by source
+   identity with late binding, and come from the D36 extractor (`extracted`) or from a
+   caller-supplied NDJSON reference set validated all-or-nothing and materialized by the
+   E0 crossref sub-worker (`supplied`). Every row belongs to one *generation* per source
+   version and origin; only the active generation is visible, and a new one replaces it
+   atomically — one identity rule for supplied sets, extracted rows and A→B→A versions. New general kinds: `refers_to`, `amends` (with a
+   known or explicitly unknown date), `implements`; callers keep their own type codes in
+   an opaque `source_label`. `document_references` reads them in both directions,
+   keyset-paged, with explicit resolution statuses that never reveal a deleted target.
+7. **Deletion.** Soft deletion (D135) is a visibility rule over the new rows; hard
+   forget (D74) deletes and unbinds explicitly.
+
+**Alternatives rejected.** One lineage per version with a caller-side date map
+(moves the core question out of the engine and breaks lineage anchoring);
+`source_modified_at` as the in-force date (a different fact, and immutable extraction
+input); one mutable window per version (cannot express a text in force twice, needs
+writes on succession); a separate `as_of_date` parameter (a second time language);
+model- or numbering-derived section identity (non-deterministic or unstable);
+`source_version_ref` or `content_hash` as the pinned address (a mutable cursor; not
+unique after A→B→A); falling back to the served version when the last period is
+retracted (resurrects withdrawn text); leaving fact eligibility to E3 alone (the default
+answer could rest on an edition not in force);
+dropping the date from the reuse key (wrong relative-date resolution) or a
+model-reported "date used" guard (model output deciding reuse); legal-specific kinds
+or flags.
+
+**Consequences.** New table `document_effective_periods`, functions
+`effective_intervals`, `versions_in_scope` and `fact_in_scope_support`;
+`document_effective_time_events` and the `document_version_scope` projection;
+`document_versions.version_key`;
+`document_sections.section_key`/`own_content_hash`/`subtree_content_hash`;
+`chunks.text_origin_at`/`reuse_identity_hash`; extended `document_crossrefs` and new
+`document_reference_generations`; two new read operations, three new write endpoints
+(periods, clear effective time, reference sets) and new ingest parameters; `time` on
+the text operations and the evidence gate on fact reads. The section-key parser is a new
+parser generation (one extraction-basis rollover per lineage). The D36 extraction rungs
+write the same reference table as extracted generations, and E3 adjudication receives the
+in-force intervals as input; build order is in the delivery plan. PR #486's belief-time rule applies unchanged because fact windows still change
+only through D118 adjudication.
+
+**Authority:** [design](plan/designs/effective_time_and_section_references_design.md),
+[analysis](plan/analysis/version_effective_time_and_section_references.md),
+[delivery](plan/plans/effective_time_and_section_references.md).
+
+
+## D141. Full-parity TypeScript client, separate executable libraries, checked contracts
+
+- **Status:** owner-selected, binding on approved design merge; implementation/publishing are not implied.
+- **Date:** 2026-10-02.
+- **Context:** The owner requested the full Python client scope in TypeScript under rememberdev, separate CLI/MCP packages and Opus 5.5 approval before implementation and merge. Source version strings alone do not identify Python's evolving surface.
+- **Decision:** `@rememberdev/client` lives in `packages/typescript-client`, Node 22+, ESM/CommonJS, a single-send Node HTTP/HTTPS default adapter with Fetch excluded, generated model/request contracts and a complete typed facade. The binding JSON inventory covers same-revision Python methods/signatures/exports and records all language adaptations. The SDK remains issuer-agnostic; private cloud schemas do not enter the public source. API export, deterministic generation, inventory/behavior fixtures, real released-engine compatibility and packed consumers gate it. CLI/MCP are separate libraries dependent only on declared public support exports.
+- **Windows precedence amendment:** Argument or environment signed keys without a URL bypass unavailable stored files and use issuer routing in both clients; POSIX keeps independent-setting precedence. D136 §8.2 records this exception.
+- **Safety amendment:** Both SDKs never replay mutating requests, even after 421 or connection errors; they may refresh the pinned-project host for the next call. Reads are explicitly classified by the engine. Error diagnostics are validated and surfaced, never retry authorization.
+- **Alternatives:** Generated-only clients omit routing/files/readiness; handwritten DTOs drift; a separate repository multiplies publisher coordination; browser core and newer generator are viable unselected alternatives with adoption triggers.
+- **Consequences:** No new server/tenant store. Node runtime validation/default filling and explicit numeric-precision refusals protect correctness. One-way issuer compatibility checks belong to providers. Merge does not publish npm or activate connectors. Full CLI/MCP designs/reviews precede their implementation.
+- **Companion design/evidence:** [design](plan/designs/typescript_client_design.md), [inventory](plan/designs/typescript_client_parity.json), [analysis](plan/analysis/typescript_client_parity.md), [delivery](plan/plans/typescript_client.md), [421 transport evidence](plan/analysis/typescript_transport_421.md) (measured 2026-10-02); issue #501; D136 amended only as stated above.
+
+
+## D142. Ranked search nominates from the index and confirms in one snapshot
+
+**Status:** accepted (design approved by review round 3, 2026-10-21;
+implementation approved by review round 5 pending the latency decision, which
+the owner took on 2026-10-22 — amendment below); binding on merge of PR #505. Issue
+[#504](https://github.com/writeitai/remember-stack/issues/504).
+
+**Context.** D94 put ranking and authority confirmation into one PostgreSQL
+statement per channel. On the D140 benchmark (synthetic corpora, 30,000 and
+500,000 chunks) the planner answered those statements by scoring every chunk
+of the deployment and sorting: p95 1.3 s (BM25) and 0.7 s (semantic) at
+30,000 chunks, 2.8 s BM25 at 500,000, growing linearly. Forcing an index plan
+alone is not a fix: post-filtered index scans can stop short without saying
+why (pgvector at `hnsw.max_scan_tuples` or its memory limit; the pinned
+`pg_textsearch` 1.3.1 returns its top-k before filtering). A real-deployment
+plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
+
+**Decision.**
+
+- **Ranked-read context.** Every ranked operation reads P1 and authority in one
+  `READ ONLY`, `REPEATABLE READ` transaction with pinned `evaluated_at`/
+  `believed_at` parameters — readiness, nominations, confirmations, coverage,
+  both fact branches, the D140 `scope_pending` probe and final confirmation.
+  The SQL sandbox shares its request snapshot with the adapter by snapshot
+  export/import; a failed import fails the invocation.
+- **Nominate, confirm, continue.** Per target and channel, one server-side
+  cursor over a join-free index statement streams IDs and scores in index
+  order — one BM25 scoring generation, one continuing HNSW scan; disjoint
+  doubling fetches; each batch confirmed by primary key with the unchanged
+  eligibility predicates; scores never recomputed. It stops at `k_filled`
+  (past any equal-score run), `exhausted` (channel-specific proof), or a
+  disclosed bound (`work_budget`, `deadline`, `ann_scan_bound`,
+  `plan_rejected`).
+- **Plans enforced and attested.** Planner controls apply to the nomination
+  cursor only and are restored before confirmation; an `EXPLAIN` of the exact
+  nomination statement must show the expected index, otherwise the call
+  fails with `p1_unavailable` before fetching.
+- **Honest results.** Port calls return a structured search result (rows,
+  termination, counters, limits, attestation) that propagates through RRF,
+  the fact merge, envelopes, `QueryResult.semantic_invocations[]` and
+  `scope_pending.complete`; an empty result is `known_empty` only when every
+  channel was exhausted.
+- **Coverage first.** Entity-scoped testimony and facts rank coverage tiers
+  computed from mentions or survivor-resolved fact endpoints within an entity
+  work budget (exceeded → `boundary`), score small tiers exactly and run the
+  loop within large ones; facts merge by `(coverage DESC, distance,
+  fact_kind, fact_id)`.
+- **Lexical semantics.** BM25 results are positive matches only on every
+  path, ranked by **one canonical BM25 score**: the standalone `<@>`
+  operator's (fieldnorm-quantized length, float4 terms accumulated in float8
+  in query-term order), evaluated in the nomination cursor's executor; ties
+  by bitwise equality; equality with today's ordering is measured. Because
+  pg_textsearch 1.5.1's index order uses raw memtable lengths, the cursor
+  stops only past a proven margin (`index ≤ canonical ≤ index/(1−1/9)`, so
+  stop when the `k`-th canonical score exceeds `(1+ε(n))⁴/(1−1/9)` × the last
+  fetched one, with `ε(n) = 2(n+16)·2⁻²⁴` bounded by the query's analyzed-term
+  count — review r1 P1-2); a scorer-bound gate checks the bound on every image
+  build.
+  **Post-approval design change (2026-10-21, after the round-3 approval;
+  for the dual review to judge):** this margin replaces the approved design's
+  local scorer patch, because bitwise-equal scorers would have meant patching
+  every BM25 scoring path of the extension (design §8.3, analysis §6.1). It
+  keeps exactness at the cost of fetching rows within ≈12.5% of the `k`-th
+  score; the gate is a test pinning the extension revision the bound was
+  verified on, plus the counterexample proofs on the built image.
+- **Entity-scoped facts (post-approval alternative, review r2 P2-7).**
+  Fact search with entity anchors scores the survivor-expanded in-scope
+  facts exactly when they number at most the entity work budget (50,000
+  stored-endpoint rows, counted first); above it, `entity_scope_too_broad`.
+  It does not run the coverage-tier loop (design §8.5).
+- **Document-filtered chunk searches (post-approval additions, 2026-10-21,
+  review r1 P1-9).** The search enumerates its eligible rows from the
+  matching versions: at most the exact-tier threshold are scored exactly
+  (design §8.4); up to 20,000 are pushed into the index scan as a
+  membership filter (design §8.3), so the cursor streams eligible rows only;
+  above that the plain loop runs. **Post-approval design change, for review.**
+  It removes the filtered strata's early stops (3M diagnostic run: 25% → 0%);
+  latency is accepted under the 2026-10-22 amendment below.
+- **One operation context (review r1 P1-3/P1-4/P1-7).** Every ranked
+  operation owns one read-only REPEATABLE READ snapshot with one absolute
+  deadline and one pinned authority instant; readiness, entity checks,
+  nomination, confirmation, hydration and pending/freshness reads all use it,
+  and nested reads clamp their statement timeout to the time left. The SQL
+  sandbox exports its snapshot with its transaction instant and its request
+  deadline; the import spans hydration.
+- **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
+  compatibility is a local image gate; no local patch.
+- **Gates.** Scaling (latency with returned-`k` and truncation rates and
+  index-internal work, by stratum), HNSW recall (mean recall@10 ≥ 0.95, no
+  stratum below 0.90), scorer bound, LoCoMo answer accuracy by a
+  predeclared paired non-inferiority test (question as unit, three runs per
+  side, paired bootstrap one-sided 95% bound, fixed 1.0 pp margin,
+  inconclusive when underpowered), and separate measurement of the lexical
+  change and the upgrade. Thresholds and margin are starting points for the
+  owner to confirm. *(The scaling gate's latency criterion is amended below,
+  2026-10-22.)*
+
+**D142 amendment (2026-10-22, owner decision): latency acceptance.** The
+blanket "p95 within the interactive budget (≈ 300 ms) at the target size for
+the common strata" is replaced by these size- and stratum-specific budgets,
+which D142 meets as measured. The owner: "definitely this way. It still sounds
+like a significant improvement. Let's get it in."
+
+| Stratum (300k chunks) | Eligible rows | Path | p95 budget | Measured p50 / p95 | Completeness |
+| --- | --- | --- | --- | --- | --- |
+| `current`, unfiltered | 60,000 current chunk rows | loop | **≤ 300 ms** | 152 / 263 ms | 40/40 return k; 0 early stops |
+| `history`, unfiltered | 180,000 history-eligible rows (of 300,000 indexed edition rows) | loop | **≤ 300 ms** | 112 / 267 ms | 40/40 return k; 0 early stops |
+| 0.1% of documents (6) | 60 | exact tier | **≤ 300 ms** | 78 / 90 ms | 0 early stops (7 return k; the rest have fewer matches) |
+| 1% of documents (60) | 600 | exact tier | **≤ 500 ms** | 235 / 351 ms | 0 early stops (18 return k; the rest have fewer matches) |
+| 10% of documents (600) | 6,000 | pushdown | **≤ 1,000 ms** | 600 / 859 ms | 0 early stops (37 return k) |
+| 499 documents | 4,990 | exact tier | **≤ 2,500 ms** | 1,334 / 2,084 ms | 0 early stops (35 return k) |
+| 501 documents | 5,010 | pushdown | **≤ 1,000 ms** | 505 / 780 ms | 0 early stops (35 return k) |
+
+Measured conditions (all binding on the criterion): the public
+`QueryEngine.search_chunks` operation, BM25 channel, k = 20, in-process (no
+HTTP); a synthetic corpus of 6,000 lineages × 5 versions × 10 chunks = 300,000
+chunk rows, half the lineages periodised (declared effective periods) and half
+repeating version 1's text in later versions (120,120 duplicated rows), chunk
+text 20–300 Zipf-skewed words from a 50,000-word vocabulary, D134 metadata on
+every version, no vectors; one GCE n2-highmem-8 VM (8 vCPU, 64 GB, pd-ssd),
+the branch's PostgreSQL 19 engine image in Docker (`shared_buffers` 8 GB,
+`work_mem` 128 MB), warm cache (corpus seeded and indexed in the same session,
+heap and indexes fit in shared buffers), while the integration test suite ran
+on the same VM against another database (contended CPU, no other load on this
+database); 40 two-word queries drawn from the generator's own Zipf
+distribution (seed 142, query hash `c5d83714…`), each run once per stratum,
+sequentially, no concurrency. Archive:
+`plan/analysis/data/d142_sweep_300k_2026-10-22.json`. "Fewer matches" means
+the search was `exhausted` with fewer than k positive lexical matches among the
+eligible rows — a complete answer, not an early stop.
+
+- **Completeness is part of the criterion:** every search in these strata ends
+  `k_filled` or `exhausted` (allowed early-stop rate: 0); any early stop in
+  production is disclosed with its typed `p1_<reason>`, never `known_empty`.
+- **Multi-second filtered reads are accepted for now:** document-filtered
+  searches between about 600 and 6,000 eligible rows may take up to 2.5 s at
+  p95 at this size; the 4,990-row exact tier is the slowest measured case.
+- **No extrapolation.** These budgets hold for 300k chunks only. The 3M public
+  run (analysis §8.2) is diagnostic; 3M chunks and the 50M target are
+  **ungated** until measured on hydratable public results.
+- **The ≈ 300 ms interactive goal stays the target**, for every common stratum,
+  that the follow-up must meet: WP-RS.11, immutable `doc_id` on search rows
+  plus re-tuning the document exact-tier threshold (2.1 s at 4,990 rows
+  against 0.8 s by pushdown at 5,010), issue
+  [#508](https://github.com/writeitai/remember-stack/issues/508), with its own
+  measured gate (plan).
+- **Post-merge follow-ups (owner, 2026-10-22):** the paid LoCoMo answer-quality
+  gate runs after the owner's current full LoCoMo run finishes, on its own
+  isolated deployment; WP-RS.0 (real-data `EXPLAIN` on a copy of a deployment)
+  likewise. Neither blocks the merge.
+
+**Rejected.** Steering the one-statement plan (hints, `enable_seqscan`,
+rewritten joins): still estimate-dependent for the whole statement and cannot
+attribute a short result. Re-running a growing `LIMIT` per round: rescores BM25
+under newer statistics and repeats work. Copying visibility onto search rows:
+rejected by D94 and incompatible with D140's retroactive, instant-evaluated
+periods. Partial or partitioned indexes as the general answer: no stable
+visibility boolean for time-scoped chunks. A different ANN engine: does not
+address BM25 or authority. Filling the lexical list with zero-score rows by a
+stable-ID walk: preserves a tail with no keyword signal at the cost of an
+unbounded walk. Raw-length index scoring as the canonical score: a row's rank
+would change when a maintenance spill moves it to a segment. A local patch
+making index and standalone scores bitwise equal: it touches every BM25
+scoring path of the extension, while the proven margin needs no change.
+
+**Distinct-text index (owner-approved adoption rule, 2026-10-21).** Indexing
+each distinct search input once stays an unchosen proposal
+([proposal](plan/proposals/distinct_text_search_index.md)) and is not
+implemented by D142. The owner approved its rule as written: investigate if
+the pilot's median effective duplication is ≥ 5 or p95 extrapolates out of
+budget; then an isolated prototype on pilot data; adopt only with a
+demonstrated benefit and passed gates, through its own design update.
+
+**Owner invariant (2026-10-21): incremental ingestion is untouched.** D142
+leaves every ingestion identity and paid-work input unchanged; besides the
+query path it changes only vector write validation (P1 writers reject
+vectors that store as non-finite or zero float4). It does not change anchor-stabilized chunking
+(D58), the inputs of `extraction_input_hash` or `reuse_identity_hash`,
+search text versus embedding input, header facts, normalization, text origin
+(D140) or embedding carry-forward (D80); the reuse boundary is unchanged.
+What the CI regression proves, for both a living undated and a dated
+snapshot lineage after a one-paragraph edit: every Selection call targets a
+chunk with a new extraction identity (one call each) and those are the
+changed chunk and its immediate same-section neighbours; every embedding
+input belongs to that neighbourhood; every Claimify call targets a chunk
+with a new Claimify identity (one call each), and those lie within the
+extracted chunks and the eight chunks after each; every other chunk keeps its
+extraction identity, reuse identity, text origin, embedding input and v1
+vector, and a chunk with an unchanged Claimify identity reattaches exactly
+its v1 claim ids. That Claimify window is a known Rule 4 gap that D142
+neither causes nor fixes; a narrowly scoped expected-failure test holds the
+requirement against it.
+
+**Consequences.** In the common case fetched-candidate and confirmation work
+scales with `k` over the eligible share of top candidates, not with corpus
+size; index-internal work (posting traversal, internal rescoring passes, HNSW
+visits) is bounded by the deadline and measured separately; declining eligible
+shares, long tie runs and broad entity scopes remain bounded but not
+size-independent, and are reported. More statements per channel and one
+snapshot per operation. Semantic search becomes approximate (HNSW) where it
+was accidentally exact, under the quality gates. **Behaviour change:**
+non-matching rows no longer appear as lexical results or take RRF ranks.
+No public parameter changes; `Freshness.scope_pending` gains `complete`.
+
+**Refines/amends.** Refines D94 (one-statement execution and the cutover's
+"no benchmark" scope) and its D48 amendment (confirmation stays in
+PostgreSQL, in one snapshot rather than one statement). Refines D140's
+ranked-statement wording (scope semantics unchanged). Preserves D9
+(independent channels, RRF, zero LLM calls), D87 (eligibility before the
+relevance cut) and D49 (honest truncation). Amends D98's `pg_textsearch`
+patch pin.
+
+**Authority:** [design](plan/designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
+[analysis](plan/analysis/index_driven_ranked_search.md),
+[delivery](plan/plans/index_driven_ranked_search.md),
+reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
+[r2](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r2_2026-10-21.md),
+[r3](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r3_2026-10-21.md).
+
+
+## D143. Processing layers can be switched off per deployment and per request
+
+**Status:** accepted (design approved by GPT-6.1 Sol review round 9, 2026-10-23); binding on
+merge of PR #515; implementation is not implied.
+**Date:** 2026-10-23.
+
+**Context.** Every version ran the whole pipeline and every read consulted every kind of
+result. The owner asked (2026-10-23): "It should be possible to turn the layers on and off —
+both in ingestion and retrieval. However, they must be on by default." The motivating corpus,
+a Czech-legislation product of about 118,000 statute versions, is answered from binding text,
+declared effective periods (D140), section keys, supplied references and embeddings; the owner
+decided its first full ingestion runs without the fact layer and that claim extraction is
+evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14): sources
+1.5–4%, claims 18–46%, facts 50–80% (analysis §1.1).
+
+**Decision.**
+
+- **Three layers in a line:** *sources* (conversion, structure with section summaries,
+  cross-references, chunks, chunk embeddings), *claims* (Selection, Claimify, claim embeddings,
+  testimony currency), *facts* (normalisation, entity resolution, fact adjudication and
+  follow-ups, labels, window reviews, profiles, graph, plane K). Sources ← claims ← facts;
+  sources is always on.
+- **Deployment scope only.** `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER` and
+  `REMEMBERSTACK_SELFHOST_FACTS_LAYER`, both default `true`; `setup` writes them to
+  `deployment_processing_layers` (no row = both on) under an exclusive *layer fence* and refuses
+  facts without claims. No per-document, per-source-kind or per-ingest setting, no runtime API.
+- **One boundary per layer** — claims at `embed_chunk` completion, facts at the extract barrier
+  and the D90 empty path — decided in the completing transaction under the shared layer fence and
+  the D135 lineage lock. Without a configuration row it enters exactly as today. In a *configured*
+  deployment it records a *gap* and runs the same **advance** procedure the backfill uses, so a
+  version enters a layer only after every earlier version of its lineage reached that layer's
+  reuse *frontier* (claims: occurrences complete and `embed_claim` succeeded; facts: full
+  reconcile). When facts are not entered,
+  the facts boundary opens the **claims tail**: `embed_claim` and `reconcile` at
+  `reconcile-2026.07:claims`, which runs the full reconcile logic but opens no `label_relation`
+  and no window review, so existing facts stay exact while facts are off (profile refresh is the
+  one paid exception, only when facts exist).
+- **Configured deployments only:** living supersession waits until the current version's claim
+  occurrences are complete, checked and applied in one transaction under the lineage lock; and a
+  version's claims tail waits until no earlier version of its lineage has fact work in flight, so
+  older fact work always runs while its claims are current — the always-on order — and retired
+  testimony never becomes a fact. The claims frontier includes the version's `embed_claim`, so a
+  successor never reuses a claim that has no vector.
+- **Off drains:** boundaries stop entering; versions that entered finish the layer; retrieval
+  and readiness stop using it; data is kept. Only lineage-level window reviews are held. Deletion
+  and hard forget are never gated.
+- **On later backfills in lineage order** through the same advance procedure, invoked by
+  boundaries, frontiers, deletions (including current-version repointing) and `setup`'s seeding.
+  Snapshot lineages are processed every version oldest first (equal to always-on processing);
+  living lineages at their current version only — older unentered gaps are discharged, and reopened
+  if deletion makes their version current again. Backfill rows and the follow-up rows they open
+  (including fact-application projection repair and window reviews) take the backfill lane; lanes
+  order and budget work rows but do not isolate the shared per-entity application stream. Coverage is
+  derived from open gaps. Rule 4 holds: no re-chunking, no chunk re-embedding, unchanged reuse
+  identities, each later snapshot version pays only for its edit.
+- **Readiness** expects the enabled layers' stages (all on: unchanged; facts off: `reconcile` at
+  either version). `processing_profile_id` is `doc-text-standard-v1`, `doc-text-claims-v1` or
+  `doc-text-sources-v1`; `profile_complete` certifies every stage the measured profile requires
+  (standard: today's predicate), otherwise `failed` / `processing_profile_changed`. Frontiers order
+  lineages; they are not readiness.
+- **Retrieval** reads the served (enabled) layers. A `layers` selection on
+  `POST /operations/{name}`, the sandbox execution routes, both SDKs, the CLI and
+  `remember mcp --layers` narrows it without changing any agent tool schema. Reads have channels
+  and mandatory dependencies (`entity_ids`, a claim search's `entity_id` filter need facts).
+  Disabled layers are refused (409 `layer_unavailable`; existing sandbox codes); an empty answer
+  with an unconsulted channel is a `boundary`, never `known_empty`; backfilling sandbox reads warn;
+  `GET /processing-layers` reports states; catalogues list only served tools. **No response model
+  changes**, so default responses, descriptors and the manifest hash are byte-identical.
+  `combined_context` composes exactly per admitted set; a child with no admitted channel is a
+  synthetic empty `boundary` envelope of its grain (fact or evidence). P3 serves only a snapshot built for the served set; the
+  knowledge mount is not published without facts.
+
+**Alternatives rejected.** Finer-grained scopes; serving or deleting an off layer; holding queued
+work; a currency-only claims reconcile; unordered backfill; backfilling old living versions; a
+stored coverage flag; a `layers` tool argument or `Envelope` field (changes the pinned agent
+surface); separate summary or entity layers (analysis §8).
+
+**Consequences.** Two tables, one migration, one new read route. Self-host workers serve the
+backfill lane when their steady route is idle. A living lineage's history in a backfilled layer
+starts at its current version. The managed cloud must register the two new profile ids before a
+managed deployment switches a layer off. LoCoMo, existing deployments and existing clients are
+unaffected while every layer is on.
+
+**Refines.** D90 (the empty path opens the claims tail when facts are not entered); D54 and the
+evidence lifecycle's reconciliation (a claims-mode component version; the living supersession
+guard); D84/D88 (the extract barrier opens normalisation only when facts are entered);
+orchestration §3 (layer backfill; self-host serves the backfill lane); D136 §3.4 (the tool list
+follows served layers); D87 and D114 (exact composition per admitted layer set; the synthetic
+fact child).
+
+**Authority:** [design](plan/designs/processing_layers_design.md),
+[analysis](plan/analysis/processing_layer_toggles.md),
+[delivery](plan/plans/processing_layers.md); reviews r1–r9 and responses in `design/reviews/`
+(`REVIEW_gpt-6.1-sol_d143_design_r*`, `RESPONSE_d143_design_r*`).

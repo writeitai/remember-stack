@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contracts": {
+    "IssuerMetadata": {
+      "description": "The fields of the issuer's authorization-server metadata the client uses.",
+      "properties": {
+        "device_authorization_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Authorization Endpoint"
+        },
+        "issuer": {
+          "title": "Issuer",
+          "type": "string"
+        },
+        "jwks_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jwks Uri"
+        },
+        "remember_account_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remember Account Endpoint"
+        },
+        "remember_mcp_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remember Mcp Endpoint"
+        },
+        "remember_project_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remember Project Endpoint"
+        },
+        "revocation_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revocation Endpoint"
+        },
+        "token_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token Endpoint"
+        }
+      },
+      "required": [
+        "issuer"
+      ],
+      "title": "IssuerMetadata",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "ResolvedProject": {
+      "description": "The issuer's answer: which deployment serves one project for this key.",
+      "properties": {
+        "api_url": {
+          "minLength": 1,
+          "title": "Api Url",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "project": {
+          "minLength": 1,
+          "title": "Project",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "name",
+        "api_url"
+      ],
+      "title": "ResolvedProject",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "Whoami": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  }
+}

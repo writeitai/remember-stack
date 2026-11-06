@@ -12,6 +12,8 @@ credential-file conversion, no acceptance of the old `scope` claim.
    agent-facing fields from the catalogue; add `tools` to `GET /deployment`.
 2. **Direct-path admission.** Per-key and per-deployment rate and in-flight
    limits in the perimeter (design §7.6), in place before any key is issued.
+   Off by default in the engine (each limit applies only when its setting is
+   positive); the hosted fleet sets the values for every cloud deployment.
 3. **Perimeter.** Replace the signed-token claim contract with the per-kind
    claim sets (`aud`, `org`, `projects`, `permissions`, `kind`), URL-fetched
    key set, and the signed, sequenced revocation document with `active_kids`;

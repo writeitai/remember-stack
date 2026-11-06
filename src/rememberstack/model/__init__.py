@@ -33,6 +33,7 @@ from rememberstack.model.chunks import P1ClaimRow
 from rememberstack.model.chunks import P1FactRow
 from rememberstack.model.chunks import PackedChunk
 from rememberstack.model.chunks import SectionSpan
+from rememberstack.model.chunks import TextOriginMatch
 from rememberstack.model.claims import AddedContext
 from rememberstack.model.claims import CandidateClaim
 from rememberstack.model.claims import ClaimForEmbedding
@@ -92,6 +93,7 @@ from rememberstack.model.consumption import ConsumptionScope
 from rememberstack.model.consumption import ConsumptionSkillContext
 from rememberstack.model.consumption import RenderedConsumptionSkill
 from rememberstack.model.consumption import S58Answer
+from rememberstack.model.content_detection import ContentDetectionError
 from rememberstack.model.conversion import ConversionCoverage
 from rememberstack.model.conversion import ConversionError
 from rememberstack.model.conversion import ConversionResult
@@ -100,6 +102,7 @@ from rememberstack.model.conversion import ConverterManifest
 from rememberstack.model.conversion import ConverterUsageEvent
 from rememberstack.model.conversion import DerivationRange
 from rememberstack.model.conversion import DerivedAsset
+from rememberstack.model.conversion import FileHints
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import ManifestComponent
 from rememberstack.model.conversion import NormalizedRegion
@@ -118,13 +121,17 @@ from rememberstack.model.deployment import DeploymentBootstrapConflictError
 from rememberstack.model.deployment import DeploymentBootstrapInput
 from rememberstack.model.deployment import DeploymentBootstrapResult
 from rememberstack.model.deployment import DeploymentConflictError
+from rememberstack.model.documents import ChunkNotFoundError
 from rememberstack.model.documents import ConvertSource
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import DocumentVersionNotFoundError
+from rememberstack.model.documents import EffectivePeriodConflictError
+from rememberstack.model.documents import EffectiveTimeNotSupportedError
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.model.documents import IngestPrincipal
 from rememberstack.model.documents import IngestPrincipalKind
+from rememberstack.model.documents import ReferenceBodyError
 from rememberstack.model.documents import RepresentationNotFoundError
 from rememberstack.model.documents import RepresentationRecord
 from rememberstack.model.documents import SourceItem
@@ -132,12 +139,14 @@ from rememberstack.model.documents import StructureSource
 from rememberstack.model.documents import SyncCycleSummary
 from rememberstack.model.documents import SyntheticRootRecord
 from rememberstack.model.documents import UploadRecord
+from rememberstack.model.documents import VersionKeyConflictError
 from rememberstack.model.envelope import AggregateBucket
 from rememberstack.model.envelope import AggregateReport
 from rememberstack.model.envelope import AsOfTemporalScope
 from rememberstack.model.envelope import AtTemporalScope
 from rememberstack.model.envelope import ChangeRecord
 from rememberstack.model.envelope import ChunkEvidenceResult
+from rememberstack.model.envelope import ClaimOccurrence
 from rememberstack.model.envelope import CoMember
 from rememberstack.model.envelope import ContextBundleV2
 from rememberstack.model.envelope import Contradiction
@@ -164,6 +173,7 @@ from rememberstack.model.envelope import OverlapTemporalScope
 from rememberstack.model.envelope import PageRef
 from rememberstack.model.envelope import RankedItem
 from rememberstack.model.envelope import ScanRow
+from rememberstack.model.envelope import ScopePending
 from rememberstack.model.envelope import SourceRecord
 from rememberstack.model.envelope import Truncation
 from rememberstack.model.envelope import Validity
@@ -428,6 +438,7 @@ __all__ = (
     "ConversionCoverage",
     "ConversionError",
     "ConversionResult",
+    "FileHints",
     "ConverterLaneError",
     "ConverterManifest",
     "ConverterUsageEvent",
@@ -464,8 +475,12 @@ __all__ = (
     "DeploymentBootstrapResult",
     "DeploymentConflictError",
     "DocumentNotFoundError",
+    "EffectivePeriodConflictError",
+    "EffectiveTimeNotSupportedError",
     "DocumentUpload",
     "DocumentVersionNotFoundError",
+    "ChunkNotFoundError",
+    "ReferenceBodyError",
     "DeploymentBuildInfo",
     "EmbeddingRequest",
     "EmbeddingResponse",
@@ -508,11 +523,13 @@ __all__ = (
     "SpendLeaseRefused",
     "SpendLeaseUnavailable",
     "track_read_embedding_cost",
+    "ClaimOccurrence",
     "Freshness",
     "Grain",
     "IdentityRegime",
     "HistoryTemporalScope",
     "KFreshness",
+    "ScopePending",
     "HandlerAlreadyRegisteredError",
     "IngestedVersion",
     "IngestPrincipal",
@@ -522,6 +539,7 @@ __all__ = (
     "ManagedIngestMeasurementV2",
     "ManagedMeterScope",
     "ManagedTextClassificationError",
+    "ContentDetectionError",
     "ManagedTextMeasurementDraft",
     "MeterAdmissionResult",
     "MeterReceiptConflict",
@@ -613,6 +631,7 @@ __all__ = (
     "ScanRow",
     "S58Answer",
     "SectionSpan",
+    "TextOriginMatch",
     "SelectionCandidate",
     "SelectionOutcome",
     "SelectionDropReason",
@@ -745,6 +764,7 @@ __all__ = (
     "UnroutableMimeError",
     "VideoRegionLocator",
     "UploadRecord",
+    "VersionKeyConflictError",
     "Validity",
     "VersionPipelineReadiness",
     "WorkLedgerError",

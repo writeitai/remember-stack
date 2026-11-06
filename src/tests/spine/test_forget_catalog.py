@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -47,6 +48,8 @@ _TARGET_DOC_ID = UUID("75000000-0000-0000-0000-000000000002")
 _CONTROL_DOC_ID = UUID("75000000-0000-0000-0000-000000000003")
 _TARGET_VERSION_ID = UUID("75000000-0000-0000-0000-000000000004")
 _CONTROL_VERSION_ID = UUID("75000000-0000-0000-0000-000000000005")
+_TARGET_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000a1")
+_CONTROL_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000a2")
 _TARGET_REPRESENTATION_ID = UUID("75000000-0000-0000-0000-000000000006")
 _CONTROL_REPRESENTATION_ID = UUID("75000000-0000-0000-0000-000000000007")
 _TARGET_CHUNK_ID = UUID("75000000-0000-0000-0000-000000000008")
@@ -217,6 +220,8 @@ def test_inventory_scrub_and_verification_preserve_independent_evidence(
         "mem://artifacts/writer-transcript.json",
         f"mem://raw/target.bin?marker={_TOKEN}",
         "mem://artifacts/planner-transcript.json",
+        # D140: the forgotten lineage's stored reference sets
+        f"mem://artifacts/{_TARGET_DOC_ID}/references/{_TOKEN}.ndjson",
     }
 
     catalog.accept_and_enqueue(manifest=manifest)
@@ -523,6 +528,59 @@ def _seed_documents(*, connection: Connection) -> None:
             ),
             {"rep": representation_id, "d": _DEPLOYMENT_ID, "version": version_id},
         )
+    for version_id, doc_id, marker in (
+        (_TARGET_VERSION_ID, _TARGET_DOC_ID, _TOKEN),
+        (_CONTROL_VERSION_ID, _CONTROL_DOC_ID, "control"),
+    ):
+        # D134 metadata, people and observed names are source-bearing.
+        connection.execute(
+            text(
+                "INSERT INTO document_metadata (deployment_id, version_id, doc_id,"
+                " family, file_name, source_path, title, thread_ref, extra,"
+                " metadata_mapping_version) VALUES (:d, :version, :doc, 'text',"
+                " :file_name, :path, :marker, :marker, CAST(:extra AS jsonb),"
+                " 'test')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "doc": doc_id,
+                "file_name": f"{marker}.txt",
+                "path": f"folder/{marker}",
+                "marker": marker,
+                "extra": json.dumps({"reply_to": marker}),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_people (deployment_id, version_id, role,"
+                " ordinal, display_name, address, normalized_name,"
+                " normalized_address, provenance) VALUES (:d, :version, 'author',"
+                " 0, :marker, :address, :marker, :address, 'source')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "marker": marker,
+                "address": f"{marker}@example.com",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_names (deployment_id, version_id,"
+                " observed_at, file_name, title, source_path, name_text, origin)"
+                " VALUES (:d, :version, now(), :file_name, :marker, :path,"
+                " :name_text, 'ingest')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "file_name": f"{marker}.txt",
+                "marker": marker,
+                "path": f"folder/{marker}",
+                "name_text": f"{marker}.txt {marker} folder/{marker}",
+            },
+        )
     connection.execute(
         text(
             """
@@ -569,33 +627,88 @@ def _seed_documents(*, connection: Connection) -> None:
             "control_version": _CONTROL_VERSION_ID,
         },
     )
+    # D140: references are made by source versions through a generation
+    for generation_id, doc_id, version_id in (
+        (_CONTROL_GENERATION_ID, _CONTROL_DOC_ID, _CONTROL_VERSION_ID),
+        (_TARGET_GENERATION_ID, _TARGET_DOC_ID, _TARGET_VERSION_ID),
+    ):
+        connection.execute(
+            text(
+                "INSERT INTO document_reference_generations (generation_id,"
+                " deployment_id, doc_id, version_id, origin, input_hash,"
+                " request_seq, artifact_uri, status) VALUES (:g, :d, :doc, :v,"
+                " 'supplied', :token, 1, :uri, 'active')"
+            ),
+            {
+                "g": generation_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "v": version_id,
+                "token": _TOKEN,
+                "uri": f"mem://artifacts/{doc_id}/references/{_TOKEN}.ndjson",
+            },
+        )
+    for crossref_id, source_doc, source_version, generation_id, target, kind in (
+        (
+            UUID("75000000-0000-0000-0000-000000000024"),
+            _CONTROL_DOC_ID,
+            _CONTROL_VERSION_ID,
+            _CONTROL_GENERATION_ID,
+            _TARGET_DOC_ID,
+            "cites",
+        ),
+        (
+            UUID("75000000-0000-0000-0000-000000000043"),
+            _TARGET_DOC_ID,
+            _TARGET_VERSION_ID,
+            _TARGET_GENERATION_ID,
+            _CONTROL_DOC_ID,
+            "links_to",
+        ),
+    ):
+        connection.execute(
+            text(
+                "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
+                " from_doc_id, from_version_id, generation_id, to_doc_id, kind,"
+                " origin, raw_citation, context, resolved) VALUES (:id, :d,"
+                " :source, :version, :generation, :target,"
+                " CAST(:kind AS crossref_kind), 'supplied', :token, :token, true)"
+            ),
+            {
+                "id": crossref_id,
+                "d": _DEPLOYMENT_ID,
+                "source": source_doc,
+                "version": source_version,
+                "generation": generation_id,
+                "target": target,
+                "kind": kind,
+                "token": _TOKEN,
+            },
+        )
+    # D140: the target carries a version key, a declared period and its event
+    connection.execute(
+        text("UPDATE document_versions SET version_key = :token WHERE version_id = :v"),
+        {"token": f"edition-{_TOKEN}", "v": _TARGET_VERSION_ID},
+    )
     connection.execute(
         text(
-            "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
-            " from_doc_id, to_doc_id, kind, raw_citation, context, resolved) VALUES"
-            " (:id, :d, :control, :target, 'cites', :token, :token, true)"
+            "INSERT INTO document_effective_periods (period_id, deployment_id,"
+            " doc_id, version_id, effective_from, declared_by)"
+            " VALUES (gen_random_uuid(), :d, :doc, :v, :at, 'ingest')"
         ),
         {
-            "id": UUID("75000000-0000-0000-0000-000000000024"),
             "d": _DEPLOYMENT_ID,
-            "control": _CONTROL_DOC_ID,
-            "target": _TARGET_DOC_ID,
-            "token": _TOKEN,
+            "doc": _TARGET_DOC_ID,
+            "v": _TARGET_VERSION_ID,
+            "at": _NOW,
         },
     )
     connection.execute(
         text(
-            "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
-            " from_doc_id, to_doc_id, kind, raw_citation, context, resolved) VALUES"
-            " (:id, :d, :target, :control, 'links_to', :token, :token, true)"
+            "INSERT INTO document_effective_time_events (deployment_id, doc_id, event)"
+            " VALUES (:d, :doc, 'declared')"
         ),
-        {
-            "id": UUID("75000000-0000-0000-0000-000000000043"),
-            "d": _DEPLOYMENT_ID,
-            "target": _TARGET_DOC_ID,
-            "control": _CONTROL_DOC_ID,
-            "token": _TOKEN,
-        },
+        {"d": _DEPLOYMENT_ID, "doc": _TARGET_DOC_ID},
     )
 
 
@@ -1228,6 +1341,9 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             == 1
         )
         assert _count(connection, "chunk_claims", "claim_id", _TARGET_CLAIM_ID) == 0
+        for table in ("document_metadata", "document_people", "document_names"):
+            assert _count(connection, table, "version_id", _TARGET_VERSION_ID) == 0
+            assert _count(connection, table, "version_id", _CONTROL_VERSION_ID) == 1
         assert (
             _count(connection, "claim_extraction_decisions", "doc_id", _TARGET_DOC_ID)
             == 0
@@ -1297,8 +1413,32 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert (
             _count(connection, "document_crossrefs", "to_doc_id", _TARGET_DOC_ID) == 0
         )
+        # D140 §9: the control's reference TO the forgotten lineage is the
+        # control's own content; it survives unbound, ready to re-bind
+        assert connection.execute(
+            text(
+                "SELECT to_doc_id, resolved FROM document_crossrefs"
+                " WHERE deployment_id = :d AND from_doc_id = :doc"
+            ),
+            {"d": _DEPLOYMENT_ID, "doc": _CONTROL_DOC_ID},
+        ).one() == (None, False)
         assert (
             _count(connection, "document_crossrefs", "from_doc_id", _TARGET_DOC_ID) == 0
+        )
+        for table in (
+            "document_reference_generations",
+            "document_effective_periods",
+            "document_effective_time_events",
+            "document_version_scope",
+        ):
+            assert _count(connection, table, "doc_id", _TARGET_DOC_ID) == 0, table
+        assert _count(connection, "document_version_scope", "doc_id", _CONTROL_DOC_ID)
+        assert (
+            connection.execute(
+                text("SELECT version_key FROM document_versions WHERE version_id = :v"),
+                {"v": _TARGET_VERSION_ID},
+            ).scalar_one()
+            is None
         )
         processing = connection.execute(
             text(
@@ -1375,6 +1515,18 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
                 " UNION ALL SELECT canonical_name FROM entities WHERE deployment_id = :d"
                 " UNION ALL SELECT profile_summary FROM entities WHERE deployment_id = :d"
                 " UNION ALL SELECT page_summary FROM knowledge_artifacts"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT file_name FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT source_path FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT title FROM document_metadata WHERE deployment_id = :d"
+                " UNION ALL SELECT extra::text FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT display_name FROM document_people"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT address FROM document_people WHERE deployment_id = :d"
+                " UNION ALL SELECT name_text FROM document_names"
                 "   WHERE deployment_id = :d"
                 ") residual WHERE value LIKE '%' || :token || '%'"
             ),
@@ -1489,9 +1641,18 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
             )
         connection.execute(
             text("""UPDATE observations SET valid_from='2022-01-01Z',
-            valid_until='2023-01-01Z',valid_precision='year',window_claim_ids=CAST(:claims AS uuid[])
+            valid_until='2023-01-01Z',valid_precision='year',window_claim_ids=CAST(:claims AS uuid[]),
+            period_basis='basis-over-forgotten-claims'
             WHERE observation_id=:id"""),
             {"claims": [_TARGET_CLAIM_ID], "id": _SHARED_OBSERVATION_ID},
+        )
+        # D140 §8.2: a stored window-review answer for the touched fact
+        connection.execute(
+            text("""INSERT INTO fact_window_review_attempts
+            (deployment_id,fact_kind,fact_id,input_digest,claimed_by,answer,answered_at)
+            VALUES (:dep,'observation',:id,'digest','job',
+              jsonb_build_object('rationale',CAST(:phrase AS text)),now())"""),
+            {"dep": _DEPLOYMENT_ID, "id": _SHARED_OBSERVATION_ID, "phrase": _TOKEN},
         )
     catalog.accept_and_enqueue(manifest=manifest)
     catalog.scrub_postgres(manifest=manifest)
@@ -1530,6 +1691,22 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
         ).one()
         assert tuple(row[:4]) == (None, None, "unknown", [])
         assert _TOKEN not in row[4]
+        assert (
+            connection.execute(
+                text("SELECT period_basis FROM observations WHERE observation_id=:id"),
+                {"id": _SHARED_OBSERVATION_ID},
+            ).scalar_one()
+            is None
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM fact_window_review_attempts WHERE fact_id=:id"
+                ),
+                {"id": _SHARED_OBSERVATION_ID},
+            ).scalar_one()
+            == 0
+        )
 
 
 @pytest.mark.parametrize("phase", ("selection", "claimify"))

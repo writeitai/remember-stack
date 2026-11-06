@@ -32,6 +32,14 @@ from rememberstack.workers.e0 import UploadIngestor
 
 _DEPLOYMENT_ID = UUID("106a0000-0000-0000-0000-000000000001")
 _ROUTES = {"text/markdown": "passthrough", "text/plain": "passthrough"}
+_PARQUET_BYTES = b"PAR1meta" + (4).to_bytes(length=4, byteorder="little") + b"PAR1"
+_PSD_BYTES = (
+    b"8BPS\x00\x01"
+    + b"\x00" * 6
+    + b"\x00\x03"
+    + (1).to_bytes(length=4, byteorder="big") * 2
+    + b"\x00\x08\x00\x03"
+)
 
 
 class _RecordingCatalog:
@@ -41,6 +49,7 @@ class _RecordingCatalog:
         """Start with nothing recorded."""
         self.calls = 0
         self.defer_reason: DeferReason | None = None
+        self.recorded_mime: str | None = None
 
     def record_upload(
         self,
@@ -54,6 +63,7 @@ class _RecordingCatalog:
         """Record the scheduling decision and return a fixed receipt."""
         _ = convert_component_version, lane, metering
         self.calls += 1
+        self.recorded_mime = record.mime
         self.defer_reason = (
             None
             if routable_mimes is None or record.mime in routable_mimes
@@ -91,19 +101,23 @@ class _CountingStore:
     def __init__(self) -> None:
         """Start with no writes."""
         self.writes = 0
+        self.classes: list[str] = []
 
     def read_bytes(self, *, key: ObjectKey) -> bytes:
         """Reject reads during ingest."""
         raise AssertionError(f"unexpected read of {key.root}")
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Record one raw write."""
         self.writes += 1
+        self.classes.append(storage_class)
 
 
-def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingStore]:
+def _ingest(
+    mime: str, *, observed: bool, filename: str = "input.bin"
+) -> tuple[_RecordingCatalog, _CountingStore]:
     """Drive one E0 entry point and return what it recorded."""
     catalog, store = _RecordingCatalog(), _CountingStore()
     ingestor = UploadIngestor(
@@ -112,7 +126,12 @@ def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingS
         admission=_AllowingAdmission(),
         routable_mimes=frozenset(_ROUTES),
     )
-    upload = DocumentUpload(filename="input.bin", mime=mime, content=b"hello")
+    content = {
+        "audio/mpeg": b"ID3\x04\x00\x00\x00\x00\x00\x00",
+        "application/pdf": b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF",
+        "application/msword": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+    }.get(mime, b"hello")
+    upload = DocumentUpload(filename=filename, mime=mime, content=content)
     if observed:
         ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
@@ -152,21 +171,155 @@ def test_unroutable_input_parks_its_convert_work(observed: bool) -> None:
 @pytest.mark.parametrize("observed", (False, True))
 def test_routable_input_is_scheduled_immediately(observed: bool) -> None:
     """The control: a type the deployment converts is not deferred at all."""
-    catalog, _ = _ingest("text/plain", observed=observed)
+    catalog, _ = _ingest("text/plain", observed=observed, filename="input.txt")
     assert catalog.defer_reason is None
 
 
-def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
-    """A parameterised MIME parks, because the router would not route it.
-
-    `ConversionRouter.converter_for` is an exact dict lookup. If ingest
-    normalised `text/plain; charset=utf-8` down to `text/plain` and the worker
-    did not, the row would be scheduled immediately and then dead-letter —
-    the outcome D117 exists to remove. Normalisation belongs in the router,
-    where both callers inherit it.
-    """
-    catalog, _ = _ingest("text/plain; charset=utf-8", observed=False)
+def test_pdf_signature_overrides_text_filename() -> None:
+    """A PDF cannot enter a text route through a misleading filename."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes.txt",
+            mime="application/octet-stream",
+            content=b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF",
+        ),
+    )
+    assert catalog.recorded_mime == "application/pdf"
     assert catalog.defer_reason is DeferReason.NO_ROUTE
+    assert store.classes == ["cold"]
+
+
+def test_unknown_archive_uses_registry_card_family() -> None:
+    """D138 keeps a named archive as an archive when bytes are unknown to D132."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="bundle.zip",
+            mime="application/octet-stream",
+            content=b"PK\x03\x04unknown package",
+        ),
+    )
+    assert catalog.recorded_mime == "application/zip"
+    assert store.classes == ["cold"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "declared", "content", "expected"),
+    [
+        (
+            "thread.eml",
+            "message/rfc822",
+            b"From: A\nDate: Tue\n\nHello",
+            "message/rfc822",
+        ),
+        (
+            "report.ipynb",
+            "application/x-ipynb+json",
+            b'{"nbformat":4,"cells":[]}',
+            "application/x-ipynb+json",
+        ),
+        ("letter.rtf", "application/rtf", b"{\\rtf1 Hello}", "application/rtf"),
+        ("data.csv", "text/csv", b"name,value\na,1\n", "text/csv"),
+        (
+            "book.epub",
+            "application/epub+zip",
+            b"PK\x03\x04package",
+            "application/epub+zip",
+        ),
+        (
+            "data.parquet",
+            "application/vnd.apache.parquet",
+            _PARQUET_BYTES,
+            "application/vnd.apache.parquet",
+        ),
+        (
+            "app.db",
+            "application/vnd.sqlite3",
+            b"SQLite format 3\x00payload",
+            "application/vnd.sqlite3",
+        ),
+        (
+            "photo.psd",
+            "image/vnd.adobe.photoshop",
+            _PSD_BYTES,
+            "image/vnd.adobe.photoshop",
+        ),
+    ],
+)
+def test_registry_family_survives_compatible_byte_class(
+    filename: str, declared: str, content: bytes, expected: str
+) -> None:
+    """Byte admission preserves D138 families whose converters validate them."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(filename=filename, mime=declared, content=content),
+    )
+    assert catalog.recorded_mime == expected
+    assert store.classes == ["hot" if expected.startswith("image/") else "cold"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected"),
+    [
+        ("notes.txt", b"The secret is swordfish\x00", "application/octet-stream"),
+        ("notes.txt", b"PK\x03\x04not-office", "application/octet-stream"),
+        ("notes.docx", b"ordinary UTF-8 prose", "text/plain"),
+        ("index.html", b"<!-- saved -->\n<html><p>Hi</p></html>", "text/html"),
+    ],
+)
+def test_registry_hint_cannot_cross_the_detected_byte_class(
+    filename: str, content: bytes, expected: str
+) -> None:
+    """Filename hints cannot make binary into text or text into OOXML."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename=filename, mime="application/octet-stream", content=content
+        ),
+    )
+    assert catalog.recorded_mime == expected
+    assert store.classes == ["cold"]
+
+
+def test_ingest_stores_the_registry_mime_the_router_keys_on() -> None:
+    """D138: ingest stores the family's parameter-free MIME, never the declared one.
+
+    `ConversionRouter.converter_for` is an exact dict lookup, so ingest and
+    the worker must agree on the key. Detection stores the registry's MIME
+    (here ``text/markdown``, from the declared ``text/markdown;
+    charset=utf-8``), which is exactly what the route table names.
+    """
+    catalog, _ = _ingest("text/markdown; charset=utf-8", observed=False)
+    assert catalog.defer_reason is None
 
 
 def test_ingest_and_the_router_read_the_same_key_set() -> None:
@@ -205,3 +358,53 @@ def test_managed_binary_still_requires_a_supported_metered_rate_class() -> None:
         )
     assert store.writes == 0
     assert catalog.calls == 0
+
+
+def test_ingest_stores_the_detected_family_mime() -> None:
+    """D138 §3: the extension decides over a generic or guessed declaration."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    recorded: list[str] = []
+    original = catalog.record_upload
+
+    def record(**kwargs: object) -> IngestedVersion:
+        recorded.append(cast(UploadRecord, kwargs["record"]).mime)
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    catalog.record_upload = record  # type: ignore[method-assign]
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(),
+    )
+    for filename, mime in (
+        ("main.py", "text/plain"),
+        ("Dockerfile", "application/octet-stream"),
+        ("notes.md", "application/octet-stream"),
+        ("unknown", "text/plain"),
+    ):
+        ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(filename=filename, mime=mime, content=b"print(1)\n"),
+        )
+    assert recorded == [
+        "text/x-code",
+        "text/x-code",
+        "text/markdown",
+        "text/x-other-text",
+    ]
+
+
+def test_an_oversized_file_is_never_parked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over its family's reading limit, an unrouted PDF is scheduled for a card."""
+    from rememberstack.workers import e0 as e0_module
+
+    monkeypatch.setattr(
+        e0_module,
+        "exceeds_reading_limit",
+        lambda *, mime, byte_size: mime == "application/pdf",
+    )
+    catalog, _ = _ingest("application/pdf", observed=False, filename="scan.pdf")
+    assert catalog.defer_reason is None
+    parked, _ = _ingest("application/msword", observed=False, filename="old.doc")
+    assert parked.defer_reason is DeferReason.NO_ROUTE

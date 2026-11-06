@@ -67,8 +67,10 @@ returns plain Markdown; docling/PyMuPDF-class tools expose richer structure) —
 1. **Converters produce `document.md` + a source map + derived assets + a manifest** (refines
    D38; generalized by D65 — the *page map* is the paper case of the source map). Mistral OCR:
    concatenate `pages[].markdown`, recording each page's char-range — the page map falls out
-   of concatenation. markitdown: Markdown, no source map (emails/HTML have no pages — the
-   locator is nullable). Media routes (ASR, VLM description — `media_design.md` §2) emit
+   of concatenation. Pageless formats (HTML, email, office documents) map to `source_range` or
+   `line_range` locators; structured formats to `sheet_range` / `table_region` /
+   `json_pointer` (D133, `format_conversion_design.md` §7). A converter that cannot map a range
+   names it in `coverage.gaps` rather than omitting the map. Media routes (ASR, VLM description — `media_design.md` §2) emit
    time-range / image-region locators the same way. Tools that expose real layout use it to
    render *better-segmented Markdown* (true paragraph breaks, correctly fenced tables) —
    structure informs rendering; it never bypasses the next step.
@@ -209,6 +211,11 @@ by **semchunk** (the imposed constraint, kept as the packer) to the token budget
   becomes its own oversized chunk rather than being split mid-row; a pathological giant
   paragraph falls back to deterministic sentence-splitting.
 - **Never cross a section boundary** (§3 makes this well-defined).
+- **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
+  `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
+  tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
+  chunk is wholly eligible or wholly ineligible; `chunks.extraction_eligible` records it and
+  E2 schedules Selection only for eligible chunks (`format_conversion_design.md` §4.5).
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -328,10 +335,25 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
-  facts + extractor_version + structurer_version)` — where **stable header facts** are the
-  deterministic document metadata the E2 bundle feeds the extractor: title, source kind,
-  source-modified/published date, language (from `documents`/`document_versions`; never
-  LLM-derived) — **no LLM *output* participates in the
+  facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
+  deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
+  (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
+  the old one), source kind, the chunk's **text origin time**, language (from
+  `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
+  LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
+  `published_at` header facts. It is recorded once when the chunk is created: the
+  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
+  versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
+  and **not later than this version's own date** (so a back-filled older edition never inherits
+  a later date) — own and neighbour
+  block hashes, non-date header facts, consumed converter-origin hashes,
+  blockizer/structurer/extractor versions, indexed per
+  lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
+  and replayed, never recomputed; deleting the origin version later does not change it. The
+  E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
+  in unchanged text stay resolved against the time the text was written, and a dated new
+  version reuses its unchanged chunks (with the version's own date in the key, nearly every
+  new version would miss every key) — **no LLM *output* participates in the
   key** (refines D56's original sketch, which had let the section path and prefix in — a key
   no re-run would ever match, the ~0 %-reuse hazard named in the stress test). Including
   `structurer_version` — a stable config string, not LLM output — closes the context-drift
@@ -346,6 +368,15 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   unready maintenance operation without a provider call (never leave policy version and
   vector identity disagreeing on one row).
   Content-hash-only vector copy is **incorrect** when embedding text includes location.
+  Carry-forward candidates include completed rows at or before the target document
+  version, including a previous processing generation of that same version, but
+  exclude deleted versions. Keep each distinct `(chunk_content_hash,
+  embedding_text_hash)` pair under the requested policy/model so identical body
+  text at one location cannot hide the matching vector from another. Advancing
+  the chunk-row and embed-delivery generations for converter-origin input hashes
+  creates fresh work without changing packing or the embedding model/policy.
+  The embed-delivery identity includes the chunker base generation; a base
+  chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.

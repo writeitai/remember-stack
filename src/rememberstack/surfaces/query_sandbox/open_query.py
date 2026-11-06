@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
+from rememberstack.model.client import ProcessingLayer
 from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.discovery import DiscoveryHit
 from rememberstack.surfaces.query_sandbox.discovery import QuerySpaceDescription
@@ -91,6 +92,7 @@ class OpenQueryFacade:
         max_rows: int | None = None,
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str | None = None,
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         """One sandboxed SQL statement; `QueryResult/v1` in every outcome."""
         return self._sql.query_sql(
@@ -99,6 +101,7 @@ class OpenQueryFacade:
             max_rows=max_rows,
             tier=tier,
             principal=principal or self._principal,
+            layers=layers,
         )
 
     def explain_sql(
@@ -108,6 +111,7 @@ class OpenQueryFacade:
         parameters: Sequence[object] = (),
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str | None = None,
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         """`EXPLAIN (FORMAT JSON)` without execution; same gates as query_sql."""
         # Explain is not a retrieval call; do not count toward the §8 denominator.
@@ -116,6 +120,7 @@ class OpenQueryFacade:
             parameters=parameters,
             tier=tier,
             principal=principal or self._principal,
+            layers=layers,
         )
 
     def describe_query_space(
@@ -156,6 +161,7 @@ class OpenQueryFacade:
         max_rows: int | None = None,
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str | None = None,
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         """Execute stored SQL through the same SQL executor with bound params.
 
@@ -186,6 +192,7 @@ class OpenQueryFacade:
             max_bytes=byte_cap,
             tier=tier,
             principal=principal or self._principal,
+            layers=layers,
         )
         # Design §4.4: saved_query = {query_id, namespace, name, version, query_hash}
         stamp: dict[str, str] = {

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-04
 **Binding design:** [`open_query_space_design.md`](../designs/open_query_space_design.md) §3.2, §3.3,
-§6, §9.1–§9.4, §11.1
+§6, §9.1–§9.4, delivery plan step 1 (formerly §11.1)
 **Migrations:** `p9_01_0022_memory_v1_query_space`,
 `p9_04_0025_coordinate_binding`
 **Manifest:** `src/rememberstack/spine/query_space/memory_v1_manifest.json`

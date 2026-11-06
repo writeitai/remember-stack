@@ -71,6 +71,9 @@ from rememberstack.spine.migrations.versions.p9_30_0051_mutable_fact_windows imp
 from rememberstack.spine.migrations.versions.p9_31_0052_multi_span_claim_evidence import (
     CLAIM_OCCURRENCES_LIVE_DDL,
 )
+from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+    MEMORY_V1_D140_VIEW_DDL,
+)
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -173,6 +176,7 @@ def _authored_parts() -> tuple[
         CLAIMS_CLOCK_COMMENT_DDL,
         FACT_WINDOWS_VIEW_DDL,
         CLAIM_OCCURRENCES_LIVE_DDL,
+        MEMORY_V1_D140_VIEW_DDL,
     ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):

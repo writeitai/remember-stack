@@ -45,7 +45,11 @@ def test_heading_metadata_reuses_the_canonical_parse_and_normalizes_nfkc() -> No
 
 
 def test_chunk_work_identity_tracks_the_metadata_only_blockizer_bump() -> None:
-    """The version bumps while the golden document's packed grid bytes stay locked."""
+    """The version bumps while the golden document's packed grid bytes stay locked.
+
+    D138's eligibility cut adds only the per-chunk eligibility flag: a fully
+    eligible document packs to exactly the grid it did before.
+    """
     from rememberstack.core import CHUNKER_VERSION
     from rememberstack.workers import E1_CHUNK_VERSION
 
@@ -69,13 +73,17 @@ def test_chunk_work_identity_tracks_the_metadata_only_blockizer_bump() -> None:
         ),
     )
     grid_bytes = json.dumps(
-        [chunk.model_dump(mode="json") for chunk in chunks],
+        [
+            chunk.model_dump(mode="json", exclude={"extraction_eligible"})
+            for chunk in chunks
+        ],
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
     assert hashlib.sha256(grid_bytes).hexdigest() == (
         "a8f22df40a4492ca66bc87b7b744d508c9dbcd72e386548bded0040b37f402ff"
     )
+    assert all(chunk.extraction_eligible for chunk in chunks)
 
 
 def test_offsets_slice_the_source_exactly() -> None:

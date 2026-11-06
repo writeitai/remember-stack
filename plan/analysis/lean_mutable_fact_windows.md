@@ -205,3 +205,42 @@ and stable application uniqueness are concrete implementation-contract gates.
 Grok also requested explicit D43 measurement semantics and supersession labels
 at the old rule/DDL sites. Known reporting periods are finite world windows;
 reaching their end does not invalidate belief in the historical figure.
+
+
+## Belief-time query coverage (2026-11-06)
+
+The owner accepted documenting the existing current-window limitation. This
+clarification changes no runtime behavior and does not withdraw the full
+`requirements_v3.md` knowledge-lifecycle requirement to reconstruct what was
+believed at a past instant.
+
+The current SQL in
+`src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py`,
+`facts_as_of`, applies
+belief membership (`ingested_at` / `invalidated_at`) and world-time predicates
+to the same current row. `src/rememberstack/spine/fact_graph_contract.py` gives graph reads the
+same window interpretation; their D140 document-period gate is separate.
+If an August record originally started in July, a September correction moving
+its start to June makes it match a June world-time query with an August belief
+instant. A correction can also remove a previous match. The effect changes
+historical result membership, not just the dates printed beside a result.
+
+`src/rememberstack/spine/apply_fact_decision.py` and
+`src/rememberstack/spine/fact_window_review.py` record before/after windows
+in ordinary decision payloads. Reading a known fact's transcript can explain
+those decisions. It is not equivalent to finding every fact that matched an
+earlier window across the collection: filtering on current windows may already
+exclude the identities whose old windows need inspection. Erasure may clear
+window values or scrub decision features; retained history is not an exemption
+from hard forget and cannot guarantee replay of every former state.
+
+Three choices must remain distinct. Documenting the existing read has no new
+storage, inference, ingestion-reuse or query cost. A derived historical read
+over permitted journal data could avoid another write path, but requires proof
+of complete update coverage, ordering, indexes, bounds and erasure behavior.
+A dedicated window-history table would add transactional writes, retained rows
+and deletion obligations while potentially simplifying historical lookup.
+Neither reconstruction design is selected or implemented by this clarification.
+Rejecting duplicated current-window authority does not prove historical
+reconstruction unnecessary. The binding design names the implementation gap;
+public docs describe the current result rather than promising a past snapshot.

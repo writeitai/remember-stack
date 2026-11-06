@@ -24,6 +24,8 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
+from rememberstack.core.source_origins import render_origin_label
+from rememberstack.model import DerivationRange
 from rememberstack.model.blocks import Block
 from rememberstack.model.chunks import ChunkForEmbedding
 from rememberstack.model.claims import EvidenceSpan
@@ -169,7 +171,12 @@ def build_passage_catalog(
     return PassageCatalog(passages=passages)
 
 
-def render_passage_catalog(*, catalog: PassageCatalog, document_md: str) -> str:
+def render_passage_catalog(
+    *,
+    catalog: PassageCatalog,
+    document_md: str,
+    derivation_ranges: tuple[DerivationRange, ...] = (),
+) -> str:
     """Render the request-local catalog the Claimify prompt may cite."""
     if not catalog.passages:
         return "(no source passages)"
@@ -182,7 +189,8 @@ def render_passage_catalog(*, catalog: PassageCatalog, document_md: str) -> str:
         eligibility = "origin-eligible" if passage.origin_eligible else "support-only"
         body = document_md[passage.char_start : passage.char_end]
         lines.append(
-            f"[{passage.label}] {passage.region.upper()} ({eligibility}):\n{body}"
+            f"[{passage.label}] {passage.region.upper()} ({eligibility}):\n"
+            f"{render_origin_label(start=passage.char_start, end=passage.char_end, ranges=derivation_ranges)}\n{body}"
         )
     return "\n\n".join(lines)
 

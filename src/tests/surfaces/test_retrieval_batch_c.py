@@ -23,6 +23,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
 from rememberstack.adapters import BoundedPostgresReadPool
 import rememberstack.adapters.bounded_postgres_read as bounded_read_module
 from rememberstack.adapters.testing import FakeModelProvider
@@ -41,7 +42,11 @@ from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import GraphQueries
@@ -49,8 +54,9 @@ from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
-from rememberstack.surfaces.query_engine import FACTS_CONTEXT_CANDIDATE_K
 from tests.database_reset import reset_database
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5a000000-0000-0000-0000-000000000001")
@@ -92,7 +98,7 @@ class _FactIndex:
         entity_ids: tuple[str, ...] = (),
         deadline: float | None = None,
         **_: object,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         self.requested_k.append(k)
         self.requested_entity_ids.append(entity_ids)
         self.requested_deadlines.append(deadline)
@@ -102,32 +108,38 @@ class _FactIndex:
             for kind, fact_id in self.fact_keys
             if allowed is None or (kind, fact_id) in allowed
         )[:k]
-        return tuple(
-            P1Nomination(
-                item_id=fact_id,
-                rank=rank,
-                score=1.0 / rank,
-                channel="semantic",
-                qualifier=kind,
-            )
-            for rank, (kind, fact_id) in enumerate(selected, start=1)
+        return P1SearchResult(
+            tuple(
+                P1Nomination(
+                    item_id=fact_id,
+                    rank=rank,
+                    score=1.0 / rank,
+                    channel="semantic",
+                    qualifier=kind,
+                )
+                for rank, (kind, fact_id) in enumerate(selected, start=1)
+            ),
+            account=_EXHAUSTED_ACCOUNT,
         )
 
-    def search_facts(self, *, k: int, **_: object) -> tuple[str, ...]:
+    def search_facts(self, *, k: int, **_: object) -> P1SearchIds:
         """Satisfy the legacy primitive port; D87 never calls this method."""
-        return tuple(fact_id for _kind, fact_id in self.fact_keys[:k])
+        return P1SearchIds(
+            tuple(fact_id for _kind, fact_id in self.fact_keys[:k]),
+            account=_EXHAUSTED_ACCOUNT,
+        )
 
-    def search_claims(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_claims(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
         return {}
@@ -144,14 +156,17 @@ class _ProfileRescueIndex(_FactIndex):
 
     def search_entities_scored(
         self, *, deadline: float | None = None, **_: object
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Return the profile whose prose matches the enumerative query."""
         self.profile_requests += 1
         self.profile_deadlines.append(deadline)
-        return (
-            P1Nomination(
-                item_id=str(self.entity_id), rank=1, score=0.9, channel="semantic"
+        return P1SearchResult(
+            (
+                P1Nomination(
+                    item_id=str(self.entity_id), rank=1, score=0.9, channel="semantic"
+                ),
             ),
+            account=_EXHAUSTED_ACCOUNT,
         )
 
     def search_facts_scored(
@@ -162,25 +177,28 @@ class _ProfileRescueIndex(_FactIndex):
         entity_ids: tuple[str, ...] = (),
         deadline: float | None = None,
         **arguments: object,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Keep global fact search empty so only profile rescue can find the fact."""
         if not entity_ids:
             self.requested_k.append(k)
             self.requested_deadlines.append(deadline)
-            return ()
-        return super().search_facts_scored(
-            k=k,
-            candidate_keys=candidate_keys,
-            entity_ids=entity_ids,
-            deadline=deadline,
-            **arguments,
+            return P1SearchResult((), account=_EXHAUSTED_ACCOUNT)
+        return P1SearchResult(
+            super().search_facts_scored(
+                k=k,
+                candidate_keys=candidate_keys,
+                entity_ids=entity_ids,
+                deadline=deadline,
+                **arguments,
+            ),
+            account=_EXHAUSTED_ACCOUNT,
         )
 
 
 class _UnavailableProfileIndex(_FactIndex):
     """Expose the ordinary fact channel while the additive profile channel is cut."""
 
-    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+    def search_entities_scored(self, **_: object) -> P1SearchResult:
         """Match the adapter contract during profile backfill or republishing."""
         raise P1SearchUnavailableError("entities semantic channel is not ready")
 
@@ -188,7 +206,7 @@ class _UnavailableProfileIndex(_FactIndex):
 class _UnavailableFactIndex(_FactIndex):
     """Fail the primary fact channel as it can be during a policy cut."""
 
-    def search_facts_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+    def search_facts_scored(self, **_: object) -> P1SearchResult:
         """Expose primary-channel unavailability through the P1 port contract."""
         raise P1SearchUnavailableError("relations semantic channel is not ready")
 
@@ -250,11 +268,22 @@ class _TimedOutReadPool:
         yield cast(Connection, None)  # pragma: no cover - generator typing only
 
     @contextmanager
-    def snapshot(self, *, deadline: float) -> Iterator[Connection]:
+    def snapshot(
+        self,
+        *,
+        deadline: float,
+        import_snapshot: str | None = None,
+        evaluated_at: datetime | None = None,
+    ) -> Iterator[Connection]:
         """Reject the outer compound snapshot at the same admission boundary."""
+        del import_snapshot, evaluated_at
         self.deadlines.append(deadline)
         raise SQLAlchemyTimeoutError("test retrieval admission expired")
         yield cast(Connection, None)  # pragma: no cover - generator typing only
+
+    def operation(self) -> None:
+        """No operation is ever admitted."""
+        return None
 
 
 class _Corpus:
@@ -727,6 +756,15 @@ class _Corpus:
                 "version": version_id,
             },
         )
+        # a ready version reads its current representation (D65), as the
+        # catalog records when the representation becomes ready
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id ="
+                " :representation WHERE version_id = :version"
+            ),
+            {"representation": representation_id, "version": version_id},
+        )
         connection.execute(
             text(
                 "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
@@ -785,6 +823,16 @@ class _Corpus:
                 "current": current,
                 "at": at,
             },
+        )
+        # the origin occurrence claim_catalog writes with every claim
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, evidence_spans)"
+                " SELECT deployment_id, chunk_id, claim_id, jsonb_build_array("
+                "jsonb_build_object('char_start', char_start, 'char_end', char_end))"
+                " FROM claims WHERE claim_id = :origin_claim"
+            ),
+            {"origin_claim": claim_id},
         )
         table = "relation_evidence" if kind == "relation" else "observation_evidence"
         fact_column = "relation_id" if kind == "relation" else "observation_id"
@@ -922,20 +970,26 @@ def test_retrieval_snapshot_reuses_one_read_only_mvcc_cut(corpus: _Corpus) -> No
             )
 
 
+@pytest.mark.parametrize(
+    "k,candidate_k,expected_depth",
+    [(2, None, 60), (50, None, 200), (100, None, 400), (2, 300, 300)],
+)
 def test_facts_context_returns_both_fact_kinds_with_both_stances(
-    corpus: _Corpus,
+    corpus: _Corpus, k: int, candidate_k: int | None, expected_depth: int
 ) -> None:
+    """Configured nomination depths preserve confirmed facts and both evidence stances."""
     engine, index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
     answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Where does Alice work and what does she prefer?",
-        k=2,
+        k=k,
+        candidate_k=candidate_k,
         evidence_per_fact=2,
     )
 
-    assert index.requested_k == [FACTS_CONTEXT_CANDIDATE_K + 1]
+    assert index.requested_k == [expected_depth + 1]
     assert tuple(fact.kind for fact in answer.facts) == ("relation", "observation")
     for fact in answer.facts:
         assert {
@@ -1259,11 +1313,15 @@ def test_default_facts_context_stops_graph_expansion_at_the_shared_deadline(
     """Sequential anchor traversals consult the 25-second operation deadline."""
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=())
-    observed_times = iter((0.0, 0.0, 0.0, 0.0, 0.0, 26.0))
 
     def operation_clock() -> float:
-        """Advance one shared monotonic clock across admission and execution."""
-        return next(observed_times)
+        """One shared clock: 26 s have passed once the first traversal ran.
+
+        Keyed to the traversal, not to a count of clock reads, so nested
+        reads that re-clamp their statement timeout (D142 §8.6) do not
+        shift it.
+        """
+        return 26.0 if graph.calls else 0.0
 
     monkeypatch.setattr(query_engine_module, "monotonic", operation_clock)
     monkeypatch.setattr(bounded_read_module, "monotonic", operation_clock)
@@ -1447,8 +1505,8 @@ def test_facts_context_uses_profile_text_to_rescue_list_queries(
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
     assert index.profile_requests == 1
     assert index.requested_k == [
-        FACTS_CONTEXT_CANDIDATE_K + 1,
-        FACTS_CONTEXT_CANDIDATE_K + 1,
+        DEFAULT_CONTEXT_CANDIDATES + 1,
+        DEFAULT_CONTEXT_CANDIDATES + 1,
     ]
     assert len(index.requested_deadlines) == 2
     assert index.requested_deadlines[0] == index.requested_deadlines[1]
@@ -1559,7 +1617,7 @@ def test_facts_context_keeps_evidence_separate_across_kind_id_collisions(
     ("k", "evidence_per_fact", "message"),
     (
         (0, 1, "k must"),
-        (31, 1, "k must"),
+        (101, 1, "k must"),
         (1, 0, "evidence_per_fact"),
         (1, 6, "evidence_per_fact"),
     ),

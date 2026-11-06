@@ -161,7 +161,9 @@ def _run(
 ) -> _Catalog:
     store = LocalFSObjectStore(root=tmp_path)
     blocks = blockize(document_md=source)
-    store.write_bytes(key=ObjectKey("doc/document.md"), content=source.encode())
+    store.write_bytes(
+        key=ObjectKey("doc/document.md"), content=source.encode(), storage_class="cold"
+    )
     store.write_bytes(
         key=ObjectKey("doc/blocks.json"),
         content=json.dumps(
@@ -171,6 +173,7 @@ def _run(
                 "blocks": [block.model_dump(mode="json") for block in blocks],
             }
         ).encode(),
+        storage_class="cold",
     )
     catalog = _Catalog()
     handler = StructureHandler(
@@ -430,7 +433,9 @@ def test_checker_bump_does_not_mint_a_new_generation_when_route_holds(
     source = "# A\n\nbody\n\n# B\n"
     store = LocalFSObjectStore(root=tmp_path)
     blocks = blockize(document_md=source)
-    store.write_bytes(key=ObjectKey("doc/document.md"), content=source.encode())
+    store.write_bytes(
+        key=ObjectKey("doc/document.md"), content=source.encode(), storage_class="cold"
+    )
     store.write_bytes(
         key=ObjectKey("doc/blocks.json"),
         content=json.dumps(
@@ -440,6 +445,7 @@ def test_checker_bump_does_not_mint_a_new_generation_when_route_holds(
                 "blocks": [block.model_dump(mode="json") for block in blocks],
             }
         ).encode(),
+        storage_class="cold",
     )
     catalog = _Catalog()
     summary_marker = {"value": "first"}
@@ -534,7 +540,9 @@ def test_stale_blocks_sidecar_reblockizes_instead_of_dead_lettering(
         }
         for block in blockize(document_md=source)
     ]
-    store.write_bytes(key=ObjectKey("doc/document.md"), content=source.encode())
+    store.write_bytes(
+        key=ObjectKey("doc/document.md"), content=source.encode(), storage_class="cold"
+    )
     store.write_bytes(
         key=ObjectKey("doc/blocks.json"),
         content=json.dumps(
@@ -544,6 +552,7 @@ def test_stale_blocks_sidecar_reblockizes_instead_of_dead_lettering(
                 "blocks": legacy_blocks,
             }
         ).encode(),
+        storage_class="cold",
     )
     catalog = _Catalog()
     StructureHandler(
@@ -559,3 +568,35 @@ def test_stale_blocks_sidecar_reblockizes_instead_of_dead_lettering(
     generation = catalog.generations[-1]
     assert generation.route_tag is StructureRouteTag.PARSER
     assert [section.title for section in generation.sections[1:]] == ["A", "B"]
+
+
+def test_persisted_sections_carry_keys_hashes_and_duplicate_key_warnings(
+    tmp_path: Path,
+) -> None:
+    """D140 §4: keys and both content hashes land on every persisted section."""
+    source = "# A {#a}\n\nbody\n\n# B {#a}\n\nbody\n"
+    catalog = _run(tmp_path=tmp_path, provider=None, source=source)
+    record = catalog.generations[-1]
+    assert [(s.title, s.section_key) for s in record.sections[1:]] == [
+        ("A", "a"),
+        ("B", None),
+    ]
+    assert all(
+        section.own_content_hash is not None
+        and section.subtree_content_hash is not None
+        for section in record.sections
+    )
+    sidecar = json.loads(
+        LocalFSObjectStore(root=tmp_path).read_bytes(
+            key=ObjectKey(record.pageindex_uri)
+        )
+    )
+    assert sidecar["warnings"] == [
+        {
+            "kind": "duplicate_section_key",
+            "section_key": "a",
+            "node_path": "0.1",
+            "kept_node_path": "0.0",
+        }
+    ]
+    assert sidecar["sections"][1]["section_key"] == "a"

@@ -7,6 +7,7 @@ from datetime import UTC
 from io import StringIO
 import json
 from typing import Any
+from unittest.mock import MagicMock
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -22,6 +23,8 @@ from remember.models import Freshness
 from remember.models import Grain
 from rememberstack.surfaces.http_api import _spend_gated_route
 from rememberstack.surfaces.http_api import build_api
+from rememberstack.surfaces.operation_executor import OperationExecutor
+from rememberstack.surfaces.operation_surface import OperationSurface
 
 _DEPLOYMENT_ID = UUID("11111111-1111-1111-1111-111111111111")
 _CHUNK_ID = UUID("22222222-2222-2222-2222-222222222222")
@@ -319,3 +322,19 @@ def test_query_engine_adjacent_chunks_missing_target_returns_unknown_entity() ->
     assert result.negative is not None
     assert result.negative.kind == NegativeKind.UNKNOWN_ENTITY
     assert "does not exist or is not visible" in result.negative.explanation
+
+
+def test_operation_surface_adjacent_chunks_delegates_to_query_engine() -> None:
+    """OperationSurface.adjacent_chunks passes call through OperationExecutor to QueryEngine."""
+    mock_engine = MagicMock()
+    mock_envelope = MagicMock()
+    mock_engine.adjacent_chunks.return_value = mock_envelope
+    executor = OperationExecutor(query_engine=mock_engine)
+    surface = OperationSurface(
+        registry=MagicMock(), executor=executor, deployment_id=_DEPLOYMENT_ID
+    )
+    result = surface.adjacent_chunks(chunk_id=_CHUNK_ID, window=2)
+    assert result is mock_envelope
+    mock_engine.adjacent_chunks.assert_called_once_with(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=_CHUNK_ID, window=2
+    )

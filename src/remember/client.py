@@ -33,9 +33,11 @@ from remember.connection import Connection
 from remember.connection import EngineRoute
 from remember.connection import resolve_connection
 from remember.errors import AccountApiUnavailable
+from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
+from remember.http_routes import is_read_route
 from remember.issuer import fetch_issuer_metadata
 from remember.issuer import IssuerError
 from remember.issuer import send_same_origin
@@ -49,14 +51,35 @@ from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DeploymentBuildInfo
+from remember.models import DOCUMENT_REFERENCES_DEFAULT_K
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
+from remember.models import EffectivePeriodInput
+from remember.models import EffectivePeriodsRequest
+from remember.models import EffectivePeriodsSet
+from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
+from remember.models import HistoryReadTime
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
+from remember.models import ProcessingLayerStates
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
+from remember.models import ReadTime
+from remember.models import ReferenceGenerations
+from remember.models import ReferenceInput
+from remember.models import ReferenceKind
+from remember.models import ReferencesSet
+from remember.models import SearchRequest
+from remember.models import SECTION_HISTORY_DEFAULT_K
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
@@ -191,12 +214,23 @@ class MemoryClient:
         )
 
     def run_operation(
-        self, *, name: str, arguments: Mapping[str, object] | None = None
+        self,
+        *,
+        name: str,
+        arguments: Mapping[str, object] | None = None,
+        layers: Sequence[str] | None = None,
     ) -> Envelope | ContextBundleV2:
-        """Run one assured operation and validate its exact wire contract."""
+        """Run one assured operation and validate its exact wire contract.
+
+        ``layers`` (D143) narrows the processing layers the operation may read:
+        any of ``sources``, ``claims``, ``facts``; default every layer the
+        deployment serves.
+        """
         path = f"/operations/{quote(name, safe='')}"
         endpoint = f"POST {path}"
-        payload = self._json("POST", path, json_body=dict(arguments or {}))
+        payload = self._json(
+            "POST", path, params=_layer_params(layers), json_body=dict(arguments or {})
+        )
         if isinstance(payload, dict) and payload.get("contract") == "ContextBundle/v2":
             return _validated(ContextBundleV2, payload, endpoint=endpoint)
         return _validated(Envelope, payload, endpoint=endpoint)
@@ -207,14 +241,20 @@ class MemoryClient:
         sql: str,
         parameters: list[object] | tuple[object, ...] = (),
         max_rows: int | None = None,
+        layers: Sequence[str] | None = None,
     ) -> dict[str, object]:
-        """Run one sandboxed SQL statement; returns QueryResult/v1 as a dict."""
+        """Run one sandboxed SQL statement; returns QueryResult/v1 as a dict.
+
+        ``layers`` (D143) limits which processing layers' views it may read.
+        """
         body: dict[str, object] = {"sql": sql, "parameters": list(parameters)}
         if max_rows is not None:
             body["max_rows"] = max_rows
         return _validated_dict(
             QueryResult,
-            self._json("POST", "/query/sql", json_body=body),
+            self._json(
+                "POST", "/query/sql", params=_layer_params(layers), json_body=body
+            ),
             endpoint="POST /query/sql",
         )
 
@@ -240,6 +280,8 @@ class MemoryClient:
         self,
         query: str,
         *,
+        k: int | None = None,
+        candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
         hops: int | None = None,
         predicate: str | None = None,
@@ -247,6 +289,10 @@ class MemoryClient:
     ) -> Envelope:
         """Run the assured facts_context operation."""
         args: dict[str, object] = {"query": query}
+        if k is not None:
+            args["k"] = k
+        if candidate_k is not None:
+            args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
         if hops is not None:
@@ -260,20 +306,55 @@ class MemoryClient:
         return res
 
     def combined_context(
-        self, query: str, *, time: Mapping[str, object] | None = None
+        self,
+        query: str,
+        *,
+        k: int | None = None,
+        candidate_k: int | None = None,
+        time: Mapping[str, object] | None = None,
+        layers: Sequence[str] | None = None,
     ) -> ContextBundleV2:
-        """Run the assured combined_context operation."""
+        """Run the assured combined_context operation.
+
+        ``layers`` (D143) narrows the layers it reads; a side with none of its
+        layers admitted comes back empty with a ``boundary`` negative.
+        """
         args: dict[str, object] = {"query": query}
+        if k is not None:
+            args["k"] = k
+        if candidate_k is not None:
+            args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
-        res = self.run_operation(name="combined_context", arguments=args)
+        res = self.run_operation(name="combined_context", arguments=args, layers=layers)
         assert isinstance(res, ContextBundleV2)
         return res
 
-    def claims_and_sources_context(self, query: str) -> Envelope:
-        """Run the assured claims_and_sources_context operation."""
+    def claims_and_sources_context(
+        self,
+        query: str,
+        *,
+        k: int | None = None,
+        candidate_k: int | None = None,
+        time: Mapping[str, object] | None = None,
+        layers: Sequence[str] | None = None,
+    ) -> Envelope:
+        """Run the assured claims_and_sources_context operation.
+
+        ``time`` (D140) reads the text in force for the scope (default
+        current), e.g. ``{"mode": "at", "at": "2026-02-01T00:00:00Z"}``.
+        ``layers`` (D143) narrows the channels: ``["sources"]`` answers from
+        source passages only.
+        """
+        args: dict[str, object] = {"query": query}
+        if k is not None:
+            args["k"] = k
+        if candidate_k is not None:
+            args["candidate_k"] = candidate_k
+        if time is not None:
+            args["time"] = dict(time)
         res = self.run_operation(
-            name="claims_and_sources_context", arguments={"query": query}
+            name="claims_and_sources_context", arguments=args, layers=layers
         )
         assert isinstance(res, Envelope)
         return res
@@ -285,7 +366,11 @@ class MemoryClient:
         return res
 
     def explain_sql(
-        self, *, sql: str, parameters: list[object] | tuple[object, ...] = ()
+        self,
+        *,
+        sql: str,
+        parameters: list[object] | tuple[object, ...] = (),
+        layers: Sequence[str] | None = None,
     ) -> dict[str, object]:
         """EXPLAIN one SQL statement without executing it."""
         return _validated_dict(
@@ -293,6 +378,7 @@ class MemoryClient:
             self._json(
                 "POST",
                 "/query/sql/explain",
+                params=_layer_params(layers),
                 json_body={"sql": sql, "parameters": list(parameters)},
             ),
             endpoint="POST /query/sql/explain",
@@ -366,6 +452,7 @@ class MemoryClient:
         parameters: list[object] | tuple[object, ...] = (),
         version: int | None = None,
         max_rows: int | None = None,
+        layers: Sequence[str] | None = None,
     ) -> dict[str, object]:
         """Execute one active saved query; returns QueryResult/v1 as a dict."""
         namespace_path = _saved_query_path_segment(value=namespace, field="namespace")
@@ -378,15 +465,24 @@ class MemoryClient:
         path = f"/query/saved/{namespace_path}/{name_path}/run"
         endpoint = f"POST {path}"
         return _validated_dict(
-            QueryResult, self._json("POST", path, json_body=body), endpoint=endpoint
+            QueryResult,
+            self._json("POST", path, params=_layer_params(layers), json_body=body),
+            endpoint=endpoint,
         )
 
-    def call_open_query(self, *, name: str, arguments: Mapping[str, object]) -> object:
+    def call_open_query(
+        self,
+        *,
+        name: str,
+        arguments: Mapping[str, object],
+        layers: Sequence[str] | None = None,
+    ) -> object:
         """Dispatch one open-query infrastructure tool name through the HTTP API.
 
         Used by remote MCP so local and remote tools/list/call stay aligned
         without duplicating route knowledge in the transport loop. Arguments
         are validated strictly (same rules as local MCP) before the HTTP call.
+        ``layers`` (D143) narrows the layers an executing tool may read.
         """
         if name not in OPEN_QUERY_TOOL_NAMES:
             raise ValueError(f"unknown open-query tool {name!r}")
@@ -396,11 +492,13 @@ class MemoryClient:
                 sql=str(args["sql"]),
                 parameters=list(_sdk_param_list(args.get("parameters"))),
                 max_rows=_optional_sdk_int(args.get("max_rows")),
+                layers=layers,
             )
         if name == "explain_sql":
             return self.explain_sql(
                 sql=str(args["sql"]),
                 parameters=list(_sdk_param_list(args.get("parameters"))),
+                layers=layers,
             )
         if name == "describe_query_space":
             return self.describe_query_space(
@@ -438,6 +536,7 @@ class MemoryClient:
                 version=_optional_sdk_int(args.get("version")),
                 parameters=list(_sdk_param_list(args.get("parameters"))),
                 max_rows=_optional_sdk_int(args.get("max_rows")),
+                layers=layers,
             )
         raise ValueError(f"unknown open-query tool {name!r}")
 
@@ -507,8 +606,34 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
-        """Search source claims; the returned envelope remains evidence grain."""
+        """Search source claims; the returned envelope remains evidence grain.
+
+        ``documents`` (D134) keeps only claims found in a document version
+        matching the filters ``search_documents`` takes; each returned claim
+        still cites its origin. ``time`` (D140, default current) reads only
+        text in force for the scope; a claim of a document with declared
+        effective periods returns its occurrence in each selected version.
+        Either travels in a body, so such a search uses ``POST /search/claims``.
+        """
+        if documents is not None or time is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/claims",
+                    json_body=SearchRequest(
+                        query=query,
+                        k=k,
+                        channel=channel,
+                        documents=documents,
+                        time=time,
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/claims",
+            )
         return _validated(
             Envelope,
             self._json(
@@ -525,8 +650,32 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
-        """Search live source passages as separately typed evidence."""
+        """Search live source passages as separately typed evidence.
+
+        ``documents`` (D134) keeps only chunks whose document version matches
+        the filters ``search_documents`` takes. ``time`` (D140, default
+        current) keeps only chunks of versions in force for the scope. Either
+        travels in a body, so such a search uses ``POST /search/chunks``.
+        """
+        if documents is not None or time is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/chunks",
+                    json_body=SearchRequest(
+                        query=query,
+                        k=k,
+                        channel=channel,
+                        documents=documents,
+                        time=time,
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/chunks",
+            )
         return _validated(
             Envelope,
             self._json(
@@ -650,6 +799,15 @@ class MemoryClient:
             endpoint="GET /deployment",
         )
 
+    def processing_layers(self) -> ProcessingLayerStates:
+        """Which processing layers the deployment serves (D143): each of claims
+        and facts is ``enabled``, ``backfilling`` or ``disabled``."""
+        return _validated(
+            ProcessingLayerStates,
+            self._json("GET", "/processing-layers"),
+            endpoint="GET /processing-layers",
+        )
+
     def pipeline_readiness(
         self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
     ) -> PipelineReadinessReport:
@@ -731,11 +889,27 @@ class MemoryClient:
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
         ``source_kind`` and ``source_ref`` are a pair. Reusing them creates a
         new immutable version of the same document when the bytes change.
+        ``source_path`` records where the file lives at its source (a folder
+        path or URL) with the version's metadata; sending the same bytes
+        again under a new name, title or path records that name too.
+
+        ``version_key`` is your immutable name for this version, unique within
+        the document: a new key always creates a version (even for bytes equal
+        to the latest), and an existing key is accepted only when re-sending
+        the latest version's bytes (``MemoryApiError`` 409 otherwise).
+        ``effective_from`` and optional ``effective_until`` declare when this
+        version's text is in force (UTC, half-open); without an end it lasts
+        until the next declared start. Both need ``source_kind``/``source_ref``
+        and periods need ``versioning_mode="snapshot"``.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -743,16 +917,32 @@ class MemoryClient:
             source_modified_at is not None
             or source_version_ref is not None
             or versioning_mode != "snapshot"
+            or version_key is not None
+            or effective_from is not None
+            or effective_until is not None
         ):
             raise ValueError(
-                "source timestamps, revisions, and living mode require"
-                " source_kind/source_ref"
+                "source timestamps, revisions, living mode, version keys and"
+                " effective periods require source_kind/source_ref"
             )
-        if source_modified_at is not None and (
-            source_modified_at.tzinfo is None
-            or source_modified_at.utcoffset() != timedelta(0)
+        for name, instant in (
+            ("source_modified_at", source_modified_at),
+            ("effective_from", effective_from),
+            ("effective_until", effective_until),
         ):
-            raise ValueError("source_modified_at must be timezone-aware UTC")
+            if instant is not None and (
+                instant.tzinfo is None or instant.utcoffset() != timedelta(0)
+            ):
+                raise ValueError(f"{name} must be timezone-aware UTC")
+        if effective_until is not None and effective_from is None:
+            raise ValueError("effective_until requires effective_from")
+        if effective_from is not None:
+            if versioning_mode != "snapshot":
+                raise ValueError("effective periods require versioning_mode='snapshot'")
+            # the same validation the engine applies, before any request
+            EffectivePeriodInput(
+                effective_from=effective_from, effective_until=effective_until
+            )
 
         # An explicit mime always wins. Otherwise a file path's type comes
         # from the real path name (an overridden filename does not change
@@ -790,6 +980,13 @@ class MemoryClient:
                 source_modified_at.isoformat() if source_modified_at else None,
             ),
             ("source_version_ref", source_version_ref),
+            ("source_path", source_path),
+            ("version_key", version_key),
+            ("effective_from", effective_from.isoformat() if effective_from else None),
+            (
+                "effective_until",
+                effective_until.isoformat() if effective_until else None,
+            ),
         ):
             if value is not None:
                 params[key] = value
@@ -829,6 +1026,200 @@ class MemoryClient:
             endpoint="GET /documents",
         )
 
+    def search_documents(
+        self,
+        query: str | None = None,
+        *,
+        filters: DocumentSearchFilters | None = None,
+        versions: Literal["current", "all"] = "current",
+        k: int = 20,
+        cursor: str | None = None,
+        time: ReadTime | None = None,
+    ) -> DocumentSearchPage:
+        """Find documents by name, general metadata and content (D134).
+
+        ``query`` matches every name a document was stored under (file name,
+        title, source path, old names after a rename; partial and misspelled
+        names too) and its text. ``filters`` narrow by family, authors,
+        recipients, date ranges, language, thread and doc ids. Without a
+        ``query`` results are newest first and ``cursor`` pages them; with one
+        they are ranked and not paged. ``time`` (D140) picks which editions of
+        a document with declared effective periods are candidates (default
+        current). Invalid combinations raise
+        ``pydantic.ValidationError`` before any request is sent.
+        """
+        return self.search_documents_request(
+            request=DocumentSearchRequest(
+                query=query,
+                filters=filters if filters is not None else DocumentSearchFilters(),
+                versions=versions,
+                time=time,
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def search_documents_request(
+        self, *, request: DocumentSearchRequest
+    ) -> DocumentSearchPage:
+        """Send one prepared :class:`DocumentSearchRequest` (``POST /documents/search``)."""
+        body = request.model_dump(mode="json", exclude_defaults=True)
+        if request.time is not None:
+            # Discriminators remain required even when their tag is a default.
+            body["time"] = request.time.model_dump(mode="json")
+        return _validated(
+            DocumentSearchPage,
+            self._json("POST", "/documents/search", json_body=body),
+            endpoint="POST /documents/search",
+        )
+
+    def section_history(
+        self,
+        *,
+        doc_id: UUID | str,
+        section_key: str,
+        time: ReadTime | None = None,
+        k: int = SECTION_HISTORY_DEFAULT_K,
+        cursor: str | None = None,
+    ) -> SectionHistoryPage:
+        """Follow one keyed section across a document's versions (D140 §6.2).
+
+        ``time`` selects the versions (default: history). Each row is a
+        version with its in-force intervals and the section it holds under
+        ``section_key`` — or ``absent``, ``not_indexed`` or ``processing``.
+        An unknown or deleted ``doc_id`` raises ``MemoryApiError`` with
+        ``status_code`` 404.
+        """
+        return self.section_history_request(
+            request=SectionHistoryRequest(
+                doc_id=UUID(str(doc_id)),
+                section_key=section_key,
+                time=time if time is not None else HistoryReadTime(),
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def section_history_request(
+        self, *, request: SectionHistoryRequest
+    ) -> SectionHistoryPage:
+        """Send one prepared :class:`SectionHistoryRequest`."""
+        time = request.time
+        params: dict[str, str | int] = {"mode": time.mode, "k": request.k}
+        if time.mode == "at":
+            params["at"] = time.at.isoformat()
+        elif time.mode == "overlap":
+            params["from"] = time.from_.isoformat()
+            params["to"] = time.to.isoformat()
+        if request.cursor is not None:
+            params["cursor"] = request.cursor
+        key = quote(request.section_key, safe="")
+        return _validated(
+            SectionHistoryPage,
+            self._json(
+                "GET",
+                f"/documents/{request.doc_id}/sections/{key}/history",
+                params=params,
+            ),
+            endpoint="GET /documents/{doc_id}/sections/{section_key}/history",
+        )
+
+    def set_references(
+        self,
+        *,
+        doc_id: UUID | str,
+        version_id: UUID | str,
+        references: Sequence[ReferenceInput],
+    ) -> ReferencesSet:
+        """Replace one version's supplied references (D140 §6.3).
+
+        ``references`` is the version's complete set, sent as NDJSON (one
+        reference per line, at most 64 MiB). The latest call wins: an equal
+        set is a no-op retry, a set equal to the active one cancels a newer
+        pending one, and any other set becomes a new pending generation that
+        the pipeline validates and activates — see
+        :meth:`reference_generations`. An unknown ``from_section_key``
+        rejects the whole set and the active set stays. Raises
+        ``MemoryApiError`` 404 for an unknown document or version, 413 for
+        an oversized set and 422 for an invalid line.
+        """
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        body = "".join(
+            reference.model_dump_json(exclude_none=True) + "\n"
+            for reference in references
+        ).encode("utf-8")
+        return _validated(
+            ReferencesSet,
+            self._json(
+                "PUT",
+                f"/documents/{document}/versions/{version}/references",
+                content=body,
+                headers={"Content-Type": "application/x-ndjson"},
+            ),
+            endpoint="PUT /documents/{doc_id}/versions/{version_id}/references",
+        )
+
+    def reference_generations(
+        self, *, doc_id: UUID | str, version_id: UUID | str
+    ) -> ReferenceGenerations:
+        """One version's reference generations with statuses and errors (D140)."""
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        return _validated(
+            ReferenceGenerations,
+            self._json("GET", f"/documents/{document}/versions/{version}/references"),
+            endpoint="GET /documents/{doc_id}/versions/{version_id}/references",
+        )
+
+    def document_references(
+        self,
+        *,
+        chunk_id: UUID | str | None = None,
+        doc_id: UUID | str | None = None,
+        section_key: str | None = None,
+        direction: Literal["outgoing", "incoming", "both"] = "both",
+        kinds: Sequence[ReferenceKind] | None = None,
+        time: ReadTime | None = None,
+        k: int = DOCUMENT_REFERENCES_DEFAULT_K,
+        cursor: str | None = None,
+    ) -> DocumentReferencesPage:
+        """What a passage, section or document references, and what references it.
+
+        Give ``chunk_id`` or ``doc_id`` (with an optional ``section_key``).
+        Rows resolve each reference against the target versions in force
+        during each source window (D140 §6.2). An unknown or deleted document
+        or chunk raises ``MemoryApiError`` 404.
+        """
+        return self.document_references_request(
+            request=DocumentReferencesRequest(
+                chunk_id=None if chunk_id is None else UUID(str(chunk_id)),
+                doc_id=None if doc_id is None else UUID(str(doc_id)),
+                section_key=section_key,
+                direction=direction,
+                kinds=None if kinds is None else tuple(kinds),
+                time=time,
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def document_references_request(
+        self, *, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Send one prepared :class:`DocumentReferencesRequest`."""
+        return _validated(
+            DocumentReferencesPage,
+            self._json(
+                "POST",
+                "/documents/references",
+                json_body=request.model_dump(
+                    mode="json", by_alias=True, exclude_none=True
+                ),
+            ),
+            endpoint="POST /documents/references",
+        )
+
     def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:
         """Remove one document from the live memory.
 
@@ -842,6 +1233,50 @@ class MemoryClient:
             DocumentDeletion,
             self._json("DELETE", f"/documents/{document}"),
             endpoint="DELETE /documents/{doc_id}",
+        )
+
+    def set_effective_periods(
+        self,
+        *,
+        doc_id: UUID | str,
+        version_id: UUID | str,
+        periods: Sequence[EffectivePeriodInput],
+    ) -> EffectivePeriodsSet:
+        """Replace the periods during which one version's text is in force (D140).
+
+        ``periods`` is the version's complete set: declarations not listed are
+        retracted and new ones declared, atomically. An empty sequence leaves
+        the version with no in-force period while the document keeps its
+        declared effective time; :meth:`clear_effective_time` leaves it. A
+        start already declared for another version of the document raises
+        ``MemoryApiError`` 409, a ``living`` document 422, an unknown document
+        or version 404.
+        """
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        body = EffectivePeriodsRequest(periods=tuple(periods))
+        return _validated(
+            EffectivePeriodsSet,
+            self._json(
+                "PUT",
+                f"/documents/{document}/versions/{version}/effective-periods",
+                json_body=body.model_dump(mode="json"),
+            ),
+            endpoint="PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
+        )
+
+    def clear_effective_time(self, *, doc_id: UUID | str) -> EffectiveTimeCleared:
+        """Return a document to "the newest processed version is current" (D140).
+
+        Retracts every declared period of the document and records the change,
+        so reads pinned to an earlier instant still see what they saw. An
+        unknown or deleted ``doc_id`` raises ``MemoryApiError`` 404.
+        """
+        document = UUID(str(doc_id))
+        return _validated(
+            EffectiveTimeCleared,
+            self._json("DELETE", f"/documents/{document}/effective-periods"),
+            endpoint="DELETE /documents/{doc_id}/effective-periods",
         )
 
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
@@ -892,14 +1327,11 @@ class MemoryClient:
         content: bytes | None = None,
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        """Send one engine request, re-resolving a moved deployment once.
+        """Send once; only classified reads may replay after a changed host.
 
-        Only a key-routed client re-resolves (D136 §8.3), and retries once when
-        the deployment URL changed. A read (``GET``/``HEAD``) retries after any
-        network failure, a ``421``, or a ``404`` that is not the engine's error
-        envelope. Any other request retries only after a failure that happens
-        before the request reaches the server — a connect error, a connect
-        timeout, or a ``421`` — so a write is never sent twice.
+        Writes surface their original failure even for connection errors or
+        421. Movement refreshes their mapping only for the next operation.
+        Timeouts never trigger discovery or replay.
         """
         merged: dict[str, str] = dict(headers or {})
         if self._route is None:
@@ -914,7 +1346,7 @@ class MemoryClient:
                 )
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
-        read = method in ("GET", "HEAD")
+        read = is_read_route(method=method, path=path)
         for attempt in (1, 2):
             base, authorization = self._route.target()
             if authorization is not None:
@@ -929,21 +1361,21 @@ class MemoryClient:
                     content=content,
                     headers=merged,
                 )
-            except (httpx.NetworkError, httpx.ConnectTimeout) as error:
-                unsent = isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
-                if attempt == 1 and (read or unsent) and self._route.re_resolve():
-                    continue
+            except httpx.TimeoutException as error:
+                raise MemoryApiError(status_code=0, detail=str(error)) from error
+            except httpx.NetworkError as error:
+                if attempt == 1:
+                    changed = self._route.re_resolve(previous_url=base)
+                    if read and changed:
+                        continue
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
-            if (
-                attempt == 1
-                and (response.status_code == 421 or (read and _looks_moved(response)))
-                and self._route.key_routed
-                and self._route.re_resolve()
-            ):
-                response.close()
-                continue
+            if attempt == 1 and _looks_moved(response) and self._route.key_routed:
+                changed = self._route.re_resolve(previous_url=base)
+                if read and changed:
+                    response.close()
+                    continue
             return response
         raise AssertionError("unreachable")  # pragma: no cover
 
@@ -971,6 +1403,8 @@ class MemoryClient:
         if not response.is_success:
             detail = response.text
             code: str | None = None
+            retryable: bool | None = None
+            request_id: str | None = None
             try:
                 body = response.json()
             except ValueError:
@@ -986,9 +1420,21 @@ class MemoryClient:
                         else None
                     )
                     if structured is not None:
-                        code, detail = structured
+                        code, detail, retryable, request_id = structured
                     elif path.startswith("/query/"):
                         detail = "deployment API returned a malformed structured error"
+                    elif public_detail.get("code") == "layer_unavailable":
+                        raise LayerUnavailable(
+                            detail=str(public_detail.get("message") or ""),
+                            layer=str(public_detail.get("layer") or ""),
+                        )
+                    elif public_detail.get("code") == "invalid_parameter" and (
+                        isinstance(public_detail.get("message"), str)
+                    ):
+                        # The structured 422 of operation arguments and of a
+                        # D143 layers selection keeps its code.
+                        code = "invalid_parameter"
+                        detail = str(public_detail["message"])
                     else:
                         detail = str(public_detail)
                 else:
@@ -996,7 +1442,11 @@ class MemoryClient:
             elif isinstance(body, dict) and "detail" in body:
                 detail = "deployment API returned a malformed error envelope"
             raise MemoryApiError(
-                status_code=response.status_code, detail=detail, code=code
+                status_code=response.status_code,
+                detail=detail,
+                code=code,
+                retryable=retryable,
+                request_id=request_id,
             )
         try:
             return response.json()
@@ -1005,6 +1455,20 @@ class MemoryClient:
                 status_code=response.status_code,
                 detail=f"{method} {path} returned invalid JSON",
             ) from error
+
+
+def _layer_params(layers: Sequence[str] | None) -> tuple[tuple[str, str], ...] | None:
+    """The D143 ``layers`` selection as repeated query parameters, or none."""
+    if layers is None:
+        return None
+    if isinstance(layers, str) or not layers:
+        # Omitting ``layers`` reads every served layer; an empty selection is
+        # not that request, so it is refused rather than widened.
+        raise ValueError(
+            "layers must name at least one of sources, claims, facts; omit it"
+            " to read every layer the deployment serves"
+        )
+    return tuple(("layers", str(layer)) for layer in layers)
 
 
 def _optional_sdk_int(value: object) -> int | None:
@@ -1040,9 +1504,13 @@ def _saved_query_path_segment(*, value: str, field: str) -> str:
 
 def _structured_query_error(
     *, detail: dict[object, object], status_code: int
-) -> tuple[str, str] | None:
-    """Accept only the complete public query-error shape at its bound HTTP status."""
-    if set(detail) != {"code", "message"}:
+) -> tuple[str, str, bool | None, str | None] | None:
+    """Accept public query errors and correctly typed optional diagnostics."""
+    if (
+        not {"code", "message"}
+        <= set(detail)
+        <= {"code", "message", "retryable", "request_id"}
+    ):
         return None
     code = detail.get("code")
     message = detail.get("message")
@@ -1050,7 +1518,18 @@ def _structured_query_error(
         return None
     if _QUERY_ERROR_HTTP_STATUS.get(code) != status_code:
         return None
-    return code, message
+    retryable = detail.get("retryable")
+    request_id = detail.get("request_id")
+    if "retryable" in detail and not isinstance(retryable, bool):
+        return None
+    if "request_id" in detail and not isinstance(request_id, str):
+        return None
+    return (
+        code,
+        message,
+        retryable if isinstance(retryable, bool) else None,
+        request_id if isinstance(request_id, str) else None,
+    )
 
 
 def _validated_list(
@@ -1124,6 +1603,10 @@ class Client(MemoryClient):
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1136,6 +1619,10 @@ class Client(MemoryClient):
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            source_path=source_path,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def __enter__(self) -> Self:

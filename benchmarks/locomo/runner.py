@@ -64,10 +64,8 @@ from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
-from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_DOCUMENT_BINDING_GENERATION
-from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
@@ -98,6 +96,7 @@ from remember.client import MemoryClient
 from remember.errors import MemoryApiError
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
+from remember.retrieval import ContextRetrievalBudget
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.vertex import VertexAccessError
 from rememberstack.model import ContextBundleV2 as RememberstackContextBundleV2
@@ -175,9 +174,11 @@ def prepare_run(
     tier: str,
     output: Path,
     protocol: ProtocolKey = DEFAULT_PROTOCOL_KEY,
+    retrieval_budget: ContextRetrievalBudget | None = None,
 ) -> RunConfiguration:
     """Validate, fingerprint, and render a local run without remote calls."""
     selected_protocol = protocol_for_key(protocol)
+    resolved_budget = (retrieval_budget or ContextRetrievalBudget()).resolved()
     dataset = load_dataset(dataset_path)
     manifest = load_manifest(tier)
     questions = validate_manifest(dataset=dataset, manifest=manifest)
@@ -210,7 +211,7 @@ def prepare_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
-        "api_timeout_seconds": API_TIMEOUT_SECONDS,
+        "api_timeout_seconds": selected_protocol.execution_profile.api_timeout_seconds,
         "knowledge_mode": "not_composed",
         "document_binding_generation": EXPECTED_DOCUMENT_BINDING_GENERATION,
         "answer_agent_model": selected_protocol.answer_agent_model,
@@ -218,6 +219,7 @@ def prepare_run(
             selected_protocol.answer_agent_reasoning_effort
         ),
         "answer_word_cap": selected_protocol.answer_word_cap,
+        "retrieval_budget": resolved_budget.model_dump(mode="json"),
         "judge_model": selected_protocol.judge_model,
         "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
@@ -234,6 +236,9 @@ def prepare_run(
         "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
         "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
     }
+    base["execution_profile"] = selected_protocol.execution_profile.model_dump(
+        mode="json"
+    )
     configuration = RunConfiguration(
         **base,
         prepared_at=datetime.now(timezone.utc),
@@ -265,11 +270,13 @@ def _readiness_matches_protocol(
     Model bindings come from the prepared protocol, so ingest-model variants
     check their own pins instead of the canonical module-global map.
     """
+    selected = protocol_for_name(protocol_name)
+    component_versions = selected.execution_profile.ingest_component_versions
     versions_ready = all(
         version.ready
         and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
         and {stage.stage: stage.component_version for stage in version.stages}
-        == dict(EXPECTED_INGEST_COMPONENT_VERSIONS)
+        == dict(component_versions)
         and all(
             stage.status in {"succeeded", "skipped"} and stage.finished_at is not None
             for stage in version.stages
@@ -294,14 +301,24 @@ def _readiness_matches_protocol(
         and capabilities_ready
         and readiness.document_binding_generation
         == EXPECTED_DOCUMENT_BINDING_GENERATION
-        and readiness.model_bindings
-        == dict(protocol_for_name(protocol_name).ingest_model_bindings)
+        and readiness.model_bindings == dict(selected.ingest_model_bindings)
         and repository_revision
         and readiness.build_revision == repository_revision
     )
 
 
 _PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
+
+
+def _readiness_fingerprint(*, readiness: PipelineReadinessReport) -> str:
+    """Compare serving identity while ignoring probe times and row ordering."""
+    identity = readiness.model_dump(mode="json")
+    identity["versions"] = sorted(
+        identity["versions"], key=lambda value: value["version_id"]
+    )
+    for capability in identity["capabilities"].values():
+        capability.pop("checked_at", None)
+    return _canonical_hash(identity)
 
 
 class ProviderPreflightError(BenchmarkRunError):
@@ -563,6 +580,7 @@ def answer_sample(
     p3_root: Path,
     client: MemoryClient,
     provider: ModelProviderPort,
+    checkpoint: Callable[[AnswerRecord], None] | None = None,
 ) -> tuple[AnswerRecord, ...]:
     """Retrieve and answer one isolated conversation's selected questions."""
     context = _load_run(run_dir=run_dir)
@@ -604,7 +622,9 @@ def answer_sample(
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
-    if prior_readiness is not None and prior_readiness != readiness:
+    if prior_readiness is not None and _readiness_fingerprint(
+        readiness=prior_readiness
+    ) != _readiness_fingerprint(readiness=readiness):
         raise ExecutionGuardError(
             "deployment readiness fingerprint changed after it was checkpointed"
         )
@@ -689,6 +709,7 @@ def answer_sample(
                         context.configuration.answer_reader_retry_budget
                     ),
                     answer_word_cap=context.configuration.answer_word_cap,
+                    retrieval_budget=context.configuration.retrieval_budget,
                     answer_schema=answer_schema,
                 )
             else:
@@ -723,6 +744,7 @@ def answer_sample(
                             context.configuration.answer_reader_retry_budget
                         ),
                         answer_word_cap=context.configuration.answer_word_cap,
+                        retrieval_budget=context.configuration.retrieval_budget,
                         answer_schema=answer_schema,
                         question_trace=question_trace,
                     )
@@ -735,6 +757,8 @@ def answer_sample(
                         )
             context.state.answers[question.item_id] = record
             _save_state(run_dir=run_dir, state=context.state)
+            if checkpoint is not None:
+                checkpoint(record)
     except ProviderInfrastructureError:
         _save_state(run_dir=run_dir, state=context.state)
         raise
@@ -754,6 +778,7 @@ def judge_sample(
     max_evaluator_cost_usd: Decimal,
     execute: bool,
     provider: ModelProviderPort,
+    checkpoint: Callable[[JudgeRecord], None] | None = None,
 ) -> tuple[JudgeRecord, ...]:
     """Judge one conversation's terminal answer records exactly once."""
     context = _load_run(run_dir=run_dir)
@@ -838,6 +863,8 @@ def judge_sample(
                         )
             context.state.judges[question.item_id] = judge
             _save_state(run_dir=run_dir, state=context.state)
+            if checkpoint is not None:
+                checkpoint(judge)
     except ProviderInfrastructureError:
         _save_state(run_dir=run_dir, state=context.state)
         raise
@@ -849,7 +876,7 @@ def judge_sample(
 
 def summarize_run(*, run_dir: Path) -> RunSummary:
     """Aggregate the full manifest; absent or failed records score zero."""
-    context = _load_run(run_dir=run_dir)
+    context = load_recorded_run(run_dir=run_dir)
     questions = context.questions
     doc_sessions = {
         record.doc_id: record.session_id for record in context.state.ingests.values()
@@ -960,7 +987,8 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
         tokens_out=sum(usage.tokens_out for usage in usages),
         evaluator_cost_usd=context.state.evaluator_cost_usd,
     )
-    _atomic_model(path=run_dir / _SUMMARY_FILE, value=summary)
+    if context.configuration.protocol_name == PROTOCOL_NAME:
+        _atomic_model(path=run_dir / _SUMMARY_FILE, value=summary)
     return summary
 
 
@@ -970,7 +998,7 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
         raise BenchmarkRunError("summarize requires at least one run directory")
     if len(run_dirs) == 1:
         return summarize_run(run_dir=run_dirs[0])
-    contexts = tuple(_load_run(run_dir=run_dir) for run_dir in run_dirs)
+    contexts = tuple(load_recorded_run(run_dir=run_dir) for run_dir in run_dirs)
     _require_merge_identity(run_dirs=run_dirs, contexts=contexts)
     recorded_samples = _require_disjoint_recorded_samples(
         run_dirs=run_dirs, contexts=contexts
@@ -1036,7 +1064,8 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
             "missing_sample_ids": missing_sample_ids,
         }
     )
-    _atomic_model(path=first_run / _SUMMARY_FILE, value=merged)
+    if contexts[0].configuration.protocol_name == PROTOCOL_NAME:
+        _atomic_model(path=first_run / _SUMMARY_FILE, value=merged)
     return merged
 
 
@@ -1172,7 +1201,27 @@ def run_protocol(*, run_dir: Path) -> LoCoMoProtocol:
     return protocol_for_name(configuration.protocol_name)
 
 
-def _load_run(*, run_dir: Path) -> _RunContext:
+def run_api_timeout_seconds(*, run_dir: Path) -> float:
+    """Use the transport budget saved in this run, not an ambient default."""
+    return RunConfiguration.model_validate_json(
+        (run_dir / _RUN_FILE).read_text(encoding="utf-8")
+    ).api_timeout_seconds
+
+
+def load_recorded_run(*, run_dir: Path) -> _RunContext:
+    """Load a finished run against its own recorded identity only.
+
+    Every check of :func:`_load_run` that compares the run with itself — the
+    recomputed protocol fingerprint, manifest, item, document and dataset
+    hashes, the rendered documents and the full state/identity
+    correspondence — runs; only the comparison with the *current* code's
+    protocol pins and adapter version is skipped, so a baseline produced by
+    another revision stays comparable (D142 LoCoMo gate).
+    """
+    return _load_run(run_dir=run_dir, current_pins=False)
+
+
+def _load_run(*, run_dir: Path, current_pins: bool = True) -> _RunContext:
     """Load every persisted boundary and reject protocol or state drift."""
     configuration = RunConfiguration.model_validate_json(
         (run_dir / _RUN_FILE).read_text(encoding="utf-8")
@@ -1195,6 +1244,7 @@ def _load_run(*, run_dir: Path) -> _RunContext:
         documents=documents,
         dataset=dataset,
         questions=questions,
+        current_pins=current_pins,
     )
     _validate_state(
         configuration=configuration,
@@ -1220,9 +1270,9 @@ def _validate_run(
     documents: tuple[PreparedDocument, ...],
     dataset: LoCoMoDataset,
     questions: tuple[LoCoMoQuestion, ...],
+    current_pins: bool = True,
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
-    selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
         raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v38")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
@@ -1235,7 +1285,7 @@ def _validate_run(
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
         raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v38")
-    if configuration.adapter_version != ADAPTER_VERSION:
+    if current_pins and configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
         raise BenchmarkRunError("prepared document manifest changed")
@@ -1281,39 +1331,56 @@ def _validate_run(
         "answer_schema_sha256": configuration.answer_schema_sha256,
         "judge_schema_sha256": configuration.judge_schema_sha256,
     }
+    if "retrieval_budget" in configuration.model_fields_set:
+        base["retrieval_budget"] = configuration.retrieval_budget.model_dump(
+            mode="json"
+        )
+    if configuration.execution_profile is not None:
+        base["execution_profile"] = configuration.execution_profile.model_dump(
+            mode="json"
+        )
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
-    current_pin = {
-        "answer_agent_model": selected_protocol.answer_agent_model,
-        "judge_model": selected_protocol.judge_model,
-        "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
-        "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
-        "max_agent_calls_per_question": (
-            selected_protocol.max_agent_calls_per_question
-        ),
-        "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
-        "api_timeout_seconds": API_TIMEOUT_SECONDS,
-        "answer_agent_reasoning_effort": (
-            selected_protocol.answer_agent_reasoning_effort
-        ),
-        "answer_word_cap": selected_protocol.answer_word_cap,
-        "answer_agent_temperature": selected_protocol.answer_agent_temperature,
-        "judge_temperature": selected_protocol.judge_temperature,
-        "judge_repetitions": selected_protocol.judge_repetitions,
-        "surface_manifest_hash": selected_protocol.surface_manifest_hash,
-        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
-        "answer_prompt_sha256": prompt_sha256(
-            template=selected_protocol.answer_prompt_template
-        ),
-        "judge_prompt_sha256": prompt_sha256(
-            template=selected_protocol.judge_prompt_template
-        ),
-        "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
-        "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
-    }
-    for field, expected in current_pin.items():
-        if getattr(configuration, field) != expected:
-            raise BenchmarkRunError(f"current {field} differs from prepared run")
+    if current_pins:
+        selected_protocol = protocol_for_name(configuration.protocol_name)
+        current_pin = {
+            "answer_agent_model": selected_protocol.answer_agent_model,
+            "judge_model": selected_protocol.judge_model,
+            "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
+            "max_tool_calls_per_question": (
+                selected_protocol.max_tool_calls_per_question
+            ),
+            "max_agent_calls_per_question": (
+                selected_protocol.max_agent_calls_per_question
+            ),
+            "answer_reader_retry_budget": (
+                selected_protocol.answer_reader_retry_budget
+            ),
+            "api_timeout_seconds": selected_protocol.execution_profile.api_timeout_seconds,
+            "answer_agent_reasoning_effort": (
+                selected_protocol.answer_agent_reasoning_effort
+            ),
+            "answer_word_cap": selected_protocol.answer_word_cap,
+            "answer_agent_temperature": selected_protocol.answer_agent_temperature,
+            "judge_temperature": selected_protocol.judge_temperature,
+            "judge_repetitions": selected_protocol.judge_repetitions,
+            "surface_manifest_hash": selected_protocol.surface_manifest_hash,
+            "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+            "answer_prompt_sha256": prompt_sha256(
+                template=selected_protocol.answer_prompt_template
+            ),
+            "judge_prompt_sha256": prompt_sha256(
+                template=selected_protocol.judge_prompt_template
+            ),
+            "answer_schema_sha256": schema_sha256(
+                model=selected_protocol.answer_schema
+            ),
+            "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
+        }
+        current_pin["execution_profile"] = selected_protocol.execution_profile
+        for field, expected in current_pin.items():
+            if getattr(configuration, field) != expected:
+                raise BenchmarkRunError(f"current {field} differs from prepared run")
     _validate_documents(
         run_dir=run_dir,
         configuration=configuration,
@@ -1528,6 +1595,14 @@ def _require_current_query_surface(
         raise ExecutionGuardError(
             "deployment query surface differs from the prepared protocol"
         )
+    layers = client.processing_layers()
+    if (layers.claims, layers.facts) != ("enabled", "enabled"):
+        # D143: the protocol measures every layer; a deployment that skips or
+        # is still backfilling one would certify a different pipeline.
+        raise ExecutionGuardError(
+            "deployment processing layers are not all enabled"
+            f" (claims={layers.claims}, facts={layers.facts})"
+        )
     operations = client.list_operations()
     if operations != assured_tool_catalog():
         raise ExecutionGuardError(
@@ -1687,6 +1762,7 @@ def _answer_one(
     answer_word_cap: int | None = None,
     answer_schema: AnswerStepSchema = AnswerAgentStep,
     answer_prompt_template: str | None = None,
+    retrieval_budget: ContextRetrievalBudget | None = None,
     mcp_tool_shape: bool = False,
     require_content_before_answer: bool = False,
     p3: P3Mount | None = None,
@@ -1738,6 +1814,13 @@ def _answer_one(
             ),
             mcp_tool_shape=mcp_tool_shape,
         )
+        if retrieval_budget is not None:
+            prompt += (
+                "\nCONTEXT RETRIEVAL BUDGET: Context operations are executed with "
+                f"k={retrieval_budget.k} per evidence type and "
+                f"candidate_k={retrieval_budget.candidate_depth} per search channel. "
+                "These configured values override context-tool depth arguments."
+            )
         agent_observation = (
             None
             if question_trace is None
@@ -2147,6 +2230,16 @@ def _answer_one(
         # raise here; trailing junk (observed: a sentence period after the
         # closing brace at temperature 0) is recorded on the trace row.
         step_arguments, step_trailing = step.parsed_arguments()
+        if retrieval_budget is not None and step.tool_name in {
+            "facts_context",
+            "claims_and_sources_context",
+            "combined_context",
+        }:
+            step_arguments = {
+                **step_arguments,
+                "k": retrieval_budget.k,
+                "candidate_k": retrieval_budget.candidate_depth,
+            }
         tool_observation = (
             None
             if question_trace is None
@@ -2800,10 +2893,14 @@ def _provider_unavailable_reason(*, error: ProviderCallError) -> str | None:
     stable status prefix without parsing the body. Vertex signals lost access
     -- a revoked federated identity, a disabled API, or unlinked billing, which
     is exactly what the spend guardian does -- with a typed access error.
+    Known received unbilled capacity rejections also stop before a terminal
+    item checkpoint, allowing that item to retry without preserving a wrong.
     Anything else is one failed item, not a stopped run.
     """
     if isinstance(error, VertexAccessError):
         return "Vertex access unavailable"
+    if isinstance(error, OpenRouterProviderError) and error.retryable_unbilled:
+        return "OpenRouter capacity unavailable"
     if isinstance(error, OpenRouterProviderError) and " returned 402:" in str(error):
         return "OpenRouter credits unavailable"
     return None

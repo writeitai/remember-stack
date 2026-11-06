@@ -890,8 +890,18 @@ class KnowledgeControlPlane:
     def compile_artifacts(
         self, *, deployment_id: UUID
     ) -> tuple[KnowledgeCompileArtifact, ...]:
-        """Return the deployment's schedulable compiled-page graph."""
+        """Return the deployment's schedulable compiled-page graph.
+
+        Plane K compiles pages from facts; while the deployment does not serve
+        its facts layer nothing is schedulable (D143 §7.6).
+        """
+        from rememberstack.spine.processing_layers import layer_configuration_on
+
         with self._engine.connect() as connection:
+            if not layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            ).facts_enabled:
+                return ()
             rows = connection.execute(
                 _SELECT_COMPILE_ARTIFACTS, {"deployment_id": deployment_id}
             ).mappings()

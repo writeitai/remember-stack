@@ -62,6 +62,8 @@ PUBLIC_SRF_NAMES: Final = frozenset(
         "graph_neighborhood",
         "graph_path",
         "graph_citation_path",
+        "versions_in_scope",
+        "effective_intervals",
     }
 )
 SRF_INVOCATIONS_MAX: Final = 3
@@ -83,7 +85,14 @@ SRF_CATEGORIES: Final[dict[str, str]] = {
     "graph_neighborhood": "graph",
     "graph_path": "graph",
     "graph_citation_path": "graph",
+    "versions_in_scope": "time_scope",
+    "effective_intervals": "time_scope",
 }
+
+#: Public scalar functions of the query space. The D140 evidence gate is a
+#: per-fact predicate, so it is called in a select list or WHERE clause over
+#: a fact relation rather than placed in FROM like the set-returning ones.
+PUBLIC_SCALAR_FUNCTION_NAMES: Final = frozenset({"fact_in_scope_support"})
 
 FUNCTION_ALLOWLIST: Final = frozenset(
     {
@@ -130,6 +139,7 @@ FUNCTION_ALLOWLIST: Final = frozenset(
         "lead",
         "first_value",
         "last_value",
+        *PUBLIC_SCALAR_FUNCTION_NAMES,
     }
 )
 

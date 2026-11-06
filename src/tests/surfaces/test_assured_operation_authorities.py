@@ -10,6 +10,8 @@ from uuid import uuid4
 import pytest
 
 from rememberstack.adapters import PostgresP1Index
+from rememberstack.core.text_scope import claim_in_scope
+from rememberstack.core.text_scope import fact_in_scope
 from rememberstack.model import ResolutionThresholds
 from rememberstack.model import ResolverConfig
 from rememberstack.model.assured_operations import CurrentFactTime
@@ -19,6 +21,7 @@ from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
+from rememberstack.surfaces.query_engine import _confirm_claims_in_scope_statement
 from rememberstack.surfaces.query_engine import _confirm_facts_context
 from rememberstack.surfaces.query_engine import _CONFIRM_FACTS_CONTEXT_BY_KIND
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
@@ -89,15 +92,28 @@ def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
     assert "JOIN relations" not in confirmation_sql
     assert "JOIN observations" not in confirmation_sql
     assert "review_queue" not in confirmation_sql
-    assert "relation_evidence" not in confirmation_sql
-    assert "observation_evidence" not in confirmation_sql
-    assert "v_memory_evidence_lineage_live" in evidence_sql
+    # D140 §8.1: the evidence gate is the only evidence read in confirmation.
+    gates = (
+        fact_in_scope(fact_kind="relation", fact_id="fact.fact_id"),
+        fact_in_scope(fact_kind="observation", fact_id="fact.fact_id"),
+    )
+    assert all(gate in confirmation_sql for gate in gates)
+    ungated = confirmation_sql
+    for gate in gates:
+        ungated = ungated.replace(gate, "")
+    assert "relation_evidence" not in ungated
+    assert "observation_evidence" not in ungated
+    assert "v_memory_fact_claim_live" in evidence_sql
+    assert claim_in_scope(claim="evidence.claim_id") in evidence_sql
     assert "memory_v1.evidence_lineage" not in evidence_sql
-    assert "memory_v1.claims_live" in evidence_sql
+    # D140 §3.4: the live association (origin-live, or carried by a version of
+    # a periodised lineage) is proved by v_memory_fact_claim_live; the shown
+    # claim's immutable fields come from the base table
+    assert "JOIN claims AS claim" in evidence_sql
     assert "memory_v1.documents_live" in evidence_sql
     assert "relation_evidence" not in evidence_sql
     assert "observation_evidence" not in evidence_sql
-    assert "PARTITION BY requested.kind, requested.fact_id" in evidence_sql
+    assert "PARTITION BY lineage.kind, lineage.fact_id" in evidence_sql
     for statement in _CONTRADICTION_MEMBERS.values():
         contradiction_sql = str(statement)
         assert "memory_v1.contradiction_members_current" in contradiction_sql
@@ -229,10 +245,21 @@ def test_claims_and_sources_context_confirms_claims_and_chunks_through_memory_v1
     assert "memory_v1.claims_live" in claim_sql
     assert "JOIN memory_v1.documents_live" in claim_sql
     assert "FROM claims" not in claim_sql
-    assert "memory_v1.chunks_live" in chunk_sql
-    assert "JOIN memory_v1.sections_live" in chunk_sql
+    # D140 §3.3: a chunk of any live ready version confirms in its version's
+    # current reading; the served-version view no longer bounds hydration.
+    assert "memory_v1.chunks_all_versions_live" in chunk_sql
+    assert "JOIN memory_v1.document_versions_visible" in chunk_sql
     assert "JOIN memory_v1.documents_live" in chunk_sql
     assert "FROM chunks" not in chunk_sql
+    # D140 §3.4: under a time scope an undeclared lineage's claim still needs
+    # live current testimony; a periodised one an occurrence in scope.
+    in_scope_sql = str(
+        _confirm_claims_in_scope_statement(current_only=True, entity_scoped=False)
+    )
+    assert "FROM memory_v1.claims_live AS published" in in_scope_sql
+    assert "JOIN memory_v1.documents_live" in in_scope_sql
+    assert "document_version_scope" in in_scope_sql
+    assert "AND c.is_current_testimony" in in_scope_sql
     for scoped in (_CONFIRM_CLAIMS_CURRENT_SCOPED, _CONFIRM_CHUNKS_SCOPED):
         scoped_sql = str(scoped)
         assert "memory_v1.mentions_live" in scoped_sql

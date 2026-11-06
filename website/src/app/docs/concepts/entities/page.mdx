@@ -62,6 +62,14 @@ Two refinements matter in practice:
   again.
 - Bare head nouns ("the system", "the app", "a card") are not entities
   unless the claim pins down a specific referent.
+- A document's own name is not an entity. When a claim names its own
+  document in place of "this report" (see
+  [Claims](/docs/concepts/claims#claims-about-their-own-document)), the one
+  reference at that recorded name is skipped, so two different files with
+  the same name never merge. The same name elsewhere, such as a person
+  called like the document's title or another file mentioned by name,
+  resolves normally. If the claim has several references with that exact
+  text, none is skipped.
 
 ## Merges and reversibility
 

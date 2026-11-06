@@ -668,10 +668,18 @@ def _scrub_mutable_fact_payloads(
         connection.execute(
             text(f"""UPDATE {table} SET {label_clear}
           embedding=NULL,embedding_model=NULL,embedding_input_policy_version=NULL,
-          embedding_text_hash=NULL,updated_at=now()
+          embedding_text_hash=NULL,period_basis=NULL,updated_at=now()
           WHERE deployment_id=:deployment_id AND {kind}_id=ANY(:affected_fact_ids)
         """),
             {**parameters, "affected_fact_ids": [row[0] for row in rows]},
+        )
+        # D140 §8.2: a stored review answer may quote forgotten claims
+        connection.execute(
+            text("""DELETE FROM fact_window_review_attempts
+          WHERE deployment_id=:deployment_id AND fact_kind=:kind
+            AND fact_id=ANY(:affected_fact_ids)
+        """),
+            {**parameters, "kind": kind, "affected_fact_ids": [row[0] for row in rows]},
         )
         connection.execute(
             text(f"""UPDATE {kind}_adjudications SET
@@ -1093,6 +1101,11 @@ _OBJECT_KEYS = text(
         ) uri(object_key)
         WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
         UNION ALL
+        SELECT reference_generation.artifact_uri
+        FROM document_reference_generations reference_generation
+        WHERE reference_generation.deployment_id = :deployment_id
+          AND reference_generation.doc_id = :doc_id
+        UNION ALL
         SELECT generation.pageindex_uri
         FROM document_structure_generations generation
         WHERE generation.deployment_id = :deployment_id
@@ -1229,7 +1242,29 @@ _POSTGRES_SCRUB = (
             status = 'deleted',
             error = NULL,
             superseded_at = NULL,
+            version_key = NULL,
             deleted_at = COALESCE(deleted_at, now())
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    # D140: declarations, mode events and the selection projection are
+    # erased explicitly, after the lineage is tombstoned (so the projection
+    # triggers no longer re-insert rows for it).
+    text(
+        """
+        DELETE FROM document_effective_periods
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_effective_time_events
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_version_scope
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         """
     ),
@@ -1441,6 +1476,12 @@ _POSTGRES_SCRUB = (
     ),
     text(
         """
+        DELETE FROM processing_layer_gaps
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
         DELETE FROM relations
         WHERE deployment_id = :deployment_id AND relation_id = ANY(:fact_ids)
         """
@@ -1507,6 +1548,33 @@ _POSTGRES_SCRUB = (
     text(
         """
         DELETE FROM document_entity_bindings
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    # D134: deleted, not scrubbed in place — they hold names, paths and people.
+    text(
+        """
+        DELETE FROM document_names
+        WHERE deployment_id = :deployment_id
+          AND version_id IN (
+              SELECT version_id FROM document_versions
+              WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+          )
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_people
+        WHERE deployment_id = :deployment_id
+          AND version_id IN (
+              SELECT version_id FROM document_versions
+              WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+          )
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_metadata
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         """
     ),
@@ -1600,10 +1668,22 @@ _POSTGRES_SCRUB = (
         WHERE deployment_id = :deployment_id AND from_doc_id = :doc_id
         """
     ),
+    # D140 §9: references other lineages made TO the forgotten one are their
+    # sources' content; they are unbound (and keep the target as the source
+    # names it), so a re-ingest of that identity can bind them again.
     text(
         """
-        DELETE FROM document_crossrefs
+        UPDATE document_crossrefs
+        SET to_doc_id = NULL, resolved = false
         WHERE deployment_id = :deployment_id AND to_doc_id = :doc_id
+        """
+    ),
+    # D140: the lineage's reference generations (their input hashes and
+    # artifact keys name its content) go with the references they wrote.
+    text(
+        """
+        DELETE FROM document_reference_generations
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         """
     ),
     text(
@@ -1726,7 +1806,20 @@ _VERIFY_POSTGRES_SCRUB = text(
                OR status <> 'deleted'
                OR error IS NOT NULL
                OR superseded_at IS NOT NULL
+               OR version_key IS NOT NULL
                OR deleted_at IS NULL)
+        UNION ALL
+        SELECT 1 FROM document_reference_generations
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_effective_periods
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_effective_time_events
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_version_scope
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM managed_ingest_measurements
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
@@ -1761,6 +1854,21 @@ _VERIFY_POSTGRES_SCRUB = text(
         UNION ALL
         SELECT 1 FROM document_entity_bindings
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_metadata
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_names name
+        JOIN document_versions version
+          ON version.deployment_id = name.deployment_id
+         AND version.version_id = name.version_id
+        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_people person
+        JOIN document_versions version
+          ON version.deployment_id = person.deployment_id
+         AND version.version_id = person.version_id
+        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM resolution_decisions
         WHERE deployment_id = :deployment_id AND mention_id = ANY(:mention_ids)

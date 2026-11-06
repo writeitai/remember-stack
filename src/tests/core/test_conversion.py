@@ -63,32 +63,63 @@ _PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentati
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def test_stock_routes_convert_text_html_and_office_locally() -> None:
-    """The stock table routes every keyless format; PDFs and images stay unrouted."""
-    assert STOCK_CONVERSION_ROUTE_NAMES == {
-        "text/markdown": "passthrough",
-        "text/plain": "passthrough",
-        "text/html": "markitdown",
-        _DOCX: "markitdown",
-        _PPTX: "markitdown",
-        _XLSX: "markitdown",
-    }
-    router = ConversionRouter(
-        routes=build_conversion_routes(route_names=STOCK_CONVERSION_ROUTE_NAMES)
-    )
+def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
+    """The registry-derived stock table routes every family with a converter.
+
+    Text families go to ``text``, HTML/EPUB to ``markitdown``, Word and
+    PowerPoint to ``office``, PDF, email and notebooks to their own routes,
+    workbooks, delimited files and datasets to their profile routes, images,
+    media, archives and unrecognized bytes to ``card``; the LibreOffice
+    formats park where ``soffice`` is not installed.
+    """
+    routes = STOCK_CONVERSION_ROUTE_NAMES
+    for mime in (
+        "text/markdown",
+        "text/plain",
+        "text/x-code",
+        "text/x-config",
+        "text/x-log",
+        "text/x-other-text",
+    ):
+        assert routes[mime] == "text", mime
+    for mime in ("text/html", "application/epub+zip"):
+        assert routes[mime] == "markitdown", mime
+    for mime, name in (
+        (_DOCX, "office"),
+        (_PPTX, "office"),
+        ("application/pdf", "pdf"),
+        ("message/rfc822", "email"),
+        ("application/x-ipynb+json", "notebook"),
+        (_XLSX, "spreadsheet"),
+        ("application/vnd.ms-excel", "spreadsheet"),
+        ("text/csv", "table"),
+        ("application/vnd.apache.parquet", "dataset"),
+    ):
+        assert routes[mime] == name, mime
+    for mime in (
+        "image/png",
+        "image/jpeg",
+        "video/mp4",
+        "audio/mpeg",
+        "application/zip",
+        "application/x-tar",
+        "application/octet-stream",
+    ):
+        assert routes[mime] == "card", mime
+    assert "application/x-unknown-never-routed" not in routes
+    router = ConversionRouter(routes=build_conversion_routes(route_names=routes))
     plain = router.converter_for(mime="text/plain")
-    assert plain.name == "passthrough"
+    assert plain.name == "text"
     assert plain.convert(content=b"hello note\n", mime="text/plain").document_md == (
         "hello note\n"
     )
     assert router.converter_for(mime="text/markdown") is plain
-    for mime in ("application/pdf", "image/png", "image/jpeg"):
-        with pytest.raises(UnroutableMimeError):
-            router.converter_for(mime=mime)
+    with pytest.raises(UnroutableMimeError):
+        router.converter_for(mime="application/x-unknown-never-routed")
 
 
-def test_stock_markitdown_route_converts_a_docx() -> None:
-    """The bundled markitdown carries its Word extra: a .docx becomes Markdown."""
+def test_stock_office_route_converts_a_docx() -> None:
+    """The stock office route renders a .docx with markitdown."""
     router = ConversionRouter(
         routes=build_conversion_routes(route_names=STOCK_CONVERSION_ROUTE_NAMES)
     )
@@ -96,11 +127,14 @@ def test_stock_markitdown_route_converts_a_docx() -> None:
     result = router.converter_for(mime=_DOCX).convert(content=content, mime=_DOCX)
     assert "Quarterly plan" in result.document_md
     assert "Ship the converter." in result.document_md
-    assert result.manifest.components[0].name == "markitdown"
+    assert [component.name for component in result.manifest.components] == [
+        "office",
+        "markitdown",
+    ]
 
 
-def test_stock_markitdown_route_converts_a_pptx() -> None:
-    """The bundled markitdown carries its PowerPoint extra."""
+def test_stock_office_route_converts_a_pptx() -> None:
+    """The stock office route reads a .pptx slide by slide."""
     from pptx import Presentation
     from pptx.util import Inches
 
@@ -116,8 +150,8 @@ def test_stock_markitdown_route_converts_a_pptx() -> None:
     assert "Launch in October." in result.document_md
 
 
-def test_stock_markitdown_route_converts_an_xlsx() -> None:
-    """The bundled markitdown carries its Excel extra."""
+def test_stock_spreadsheet_route_profiles_an_xlsx() -> None:
+    """A default deployment profiles workbooks (D138 §5.1): shape, not rows."""
     from openpyxl import Workbook
 
     workbook = Workbook()
@@ -128,9 +162,9 @@ def test_stock_markitdown_route_converts_an_xlsx() -> None:
     buffer = io.BytesIO()
     workbook.save(buffer)
     result = _stock_convert(content=buffer.getvalue(), mime=_XLSX)
-    assert "Region" in result.document_md
-    assert "North" in result.document_md
-    assert "1200" in result.document_md
+    assert "  - Region: text (column A)" in result.document_md
+    assert "| North | 1200 |" in result.document_md
+    assert result.manifest.components[0].name == "spreadsheet"
 
 
 def _stock_convert(*, content: bytes, mime: str) -> ConversionResult:

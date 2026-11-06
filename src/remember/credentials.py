@@ -271,7 +271,11 @@ def _write_journal(*, entries: tuple[PendingRevocation, ...]) -> None:
 
 def _read_owner_only(*, path: Path, label: str) -> str | None:
     """Read a secret-holding file without following symlinks; ``None`` if absent."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    if os.name == "nt":
+        if not path.exists():
+            return None
+        raise CredentialError("automatic stored credentials are unavailable on Windows")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     try:
         handle = os.open(path, flags)
     except FileNotFoundError:
@@ -280,11 +284,19 @@ def _read_owner_only(*, path: Path, label: str) -> str | None:
         if error.errno == errno.ELOOP:
             raise CredentialError(f"{label} path is a symlink") from error
         raise CredentialError(f"{label} is unreadable ({error})") from error
-    with os.fdopen(handle, "r", encoding="utf-8") as stream:
-        mode = stat.S_IMODE(os.fstat(stream.fileno()).st_mode)
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode):
+            raise CredentialError(f"{label} must be a regular file")
+        mode = stat.S_IMODE(info.st_mode)
         if mode & (stat.S_IRGRP | stat.S_IROTH):
             raise CredentialError(f"{label} {path} is readable by other users")
-        return stream.read()
+        with os.fdopen(handle, "r", encoding="utf-8") as stream:
+            handle = -1  # The stream owns and closes the validated handle.
+            return stream.read()
+    finally:
+        if handle >= 0:
+            os.close(handle)
 
 
 def _write_owner_only(*, path: Path, payload: dict[str, object]) -> None:

@@ -22,35 +22,59 @@ from typing import cast
 from typing import Literal
 from uuid import UUID
 
+from remember.errors import MemoryApiError
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
+from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import handle_search_documents_tool
+from remember.mcp_tools import handle_section_history_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import invalid_arguments
+from remember.mcp_tools import layer_unavailable
 from remember.mcp_tools import map_error
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import tool
+from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model.client import DocumentDeletion
+from rememberstack.model.client import DocumentReferencesPage
+from rememberstack.model.client import DocumentReferencesRequest
+from rememberstack.model.client import DocumentSearchPage
+from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
+from rememberstack.model.client import SectionHistoryPage
+from rememberstack.model.client import SectionHistoryRequest
+from rememberstack.model.documents import ChunkNotFoundError
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
+from rememberstack.model.processing_layers import LayerSelectionError
+from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.surfaces.http_api import DocumentDeletionPort
+from rememberstack.surfaces.http_api import DocumentReferencesPort
+from rememberstack.surfaces.http_api import DocumentSearchPort
 from rememberstack.surfaces.http_api import IngestPort
 from rememberstack.surfaces.http_api import PipelineReadinessPort
+from rememberstack.surfaces.http_api import SectionHistoryPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import ProcessingLayersPort
 from rememberstack.surfaces.operation_surface import UnknownOperationError
+from rememberstack.surfaces.operation_surface import unserved_operation_names
 from rememberstack.surfaces.query_sandbox.discovery import (
     query_space_description_payload,
 )
@@ -86,10 +110,19 @@ class _LocalMemoryWriteBackend:
         source_modified_at: datetime | None,
         versioning_mode: Literal["snapshot", "living"],
         source_version_ref: str | None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Accept one body through the composed E0 ingest port."""
         upload = DocumentUpload(
-            filename=filename, mime=mime, content=content, title=title
+            filename=filename,
+            mime=mime,
+            content=content,
+            title=title,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
         if source_kind is None or source_ref is None:
             return self._ingest.ingest(deployment_id=self._deployment_id, upload=upload)
@@ -137,6 +170,84 @@ class _LocalDocumentDeleteBackend:
             raise _ForgetInProgress() from error
 
 
+class _LocalDocumentSearchBackend:
+    """Adapt the in-process document search port to the shared tool (D134)."""
+
+    def __init__(self, *, search: DocumentSearchPort, deployment_id: UUID) -> None:
+        self._search = search
+        self._deployment_id = deployment_id
+
+    def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
+        """Search through the composed port; a bad cursor is a 400 shape."""
+        try:
+            return self._search.search_documents(
+                deployment_id=self._deployment_id, request=request
+            )
+        except ValueError as error:
+            raise _BadSearchRequest(str(error)) from error
+
+
+class _LocalSectionHistoryBackend:
+    """Adapt the in-process section history port to the shared tool (D140)."""
+
+    def __init__(self, *, history: SectionHistoryPort, deployment_id: UUID) -> None:
+        self._history = history
+        self._deployment_id = deployment_id
+
+    def section_history(self, *, request: SectionHistoryRequest) -> SectionHistoryPage:
+        """Read through the composed port with the HTTP route's refusal shapes."""
+        try:
+            return self._history.section_history(
+                deployment_id=self._deployment_id, request=request
+            )
+        except DocumentNotFoundError as error:
+            raise _DocumentNotFound() from error
+        except ValueError as error:
+            raise _BadSearchRequest(str(error)) from error
+
+
+class _LocalDocumentReferencesBackend:
+    """Adapt the in-process references port to the shared tool (D140)."""
+
+    def __init__(
+        self, *, references: DocumentReferencesPort, deployment_id: UUID
+    ) -> None:
+        self._references = references
+        self._deployment_id = deployment_id
+
+    def document_references(
+        self, *, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Read through the composed port with the HTTP route's refusal shapes."""
+        try:
+            return self._references.document_references(
+                deployment_id=self._deployment_id, request=request
+            )
+        except DocumentNotFoundError as error:
+            raise _DocumentNotFound() from error
+        except ChunkNotFoundError as error:
+            raise _ChunkNotFound() from error
+        except ValueError as error:
+            raise _BadSearchRequest(str(error)) from error
+
+
+class _ChunkNotFound(Exception):
+    """The HTTP-shaped absence the shared tool maps to ``chunk_not_found``."""
+
+    status_code = 404
+    detail = "chunk_not_found"
+
+
+class _BadSearchRequest(Exception):
+    """The HTTP-shaped refusal of a malformed cursor."""
+
+    status_code = 400
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
 class _DocumentNotFound(Exception):
     """The HTTP-shaped absence the shared tool maps to ``document_not_found``."""
 
@@ -162,6 +273,10 @@ class OperationMcpServer:
         ingest: IngestPort | None = None,
         pipeline_readiness: PipelineReadinessPort | None = None,
         deletion: DocumentDeletionPort | None = None,
+        document_search: DocumentSearchPort | None = None,
+        section_history: SectionHistoryPort | None = None,
+        document_references: DocumentReferencesPort | None = None,
+        processing_layers: ProcessingLayersPort | None = None,
     ) -> None:
         """Bind the MCP server to the operation surface and optional ports.
 
@@ -170,7 +285,10 @@ class OperationMcpServer:
         tools require both ingest and pipeline_readiness; half-wiring either
         port alone is refused so tools/list never advertises a half-broken pair.
         Operation-only compositions omit the write tools (O2).
-        `delete_document` is advertised only when `deletion` is composed.
+        `delete_document` is advertised only when `deletion` is composed, and
+        `search_documents` only when `document_search` is, and
+        `section_history` only when `section_history` is, and
+        `document_references` only when `document_references` is.
         """
         if open_query is not None and open_query.deployment_id != surface.deployment_id:
             raise ValueError(
@@ -183,6 +301,7 @@ class OperationMcpServer:
                 " omitted — half-wired write tools are not allowed"
             )
         self._surface = surface
+        self._layers = processing_layers
         self._open_query = open_query
         self._write_backend: _LocalMemoryWriteBackend | None = None
         if ingest is not None and pipeline_readiness is not None:
@@ -198,21 +317,58 @@ class OperationMcpServer:
                 deletion=deletion, deployment_id=surface.deployment_id
             )
         )
+        self._search_backend: _LocalDocumentSearchBackend | None = (
+            None
+            if document_search is None
+            else _LocalDocumentSearchBackend(
+                search=document_search, deployment_id=surface.deployment_id
+            )
+        )
+        self._history_backend: _LocalSectionHistoryBackend | None = (
+            None
+            if section_history is None
+            else _LocalSectionHistoryBackend(
+                history=section_history, deployment_id=surface.deployment_id
+            )
+        )
+
+        self._references_backend: _LocalDocumentReferencesBackend | None = (
+            None
+            if document_references is None
+            else _LocalDocumentReferencesBackend(
+                references=document_references, deployment_id=surface.deployment_id
+            )
+        )
 
     def list_tools(self) -> dict[str, object]:
         """List the composed catalogue tools, in catalogue order.
 
+        `search_documents` follows `delete_document` when a search port is
+        composed.
+
         Write tools lead when both ports are composed, then `delete_document`
-        when deletion is composed, the four assured operations, and the seven
-        §3.1 tools when open query is composed. `examples.*` never appear as
-        top-level tools.
+        when deletion is composed, the four assured operations, `adjacent_chunks`,
+        and the seven §3.1 tools when open query is composed. `examples.*` never
+        appear as top-level tools.
         """
         names: list[str] = []
         if self._write_backend is not None:
             names.extend((INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME))
         if self._delete_backend is not None:
             names.append(DELETE_DOCUMENT_TOOL_NAME)
-        names.extend(OPERATION_TOOL_NAMES)
+        if self._search_backend is not None:
+            names.append(SEARCH_DOCUMENTS_TOOL_NAME)
+        if self._history_backend is not None:
+            names.append(SECTION_HISTORY_TOOL_NAME)
+        if self._references_backend is not None:
+            names.append(DOCUMENT_REFERENCES_TOOL_NAME)
+        # D143 §7.4: operations whose layer the deployment does not serve
+        # (facts_context, resolve_entity without facts) are not listed.
+        unserved = unserved_operation_names(
+            layers=self._layers, deployment_id=self._surface.deployment_id
+        )
+        names.extend(name for name in OPERATION_TOOL_NAMES if name not in unserved)
+        names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
             names.extend(OPEN_QUERY_TOOL_NAMES)
         return {
@@ -236,6 +392,18 @@ class OperationMcpServer:
         if name == DELETE_DOCUMENT_TOOL_NAME:
             return handle_delete_document_tool(
                 arguments=arguments, backend=self._delete_backend
+            )
+        if name == SEARCH_DOCUMENTS_TOOL_NAME:
+            return handle_search_documents_tool(
+                arguments=arguments, backend=self._search_backend
+            )
+        if name == SECTION_HISTORY_TOOL_NAME:
+            return handle_section_history_tool(
+                arguments=arguments, backend=self._history_backend
+            )
+        if name == DOCUMENT_REFERENCES_TOOL_NAME:
+            return handle_document_references_tool(
+                arguments=arguments, backend=self._references_backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(
@@ -267,6 +435,22 @@ class OperationMcpServer:
                 "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
                 "isError": False,
             }
+        if name == ADJACENT_CHUNKS_TOOL_NAME:
+            try:
+                args = validate_arguments(name, arguments)
+                chunk_id = cast(UUID, args["chunk_id"])
+                window = cast(int, args["window"])
+                envelope = self._surface.adjacent_chunks(
+                    chunk_id=chunk_id, window=window
+                )
+            except ToolArgumentError as error:
+                return error_result(error.error)
+            except Exception:  # noqa: BLE001 — the MCP wire boundary
+                return _internal_error(name=name)
+            return {
+                "content": [{"type": "text", "text": envelope.model_dump_json()}],
+                "isError": False,
+            }
         try:
             result = self._surface.run(name=name, arguments=arguments)
         except UnknownOperationError as error:
@@ -281,6 +465,19 @@ class OperationMcpServer:
             )
         except (MissingArgumentError, InvalidArgumentError) as error:
             return error_result(invalid_arguments(detail=str(error)))
+        except LayerSelectionError as error:
+            # D143 §7.2: the 422 the HTTP route answers, as engine-mode maps it.
+            return error_result(
+                map_error(
+                    MemoryApiError(
+                        status_code=422, detail=str(error), code="invalid_parameter"
+                    )
+                )
+            )
+        except LayerUnavailableError as error:
+            return error_result(
+                layer_unavailable(layer=error.layer.value, detail=str(error))
+            )
         except Exception:  # noqa: BLE001 — the MCP wire boundary
             return _internal_error(name=name)
         return {

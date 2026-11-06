@@ -16,6 +16,7 @@ from datetime import datetime
 import json
 import logging
 import sys
+from typing import cast
 from typing import Literal
 from typing import TextIO
 from uuid import UUID
@@ -23,23 +24,36 @@ from uuid import UUID
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
+from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import handle_search_documents_tool
+from remember.mcp_tools import handle_section_history_tool
 from remember.mcp_tools import map_error
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from remember.models import DocumentDeletion
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +61,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class _ClientBackend:
-    """The write, readiness and delete tools' backend over ``MemoryClient``.
+    """The write, readiness, delete, document-search, section and references backend.
 
     The deployment enforces its body-size limit; the tool maps the refusal.
     """
@@ -67,6 +81,9 @@ class _ClientBackend:
         source_modified_at: datetime | None,
         versioning_mode: Literal["snapshot", "living"],
         source_version_ref: str | None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Send one ingest through the HTTP SDK."""
         return self._client.ingest(
@@ -79,6 +96,9 @@ class _ClientBackend:
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def pipeline_readiness(
@@ -95,23 +115,45 @@ class _ClientBackend:
         """Delete one document through the HTTP SDK."""
         return self._client.delete_document(doc_id=doc_id)
 
+    def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
+        """Run one document search through the HTTP SDK (D134)."""
+        return self._client.search_documents_request(request=request)
+
+    def section_history(self, *, request: SectionHistoryRequest) -> SectionHistoryPage:
+        """Read one section's history through the HTTP SDK (D140)."""
+        return self._client.section_history_request(request=request)
+
+    def document_references(
+        self, *, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Read one page of references through the HTTP SDK (D140)."""
+        return self._client.document_references_request(request=request)
+
 
 class EngineMcpServer:
     """The memory tool catalogue, served against one engine's HTTP API."""
 
     def __init__(
-        self, *, client: MemoryClient, read_only: bool = False, path_ingest: bool
+        self,
+        *,
+        client: MemoryClient,
+        read_only: bool = False,
+        path_ingest: bool,
+        layers: tuple[str, ...] | None = None,
     ) -> None:
         """Bind one engine client.
 
         ``read_only`` omits and refuses every ``memory:write`` tool.
         ``path_ingest`` offers ``ingest``'s local ``path`` body (stdio only:
-        the caller runs on this machine).
+        the caller runs on this machine). ``layers`` (D143) narrows the
+        session to those processing layers: every operation and query call
+        carries it, and tools that read only excluded layers are not listed.
         """
         self._client = client
         self._backend = _ClientBackend(client=client)
         self._read_only = read_only
         self._path_ingest = path_ingest
+        self._layers = layers
 
     def list_tools(self) -> dict[str, object]:
         """The catalogue tools this deployment serves at the same version.
@@ -124,6 +166,7 @@ class EngineMcpServer:
             definition
             for definition in memory_tools()
             if served.get(definition.name) == definition.tool_version
+            and _tool_admitted(name=definition.name, layers=self._layers)
         ]
         return {
             "tools": render_tools_list(
@@ -164,6 +207,18 @@ class EngineMcpServer:
             return handle_delete_document_tool(
                 arguments=arguments, backend=self._backend
             )
+        if name == SEARCH_DOCUMENTS_TOOL_NAME:
+            return handle_search_documents_tool(
+                arguments=arguments, backend=self._backend
+            )
+        if name == SECTION_HISTORY_TOOL_NAME:
+            return handle_section_history_tool(
+                arguments=arguments, backend=self._backend
+            )
+        if name == DOCUMENT_REFERENCES_TOOL_NAME:
+            return handle_document_references_tool(
+                arguments=arguments, backend=self._backend
+            )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(
                 name=name,
@@ -174,13 +229,22 @@ class EngineMcpServer:
         try:
             if name in OPEN_QUERY_TOOL_NAMES:
                 text = json.dumps(
-                    self._client.call_open_query(name=name, arguments=arguments),
+                    self._client.call_open_query(
+                        name=name, arguments=arguments, layers=self._layers
+                    ),
                     default=str,
                 )
+            elif name == ADJACENT_CHUNKS_TOOL_NAME:
+                parsed = validate_arguments(name, arguments)
+                envelope = self._client.adjacent_chunks(
+                    chunk_id=cast(UUID, parsed["chunk_id"]),
+                    window=cast(int, parsed["window"]),
+                )
+                text = envelope.model_dump_json()
             else:
                 validate_arguments(name, arguments)
                 text = self._client.run_operation(
-                    name=name, arguments=arguments
+                    name=name, arguments=arguments, layers=self._layers
                 ).model_dump_json()
         except ToolArgumentError as error:
             return error_result(error.error)
@@ -190,6 +254,28 @@ class EngineMcpServer:
                 logger.exception("MCP tool %s failed with %s", name, mapped.code)
             return error_result(mapped)
         return {"content": [{"type": "text", "text": text}], "isError": False}
+
+
+_TOOL_LAYERS: dict[str, frozenset[str]] = {
+    "facts_context": frozenset({"facts"}),
+    "resolve_entity": frozenset({"facts"}),
+    "claims_and_sources_context": frozenset({"sources", "claims"}),
+    ADJACENT_CHUNKS_TOOL_NAME: frozenset({"sources"}),
+    SEARCH_DOCUMENTS_TOOL_NAME: frozenset({"sources"}),
+    SECTION_HISTORY_TOOL_NAME: frozenset({"sources"}),
+    DOCUMENT_REFERENCES_TOOL_NAME: frozenset({"sources"}),
+}
+"""The processing layers a read tool can answer from (D143 §7.2).
+
+Tools not listed (``combined_context``, the open-query and write tools) are
+offered whatever the session's selection; the engine applies it per call.
+"""
+
+
+def _tool_admitted(*, name: str, layers: tuple[str, ...] | None) -> bool:
+    """Whether a session narrowed to ``layers`` lists the tool."""
+    readable = _TOOL_LAYERS.get(name)
+    return layers is None or readable is None or bool(readable & set(layers))
 
 
 def _refusal(*, code: str, detail: str, agent_action: str) -> dict[str, object]:

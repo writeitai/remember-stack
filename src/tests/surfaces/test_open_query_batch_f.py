@@ -36,6 +36,9 @@ from rememberstack.model import ConsumptionOperation
 from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Grain
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
@@ -51,6 +54,8 @@ from rememberstack.surfaces.query_sandbox.saved_queries import PLATFORM_SEED_ACT
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryDescription
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
 from rememberstack.surfaces.query_sandbox.saved_queries import seed_shipped_examples
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _DEPLOYMENT = UUID("f0000000-0000-0000-0000-00000000000f")
 _HASH = surface_manifest_hash(build_hash_members())
@@ -480,20 +485,20 @@ def test_http_open_routes_and_four_assured_operations(migrated: str) -> None:
 
 
 class _NullSearch:
-    def search_claims(self, **_: object) -> tuple:
-        return ()
+    def search_claims(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple:
-        return ()
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple:
-        return ()
+    def search_chunks(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple:
-        return ()
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_facts(self, **_: object) -> tuple:
-        return ()
+    def search_facts(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def search_entities(self, **_: object) -> tuple:
         return ()
@@ -628,7 +633,10 @@ def test_remember_mcp_strict_argument_validation() -> None:
     class _StubClient:
         """Minimal client that only exercises open-query argument validation."""
 
-        def call_open_query(self, *, name: str, arguments: dict[str, object]) -> object:
+        def call_open_query(
+            self, *, name: str, arguments: dict[str, object], layers: object = None
+        ) -> object:
+            del layers
             return validate_arguments(name, arguments)
 
         def run_operation(self, **_: object) -> object:
@@ -781,9 +789,9 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
         assert descriptor.answer_intent == operation.answer_intent.value
     # Pin the closed surface versions explicitly.
     assert descriptors["resolve_entity"].version == 1
-    assert descriptors["claims_and_sources_context"].version == 2
-    assert descriptors["facts_context"].version == 3
-    assert descriptors["combined_context"].version == 4
+    assert descriptors["claims_and_sources_context"].version == 4
+    assert descriptors["facts_context"].version == 4
+    assert descriptors["combined_context"].version == 5
 
 
 def _expected_input_schema(operation: object) -> dict[str, object]:
@@ -946,7 +954,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2"
+        == "f8a6e2e20e404fd14d0963cbd4f5808ca0b19882356b5c1f21b2e9397b0a03d2"
     )
 
 

@@ -429,6 +429,13 @@ precision enum cannot represent ("this morning" has no part-of-day
 precision) remain unresolved by design — a documented expressivity boundary,
 not a defect of the anchor.
 
+The header timestamp anchors only utterances it actually dates. It must not
+silently date relative speech inside a separate attachment, quoted fiction or
+historical document. Such content needs its own supported anchor; without one,
+keep its relative wording and unknown valid time. This preserves ordinary
+source-date resolution for direct dialogue while respecting D119's source
+ownership contract.
+
 ## 7. Every temporal judgement sees both clocks; every surface names them
 
 ### 7.1 The current-fact predicate and activation/expiry

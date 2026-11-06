@@ -29,7 +29,10 @@ class MemoryApiError(RuntimeError):
         detail: str | None = None,
         code: str | None = None,
         response: object | None = None,
+        retryable: bool | None = None,
+        request_id: str | None = None,
     ) -> None:
+        """Retain structured diagnostics without authorizing automatic retries."""
         eff_detail = detail if detail is not None else (message or "")
         msg = (
             f"API {status_code}: {eff_detail}"
@@ -41,6 +44,8 @@ class MemoryApiError(RuntimeError):
         self.detail = eff_detail
         self.code = code
         self.response = response
+        self.retryable = retryable
+        self.request_id = request_id
 
 
 class RateLimited(MemoryApiError):
@@ -57,6 +62,19 @@ class RateLimited(MemoryApiError):
         """Bind the admission code and the server's retry hint."""
         super().__init__(status_code=429, detail=detail, code=code)
         self.retry_after = retry_after
+
+
+class LayerUnavailable(MemoryApiError):
+    """The read needs a processing layer the deployment does not serve (``409``).
+
+    ``layer`` is ``claims`` or ``facts`` (D143). ``code`` is ``layer_unavailable``.
+    Check ``processing_layers()`` and use a read the deployment serves.
+    """
+
+    def __init__(self, *, detail: str, layer: str) -> None:
+        """Bind the missing layer."""
+        super().__init__(status_code=409, detail=detail, code="layer_unavailable")
+        self.layer = layer
 
 
 class ProjectResolutionError(MemoryApiError):

@@ -103,7 +103,9 @@ ordinary supersession path.)
 3. **Document version** — one observed immutable snapshot of a lineage, pointing at one
    content object, carrying the per-snapshot state: artifact URIs, conversion/structure
    provenance, `source_modified_at` (which feeds derived claims' `asserted_at` — testimony is
-   dated by *when the source said it*, D41), and processing status. Append-only; the lineage
+   dated by *when the source said it*, D41; since D140 through each chunk's text origin time,
+   so text carried unchanged into a later version keeps the date it was first written), and
+   processing status. Append-only; the lineage
    holds a `current_version_id` pointer.
 
 An identical-byte observation creates no new version. It may advance the existing row's
@@ -122,6 +124,24 @@ such a contract.
 - **`living`**: the current version is the source's *standing statement* (rosters, wikis,
   config pages). Claims present only in superseded versions lose testimony currency (§3) —
   they stop counting toward current belief while remaining immutable history.
+
+**Effective periods (D140) — when a version is in force.** Separately from the mode, a
+caller may declare for each version of a **`snapshot`** lineage the periods during which its
+text is in force (`[effective_from, effective_until)`; an undeclared end is the next declared
+start in the lineage). This is the publisher's statement of force — a policy edition in force
+from 1 January, a spec edition that supersedes the previous one on a stated date — and is
+distinct from `source_modified_at` (authorship time) and from ingest order. Time-scoped
+retrieval selects versions by these periods, while `current_version_id` keeps meaning "the
+served version" (the newest non-deleted version whose processing completed). A lineage
+becomes periodised with its first declaration and stays so until the caller explicitly clears
+effective time, so retracting a withdrawn edition's last period never makes it current again.
+Periods never change testimony currency and never trigger reprocessing; fact reads apply a
+deterministic evidence gate so that no answer rests solely on text that is not in force at the
+scope. Periods are not accepted on `living` lineages, whose newest version is by definition
+the standing statement. Versions may also carry an immutable caller-chosen `version_key`, the
+stable address for pinned references (the `source_version_ref` cursor stays mutable). The full
+contract is
+[the effective time design §2–§3](effective_time_and_section_references_design.md#2-effective-periods).
 
 **Absence is never *silent* retraction — and in `living` mode, removal retracts.** The two
 modes, side by side (stress-test amendment O-B; a `review` softener existed briefly and was
@@ -290,6 +310,21 @@ self-healing gap (a named spike, not papered over):
    `{relations_closed: [r1], observations_closed: [], facts_recounted: [{id: r2, evidence_count: 3→2}], flags_raised: []}`
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
 
+**Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
+not reached a version yet, the version's reconcile runs at component version
+`reconcile-2026.07:claims`. It performs steps 1–5 above (and the deleted-testimony path of §8)
+exactly as the full reconcile does — so facts that already exist keep exact counts and closures,
+and connector-cycle closure still defers to finalization — but opens no fact label and no window
+review. When the facts layer later reaches the version, the full reconcile runs under its own
+key and opens them. **Living supersession guard (configured deployments):** a reconcile computes
+and applies step 2's `version_superseded` transitions in one transaction under the lineage lock,
+and only when the lineage's current version is its own version or its claim occurrences are
+complete — its `embed_chunk` succeeded for its representation and chunk grid, and every chunk's
+Selection and Claimify results are committed or the grid is empty (processing layers design §5.1);
+otherwise the current version's occurrences may not exist yet and the step is skipped — the current version's own reconcile computes it
+lineage-wide. Deployments without a layer configuration run step 2 exactly as before
+([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
+
 **Worked example, end to end.** Living document A; version 1 was extracted by extractor v1;
 chunk with block `b2` yielded claim `c1` ("Alice works at Acme") → relation `r1
 (Alice, works_for, Acme)`, `evidence_count = 1` (this lineage is the sole support). Version 2
@@ -325,13 +360,23 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
    **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
    block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
-   metadata: title, source kind, source-modified date, language) + the extractor version + the
+   metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
+   extractor version + the
    structurer version (a stable config string — a deliberate structurer bump is a
    re-extraction boundary, since section roles feed Selection).
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
-   discipline). A chunk whose key is already extracted for this lineage **reuses its claims**
+   discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
+   origin time of the earliest chunk of a non-deleted version of the lineage with the same
+   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
+   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
+   E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
+   version's own date instead would change every key whenever the source stamps a new
+   modification time — nearly every version — and no chunk would ever be reused. Unchanged
+   text keeps being read against the time it was written, which is also the `asserted_at` of
+   the claim it reuses.
+   A chunk whose key is already extracted for this lineage **reuses its claims**
    (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
    re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
    embedding version) the same way. **The mechanics — block-hash diff alignment,

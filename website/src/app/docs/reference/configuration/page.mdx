@@ -69,6 +69,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
 | `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
+| `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` | `300` | int | Read by Compose only. PostgreSQL `max_connections`. The default stack's ceiling is 231 connections; see [Database connections](/docs/self-hosting/scaling#database-connections). |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 
 ## Deployment and API
@@ -86,10 +87,10 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | Largest `POST /ingest` body; larger uploads get `413`. |
 | `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins; http only on `localhost`, `127.0.0.1` or `[::1]` | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | Requests per minute for the whole deployment (bursts of a quarter of it). |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | Requests running at once for the whole deployment. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests running at once per credential. Over it: `429` `concurrency_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests per minute for the whole deployment (bursts of a quarter of it). |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests running at once for the whole deployment. |
 
 ## Storage
 
@@ -146,6 +147,18 @@ without the spend lease URL.
 | `REMEMBERSTACK_SELFHOST_METER_RECEIPT_POLL_S` | `2.0` | float, max 300 | Receipt worker poll interval. |
 
 </Cloud>
+
+## Processing layers
+
+Which parts of the pipeline the deployment runs and serves. Both are on by
+default; see [Processing layers](/docs/concepts/pipeline#processing-layers).
+`setup` applies a change.
+
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER` | `true` | bool | Extract, embed and serve claims. Turning it off also requires `REMEMBERSTACK_SELFHOST_FACTS_LAYER=false`. |
+| `REMEMBERSTACK_SELFHOST_FACTS_LAYER` | `true` | bool | Build and serve entities, facts, the entity graph and knowledge pages. Requires the claims layer. |
+| `REMEMBERSTACK_SELFHOST_LAYER_SEED_BATCH_SIZE` | `500` | int ≥ 1 | Documents `setup` queues per batch when it starts processing a layer that was switched on. |
 
 ## Pools and workers
 
@@ -220,7 +233,7 @@ See [File formats and converters](/docs/self-hosting/converters).
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | empty: the engine's format table ([the table](/docs/self-hosting/converters#what-a-stock-deployment-reads)) | JSON object | MIME type → converter. Adds to the default table and overrides the entries it names. |
 | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
 | `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | Mistral API address. |
 | `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | OCR model. |
@@ -234,7 +247,9 @@ See [File formats and converters](/docs/self-hosting/converters).
 | `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | Price used to record OCR cost. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | OpenRouter key for image descriptions; required by `image_ocr_description`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Hard OpenRouter endpoint allowlist; for Flex use `["openai/flex"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |

@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from rememberstack.model import CandidateClaim
+from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimValidKind
 from rememberstack.model import ClaimValidPrecision
@@ -20,6 +21,20 @@ from rememberstack.workers.e2 import _CLAIMIFY_PROMPT
 from rememberstack.workers.e2 import _header_text
 from rememberstack.workers.e2 import _parse_claim_valid_time
 from rememberstack.workers.e2 import _parse_iso_timestamp
+
+_UNDATED_CHUNK = ChunkForEmbedding(
+    chunk_id=UUID("79000000-0000-0000-0000-000000000005"),
+    doc_id=UUID("79000000-0000-0000-0000-000000000002"),
+    version_id=UUID("79000000-0000-0000-0000-000000000003"),
+    ordinal=0,
+    char_start=0,
+    char_end=1,
+    chunk_content_hash="sha256:chunk",
+    extraction_input_hash="sha256:input",
+    section_role="body",
+    section_path="0",
+)
+"""A chunk without a recorded text origin: the header shows the version date."""
 
 
 def test_document_header_keeps_absent_source_time_unknown() -> None:
@@ -40,20 +55,22 @@ def test_document_header_keeps_absent_source_time_unknown() -> None:
         sections=(),
     )
 
-    assert _header_text(source=source) == (
-        "title Unknown time; source upload; date unknown; language en"
+    assert _header_text(source=source, chunk=_UNDATED_CHUNK) == (
+        "title Unknown time; file unknown; source upload; date unknown; language en"
     )
     dated = source.model_copy(
         update={"source_modified_at": datetime(2023, 5, 1, 13, tzinfo=UTC)}
     )
-    assert _header_text(source=dated) == (
-        "title Unknown time; source upload; date 2023-05-01T13:00:00+00:00; language en"
+    assert _header_text(source=dated, chunk=_UNDATED_CHUNK) == (
+        "title Unknown time; file unknown; source upload;"
+        " date 2023-05-01T13:00:00+00:00; language en"
     )
 
 
 def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> None:
     """The extraction request resolves relative time into both text and fields."""
     rendered = _CLAIMIFY_PROMPT.format(
+        source_focus="",
         cards="(none)",
         keeps="- Melanie painted a lake sunrise last year.",
         passages="[S1] TARGET (origin-eligible):\nMelanie painted a lake sunrise last year.",
@@ -68,6 +85,12 @@ def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> Non
     assert "regardless of claim form" in rendered
     assert "relative expression inside quoted or attributed text" in rendered
     assert "you MUST resolve the expression" in rendered
+    assert "that actually anchors that source utterance" in rendered
+    assert (
+        "An upload/session date does not anchor relative speech inside an attached"
+        in rendered
+    )
+    assert "Direct dialogue whose source" in rendered
     assert "WRITE THE RESOLVED DATE INTO claim_text" in rendered
     assert "exactly like a pronoun" in rendered
     assert "valid-time fields" in rendered
@@ -315,16 +338,18 @@ def test_two_same_day_sources_keep_distinct_temporal_anchors() -> None:
         update={"source_modified_at": datetime(2023, 5, 8, 22, tzinfo=UTC)}
     )
     first_prompt = _CLAIMIFY_PROMPT.format(
+        source_focus="",
         cards="(none)",
         keeps="the final ended three hours ago",
         passages="",
-        bundle=_header_text(source=source),
+        bundle=_header_text(source=source, chunk=_UNDATED_CHUNK),
     )
     later_prompt = _CLAIMIFY_PROMPT.format(
+        source_focus="",
         cards="(none)",
         keeps="the final ended three hours ago",
         passages="",
-        bundle=_header_text(source=later),
+        bundle=_header_text(source=later, chunk=_UNDATED_CHUNK),
     )
     assert first_prompt != later_prompt
     assert first_prompt.endswith("date 2023-05-08T19:30:00+00:00; language en")
@@ -332,7 +357,9 @@ def test_two_same_day_sources_keep_distinct_temporal_anchors() -> None:
     fallback = source.model_copy(
         update={"source_modified_at": None, "published_at": source.source_modified_at}
     )
-    assert _header_text(source=fallback) == _header_text(source=source)
+    assert _header_text(source=fallback, chunk=_UNDATED_CHUNK) == _header_text(
+        source=source, chunk=_UNDATED_CHUNK
+    )
 
 
 def test_temporal_prompt_and_schema_explain_kinds_and_precision_independently() -> None:

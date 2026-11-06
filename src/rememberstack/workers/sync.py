@@ -156,6 +156,7 @@ class SyncCycleRunner:
                 filename=item.filename or item.source_ref,
                 mime=item.mime,
                 content=content,
+                source_path=item.source_path,
             ),
             versioning_mode=versioning_mode,
             source_modified_at=item.modified_at,

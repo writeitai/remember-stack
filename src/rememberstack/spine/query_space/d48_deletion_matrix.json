@@ -1,11 +1,18 @@
 {
-  "cell_count": 288,
+  "cell_count": 306,
   "cells": [
     {
       "basis": null,
       "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.changes_visible",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.chunks_all_versions_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.chunks_all_versions_live",
       "target_id": "lineage"
     },
     {
@@ -55,6 +62,13 @@
       "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.document_crossrefs_live before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through memory_v1.document_effective_periods_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "lineage"
     },
     {
@@ -233,6 +247,13 @@
       "target_id": "version"
     },
     {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.chunks_all_versions_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "version"
+    },
+    {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
@@ -279,6 +300,13 @@
       "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "version"
+    },
+    {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through memory_v1.document_effective_periods_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "version"
     },
     {
@@ -458,6 +486,13 @@
     },
     {
       "basis": null,
+      "expectation": "The representation target's forbidden identifiers are reachable through memory_v1.chunks_all_versions_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": null,
       "expectation": "The representation target's forbidden identifiers are reachable through memory_v1.chunks_live before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.chunks_live",
@@ -503,6 +538,13 @@
       "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_effective_periods_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "representation"
     },
     {
@@ -682,6 +724,13 @@
     },
     {
       "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.chunks_all_versions_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.chunks_live",
@@ -727,6 +776,13 @@
       "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "claim"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_effective_periods_live publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "claim"
     },
     {
@@ -906,6 +962,13 @@
     },
     {
       "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.chunks_all_versions_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.chunks_live",
@@ -951,6 +1014,13 @@
       "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_effective_periods_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "fact_provenance"
     },
     {
@@ -1130,6 +1200,13 @@
     },
     {
       "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.chunks_all_versions_live before the mutation, and no column of any row carries one of them after it.",
+      "status": "applicable",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
       "expectation": "The k_target target's forbidden identifiers are reachable through memory_v1.chunks_live before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.chunks_live",
@@ -1175,6 +1252,13 @@
       "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_effective_periods_live publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "k_target"
     },
     {
@@ -1356,6 +1440,13 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "memory_v1.chunks_live",
       "target_id": "p1_candidate"
     },
@@ -1399,6 +1490,13 @@
       "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "p1_candidate"
     },
     {
@@ -1578,6 +1676,13 @@
     },
     {
       "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.chunks_all_versions_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "graph_edge"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.chunks_live",
@@ -1623,6 +1728,13 @@
       "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "graph_edge"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "memory_v1.document_effective_periods_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
+      "status": "not_applicable",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "graph_edge"
     },
     {
@@ -1804,6 +1916,13 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "memory_v1.chunks_all_versions_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "memory_v1.chunks_live",
       "target_id": "corpus_body"
     },
@@ -1847,6 +1966,13 @@
       "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
       "surface": "memory_v1.document_crossrefs_live",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "memory_v1.document_effective_periods_live",
       "target_id": "corpus_body"
     },
     {
@@ -2021,16 +2147,21 @@
   "contract": "memory_v1.d48_deletion_matrix/2",
   "schema": "memory_v1",
   "status_counts": {
-    "applicable": 84,
-    "deferred": 64,
-    "not_applicable": 140
+    "applicable": 90,
+    "deferred": 68,
+    "not_applicable": 148
   },
-  "surface_count": 32,
+  "surface_count": 34,
   "surfaces": [
     {
       "caller_reachable": true,
       "compiles_deletion": true,
       "name": "memory_v1.changes_visible"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.chunks_all_versions_live"
     },
     {
       "caller_reachable": true,
@@ -2066,6 +2197,11 @@
       "caller_reachable": true,
       "compiles_deletion": true,
       "name": "memory_v1.document_crossrefs_live"
+    },
+    {
+      "caller_reachable": true,
+      "compiles_deletion": true,
+      "name": "memory_v1.document_effective_periods_live"
     },
     {
       "caller_reachable": true,
@@ -2193,6 +2329,7 @@
     {
       "applicable_surfaces": [
         "memory_v1.changes_visible",
+        "memory_v1.chunks_all_versions_live",
         "memory_v1.chunks_live",
         "memory_v1.claim_occurrences_live",
         "memory_v1.claims_canonical",
@@ -2200,6 +2337,7 @@
         "memory_v1.claims_visible_history",
         "memory_v1.contradiction_members_current",
         "memory_v1.document_crossrefs_live",
+        "memory_v1.document_effective_periods_live",
         "memory_v1.document_versions_visible",
         "memory_v1.documents_live",
         "memory_v1.entities_current",
@@ -2247,8 +2385,10 @@
     {
       "applicable_surfaces": [
         "memory_v1.changes_visible",
+        "memory_v1.chunks_all_versions_live",
         "memory_v1.claims_canonical",
         "memory_v1.claims_visible_history",
+        "memory_v1.document_effective_periods_live",
         "memory_v1.document_versions_visible",
         "memory_v1.testimony_currency_events_visible"
       ],
@@ -2270,6 +2410,7 @@
     },
     {
       "applicable_surfaces": [
+        "memory_v1.chunks_all_versions_live",
         "memory_v1.chunks_live",
         "memory_v1.document_versions_visible",
         "memory_v1.documents_live",
@@ -2337,6 +2478,7 @@
     {
       "applicable_surfaces": [
         "memory_v1.changes_visible",
+        "memory_v1.chunks_all_versions_live",
         "memory_v1.chunks_live",
         "memory_v1.claim_occurrences_live",
         "memory_v1.claims_canonical",

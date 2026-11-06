@@ -12,8 +12,10 @@ instructions: |
 
   Verify ALL of the following:
   1. A typed SourceLocator union exists matching the normative schema of media_design.md §4 —
-     the five kinds page / source_range (the pageless case: HTML, email, plain text) /
-     image_region / time / video_region — EVERY variant carrying a precision field. It is a
+     the nine kinds page / source_range (the pageless case: HTML, email, plain text) /
+     image_region / time / video_region / sheet_range / table_region / json_pointer /
+     line_range (the last four from D133, conventions in format_conversion_design.md §7) —
+     EVERY variant carrying a precision field. It is a
      discriminated/tagged type, not a bag of nullable columns. Field conventions hold: pages
      1-based; regions normalized {x,y,w,h} in [0,1], origin top-left; time intervals
      half-open [start_ms, end_ms) in integer milliseconds on the manifest-declared timeline;

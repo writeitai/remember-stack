@@ -65,6 +65,10 @@ class SemanticInvocation(BaseModel):
     generation: str | None = None
     pg_confirmed_at: datetime | None = None
     termination_reason: str | None = None
+    # D142 §8.6: index candidates the search read (``nominated`` is only the
+    # returned prefix), and how many of them failed confirmation.
+    fetched: int = 0
+    rejected: int = 0
 
 
 class GraphInvocation(BaseModel):

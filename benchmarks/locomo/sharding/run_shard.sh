@@ -25,7 +25,7 @@ run_dir=$2
 dataset_path=$3
 python_bin=${LOCOMO_PYTHON:-.venv/bin/python}
 tier=${LOCOMO_TIER:-publication}
-protocol=${LOCOMO_PROTOCOL:-full-v38}
+protocol=${LOCOMO_PROTOCOL:-full-v39}
 mount_root=${LOCOMO_MOUNT_ROOT:-$run_dir/.mounts}
 max_documents=${LOCOMO_MAX_DOCUMENTS:-100}
 max_questions=${LOCOMO_MAX_QUESTIONS:-1540}
@@ -60,51 +60,14 @@ backup_python() {
     "$python_bin" "$@"
 }
 
-# The protocol's non-secret ingest identity. Override ambient self-host
-# defaults so every shard runs the exact pipeline the protocol checks.
-# full-v38-glm swaps only the generation seats to GLM (embeddings, pipeline,
-# prompts, budgets, answer, and judge stay canonical) and routes chat through
-# the ordered shortlist with fallbacks so D127 rotation can engage; pinning
-# CHAT_PROVIDER_ONLY would leave rotation nowhere to advance to.
-if [[ "$protocol" == "full-v38-glm" ]]; then
-  glm_model=z-ai/glm-5.3-flash
-  export REMEMBERSTACK_STRUCTURER_MODEL="$glm_model"
-  export REMEMBERSTACK_SKELETON_CHECK_MODEL="$glm_model"
-  export REMEMBERSTACK_ROLE_MODEL="$glm_model"
-  export REMEMBERSTACK_SUMMARY_MODEL="$glm_model"
-  export REMEMBERSTACK_E2_EXTRACT_MODEL="$glm_model"
-  export REMEMBERSTACK_E3_NORMALIZE_MODEL="$glm_model"
-  export REMEMBERSTACK_OBS_SMALL_MODEL="$glm_model"
-  export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-  export REMEMBERSTACK_FACT_MODEL="$glm_model"
-  export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
-  unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
-  export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
-  unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
-  export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"z-ai/glm-5.3-flash":"minimal"}'
-  export REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER=deepinfra,relace,wafer
-  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
-else
-  export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_ROLE_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_SUMMARY_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_E3_NORMALIZE_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-  export REMEMBERSTACK_FACT_MODEL=openai/gpt-5.6-luna
-  export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
-  unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
-  export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
-  unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
-  export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"openai/gpt-5.6-luna":"high"}'
-  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
-  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER
-fi
+# One current protocol; retired execution branches live in Git and saved runs.
+[[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
+profile_environment=$("$python_bin" -m benchmarks.locomo.profile_environment "$protocol")
+while IFS= read -r binding; do
+  export "$binding"
+done <<<"$profile_environment"
 export REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR=/var/lib/rememberstack/invalid-completions
 
-[[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
 [[ -f "$dataset_path" ]] || die "dataset does not exist: $dataset_path"
 [[ -n ${REMEMBERSTACK_OPENROUTER_API_KEY:-} ]] ||
   die "REMEMBERSTACK_OPENROUTER_API_KEY must be exported for the benchmark CLI"
@@ -176,6 +139,15 @@ attest_worker_environment() {
     REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
     REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP
     REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR
+  )
+  frozen_variables+=(
+      REMEMBERSTACK_FACT_ADJUDICATION_ENGINE
+      REMEMBERSTACK_FACT_CONFIDENCE_FLOOR
+      REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT
+      REMEMBERSTACK_TYPESAFE_MODEL
+      REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL
+      REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT
+      REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY
   )
 
   while IFS= read -r container_id; do
