@@ -207,13 +207,14 @@ Claims whose time is `unknown` have no window and are left out; the
 were said rather than when they happened, write a SQL query on
 `claims_live` with `asserted_at`; see [Explore memory with SQL](/docs/guides/sql).
 
-## What the memory believed on an earlier day
+## Facts recorded on an earlier day
 
-The time modes answer "what was true then, as we know it now". To ask
-"what did the memory believe on 1 August about 1 July?", before the
-17 September correction arrived, use the `facts_as_of` function in a SQL
-query. SQL queries run over the query space, a set of prepared read-only
-views and functions; every statement is checked against it before it runs
+The time modes answer "what was true then, as we know it now". The separate
+`facts_as_of` function selects facts recorded by a belief instant and not yet
+invalidated then, and tests them against a world-time instant using their
+current corrected windows. It does not reconstruct earlier fact-window values.
+SQL queries run over the query space, a set of prepared read-only views and
+functions; every statement is checked against it before it runs
 ([Explore memory with SQL](/docs/guides/sql)). `facts_as_of` takes a world-time
 instant and a belief instant:
 
@@ -230,9 +231,13 @@ for row in believed.rows:
 ```
 
 It returns at most 200 rows by default (its third argument, up to 1,000).
-It picks the facts the memory held on the belief instant, but shows each
-with its dates as they stand today: a window corrected after that instant
-comes back corrected.
+Both filtering and the returned dates use the fact's window as it stands
+today. A later correction can make a fact appear or disappear from the same
+past-belief query. For example, a July start learned in August and corrected
+to June in September now matches a query about June with an August belief
+instant. A full reconstruction of the earlier window is not available through
+this function.
+
 The graph calls `graph_neighborhood` and `graph_path` take the same two
 clocks as `valid_at` and `believed_at`.
 

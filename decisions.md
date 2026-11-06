@@ -5953,14 +5953,18 @@ implementation was withdrawn as unneeded for an unreleased product
 Points to observe on real corpora are kept in
 [the watch list](plan/analysis/mutable_fact_windows_watch_list.md).
 
-**Belief-time reads (2026-09-25).** Because windows change in place, a
-belief-time read (`facts_as_of`, graph helpers with `believed_at`) selects
-facts by `ingested_at`/`invalidated_at` and shows each with its current window;
-earlier windows remain readable only in the adjudication transcript. A
-window-history table is rejected as a second write path and forget target for a
-question the transcript already answers. Assured fact operations keep answering
-current belief; they take no `believed_at`
-([design §2](plan/designs/mutable_fact_windows_design.md#2-one-chosen-window-with-honest-precision)).
+**Belief-time coverage clarification (2026-11-06).** The shipped
+`facts_as_of` and graph belief-time reads filter and display each fact's current
+world window after selecting its recorded belief interval. Later corrections
+can change which facts a past-belief query returns. This accepted limitation
+is not full historical reconstruction and does not supersede the time-travel
+requirement. Per-fact adjudication transcripts retain permitted before/after
+values but do not replace a historical query across facts. No additional
+history store, write path or reconstruction API is introduced or selected by
+this clarification. Assured fact operations retain current-belief semantics.
+[Design §2](plan/designs/mutable_fact_windows_design.md#2-one-chosen-window-with-honest-precision)
+and the [coverage analysis](plan/analysis/lean_mutable_fact_windows.md#belief-time-query-coverage-2026-11-06)
+state the example, remaining requirement, alternatives and erasure boundary.
 
 **Authority and delivery.** [D118 design](plan/designs/mutable_fact_windows_design.md)
 contains the full concepts, semantics, alternatives, security/recovery obligations
