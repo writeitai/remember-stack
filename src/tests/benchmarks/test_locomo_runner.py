@@ -3577,7 +3577,7 @@ def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     resolved = run_protocol(run_dir=tmp_path)
 
     assert resolved is protocol
-    assert resolved.execution_profile.chat_provider_only == ("openai/flex",)
+    assert resolved.execution_profile.chat_provider_only == ("openai/flex", "openai")
 
 
 class _DiscriminatedProvider:
