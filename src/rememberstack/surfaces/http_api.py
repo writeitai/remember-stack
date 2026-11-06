@@ -569,17 +569,25 @@ def deployment_context(request: Request) -> ApiDeployment:
     request alone; the body is not read yet) once per request, before
     authentication, and every route, the D74 barrier and the perimeter use
     the result. ``resolve`` may raise ``HTTPException`` to refuse, for
-    example 401 for a credential it cannot place. Used as a dependency in a
-    host's own route, it returns the deployment the gate resolved for the
-    request.
+    example 401 for a credential it cannot place. On its first request the
+    gate takes ``resolve`` over (keeping it as the app's resolver) and points
+    the override back at the resolved value, so FastAPI never calls
+    ``resolve`` a second time: as a dependency anywhere, including a host's
+    own routes and included routers, ``deployment_context`` returns the
+    deployment the gate resolved and authenticated for the request.
     """
     return _request_deployment(request)
 
 
 async def _resolve_deployment(scope: Scope) -> ApiDeployment:
-    """Call the app's ``deployment_context`` (or its override) for one request."""
+    """Call the app's resolver (its ``deployment_context`` override) once."""
     app = scope["app"]
-    resolve = app.dependency_overrides.get(deployment_context)
+    overrides = app.dependency_overrides
+    registered = overrides.get(deployment_context)
+    if registered is not None and registered is not _request_deployment:
+        app.state.deployment_resolver = registered
+        overrides[deployment_context] = _request_deployment
+    resolve = getattr(app.state, "deployment_resolver", None)
     if resolve is None:
         return app.state.api_deployment
     request = Request(scope)

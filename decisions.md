@@ -7377,8 +7377,11 @@ deployment's values into another's work.
 5. **One app, a perimeter per request (2026-11-06).** `ApiDeployment` also carries the
    request's perimeter: `auth`, `direct_admission` and `spend_lease`. The perimeter gate
    resolves the request's deployment first, by calling the app's `deployment_context`
-   override with the request (a plain or `async` function; it may raise `HTTPException`),
-   then authenticates against that deployment, admits under its limits, and the spend
+   override with the request (a plain or `async` function; it may raise `HTTPException`)
+   exactly once: the gate keeps the override as the app's resolver and points the
+   override at the resolved value, so `Depends(deployment_context)` anywhere, including
+   included routers, returns the deployment that was authenticated. It then authenticates
+   against that deployment, admits under its limits, and the spend
    lease middleware uses its lease. Without an override the composed deployment applies,
    exactly as before. Routes, the D74 barrier, the scope check, ingest attribution and
    open-query principal forwarding all read the same resolved deployment, and every route

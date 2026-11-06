@@ -12,6 +12,7 @@ from typing import Annotated
 from typing import cast
 from uuid import UUID
 
+from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
@@ -178,3 +179,42 @@ def test_a_hosts_own_route_sees_the_resolved_deployment() -> None:
     served = client.get("/whoami", headers=_headers("b", "b-key"))
     assert served.status_code == 200, served.text
     assert served.json() == {"deployment": str(_B)}
+
+
+def test_included_routers_reuse_the_one_resolution() -> None:
+    """A router's ``Depends(deployment_context)`` never calls the resolver again."""
+    app = build_api(
+        engine=cast(QueryEngine, object()),
+        deployment_id=_A,
+        admission=_Open(),
+        readiness=_Ready(),
+    )
+    template: ApiDeployment = app.state.api_deployment
+    answers = [
+        replace(template, deployment_id=_B, auth=_Auth(_B)),
+        replace(template, auth=_Auth(_A)),
+    ]
+    calls: list[int] = []
+
+    async def resolve(request: Request) -> ApiDeployment:
+        calls.append(1)
+        return answers[len(calls) - 1]
+
+    app.dependency_overrides[deployment_context] = resolve
+    router = APIRouter()
+
+    @router.get("/whoami")
+    def whoami(
+        request: Request,
+        deployment: Annotated[ApiDeployment, Depends(deployment_context)],
+    ) -> dict[str, str]:
+        return {
+            "served": str(deployment.deployment_id),
+            "authenticated": str(request.state.perimeter_context.deployment_id),
+        }
+
+    app.include_router(router)
+    served = TestClient(app).get("/whoami", headers={"Authorization": "Bearer b-key"})
+    assert served.status_code == 200, served.text
+    assert served.json() == {"served": str(_B), "authenticated": str(_B)}
+    assert calls == [1]
