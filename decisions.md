@@ -7433,7 +7433,7 @@ state and belongs on the row D67 already made the single home of delivery state.
 expired rows as `failed` with a retry backoff was rejected: a dead worker is not evidence that
 the input is bad, and the attempt count already bounds a task that kills its worker every time.
 
-**Consequences.** Migration `p9_42_0063` adds the column, a `running ⇒ lease_until IS NOT NULL`
+**Consequences.** Migration `p9_43_0064` adds the column, a `running ⇒ lease_until IS NOT NULL`
 check and the reaper's partial index, and gives rows already `running` an expired lease so the
 first sweep recovers them. [Orchestration §6](plan/designs/orchestration_design.md#claim-leases-and-the-reaper-d145)
 holds the contract; [schema §2](plan/designs/postgres_schema_design.md) the column, index and

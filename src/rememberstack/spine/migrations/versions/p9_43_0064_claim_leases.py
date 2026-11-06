@@ -1,6 +1,6 @@
 """Claim leases: a running attempt holds its row only while its worker renews it.
 
-revision: p9_42_0063
+revision: p9_43_0064
 
 ``processing_state.lease_until`` is set when an attempt is claimed and moved
 forward by the worker while the handler runs. A running row whose lease has
@@ -20,8 +20,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "p9_42_0063"
-down_revision: str | None = "p9_41_0062"
+revision: str = "p9_43_0064"
+down_revision: str | None = "p9_42_0063"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
