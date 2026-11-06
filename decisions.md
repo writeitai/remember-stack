@@ -7492,7 +7492,7 @@ rewritten; threads reuse the synchronous handlers, which share no mutable state.
 of fourteen stage workers; `worker --stage` is gone. Contract in
 [packaging §3, worker classes](plan/designs/packaging_distribution_design.md#3-task-execution--one-model-two-delivery-shells).
 
-## D146. Object-storage bytes are reported per worker attempt
+## D147. Object-storage bytes are reported per worker attempt
 
 **Status:** accepted. **Date:** 2026-11-06.
 

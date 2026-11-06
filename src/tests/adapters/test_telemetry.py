@@ -9,8 +9,10 @@ from uuid import UUID
 
 from rememberstack.adapters.selfhost import FanoutTelemetry
 from rememberstack.adapters.selfhost import JsonLineTelemetry
+from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.model import ClaimedWork
 from rememberstack.model import NonRetryableHandlerError
+from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
@@ -159,3 +161,63 @@ def test_worker_result_and_ledger_survive_raising_optional_fanout_sink() -> None
     local_row = json.loads(stream.getvalue())
     assert local_row["attributes"][5] == {"name": "outcome", "value": "dead_lettered"}
     assert local_row["exception"]["message"] == "authoritative handler failure"
+
+
+class _S3Body:
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+
+    def read(self) -> bytes:
+        return self._content
+
+    def close(self) -> None:
+        return None
+
+
+class _TinyS3:
+    """Just enough of the S3 client for one read and one write."""
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        del Bucket, Key
+        return {"Body": _S3Body(b"12345")}
+
+    def put_object(self, **_: object) -> object:
+        return {}
+
+
+class _MovesBytesThenFails:
+    def __init__(self) -> None:
+        self._store = MinIOObjectStore(bucket="artifacts", client=_TinyS3())  # type: ignore[arg-type]
+
+    def handle(self, *, work: ClaimedWork, meter: object) -> HandlerOutcome:
+        del work, meter
+        self._store.read_bytes(key=ObjectKey("in.md"))
+        self._store.write_bytes(
+            key=ObjectKey("out.md"), content=b"123", storage_class="hot"
+        )
+        raise NonRetryableHandlerError("after moving bytes")
+
+
+def test_worker_event_reports_the_object_bytes_the_attempt_moved() -> None:
+    """D147: the attempt's worker.run event carries its object-storage traffic."""
+    registry = HandlerRegistry()
+    registry.register(stage=PipelineStage.CONVERT, handler=_MovesBytesThenFails())
+    stream = StringIO()
+
+    Worker(
+        ledger=cast(WorkLedger, _MemoryLedger()),
+        registry=registry,
+        telemetry=JsonLineTelemetry(stream=stream),
+    ).run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.CONVERT,
+        lane=ProcessingLane.STEADY,
+    )
+
+    attributes = {
+        item["name"]: item["value"]
+        for item in json.loads(stream.getvalue())["attributes"]
+    }
+    assert attributes["outcome"] == "dead_lettered"
+    assert attributes["object_bytes_read"] == 5
+    assert attributes["object_bytes_written"] == 3

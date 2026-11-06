@@ -303,7 +303,7 @@ system:
 - per-stage throughput / latency / error rate / DLQ depth (`processing_state`);
 - per-stage object-storage traffic: each claimed attempt's `worker.run` event carries the bytes
   it read from and wrote to networked object storage (`object_bytes_read`,
-  `object_bytes_written`, D146), so storage egress is summed per stage from the same telemetry;
+  `object_bytes_written`, D147), so storage egress is summed per stage from the same telemetry;
 - spend by stage × cascade tier × lane against budget (`cost_ledger`);
 - the end-to-end trace of one document — its `processing_state` rows, ordered, *are* the
   trace;
