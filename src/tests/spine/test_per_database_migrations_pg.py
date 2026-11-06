@@ -192,18 +192,34 @@ def test_two_databases_upgrade_concurrently(
             _drop(admin, name)
 
 
-def test_a_database_name_too_long_for_its_roles_is_refused(
-    database_url: str, admin: Engine
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(f"rs_long_{uuid4().hex}{uuid4().hex}"[:44], id="44-chars"),
+        pytest.param(f"RS_Upper_{uuid4().hex[:8]}", id="upper-case"),
+    ],
+)
+def test_a_database_name_its_roles_cannot_keep_apart_is_refused(
+    database_url: str, admin: Engine, name: str
 ) -> None:
-    """A name whose role names PostgreSQL would truncate never gets migrated."""
-    name = f"rs_long_{uuid4().hex}{uuid4().hex}"[:44]
-    assert len(name) == 44
+    """A name whose role names PostgreSQL would fold or cut is never migrated."""
     try:
         with admin.connect() as connection:
             connection.execute(text(f'CREATE DATABASE "{name}"'))
         config = Config(str(_ROOT / "alembic.ini"))
         config.set_main_option("sqlalchemy.url", _url(database_url, name))
-        with pytest.raises(RuntimeError, match="longer than 43 bytes"):
+        with pytest.raises(RuntimeError, match="at most 43 characters"):
             command.upgrade(config=config, revision="head")
+        engine = create_engine(_url(database_url, name))
+        try:
+            with engine.connect() as connection:
+                assert (
+                    connection.execute(
+                        text("SELECT to_regclass('public.alembic_version')")
+                    ).scalar_one()
+                    is None
+                )
+        finally:
+            engine.dispose()
     finally:
         _drop(admin, name)

@@ -252,8 +252,9 @@ ports and published extension points, keeping it portable off GCP too.
   Migrations may touch cluster-global objects only idempotently and race-free: the shared
   `rememberstack_view_owner` role is created tolerating a concurrent creator, every other role
   is named per database (`rememberstack_query_<database>`, `rememberstack_graph_<database>`),
-  and a database name longer than 43 bytes is refused because PostgreSQL would truncate those
-  role names at 63 bytes and let two databases share one. Advisory locks are database-scoped
+  and a database name that is not 1–43 characters of `[a-z0-9_]` (not starting with a digit)
+  is refused, because PostgreSQL folds those unquoted role names to lower case and truncates
+  them at 63 bytes, which would let two databases share one. Advisory locks are database-scoped
   and need no guard. The loop over databases is operator tooling, not part of the library. Processing-version stamps (D7/D12) mean code upgrades
   never silently invalidate derived state — reprocessing is explicit, per version filters,
   through the Phase-7 lanes.
