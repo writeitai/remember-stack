@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
@@ -519,3 +520,40 @@ def test_retrieval_database_budget_is_environment_configurable_and_deployment_lo
     assert from_env.retrieval_database_budget_s == 240
     assert explicit.retrieval_database_budget_s == 75
     assert from_env.retrieval_database_budget_s == 240
+
+
+@pytest.mark.parametrize("budget", [0.0, -1.0, float("inf"), float("nan")])
+def test_query_engine_rejects_invalid_database_budget(budget: float) -> None:
+    """Direct library composition enforces the same finite positive contract."""
+    from rememberstack.surfaces import QueryEngine
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        QueryEngine(
+            engine=MagicMock(),
+            search_index=MagicMock(),
+            model_provider=MagicMock(),
+            embedding_model="budget-test",
+            database_budget_seconds=budget,
+        )
+
+
+def test_query_engine_database_budget_does_not_leak_between_instances() -> None:
+    """Two deployments can choose different deadlines in the same process."""
+    from rememberstack.surfaces import QueryEngine
+
+    first = QueryEngine(
+        engine=MagicMock(),
+        search_index=MagicMock(),
+        model_provider=MagicMock(),
+        embedding_model="budget-test",
+        database_budget_seconds=240,
+    )
+    second = QueryEngine(
+        engine=MagicMock(),
+        search_index=MagicMock(),
+        model_provider=MagicMock(),
+        embedding_model="budget-test",
+        database_budget_seconds=75,
+    )
+    assert first.database_budget_seconds == 240
+    assert second.database_budget_seconds == 75
