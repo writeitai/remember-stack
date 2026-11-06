@@ -742,7 +742,9 @@ default: 120 seconds). The stock profile reads
 `REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`; an explicit library
 `EngineSettings.deployment.retrieval_database_budget_s` overrides that process
 environment for its own deployment. Clients and proxies must allow more than
-this budget (for example, a 180-second client timeout for a 120-second budget).
+this budget. `combined_context` runs two independently bounded children, so
+its transport must allow their sum plus overhead (for example, a 300-second
+client timeout for two 120-second budgets).
 This read policy never changes ingestion or paid-product reuse. Pool
 admission, P1 channel-readiness checks, semantic fact nomination, optional
 entity-profile rescue, anchor/neighbor authority checks, graph expansion, and

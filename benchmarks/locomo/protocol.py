@@ -41,8 +41,8 @@ ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-configurable-retrieval-v39
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
-API_TIMEOUT_SECONDS: Final = 180.0
-"""Transport budget for compound retrieval, larger than the server DB budget."""
+API_TIMEOUT_SECONDS: Final = 300.0
+"""Transport budget covering both independently bounded combined-context children."""
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
 """Concise adjudication projector/response-adapter generation (D121/D123)."""

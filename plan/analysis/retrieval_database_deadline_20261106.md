@@ -27,8 +27,10 @@ QueryEngine constructor. A single absolute deadline still covers admission and
 nested reads; a new statement must not reset it. Admission concurrency and its
 short queue-wait limit remain separate. Longer budgets can occupy a read slot
 longer and consume more CPU, so retain bounded pools and typed deadline results.
-Client and proxy timeouts must exceed the configured budget; the LoCoMo profile
-already uses 180 seconds and will freeze the new server setting in its identity.
+Client and proxy timeouts must exceed the configured budget. Combined context
+runs two independently bounded children, so LoCoMo will freeze a 300-second
+transport timeout alongside the new server setting, allowing both 120-second
+children plus overhead.
 Existing saved profiles and results are not rewritten.
 
 An unlimited timeout is rejected because expensive requests could monopolize a
