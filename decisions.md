@@ -7382,7 +7382,8 @@ profile, so a host may hold several profiles in one process.
 - Swapping environment variables per request. It is unsafe under concurrency.
 
 **Consequences.**
-- `build_api`'s keyword signature is unchanged, and the OpenAPI document is unchanged
+- `build_api`'s keyword signature stays backward compatible (item 4 adds an optional
+  `task_queue`), and the OpenAPI document is unchanged
   (the dependency adds no parameters).
 - A capability missing from a request's `ApiDeployment` answers 404, as an unmounted
   route would.
