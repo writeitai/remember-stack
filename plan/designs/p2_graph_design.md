@@ -650,7 +650,7 @@ logical/known-compatible source, not reusing an unverified data directory.
 
 A store created on PostgreSQL 19 Beta 3 still holds the two former SQL/PGQ
 property graphs. `pg_upgrade` and `pg_restore` replay their DDL, which RC 1
-cannot parse, so the store first runs migration `p9_43_0064` on Beta 3, which
+cannot parse, so the store first runs migration `p9_44_0065` on Beta 3, which
 drops them, and then moves to RC 1. The catalog version also changed between
 Beta 3 and RC 1, so the data directory moves by `pg_upgrade` or
 `pg_dump`/`pg_restore`, never by opening it directly.

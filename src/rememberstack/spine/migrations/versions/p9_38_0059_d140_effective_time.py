@@ -43,7 +43,7 @@ lands in this one revision:
   pair and kind among the references of the versions in force now) are
   recreated in the same transaction, with their grants. (As shipped, the
   SQL/PGQ property graph over that view was recreated too; the D98 RC 1
-  amendment removed it, see p9_43_0064.)
+  amendment removed it, see p9_44_0065.)
 
 The downgrade refuses when any D140 data exists — a declaration or mode event
 (live or retracted), a version key, or a reference generation — because none

@@ -12,7 +12,7 @@ As shipped, this revision also created two SQL/PGQ property graphs
 (``memory_v1.memory_current`` and ``memory_v1.memory_history``) over these
 views. PostgreSQL 19 Beta 4 removed SQL/PGQ, so a later server cannot parse
 that DDL; under the D98 RC 1 amendment the property graphs are no longer
-created here, and p9_43_0064 drops them from Beta 3 stores that have them.
+created here, and p9_44_0065 drops them from Beta 3 stores that have them.
 
 The development-only downgrade restores legacy graph objects but does not
 widen ``memory_v1.document_crossrefs_live`` back to unresolved or tombstoned

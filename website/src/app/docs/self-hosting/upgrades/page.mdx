@@ -171,7 +171,7 @@ database still holds two of them. `pg_upgrade` and `pg_restore` would replay
 their definitions, which RC 1 cannot parse. To move a Beta 3 deployment:
 
 1. Upgrade RememberStack while it still runs on the Beta 3 PostgreSQL image.
-   `setup` runs migration `p9_43_0064`, which drops the two property graphs.
+   `setup` runs migration `p9_44_0065`, which drops the two property graphs.
 2. Move the data into a new RC 1 volume with `pg_upgrade`, or with a logical
    dump and restore (below).
 

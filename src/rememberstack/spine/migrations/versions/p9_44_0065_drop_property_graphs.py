@@ -24,8 +24,8 @@ from alembic import op
 
 from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
 
-revision: str = "p9_43_0064"
-down_revision: str | None = "p9_42_0063"
+revision: str = "p9_44_0065"
+down_revision: str | None = "p9_43_0064"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

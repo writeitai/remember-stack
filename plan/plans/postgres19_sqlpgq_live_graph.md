@@ -3,7 +3,7 @@
 **Status:** implementation complete; release execution gates remain open.
 The SQL/PGQ parts were later replaced: PostgreSQL 19 Beta 4 removed SQL/PGQ,
 so the one-hop read is a relational join and the property graphs are dropped
-(D98 RC 1 amendment, 2026-11-06; migration `p9_43_0064`).  
+(D98 RC 1 amendment, 2026-11-06; migration `p9_44_0065`).  
 **Date:** 2026-08-27  
 **Binding design:** [`../designs/p2_graph_design.md`](../designs/p2_graph_design.md)  
 **Analysis:**
