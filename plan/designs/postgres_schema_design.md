@@ -485,10 +485,12 @@ CREATE TABLE processing_state (
   enqueued_at     timestamptz NOT NULL DEFAULT now(),
   started_at      timestamptz,
   finished_at     timestamptz,
+  lease_until     timestamptz,                 -- D145: while running, when the claiming attempt's lease ends unless its worker renews it; meaningless otherwise
   UNIQUE (deployment_id, target_kind, target_id, stage, component_version),
   UNIQUE (deployment_id, processing_id),       -- supports tenancy-safe cost_ledger FK
   CHECK (attempts >= 0 AND max_attempts >= 1 AND attempts <= max_attempts),
   CHECK (status <> 'failed' OR attempts < max_attempts),
+  CHECK (status <> 'running' OR lease_until IS NOT NULL),
   CHECK (
     (status = 'failed' AND defer_reason = 'retry_backoff') OR
     (status = 'pending' AND (defer_reason IS NULL OR defer_reason IN ('scheduled','budget'))) OR
@@ -500,6 +502,7 @@ COMMENT ON TABLE processing_state IS
 CREATE INDEX ix_procstate_dlq      ON processing_state (deployment_id, stage) WHERE status = 'dead_letter';
 CREATE INDEX ix_procstate_due      ON processing_state (deployment_id, stage, lane, not_before, enqueued_at, processing_id) WHERE status IN ('pending','failed');
 CREATE INDEX ix_procstate_target   ON processing_state (target_kind, target_id);
+CREATE INDEX ix_procstate_running_lease ON processing_state (deployment_id, stage, lease_until) WHERE status = 'running';  -- D145 reaper
 
 -- Transactional initial wake for the self-host shell (D67). PostgreSQL delivers NOTIFY only if
 -- the INSERT commits; future-scheduled rows are discovered by the due-work fallback poll. The
@@ -523,8 +526,10 @@ FOR EACH ROW EXECUTE FUNCTION notify_due_processing_insert();
 -- equivalent `lane IS NULL` form for an unlaned K/P route; both use ix_procstate_due.
 -- The claim transaction locks the selected row and runs the budget pre-flight before finalizing a
 -- transition. Exhaustion leaves it pending with defer_reason='budget' and not_before at the window
--- roll. Otherwise the transaction clears defer_reason, changes status to running, and increments
--- attempts exactly once immediately before the handler begins.
+-- roll. Otherwise the transaction clears defer_reason, changes status to running, increments
+-- attempts exactly once immediately before the handler begins, and sets lease_until to now() plus
+-- the lease (D145). Renewal, complete, fail and cost recording match `attempts = <the claimed attempt>` as well as
+-- `status = 'running'`, so an attempt whose claim was taken back changes nothing.
 SELECT processing_id
 FROM processing_state
 WHERE deployment_id = $1
@@ -536,6 +541,21 @@ WHERE deployment_id = $1
 ORDER BY not_before, enqueued_at, processing_id
 LIMIT $4
 FOR UPDATE SKIP LOCKED;
+
+-- D145 reaper: running rows on the sweeping worker's stages whose lease has passed (their worker
+-- was killed or stalled) return to pending, due now, or become dead letters once attempts reached
+-- max_attempts. Rows another sweep holds are skipped.
+WITH expired AS (
+  SELECT processing_id FROM processing_state
+  WHERE deployment_id = $1 AND stage = ANY($2) AND status = 'running' AND lease_until < now()
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE processing_state p
+SET status      = CASE WHEN p.attempts < p.max_attempts THEN 'pending' ELSE 'dead_letter' END,
+    not_before  = CASE WHEN p.attempts < p.max_attempts THEN now() ELSE p.not_before END,
+    finished_at = CASE WHEN p.attempts < p.max_attempts THEN NULL ELSE now() END,
+    last_error  = 'lease expired: …'
+FROM expired WHERE p.processing_id = expired.processing_id;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- cost_ledger — per-invocation cost/latency metering for enforced per-layer budgets (§8 overall).
@@ -2939,6 +2959,7 @@ Labs."*
 | D65 media: immutable representations + occurrence provenance | `document_representations` (immutable conversion outputs; route + component graph + output hashes; representation-addressed artifact paths) + `document_versions.current_representation_id` (swap-on-completion); `representation_id` on `document_sections`/`chunks` (the basis coordinate); `chunk_claims.derivation_kind`/`evidence_mode`/`source_locators` (occurrence-grain disclosure + locators, media_design §4–§6) |
 | D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
+| D145 claim leases and the reaper | `processing_state.lease_until` + running-requires-lease CHECK; `ix_procstate_running_lease`; attempt-conditional renew/complete/fail |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
 | D133/D138 format families and extraction eligibility | `chunks.extraction_eligible` + policy version; `computed` evidence mode; formats themselves need no new table |
 | D134 document metadata and search | `document_metadata`, `document_people` (general fields per version), `document_names` (every observed name, trigram + BM25 indexes); `claims.own_document_name_span`; search filters join them; no new search sidecar (content channel reuses `chunk_search`) |

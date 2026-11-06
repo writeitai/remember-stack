@@ -98,10 +98,16 @@ class _MemoryLedger:
             payload=None,
         )
 
+    lease_renewal_interval_s = 60.0
+
+    def renew_lease(self, *, processing_id: UUID, attempt: int) -> bool:
+        return processing_id == _PROCESSING_ID and attempt == 1
+
     def fail(
-        self, *, processing_id: UUID, error: str, retryable: bool
+        self, *, processing_id: UUID, attempt: int, error: str, retryable: bool
     ) -> datetime | None:
         assert processing_id == _PROCESSING_ID
+        assert attempt == 1
         assert retryable is False
         self.rows[0]["status"] = "dead_letter"
         self.rows[0]["last_error"] = error

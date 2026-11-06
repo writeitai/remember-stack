@@ -196,6 +196,7 @@ def test_cost_attribution_is_copied_from_the_running_row(
 
     call = RecordCall(
         processing_id=claimed.processing_id,
+        attempt=claimed.attempt,
         call_key="selection",
         cost_usd=Decimal("0.01"),
     )
@@ -218,10 +219,14 @@ def test_cost_attribution_is_copied_from_the_running_row(
     assert row["lane"] == ProcessingLane.STEADY.value
     assert row["attempt"] == 1
 
-    ledger.complete(processing_id=claimed.processing_id)
+    ledger.complete(processing_id=claimed.processing_id, attempt=claimed.attempt)
     with pytest.raises(WorkNotRunningError):
         ledger.record_call(
-            call=RecordCall(processing_id=claimed.processing_id, call_key="late")
+            call=RecordCall(
+                processing_id=claimed.processing_id,
+                attempt=claimed.attempt,
+                call_key="late",
+            )
         )
 
 
@@ -319,6 +324,7 @@ def test_configured_budget_parks_reports_and_resumes_without_losing_work(
     assert budgeted.record_call(
         call=RecordCall(
             processing_id=claimed.processing_id,
+            attempt=claimed.attempt,
             call_key="selection",
             tier="selection",
             cost_usd=Decimal("0.75"),
@@ -327,12 +333,13 @@ def test_configured_budget_parks_reports_and_resumes_without_losing_work(
     assert budgeted.record_call(
         call=RecordCall(
             processing_id=claimed.processing_id,
+            attempt=claimed.attempt,
             call_key="decontextualize",
             tier="frontier",
             cost_usd=Decimal("0.50"),
         )
     )
-    budgeted.complete(processing_id=claimed.processing_id)
+    budgeted.complete(processing_id=claimed.processing_id, attempt=claimed.attempt)
 
     waiting = budgeted.enqueue(work=_work())
     handler = _CountingHandler()

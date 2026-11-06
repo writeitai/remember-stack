@@ -76,6 +76,12 @@ When a stage fails on an item:
 - A **non-retryable** failure, such as a file that cannot be converted,
   goes straight to the dead letters.
 - An item that uses its last attempt goes to the dead letters.
+- A worker that **dies** while running an item (killed, out of memory,
+  restarted) stops renewing its hold on the item. Once the hold runs out
+  (`REMEMBERSTACK_WORK_LEASE_S`, 60 seconds by default), another worker
+  puts the item back in the queue, or sends it to the dead letters if that
+  was its last attempt. The `last_error` then starts with
+  `lease expired`.
 
 HTTP 429 answers from OpenRouter are handled inside the provider call and do
 not use attempts ([Models and providers](/docs/self-hosting/models#openrouter-routing-and-limits)).

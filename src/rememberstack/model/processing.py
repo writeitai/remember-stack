@@ -127,6 +127,19 @@ class ClaimedWork(BaseModel):
     payload: dict[str, object] | None
 
 
+class ExpiredLease(BaseModel):
+    """A running attempt whose lease ran out, as the reaper left it.
+
+    ``requeued`` rows went back to ``pending`` for another attempt; the others
+    had used their last attempt and were dead-lettered.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    work: ClaimedWork
+    requeued: bool
+
+
 class CostBudget(BaseModel):
     """One explicit spend ceiling for a deployment, stage, lane, and fixed window."""
 
@@ -153,13 +166,16 @@ class BudgetParked(BaseModel):
 class RecordCall(BaseModel):
     """One billed model/provider call to attribute to the claimed row's attempt.
 
-    Attribution fields (stage, lane, attempt) are copied from the locked
+    Attribution fields (stage, lane, target) are copied from the locked
     ``processing_state`` row by the spine and can never be supplied here (D67).
+    ``attempt`` is the caller's claim: the call is recorded only while that
+    attempt still holds the row (D145).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     processing_id: UUID
+    attempt: int = Field(ge=1)
     call_key: str
     model_name: str | None = None
     tier: str | None = None
@@ -179,6 +195,7 @@ class RunResultOutcome(StrEnum):
     SUCCEEDED = "succeeded"
     RETRY_SCHEDULED = "retry_scheduled"
     DEAD_LETTERED = "dead_lettered"
+    LEASE_LOST = "lease_lost"
 
 
 class WorkLedgerError(Exception):

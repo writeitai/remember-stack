@@ -104,7 +104,7 @@ def _complete_prior_work(*, ledger: WorkLedger, target_ids: tuple[UUID, ...]) ->
             lane=ProcessingLane.STEADY,
         )
         assert isinstance(claimed, ClaimedWork)
-        ledger.complete(processing_id=claimed.processing_id)
+        ledger.complete(processing_id=claimed.processing_id, attempt=claimed.attempt)
 
 
 def test_version_bump_is_bounded_resumable_and_cannot_starve_steady_work(

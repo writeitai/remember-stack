@@ -276,6 +276,7 @@ EXPECTED_INDEXES: Final = (
     "ix_predicates_other",
     "ix_procstate_dlq",
     "ix_procstate_due",
+    "ix_procstate_running_lease",
     "ix_procstate_target",
     "ix_relations_block_obj",
     "ix_relations_block_subj",
@@ -373,7 +374,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 118,
+    "c": 119,
     "f": 148,
     "n": 643,
     "p": 85,
@@ -398,6 +399,7 @@ DECISION_OBJECTS: Final = {
     "D57": ("document_sections", "document_representations"),
     "D65": ("documents", "document_versions", "document_representations"),
     "D67": ("processing_state", "cost_ledger", "ix_procstate_due"),
+    "D145": ("processing_state", "ix_procstate_running_lease"),
     "D68": ("deployments", "ix_entities_name_trgm"),
     "D69": ("relations", "v_memory_entity_survivor"),
     "D74": ("forget_manifests", "ix_forget_content_guard"),

@@ -28,7 +28,9 @@ docker compose logs --since 1h
   `deployment_id`, `processing_id`, `stage`, `lane`, `attempt`, `outcome`
   and `duration_ms`. The outcome is one of
   `succeeded`, `retry_scheduled`, `dead_lettered`, `budget_parked`,
-  `no_route_parked` or `no_work`. A failure adds an `exception` object with
+  `no_route_parked`, `lease_lost` or `no_work`. `lease_lost` means the
+  worker took longer than its hold on the item without renewing it, the
+  item was handed back to the queue, and this run's result was discarded. A failure adds an `exception` object with
   the error type, message and full traceback.
 
 An error message can quote the input that caused it, so treat worker logs

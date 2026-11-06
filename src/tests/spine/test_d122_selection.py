@@ -138,7 +138,9 @@ def test_no_claimify_work_before_every_selection_is_committed_and_succeeded(
             normalize_component_version=E3_NORMALIZER_VERSION,
         )
         ledger.complete_chunk_selection(
-            processing_id=claimed.processing_id, barrier=barrier
+            processing_id=claimed.processing_id,
+            attempt=claimed.attempt,
+            barrier=barrier,
         )
         with database_engine.connect() as connection:
             count = connection.execute(

@@ -168,6 +168,7 @@ def test_announce_reannounces_an_existing_row(
         assert isinstance(claimed, ClaimedWork)
         ledger.fail(
             processing_id=claimed.processing_id,
+            attempt=claimed.attempt,
             error="Traceback: transient",
             retryable=True,
         )

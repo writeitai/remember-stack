@@ -252,6 +252,43 @@ backoff-derived `not_before`; at the total-attempt limit the row becomes `dead_l
 Non-retryable errors may dead-letter earlier. Delivery retries that never claim the row consume no
 application attempt, and budget parking can never take either failure transition.
 
+### Claim leases and the reaper (D145)
+
+A claim is only valid while the worker that made it is alive. Without a time limit, a worker that
+is killed mid-task (out of memory, a container restart, a preempted instance) would leave its row
+`running` forever: nothing would retry it, the stages after it would wait, and a hard forget
+(which waits for running work to drain) would never start. So every claim carries a **lease**:
+
+- **Claim.** Claiming sets `lease_until = now() + lease` (default 60 s,
+  `REMEMBERSTACK_WORK_LEASE_S`) in the same transaction that moves the row to `running` and
+  increments `attempts`. The attempt number is the claim's identity.
+- **Renewal.** While the handler runs, its worker extends the lease every third of the lease
+  from a background thread. A slow LLM call therefore never loses its claim, but a dead process
+  stops renewing within one lease.
+- **Attempt-conditional transitions.** Renewal, complete, fail and cost recording succeed only
+  for the row's current attempt (`status = 'running' AND attempts = <claimed attempt>`). Example: attempt 1
+  stalls, the reaper takes the row back, attempt 2 claims it; when attempt 1 wakes up and tries
+  to complete, nothing matches and its result is discarded (`lease_lost`), so it can never
+  overwrite or finish attempt 2. A complete after the lease has expired but before any reaper
+  ran is still accepted: no other attempt exists yet, and the work is done.
+- **The reaper.** Each worker periodically sweeps the stages it serves for `running` rows whose
+  lease has passed. A row with attempts left goes back to `pending`, due now, with `last_error`
+  saying the lease expired; it is announced like any retry. A row whose `attempts` already
+  reached `max_attempts` becomes a dead letter instead (and its handler's terminal-failure
+  finalizer runs), because claiming requires `attempts < max_attempts` and a pending row at the
+  limit could never be claimed again. Since `attempts` increments at claim, a task that kills its
+  worker every time dead-letters after `max_attempts` instead of looping. Concurrent sweeps skip
+  each other's rows (`SKIP LOCKED`).
+
+Handlers already tolerate a second attempt (D12: idempotent writes, put-if-absent objects), so a
+reaped attempt that had partly run is safe to repeat. Cost rows are attempt-conditional too: the
+meter records a call under the claimed attempt only while that attempt holds the row. Calls the
+lost attempt recorded before losing its claim stay on its own attempt's rows; a call it finishes
+afterwards is refused, exactly as a killed worker's in-flight calls are never recorded, so it can
+never land on (and deduplicate) the newer attempt's calls with the same call key. The lease length is a trade-off between how quickly a dead
+worker's task runs again and how much database renewal traffic a busy worker makes; it must stay
+well above the longest pause a live worker can have between renewals.
+
 ## 7. Observable state and telemetry — no dashboard subsystem
 
 Everything below derives from tables that already exist (`processing_state`, `cost_ledger`,
@@ -286,7 +323,7 @@ authority for pipeline truth (D60/D61).
 ## References
 
 Inventory: `../analysis/workers.md`. Decisions: D4, D6, D7, D12, D16, D23, D25,
-**D52–D53 and D67**
+**D52–D53, D67 and D145**
 (`decisions.md`). Review findings: `../analysis/design_review_2026_07.md` (F8, F9).
 Requirements: operational properties + imposed constraints (`../requirements/requirements_v3.md`).
 Worker semantics live in their layer designs: `e0_files_design.md`,

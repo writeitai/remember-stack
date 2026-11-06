@@ -456,12 +456,13 @@ def test_budget_park_emits_one_worker_event_without_running_handler(
     ledger.record_call(
         call=RecordCall(
             processing_id=charged,
+            attempt=1,
             call_key="provider-call",
             model_name="fixture-model",
             cost_usd=Decimal("1.00"),
         )
     )
-    ledger.complete(processing_id=charged)
+    ledger.complete(processing_id=charged, attempt=1)
     parked_id = ledger.enqueue(
         work=_work(target_id=uuid4(), component_version="convert-parked")
     ).processing_id
