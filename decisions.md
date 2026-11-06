@@ -7290,3 +7290,73 @@ fact child).
 [analysis](plan/analysis/processing_layer_toggles.md),
 [delivery](plan/plans/processing_layers.md); reviews r1–r9 and responses in `design/reviews/`
 (`REVIEW_gpt-6.1-sol_d143_design_r*`, `RESPONSE_d143_design_r*`).
+
+---
+
+## D144. A deployment's engine is built from explicit settings and can run beside others in one process
+
+**Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c).
+**Date:** 2026-11-06.
+
+**Context.** Until now one process served one deployment. The self-host profile read the
+database URL, deployment identity, buckets, object-store credentials and model-provider key
+from process environment variables. The HTTP API captured that one deployment's
+capabilities when it was built. A worker could only claim "the next due row on my route",
+never a row it was told about. A program that wants to use the engine as a library for
+several deployments (for example a host that keeps each deployment in its own database
+and receives one task at a time from a push queue) had nowhere to plug in. It would have
+had to fork the profile, or swap environment variables between requests, which leaks one
+deployment's values into another's work.
+
+**Decision.** Three generic seams, with no multi-deployment machinery in this repository:
+
+1. **Explicit settings.** `EngineSettings` (`rememberstack.profiles`) holds every value
+   that differs between two deployments' engines: `deployment` (`SelfHostSettings`:
+   identity, buckets, limits), `database`, `object_store` and `model_provider` (the
+   provider account and key). `SelfHostProfile.from_settings(settings)` builds one
+   deployment's context (database engines, stores, model provider, optional
+   `TaskQueuePort`) from it alone. `EngineSettings.from_env()` is just the default way to
+   make one, and it is what `python -m rememberstack.profiles.selfhost` uses. The profile no
+   longer reads the database URL or provider settings from the environment after
+   construction. Migrations and the worker's `LISTEN` connection use the profile's own
+   engine URL. Model *policy* (which model each stage calls, embedding model,
+   adjudication engine) still comes from the environment. It holds no deployment's data
+   and is the same for every deployment a process serves.
+2. **Run one named task.** `run_task(context, processing_id)` (`rememberstack.profiles`)
+   reads the row's route from the context's database and runs it through the ordinary
+   worker boundary (`Worker.run_one`, with a claim restricted to that row by
+   `WorkLedger.claim_one(processing_id=…)`). It uses the same due rule, attempts,
+   retries, budget parking, dead-lettering and chain follow-ups as a looping worker. A row
+   that is gone, not yet due, finished, or claimed elsewhere answers `no_work`. A row of
+   another deployment is refused. Retries are announced through the context's
+   `TaskQueuePort`, which defaults to the `pg_notify` shell (§3 of the packaging design).
+3. **Per-request API context.** Every HTTP route reads its deployment id and capabilities
+   (`ApiDeployment`) from one FastAPI dependency, `deployment_context`. By default it
+   returns the deployment `build_api` was composed with. A host replaces it with
+   `app.dependency_overrides[deployment_context] = resolve` and returns each request's
+   own `ApiDeployment` (`SelfHostProfile.api_deployment()`). The D74 admission barrier
+   uses the same per-request deployment. The perimeter gate, direct admission, the spend
+   lease and the startup readiness check stay composed per app.
+
+No module-level variable holds a deployment's values. Per-deployment state lives on the
+profile, so a host may hold several profiles in one process.
+
+**Alternatives rejected.**
+- A tenant resolver, a deployment cache or a push-queue dispatcher in the engine. These
+  are a host's concerns: they are not needed to run one deployment, and D60 keeps them out.
+- One FastAPI app per deployment behind a router. It works without engine changes, but
+  builds every route set once per deployment and gives no seam a host can reuse.
+- Swapping environment variables per request. It is unsafe under concurrency.
+
+**Consequences.**
+- `build_api`'s keyword signature is unchanged, and the OpenAPI document is unchanged
+  (the dependency adds no parameters).
+- A capability missing from a request's `ApiDeployment` answers 404, as an unmounted
+  route would.
+- `two_deployment_contexts_pg` proves two contexts over two databases in one process: the
+  API overridden per request, and `run_task` interleaved.
+
+**Refines.** D61/D62 (the queue port and the composition root: the profile is now one
+deployment's context, built explicitly); packaging design §3 and §5.
+
+**Authority:** [packaging design §5](plan/designs/packaging_distribution_design.md#5-deployment-profiles).

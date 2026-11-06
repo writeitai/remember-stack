@@ -265,9 +265,16 @@ class Worker:
         self._telemetry = telemetry
 
     def run_one(
-        self, *, deployment_id: UUID, stage: PipelineStage, lane: ProcessingLane | None
+        self,
+        *,
+        deployment_id: UUID,
+        stage: PipelineStage,
+        lane: ProcessingLane | None,
+        processing_id: UUID | None = None,
     ) -> RunResult:
         """Claim and run at most one due unit of work on the route.
+
+        ``processing_id`` restricts the claim to that one row (D144).
 
         This is the worker's single catch-to-log boundary (core value 6): the
         full traceback is logged and recorded on the row; a
@@ -278,7 +285,10 @@ class Worker:
         handler = self._registry.handler_for(stage=stage)  # before any claim:
         # an unregistered stage must never strand a claimed row as running.
         claimed = self._ledger.claim_one(
-            deployment_id=deployment_id, stage=stage, lane=lane
+            deployment_id=deployment_id,
+            stage=stage,
+            lane=lane,
+            processing_id=processing_id,
         )
         if claimed is None:
             return RunResult(processing_id=None, outcome=RunResultOutcome.NO_WORK)

@@ -7,15 +7,21 @@ is the registry's active rows, so CLI and MCP stay in lockstep by construction.
 The API is the one place authorization is enforced for query-engine reads
 (retrieval §9): a deployment that passes an `AuthPerimeterPort` gets every
 endpoint gated on a valid perimeter credential for THIS deployment — a single
-trust domain, never per-request tenancy. With no port, the perimeter is
-infrastructure's job and the app is open (the self-host default). The surface
-itself never touches adapters.
+trust domain. With no port, the perimeter is infrastructure's job and the app
+is open (the self-host default). The surface itself never touches adapters.
+
+Every route reads its deployment and capabilities from one FastAPI dependency,
+:func:`deployment_context`, which by default returns the deployment `build_api`
+was composed with. A host that serves several deployments from one process
+overrides that dependency and returns the request's deployment (D144); each
+request is still served by exactly one deployment.
 """
 
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 import functools
@@ -493,6 +499,73 @@ class RunSavedQueryRequest(BaseModel):
     max_rows: int | None = Field(default=None, ge=0)
 
 
+@dataclass(frozen=True, kw_only=True)
+class ApiDeployment:
+    """The deployment a request is served from: its id and capabilities (D144).
+
+    `build_api` mounts the routes for the capabilities its own deployment
+    has, and every route reads them from the request's deployment through
+    :func:`deployment_context`, never from values captured when the app was
+    built. A capability absent from the request's deployment answers 404,
+    as an unmounted route would. The perimeter gate, direct admission, the
+    spend lease and the startup readiness check stay composed per app.
+    """
+
+    deployment_id: UUID
+    engine: QueryEngine
+    admission: AdmissionPort
+    surface: OperationSurface | None = None
+    open_query: OpenQueryFacade | None = None
+    ingest: IngestPort | None = None
+    connectors: ConnectorManagementPort | None = None
+    pipeline_readiness: PipelineReadinessPort | None = None
+    documents: DocumentInventoryPort | None = None
+    document_search: DocumentSearchPort | None = None
+    section_history: SectionHistoryPort | None = None
+    references: ReferencesPort | None = None
+    document_references: DocumentReferencesPort | None = None
+    deletion: DocumentDeletionPort | None = None
+    effective_time: EffectiveTimePort | None = None
+    graph: GraphQueryPort | None = None
+    build_info: BuildInfoPort | None = None
+    processing_layers: ProcessingLayersPort | None = None
+
+    def __post_init__(self) -> None:
+        """One deployment is one trust domain (D50): bound parts must agree."""
+        for name, part in (
+            ("operation surface", self.surface),
+            ("open-query facade", self.open_query),
+        ):
+            if part is not None and part.deployment_id != self.deployment_id:
+                raise ValueError(
+                    f"the {name} and the API serve different deployments —"
+                    " one deployment is one trust domain (D50)"
+                )
+
+
+def deployment_context(request: Request) -> ApiDeployment:
+    """The deployment this request is served from (D144).
+
+    The default is the deployment `build_api` was composed with. A host that
+    serves several deployments replaces it per app, for example
+    ``app.dependency_overrides[deployment_context] = resolve``, where
+    ``resolve`` may take the request (and its credential) and returns that
+    request's :class:`ApiDeployment`. FastAPI resolves it once per request,
+    so the D74 barrier and the route see the same deployment.
+    """
+    return request.app.state.api_deployment
+
+
+_Deployment = Annotated[ApiDeployment, Depends(deployment_context)]
+
+
+def _served[T](capability: T | None) -> T:
+    """The request's deployment capability, or 404 when it does not serve it."""
+    if capability is None:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return capability
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -559,16 +632,26 @@ def build_api(
     None — the self-host default — imposes no limit: caps are deployment
     policy, never an engine default (D61).
     """
-    if surface is not None and surface.deployment_id != deployment_id:
-        raise ValueError(
-            "the operation surface and the API serve different deployments —"
-            " one deployment is one trust domain (D50)"
-        )
-    if open_query is not None and open_query.deployment_id != deployment_id:
-        raise ValueError(
-            "the open-query facade and the API serve different deployments —"
-            " one deployment is one trust domain (D50)"
-        )
+    deployment = ApiDeployment(
+        deployment_id=deployment_id,
+        engine=engine,
+        admission=admission,
+        surface=surface,
+        open_query=open_query,
+        ingest=ingest,
+        connectors=connectors,
+        pipeline_readiness=pipeline_readiness,
+        documents=documents,
+        document_search=document_search,
+        section_history=section_history,
+        references=references,
+        document_references=document_references,
+        deletion=deletion,
+        effective_time=effective_time,
+        graph=graph,
+        build_info=build_info,
+        processing_layers=processing_layers,
+    )
     readiness.ensure_ready(deployment_id=deployment_id)
     # One perimeter dependency instance so app-level gating and open-query
     # principal injection share the same authenticate call per request.
@@ -582,7 +665,7 @@ def build_api(
         # raises: `perimeter_dep` above stays the sole enforcement point and
         # keeps answering 401, so documenting the contract cannot change it.
         *([Depends(HTTPBearer(auto_error=False))] if perimeter_dep is not None else []),
-        Depends(_admission(admission=admission, deployment_id=deployment_id)),
+        Depends(_admission),
     ]
     app = FastAPI(
         title="RememberStack query API",
@@ -592,6 +675,7 @@ def build_api(
         openapi_url=None,  # a machine API; the schema endpoint is not gated, so off
         dependencies=dependencies,
     )
+    app.state.api_deployment = deployment
     if direct_admission is not None:
         # Before any route is declared, so every one is built held.
         app.router.route_class = _HeldRoute
@@ -631,20 +715,22 @@ def build_api(
 
     @app.get("/resolve", response_model=Envelope)
     def resolve(
+        deployment: _Deployment,
         name: str,
         context_entity_ids: Annotated[
             list[UUID] | None, Query(max_length=RESOLVE_CONTEXT_LIMIT)
         ] = None,
     ) -> Envelope:
         """Resolve current entities, optionally ranked by focal context (S51)."""
-        return engine.resolve(
-            deployment_id=deployment_id,
+        return deployment.engine.resolve(
+            deployment_id=deployment.deployment_id,
             name=name,
             context_entity_ids=tuple(context_entity_ids or ()),
         )
 
     @app.get("/lookup/relations", response_model=Envelope)
     def lookup_relations(
+        deployment: _Deployment,
         subject_entity_id: UUID | None = None,
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
@@ -652,8 +738,8 @@ def build_api(
         k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 50,
     ) -> Envelope:
         """Relations matching an (s, p, o) pattern — current, or as-of (S9)."""
-        return engine.lookup_relations(
-            deployment_id=deployment_id,
+        return deployment.engine.lookup_relations(
+            deployment_id=deployment.deployment_id,
             subject_entity_id=subject_entity_id,
             predicate=predicate,
             object_entity_id=object_entity_id,
@@ -662,21 +748,22 @@ def build_api(
         )
 
     @app.get("/transcript/relation/{relation_id}", response_model=Envelope)
-    def transcript_relation(relation_id: UUID) -> Envelope:
+    def transcript_relation(deployment: _Deployment, relation_id: UUID) -> Envelope:
         """The S8 audit query: why the system believes what it believes."""
-        return engine.transcript_relation(
-            deployment_id=deployment_id, relation_id=relation_id
+        return deployment.engine.transcript_relation(
+            deployment_id=deployment.deployment_id, relation_id=relation_id
         )
 
     @app.get("/lookup/observations", response_model=Envelope)
     def lookup_observations(
+        deployment: _Deployment,
         entity_id: UUID,
         property_query: str | None = None,
         k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 10,
     ) -> Envelope:
         """Live observations on one entity, semantic over statements (S2)."""
-        return engine.lookup_observations(
-            deployment_id=deployment_id,
+        return deployment.engine.lookup_observations(
+            deployment_id=deployment.deployment_id,
             entity_id=entity_id,
             property_query=property_query,
             k=k,
@@ -684,24 +771,26 @@ def build_api(
 
     @app.get("/search/claims", response_model=Envelope)
     def search_claims(
+        deployment: _Deployment,
         query: str,
         k: Annotated[int, Query(ge=1, le=400)] = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
     ) -> Envelope:
         """Claim search — evidence grain, never current-fact truth."""
-        return engine.search_claims(
-            deployment_id=deployment_id, query=query, k=k, channel=channel
+        return deployment.engine.search_claims(
+            deployment_id=deployment.deployment_id, query=query, k=k, channel=channel
         )
 
     @app.get("/search/chunks", response_model=Envelope)
     def search_chunks(
+        deployment: _Deployment,
         query: str,
         k: Annotated[int, Query(ge=1, le=400)] = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
     ) -> Envelope:
         """Search live source chunks as separately typed evidence."""
-        return engine.search_chunks(
-            deployment_id=deployment_id, query=query, k=k, channel=channel
+        return deployment.engine.search_chunks(
+            deployment_id=deployment.deployment_id, query=query, k=k, channel=channel
         )
 
     # The same two searches, with the terms in a body instead of the request
@@ -710,7 +799,9 @@ def build_api(
     # surface a browser uses must not put it there (D59). The GET forms stay
     # for existing clients, which reach the deployment over a private path.
     @app.post("/search/claims", response_model=Envelope)
-    def post_search_claims(body: Annotated[SearchRequest, Body()]) -> Envelope:
+    def post_search_claims(
+        deployment: _Deployment, body: Annotated[SearchRequest, Body()]
+    ) -> Envelope:
         """Claim search — evidence grain, never current-fact truth.
 
         ``documents`` keeps claims with a live occurrence in a matching
@@ -719,8 +810,8 @@ def build_api(
         declared effective periods through their occurrences in the versions
         in force for the scope, and returns those occurrences.
         """
-        return engine.search_claims(
-            deployment_id=deployment_id,
+        return deployment.engine.search_claims(
+            deployment_id=deployment.deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
@@ -728,14 +819,16 @@ def build_api(
         )
 
     @app.post("/search/chunks", response_model=Envelope)
-    def post_search_chunks(body: Annotated[SearchRequest, Body()]) -> Envelope:
+    def post_search_chunks(
+        deployment: _Deployment, body: Annotated[SearchRequest, Body()]
+    ) -> Envelope:
         """Search live source chunks as separately typed evidence.
 
         ``documents`` keeps chunks whose document version matches (D134);
         ``time`` keeps chunks of versions in force for the scope (D140).
         """
-        return engine.search_chunks(
-            deployment_id=deployment_id,
+        return deployment.engine.search_chunks(
+            deployment_id=deployment.deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
@@ -744,50 +837,44 @@ def build_api(
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
     def adjacent_chunks(
+        deployment: _Deployment,
         chunk_id: UUID,
         window: Annotated[
             int, Query(ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW)
         ] = 1,
     ) -> Envelope:
         """Fetch surrounding source chunks within a window around a target chunk in document order."""
-        return engine.adjacent_chunks(
-            deployment_id=deployment_id, chunk_id=chunk_id, window=window
+        return deployment.engine.adjacent_chunks(
+            deployment_id=deployment.deployment_id, chunk_id=chunk_id, window=window
         )
 
     @app.post("/chunks/adjacent", response_model=Envelope)
     def post_adjacent_chunks(
-        body: Annotated[AdjacentChunksRequest, Body()],
+        deployment: _Deployment, body: Annotated[AdjacentChunksRequest, Body()]
     ) -> Envelope:
         """Fetch surrounding source chunks within a window around a target chunk in document order."""
-        return engine.adjacent_chunks(
-            deployment_id=deployment_id, chunk_id=body.chunk_id, window=body.window
+        return deployment.engine.adjacent_chunks(
+            deployment_id=deployment.deployment_id,
+            chunk_id=body.chunk_id,
+            window=body.window,
         )
 
     @app.get("/hydrate/relation/{relation_id}", response_model=Envelope)
-    def hydrate_relation(relation_id: UUID) -> Envelope:
+    def hydrate_relation(deployment: _Deployment, relation_id: UUID) -> Envelope:
         """The S5 chain: relation → evidence claims → source documents."""
-        return engine.hydrate_relation(
-            deployment_id=deployment_id, relation_id=relation_id
+        return deployment.engine.hydrate_relation(
+            deployment_id=deployment.deployment_id, relation_id=relation_id
         )
 
     if surface is not None:
-        _mount_operations(
-            app=app,
-            surface=surface,
-            layers=processing_layers,
-            deployment_id=deployment_id,
-        )
+        _mount_operations(app=app)
     if processing_layers is not None:
-        _mount_processing_layers(
-            app=app, layers=processing_layers, deployment_id=deployment_id
-        )
+        _mount_processing_layers(app=app)
     if open_query is not None:
-        _mount_open_query(app=app, open_query=open_query, perimeter=perimeter_dep)
+        _mount_open_query(app=app, perimeter=perimeter_dep)
     if ingest is not None:
         _mount_ingest(
             app=app,
-            ingest=ingest,
-            deployment_id=deployment_id,
             max_body_bytes=ingest_body_max_bytes,
             trusted_principal_source=trusted_principal_source,
             attribution_requires_write=auth is not None,
@@ -795,47 +882,28 @@ def build_api(
         if ingest_body_max_bytes is not None:
             app.add_middleware(_IngestBodyLimit, max_bytes=ingest_body_max_bytes)
     if connectors is not None:
-        _mount_connectors(app=app, connectors=connectors, deployment_id=deployment_id)
+        _mount_connectors(app=app)
     if pipeline_readiness is not None:
-        _mount_pipeline_readiness(
-            app=app, readiness=pipeline_readiness, deployment_id=deployment_id
-        )
+        _mount_pipeline_readiness(app=app)
     if documents is not None:
-        _mount_document_inventory(
-            app=app, documents=documents, deployment_id=deployment_id
-        )
+        _mount_document_inventory(app=app)
     if document_search is not None:
-        _mount_document_search(
-            app=app, search=document_search, deployment_id=deployment_id
-        )
+        _mount_document_search(app=app)
     if section_history is not None:
-        _mount_section_history(
-            app=app, history=section_history, deployment_id=deployment_id
-        )
+        _mount_section_history(app=app)
     if references is not None:
-        _mount_references(app=app, references=references, deployment_id=deployment_id)
+        _mount_references(app=app)
     if document_references is not None:
-        _mount_document_references(
-            app=app, references=document_references, deployment_id=deployment_id
-        )
+        _mount_document_references(app=app)
     if deletion is not None:
-        _mount_document_deletion(
-            app=app, deletion=deletion, deployment_id=deployment_id
-        )
+        _mount_document_deletion(app=app)
     if effective_time is not None:
-        _mount_effective_time(
-            app=app, effective_time=effective_time, deployment_id=deployment_id
-        )
+        _mount_effective_time(app=app)
     if graph is not None:
-        _mount_graph(
-            app=app, graph=graph, layers=processing_layers, deployment_id=deployment_id
-        )
+        _mount_graph(app=app)
     if build_info is not None:
         _mount_build_info(
             app=app,
-            build_info=build_info,
-            deployment_id=deployment_id,
-            layers=processing_layers,
             tools=_served_tools(
                 operations=surface is not None,
                 open_query=open_query is not None,
@@ -1038,14 +1106,7 @@ def _served_tools(
     return {name: tool(name).tool_version for name in names}
 
 
-def _mount_build_info(
-    *,
-    app: FastAPI,
-    build_info: BuildInfoPort,
-    deployment_id: UUID,
-    tools: dict[str, int],
-    layers: ProcessingLayersPort | None,
-) -> None:
+def _mount_build_info(*, app: FastAPI, tools: dict[str, int]) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
     Composed here rather than added to the app after `build_api` returns, which
@@ -1064,11 +1125,14 @@ def _mount_build_info(
     """
 
     @app.get("/deployment", response_model=DeploymentBuildInfo)
-    def deployment_build_info() -> DeploymentBuildInfo:
+    def deployment_build_info(deployment: _Deployment) -> DeploymentBuildInfo:
         """Report which code, model bindings and tools are serving, before any work."""
         # D143 §7.4: tools that read only an unserved layer are not listed.
-        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
-        return build_info.build_info(deployment_id=deployment_id).model_copy(
+        unserved = unserved_operation_names(
+            layers=deployment.processing_layers, deployment_id=deployment.deployment_id
+        )
+        build_info = _served(deployment.build_info)
+        return build_info.build_info(deployment_id=deployment.deployment_id).model_copy(
             update={
                 "tools": {
                     name: version
@@ -1141,13 +1205,7 @@ def _require_facts(
 _FACTS_LAYER: Final = frozenset({ProcessingLayer.FACTS})
 
 
-def _mount_graph(
-    *,
-    app: FastAPI,
-    graph: GraphQueryPort,
-    layers: ProcessingLayersPort | None,
-    deployment_id: UUID,
-) -> None:
+def _mount_graph(*, app: FastAPI) -> None:
     """Mount the three server-owned graph operations.
 
     The entity graph reads the facts layer; citation paths read sources
@@ -1155,9 +1213,14 @@ def _mount_graph(
     """
 
     @app.post("/graph/neighborhood", response_model=Envelope)
-    def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
+    def graph_neighborhood(
+        deployment: _Deployment, body: GraphNeighborhoodRequest
+    ) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
-        admission = _require_facts(layers=layers, deployment_id=deployment_id)
+        graph = _served(deployment.graph)
+        admission = _require_facts(
+            layers=deployment.processing_layers, deployment_id=deployment.deployment_id
+        )
         with _graph_errors():
             envelope = graph.neighborhood(
                 entity_id=body.entity_id,
@@ -1173,9 +1236,12 @@ def _mount_graph(
         return disclose_layers(envelope=envelope, admission=admission)
 
     @app.post("/graph/path", response_model=Envelope)
-    def graph_path(body: GraphPathRequest) -> Envelope:
+    def graph_path(deployment: _Deployment, body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
-        admission = _require_facts(layers=layers, deployment_id=deployment_id)
+        graph = _served(deployment.graph)
+        admission = _require_facts(
+            layers=deployment.processing_layers, deployment_id=deployment.deployment_id
+        )
         with _graph_errors():
             envelope = graph.path(
                 from_entity_id=body.from_entity_id,
@@ -1188,8 +1254,11 @@ def _mount_graph(
         return disclose_layers(envelope=envelope, admission=admission)
 
     @app.post("/graph/citation-path", response_model=Envelope)
-    def graph_citation_path(body: GraphCitationPathRequest) -> Envelope:
+    def graph_citation_path(
+        deployment: _Deployment, body: GraphCitationPathRequest
+    ) -> Envelope:
         """Return bounded directed citation paths between two documents."""
+        graph = _served(deployment.graph)
         with _graph_errors():
             return graph.citation_path(
                 from_doc_id=body.from_doc_id,
@@ -1198,9 +1267,7 @@ def _mount_graph(
             )
 
 
-def _mount_open_query(
-    *, app: FastAPI, open_query: OpenQueryFacade, perimeter: Any | None = None
-) -> None:
+def _mount_open_query(*, app: FastAPI, perimeter: Any | None = None) -> None:
     """Add the seven §3.1 open-query routes when the facade is composed.
 
     Paths are short and consistent under `/query/…`. Sandbox and registry failures map to typed
@@ -1215,6 +1282,7 @@ def _mount_open_query(
 
     @app.post("/query/sql", response_model=QueryResult)
     def query_sql(
+        deployment: _Deployment,
         body: SqlQueryRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
         layers: Annotated[
@@ -1222,6 +1290,7 @@ def _mount_open_query(
         ] = None,
     ) -> QueryResult:
         """One sandboxed SQL statement; QueryResult/v1."""
+        open_query = _served(deployment.open_query)
         return _open_call(
             lambda: open_query.query_sql(
                 sql=body.sql,
@@ -1234,6 +1303,7 @@ def _mount_open_query(
 
     @app.post("/query/sql/explain", response_model=QueryResult)
     def explain_sql(
+        deployment: _Deployment,
         body: SqlExplainRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
         layers: Annotated[
@@ -1241,6 +1311,7 @@ def _mount_open_query(
         ] = None,
     ) -> QueryResult:
         """EXPLAIN one SQL statement without executing it."""
+        open_query = _served(deployment.open_query)
         return _open_call(
             lambda: open_query.explain_sql(
                 sql=body.sql,
@@ -1252,9 +1323,12 @@ def _mount_open_query(
 
     @app.get("/query/space")
     def describe_query_space(
-        pattern: str | None = None, include_examples: bool = False
+        deployment: _Deployment,
+        pattern: str | None = None,
+        include_examples: bool = False,
     ) -> dict[str, object]:
         """Manifest-backed schema discovery (content-free)."""
+        open_query = _served(deployment.open_query)
         from rememberstack.surfaces.query_sandbox.discovery import (
             query_space_description_payload,
         )
@@ -1268,10 +1342,12 @@ def _mount_open_query(
 
     @app.get("/query/space/search")
     def search_query_space(
+        deployment: _Deployment,
         query: Annotated[str, Query(min_length=1)],
         k: Annotated[int, Query(ge=1, le=25)] = 10,
     ) -> list[dict[str, object]]:
         """Search checked-in manifest text only."""
+        open_query = _served(deployment.open_query)
         hits = _open_call(lambda: open_query.search_query_space(query=query, k=k))
         return [
             {
@@ -1286,9 +1362,12 @@ def _mount_open_query(
 
     @app.get("/query/saved")
     def list_saved_queries(
-        namespace: str | None = None, status: SavedQueryStatus | None = None
+        deployment: _Deployment,
+        namespace: str | None = None,
+        status: SavedQueryStatus | None = None,
     ) -> list[dict[str, object]]:
         """Registry metadata for discoverable saved queries."""
+        open_query = _served(deployment.open_query)
         rows = _open_call(
             lambda: open_query.list_saved_queries(namespace=namespace, status=status)
         )
@@ -1310,9 +1389,10 @@ def _mount_open_query(
 
     @app.get("/query/saved/{namespace}/{name}")
     def describe_saved_query(
-        namespace: str, name: str, version: int | None = None
+        deployment: _Deployment, namespace: str, name: str, version: int | None = None
     ) -> dict[str, object]:
         """One immutable saved-query version."""
+        open_query = _served(deployment.open_query)
         detail = _open_call(
             lambda: open_query.describe_saved_query(
                 namespace=namespace, name=name, version=version
@@ -1342,6 +1422,7 @@ def _mount_open_query(
 
     @app.post("/query/saved/{namespace}/{name}/run", response_model=QueryResult)
     def run_saved_query(
+        deployment: _Deployment,
         namespace: str,
         name: str,
         body: RunSavedQueryRequest,
@@ -1351,6 +1432,7 @@ def _mount_open_query(
         ] = None,
     ) -> QueryResult:
         """Execute one active saved query through the same SQL executor."""
+        open_query = _served(deployment.open_query)
         return _open_call(
             lambda: open_query.run_saved_query(
                 namespace=namespace,
@@ -1436,30 +1518,27 @@ def _sandbox_status(code: QueryErrorCode) -> int:
     return 422
 
 
-def _mount_pipeline_readiness(
-    *, app: FastAPI, readiness: PipelineReadinessPort, deployment_id: UUID
-) -> None:
+def _mount_pipeline_readiness(*, app: FastAPI) -> None:
     """Expose a normal, read-only completion boundary for bounded versions."""
 
     @app.post("/readiness", response_model=PipelineReadinessReport)
     def pipeline_readiness(
-        request: Annotated[PipelineReadinessRequest, Body()],
+        deployment: _Deployment, request: Annotated[PipelineReadinessRequest, Body()]
     ) -> PipelineReadinessReport:
         """Inspect exact pipeline and explicitly requested capabilities."""
-        return readiness.inspect(
-            deployment_id=deployment_id,
+        return _served(deployment.pipeline_readiness).inspect(
+            deployment_id=deployment.deployment_id,
             version_ids=tuple(request.version_ids),
             require=request.require,
         )
 
 
-def _mount_document_inventory(
-    *, app: FastAPI, documents: DocumentInventoryPort, deployment_id: UUID
-) -> None:
+def _mount_document_inventory(*, app: FastAPI) -> None:
     """Expose the read-only inventory of what this deployment holds."""
 
     @app.get("/documents", response_model=DocumentPage)
     def list_documents(
+        deployment: _Deployment,
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
         cursor: Annotated[str | None, Query()] = None,
         status: Annotated[DocumentStatusFilter | None, Query()] = None,
@@ -1475,8 +1554,11 @@ def _mount_document_inventory(
         whole corpus and filtering client-side.
         """
         try:
-            return documents.list_documents(
-                deployment_id=deployment_id, limit=limit, cursor=cursor, status=status
+            return _served(deployment.documents).list_documents(
+                deployment_id=deployment.deployment_id,
+                limit=limit,
+                cursor=cursor,
+                status=status,
             )
         except ValueError as error:
             # A cursor that does not parse. 400 rather than a silent restart:
@@ -1494,9 +1576,7 @@ def _documents_scope(body: SearchRequest) -> dict[str, Any]:
     return scope
 
 
-def _mount_document_search(
-    *, app: FastAPI, search: DocumentSearchPort, deployment_id: UUID
-) -> None:
+def _mount_document_search(*, app: FastAPI) -> None:
     """Expose ``search_documents`` (D134): find files. A read."""
 
     @app.post(
@@ -1505,7 +1585,7 @@ def _mount_document_search(
         responses={400: {"description": "cursor is malformed"}},
     )
     def search_documents(
-        body: Annotated[DocumentSearchRequest, Body()],
+        deployment: _Deployment, body: Annotated[DocumentSearchRequest, Body()]
     ) -> DocumentSearchPage:
         """Find documents by observed name, general metadata and content.
 
@@ -1516,14 +1596,14 @@ def _mount_document_search(
         ``cursor``, which pins the first call's as-of instant.
         """
         try:
-            return search.search_documents(deployment_id=deployment_id, request=body)
+            return _served(deployment.document_search).search_documents(
+                deployment_id=deployment.deployment_id, request=body
+            )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _mount_section_history(
-    *, app: FastAPI, history: SectionHistoryPort, deployment_id: UUID
-) -> None:
+def _mount_section_history(*, app: FastAPI) -> None:
     """Expose ``section_history`` (D140 §6.2). A read."""
 
     @app.get(
@@ -1536,6 +1616,7 @@ def _mount_section_history(
         },
     )
     def section_history(
+        deployment: _Deployment,
         doc_id: UUID,
         section_key: str,
         mode: Literal["current", "at", "overlap", "history"] = "history",
@@ -1580,7 +1661,9 @@ def _mount_section_history(
                 detail=error.errors(include_url=False, include_context=False),
             ) from error
         try:
-            return history.section_history(deployment_id=deployment_id, request=request)
+            return _served(deployment.section_history).section_history(
+                deployment_id=deployment.deployment_id, request=request
+            )
         except DocumentNotFoundError as error:
             raise HTTPException(status_code=404, detail="document_not_found") from error
         except ValueError as error:
@@ -1608,9 +1691,7 @@ _REFERENCE_ERRORS: Final = (
 )
 
 
-def _mount_references(
-    *, app: FastAPI, references: ReferencesPort, deployment_id: UUID
-) -> None:
+def _mount_references(*, app: FastAPI) -> None:
     """Expose the supplied-reference write (write scope) and its read (D140 §6.3)."""
 
     @app.put(
@@ -1633,7 +1714,7 @@ def _mount_references(
         },
     )
     async def set_references(
-        doc_id: UUID, version_id: UUID, request: Request
+        deployment: _Deployment, doc_id: UUID, version_id: UUID, request: Request
     ) -> ReferencesSet:
         """Replace one version's supplied references with an NDJSON set.
 
@@ -1661,8 +1742,8 @@ def _mount_references(
                 raise _references_too_large()
         try:
             return await run_in_threadpool(
-                references.set_references,
-                deployment_id=deployment_id,
+                _served(deployment.references).set_references,
+                deployment_id=deployment.deployment_id,
                 doc_id=doc_id,
                 version_id=version_id,
                 body=bytes(received),
@@ -1675,15 +1756,19 @@ def _mount_references(
         response_model=ReferenceGenerations,
         responses={404: {"description": "document_not_found | version_not_found"}},
     )
-    def reference_generations(doc_id: UUID, version_id: UUID) -> ReferenceGenerations:
+    def reference_generations(
+        deployment: _Deployment, doc_id: UUID, version_id: UUID
+    ) -> ReferenceGenerations:
         """The version's reference generations, newest first.
 
         Each generation is ``pending``, ``active``, ``rejected`` (with
         ``{item, field, reason}`` errors) or ``superseded``.
         """
         try:
-            return references.reference_generations(
-                deployment_id=deployment_id, doc_id=doc_id, version_id=version_id
+            return _served(deployment.references).reference_generations(
+                deployment_id=deployment.deployment_id,
+                doc_id=doc_id,
+                version_id=version_id,
             )
         except _REFERENCE_ERRORS as error:
             raise _reference_errors(error) from error
@@ -1699,9 +1784,7 @@ def _references_too_large() -> HTTPException:
     )
 
 
-def _mount_document_references(
-    *, app: FastAPI, references: DocumentReferencesPort, deployment_id: UUID
-) -> None:
+def _mount_document_references(*, app: FastAPI) -> None:
     """Expose ``document_references`` (D140 §6.2). A read."""
 
     @app.post(
@@ -1712,7 +1795,9 @@ def _mount_document_references(
             404: {"description": "document_not_found | chunk_not_found"},
         },
     )
-    def document_references(body: DocumentReferencesRequest) -> DocumentReferencesPage:
+    def document_references(
+        deployment: _Deployment, body: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
         """What a passage, section or document references, and what references it.
 
         Give ``chunk_id`` or ``doc_id`` (optionally ``section_key``). Each row
@@ -1724,8 +1809,8 @@ def _mount_document_references(
         pages and pins the evaluation and belief instants.
         """
         try:
-            return references.document_references(
-                deployment_id=deployment_id, request=body
+            return _served(deployment.document_references).document_references(
+                deployment_id=deployment.deployment_id, request=body
             )
         except DocumentNotFoundError as error:
             raise HTTPException(status_code=404, detail="document_not_found") from error
@@ -1735,9 +1820,7 @@ def _mount_document_references(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _mount_document_deletion(
-    *, app: FastAPI, deletion: DocumentDeletionPort, deployment_id: UUID
-) -> None:
+def _mount_document_deletion(*, app: FastAPI) -> None:
     """Expose the lineage-grain delete (D135). Requires write scope."""
 
     @app.delete(
@@ -1745,7 +1828,7 @@ def _mount_document_deletion(
         response_model=DocumentDeletion,
         responses={404: {"description": "document_not_found"}},
     )
-    def delete_document(doc_id: UUID) -> DocumentDeletion:
+    def delete_document(deployment: _Deployment, doc_id: UUID) -> DocumentDeletion:
         """Remove one document from the live memory.
 
         Its claims stop counting as current testimony, facts that no other
@@ -1759,7 +1842,9 @@ def _mount_document_deletion(
         finished and answers 200 instead.
         """
         try:
-            return deletion.delete_document(deployment_id=deployment_id, doc_id=doc_id)
+            return _served(deployment.deletion).delete_document(
+                deployment_id=deployment.deployment_id, doc_id=doc_id
+            )
         except DocumentNotFoundError as error:
             raise HTTPException(status_code=404, detail="document_not_found") from error
         except ForgetInProgressError as error:
@@ -1814,9 +1899,7 @@ _EFFECTIVE_TIME_ERRORS: Final = (
 )
 
 
-def _mount_effective_time(
-    *, app: FastAPI, effective_time: EffectiveTimePort, deployment_id: UUID
-) -> None:
+def _mount_effective_time(*, app: FastAPI) -> None:
     """Expose the D140 period writes. Both require write scope."""
 
     @app.put(
@@ -1829,7 +1912,10 @@ def _mount_effective_time(
         },
     )
     def set_effective_periods(
-        doc_id: UUID, version_id: UUID, body: EffectivePeriodsRequest
+        deployment: _Deployment,
+        doc_id: UUID,
+        version_id: UUID,
+        body: EffectivePeriodsRequest,
     ) -> EffectivePeriodsSet:
         """Replace the periods during which one version's text is in force.
 
@@ -1843,8 +1929,8 @@ def _mount_effective_time(
         a ``living`` document with 422. Periods never trigger reprocessing.
         """
         try:
-            return effective_time.set_effective_periods(
-                deployment_id=deployment_id,
+            return _served(deployment.effective_time).set_effective_periods(
+                deployment_id=deployment.deployment_id,
                 doc_id=doc_id,
                 version_id=version_id,
                 periods=body.periods,
@@ -1857,7 +1943,9 @@ def _mount_effective_time(
         response_model=EffectiveTimeCleared,
         responses={404: {"description": "document_not_found"}},
     )
-    def clear_effective_time(doc_id: UUID) -> EffectiveTimeCleared:
+    def clear_effective_time(
+        deployment: _Deployment, doc_id: UUID
+    ) -> EffectiveTimeCleared:
         """Return a document to "the newest processed version is current".
 
         Every declared period of the document is retracted and the change is
@@ -1865,38 +1953,35 @@ def _mount_effective_time(
         they saw. It is the only way back from declared effective time.
         """
         try:
-            return effective_time.clear_effective_time(
-                deployment_id=deployment_id, doc_id=doc_id
+            return _served(deployment.effective_time).clear_effective_time(
+                deployment_id=deployment.deployment_id, doc_id=doc_id
             )
         except _EFFECTIVE_TIME_ERRORS as error:
             raise _effective_time_errors(error) from error
 
 
-def _mount_processing_layers(
-    *, app: FastAPI, layers: ProcessingLayersPort, deployment_id: UUID
-) -> None:
+def _mount_processing_layers(*, app: FastAPI) -> None:
     """Mount ``GET /processing-layers`` (D143 §7.4)."""
 
     @app.get("/processing-layers", response_model=ProcessingLayerStates)
-    def processing_layers() -> ProcessingLayerStates:
+    def processing_layers(deployment: _Deployment) -> ProcessingLayerStates:
         """Each switchable layer is enabled, backfilling or disabled."""
-        return layers.states(deployment_id=deployment_id)
+        return _served(deployment.processing_layers).states(
+            deployment_id=deployment.deployment_id
+        )
 
 
-def _mount_operations(
-    *,
-    app: FastAPI,
-    surface: OperationSurface,
-    layers: ProcessingLayersPort | None,
-    deployment_id: UUID,
-) -> None:
+def _mount_operations(*, app: FastAPI) -> None:
     """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
     @app.get("/operations", response_model=list[ToolDescriptor])
-    def list_operations() -> list[ToolDescriptor]:
+    def list_operations(deployment: _Deployment) -> list[ToolDescriptor]:
         """The four assured operations for this deployment."""
+        surface = _served(deployment.surface)
         # D143 §7.4: operations that read only an unserved layer are not listed.
-        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
+        unserved = unserved_operation_names(
+            layers=deployment.processing_layers, deployment_id=deployment.deployment_id
+        )
         return [
             descriptor
             for descriptor in surface.descriptors()
@@ -1905,6 +1990,7 @@ def _mount_operations(
 
     @app.post("/operations/{name}", response_model=Envelope | ContextBundleV2)
     def run_operation(
+        deployment: _Deployment,
         name: str,
         arguments: Annotated[dict[str, object], Body(default_factory=dict)],
         request: Request,
@@ -1920,6 +2006,7 @@ def _mount_operations(
         against the descriptor, and an operation that has not declared itself
         non-mutating is refused to a read-only credential.
         """
+        surface = _served(deployment.surface)
         context = getattr(request.state, "perimeter_context", None)
         if context is not None:
             descriptor = next(
@@ -2056,8 +2143,6 @@ def _forgotten_source_http_error() -> HTTPException:
 def _mount_ingest(
     *,
     app: FastAPI,
-    ingest: IngestPort,
-    deployment_id: UUID,
     max_body_bytes: int | None,
     attribution_requires_write: bool,
     trusted_principal_source: bool = False,
@@ -2066,6 +2151,7 @@ def _mount_ingest(
 
     @app.post("/ingest", response_model=IngestedVersion)
     def ingest_document(
+        deployment: _Deployment,
         request: Request,
         content: Annotated[bytes, Body(media_type="application/octet-stream")],
         filename: Annotated[str, Query(min_length=1)],
@@ -2165,6 +2251,8 @@ def _mount_ingest(
         forged is recorded either way, and refusing would let a metadata
         concern fail an otherwise valid ingest.
         """
+        ingest = _served(deployment.ingest)
+        deployment_id = deployment.deployment_id
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
             # holds if a server ever passes an unframed oversized body through
@@ -2277,33 +2365,43 @@ def _mount_ingest(
             raise _effective_time_errors(error) from error
 
 
-def _mount_connectors(
-    *, app: FastAPI, connectors: ConnectorManagementPort, deployment_id: UUID
-) -> None:
+def _mount_connectors(*, app: FastAPI) -> None:
     """Add remote connector-management endpoints; execution stays server-side."""
 
     @app.get("/connectors", response_model=list[ConnectorDescriptor])
-    def list_connectors() -> list[ConnectorDescriptor]:
-        return list(connectors.connectors(deployment_id=deployment_id))
+    def list_connectors(deployment: _Deployment) -> list[ConnectorDescriptor]:
+        return list(
+            _served(deployment.connectors).connectors(
+                deployment_id=deployment.deployment_id
+            )
+        )
 
     @app.post("/connectors", response_model=ConnectorDescriptor)
-    def add_connector(connector: ConnectorCreate) -> ConnectorDescriptor:
-        return connectors.add(deployment_id=deployment_id, connector=connector)
+    def add_connector(
+        deployment: _Deployment, connector: ConnectorCreate
+    ) -> ConnectorDescriptor:
+        return _served(deployment.connectors).add(
+            deployment_id=deployment.deployment_id, connector=connector
+        )
 
     @app.post("/connectors/{connector_id}/pause", response_model=ConnectorDescriptor)
-    def pause_connector(connector_id: UUID) -> ConnectorDescriptor:
+    def pause_connector(
+        deployment: _Deployment, connector_id: UUID
+    ) -> ConnectorDescriptor:
         try:
-            return connectors.pause(
-                deployment_id=deployment_id, connector_id=connector_id
+            return _served(deployment.connectors).pause(
+                deployment_id=deployment.deployment_id, connector_id=connector_id
             )
         except ConnectorNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get("/connectors/{connector_id}", response_model=ConnectorDescriptor)
-    def connector_status(connector_id: UUID) -> ConnectorDescriptor:
+    def connector_status(
+        deployment: _Deployment, connector_id: UUID
+    ) -> ConnectorDescriptor:
         try:
-            return connectors.status(
-                deployment_id=deployment_id, connector_id=connector_id
+            return _served(deployment.connectors).status(
+                deployment_id=deployment.deployment_id, connector_id=connector_id
             )
         except ConnectorNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
@@ -2387,19 +2485,14 @@ def _perimeter(*, deployment_id: UUID):  # noqa: ANN202
     return dependency
 
 
-def _admission(*, admission: AdmissionPort, deployment_id: UUID):  # noqa: ANN202
-    """Return the deployment-wide D74 traffic dependency."""
-
-    def dependency() -> None:
-        """Map a closed fail-safe barrier to one stable HTTP negative."""
-        try:
-            admission.assert_available(deployment_id=deployment_id)
-        except ForgetInProgressError as error:
-            raise HTTPException(
-                status_code=503, detail={"code": "forget_in_progress"}
-            ) from error
-
-    return dependency
+def _admission(deployment: _Deployment) -> None:
+    """The request's deployment-wide D74 barrier, as one stable HTTP negative."""
+    try:
+        deployment.admission.assert_available(deployment_id=deployment.deployment_id)
+    except ForgetInProgressError as error:
+        raise HTTPException(
+            status_code=503, detail={"code": "forget_in_progress"}
+        ) from error
 
 
 _ADMISSION_MESSAGES: Final = {

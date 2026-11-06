@@ -119,9 +119,18 @@ class WorkLedger:
             return enqueue_on(connection=connection, work=work)
 
     def claim_one(
-        self, *, deployment_id: UUID, stage: PipelineStage, lane: ProcessingLane | None
+        self,
+        *,
+        deployment_id: UUID,
+        stage: PipelineStage,
+        lane: ProcessingLane | None,
+        processing_id: UUID | None = None,
     ) -> ClaimedWork | BudgetParked | None:
         """Claim, budget-park, or find no due row on one route.
+
+        With ``processing_id`` only that row is considered (D144: a host that
+        delivers one task at a time names it); it must be due on the route,
+        exactly as an unnamed claim would require.
 
         The due row is locked before the current route-window spend is checked.
         Exhaustion durably parks it until the aligned window rolls, without
@@ -148,10 +157,13 @@ class WorkLedger:
                 # D143 §4.4: lineage-level window reviews wait while the
                 # facts layer is off; they run when it is switched back on.
                 return None
+            route = {"deployment_id": deployment_id, "stage": stage, "lane": lane}
             row = (
                 connection.execute(
-                    _CLAIM_SELECT,
-                    {"deployment_id": deployment_id, "stage": stage, "lane": lane},
+                    _CLAIM_SELECT if processing_id is None else _CLAIM_SELECT_NAMED,
+                    route
+                    if processing_id is None
+                    else {**route, "processing_id": processing_id},
                 )
                 .mappings()
                 .first()
@@ -185,6 +197,22 @@ class WorkLedger:
                 .one()
             )
             return _claimed_work(row=started)
+
+    def route_of(self, *, processing_id: UUID) -> QueueRoute | None:
+        """The route one processing row belongs to, or None when it is gone."""
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(_SELECT_ROUTE, {"processing_id": processing_id})
+                .mappings()
+                .first()
+            )
+        if row is None:
+            return None
+        return QueueRoute(
+            deployment_id=row["deployment_id"],
+            stage=PipelineStage(row["stage"]),
+            lane=None if row["lane"] is None else ProcessingLane(row["lane"]),
+        )
 
     def complete(
         self, *, processing_id: UUID, follow_up: tuple[EnqueueWork, ...] = ()
@@ -1829,11 +1857,8 @@ _RESUME_NO_ROUTE = text(
     """
 )
 
-_CLAIM_SELECT = text(
-    """
-    SELECT processing_id
-    FROM processing_state
-    WHERE deployment_id = :deployment_id
+_CLAIM_DUE_ON_ROUTE = """
+    deployment_id = :deployment_id
       AND stage = :stage
       AND lane IS NOT DISTINCT FROM :lane
       AND status IN ('pending', 'failed')
@@ -1844,9 +1869,34 @@ _CLAIM_SELECT = text(
       -- its reason rather than by a sentinel timestamp; registering the
       -- converter and resuming is what releases it.
       AND (defer_reason IS NULL OR defer_reason::text <> 'no_route')
+"""
+
+_CLAIM_SELECT = text(
+    f"""
+    SELECT processing_id
+    FROM processing_state
+    WHERE {_CLAIM_DUE_ON_ROUTE}
     ORDER BY not_before, enqueued_at, processing_id
     LIMIT 1
     FOR UPDATE SKIP LOCKED
+    """
+)
+
+_CLAIM_SELECT_NAMED = text(
+    f"""
+    SELECT processing_id
+    FROM processing_state
+    WHERE processing_id = :processing_id
+      AND {_CLAIM_DUE_ON_ROUTE}
+    FOR UPDATE SKIP LOCKED
+    """
+)
+
+_SELECT_ROUTE = text(
+    """
+    SELECT deployment_id, stage, lane
+    FROM processing_state
+    WHERE processing_id = :processing_id
     """
 )
 

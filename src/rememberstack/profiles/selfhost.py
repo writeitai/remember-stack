@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from functools import partial
 import json
 import logging
@@ -31,7 +32,6 @@ from pydantic_settings import SettingsConfigDict
 import sqlalchemy
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.engine import make_url
 
 from rememberstack.adapters import BoundedPostgresReadPool
 from rememberstack.adapters import OpenRouterModelProvider
@@ -59,6 +59,7 @@ from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
+from rememberstack.spine.settings import DatabaseSettings
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
@@ -79,8 +80,12 @@ if TYPE_CHECKING:
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
         ControlPlaneSpendLease,
     )
+    from rememberstack.ports.queue import TaskQueuePort
     from rememberstack.ports.telemetry import TelemetryPort
+    from rememberstack.surfaces.http_api import ApiDeployment
+    from rememberstack.workers import RunResult
     from rememberstack.workers import StageHandler
+    from rememberstack.workers import Worker
 
 _SUPPORTED_WORKER_STAGES = (
     PipelineStage.CONVERT,
@@ -820,8 +825,42 @@ def _provision_query_role_password(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class EngineSettings:
+    """Every value that differs between two deployments' engines (D144).
+
+    The deployment's identity and buckets, its database, its object store and
+    its model-provider account. :meth:`from_env` is the default way to make
+    one; a host that serves several deployments from one process makes one
+    per deployment and builds each engine from it, so no deployment's values
+    live in process globals. Model policy (which models each stage calls)
+    still comes from the environment and is the same for every deployment a
+    process serves.
+    """
+
+    deployment: SelfHostSettings
+    database: DatabaseSettings
+    object_store: MinIOSettings
+    model_provider: OpenRouterSettings
+
+    @classmethod
+    def from_env(cls) -> Self:
+        """Read one deployment's settings from the process environment."""
+        return cls(
+            deployment=SelfHostSettings.model_validate({}),
+            database=load_database_settings(),
+            object_store=MinIOSettings.model_validate({}),
+            model_provider=OpenRouterSettings.model_validate({}),
+        )
+
+
 class SelfHostProfile:
-    """Compose the continuous E/P1 path plus the aggregate P3 build."""
+    """Compose the continuous E/P1 path plus the aggregate P3 build.
+
+    One profile is one deployment's context: its settings, database engines,
+    stores and model provider. Nothing it composes reads another deployment's
+    values, so a host may hold several profiles in one process (D144).
+    """
 
     def __init__(
         self,
@@ -835,8 +874,17 @@ class SelfHostProfile:
         corpusfs_store: MinIOObjectStore,
         model_provider: ModelProviderPort,
         error_telemetry: TelemetryPort | None = None,
+        task_queue: TaskQueuePort | None = None,
+        model_provider_settings: OpenRouterSettings | None = None,
     ) -> None:
-        """Retain one dependency graph for an API, setup, or worker process."""
+        """Retain one dependency graph for an API, setup, or worker process.
+
+        ``task_queue`` announces retries and budget parks; without one the
+        LISTEN/NOTIFY default (``pg_notify`` on this database) is used.
+        ``model_provider_settings`` are the settings ``model_provider`` was
+        built from, reported (without secrets) as model bindings; without
+        them the bindings are read from the environment.
+        """
         self._settings = settings
         self._engine = engine
         self._graph_engine = graph_engine or engine
@@ -846,13 +894,21 @@ class SelfHostProfile:
         self._corpusfs_store = corpusfs_store
         self._model_provider = model_provider
         self._error_telemetry = error_telemetry
+        self._task_queue = task_queue
+        self._model_provider_settings = model_provider_settings
 
     @classmethod
-    def from_settings(cls, *, error_telemetry: TelemetryPort | None = None) -> Self:
-        """Load every external value through its typed settings boundary."""
-        profile_settings = SelfHostSettings.model_validate({})
-        minio_settings = MinIOSettings.model_validate({})
-        database_url = load_database_settings().sqlalchemy_url()
+    def from_settings(
+        cls,
+        settings: EngineSettings,
+        *,
+        error_telemetry: TelemetryPort | None = None,
+        task_queue: TaskQueuePort | None = None,
+    ) -> Self:
+        """Build one deployment's engine from its explicit settings (D144)."""
+        profile_settings = settings.deployment
+        minio_settings = settings.object_store
+        database_url = settings.database.sqlalchemy_url()
         return cls(
             settings=profile_settings,
             engine=sqlalchemy.create_engine(database_url, pool_pre_ping=True),
@@ -879,10 +935,10 @@ class SelfHostProfile:
             corpusfs_store=MinIOObjectStore(
                 bucket=profile_settings.corpusfs_bucket_name, settings=minio_settings
             ),
-            model_provider=OpenRouterModelProvider(
-                settings=OpenRouterSettings.model_validate({})
-            ),
+            model_provider=OpenRouterModelProvider(settings=settings.model_provider),
             error_telemetry=error_telemetry,
+            task_queue=task_queue,
+            model_provider_settings=settings.model_provider,
         )
 
     def close(self) -> None:
@@ -929,7 +985,7 @@ class SelfHostProfile:
         """Apply migrations, provision stores, bootstrap, and seed operations."""
         migration = Config(str(self._settings.migration_config))
         migration.set_main_option(
-            "sqlalchemy.url", load_database_settings().sqlalchemy_url()
+            "sqlalchemy.url", self._engine.url.render_as_string(hide_password=False)
         )
         command.upgrade(config=migration, revision="head")
         self._raw_store.ensure_bucket()
@@ -1061,7 +1117,72 @@ class SelfHostProfile:
             self.run_projection(plane="p3")
 
     def api(self) -> FastAPI:
-        """Build the existing HTTP surface over this self-host dependency graph."""
+        """Build the existing HTTP surface over this self-host dependency graph.
+
+        Every route reads this profile's :meth:`api_deployment` through the
+        overridable ``deployment_context`` dependency (D144).
+        """
+        from rememberstack.spine.perimeter_state import PerimeterStateCatalog
+        from rememberstack.surfaces import build_api
+        from rememberstack.surfaces.direct_admission import AdmissionLimits
+        from rememberstack.surfaces.direct_admission import DirectPathAdmission
+
+        trust = resolve_selfhost_perimeter_trust(
+            settings=self._settings, store=PerimeterStateCatalog(engine=self._engine)
+        )
+        admission_limits = AdmissionLimits(
+            key_per_minute=self._settings.api_admission_key_per_minute,
+            key_in_flight=self._settings.api_admission_key_in_flight,
+            deployment_per_minute=self._settings.api_admission_deployment_per_minute,
+            deployment_in_flight=self._settings.api_admission_deployment_in_flight,
+        )
+        deployment = self.api_deployment()
+        app = build_api(
+            **vars(deployment),
+            ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
+            trusted_principal_source=self._settings.trusted_principal_source,
+            browser_origins=_browser_origins(self._settings.browser_origins),
+            auth=resolve_selfhost_api_auth(settings=self._settings, trust=trust),
+            direct_admission=(
+                DirectPathAdmission(limits=admission_limits)
+                if admission_limits.enabled
+                else None
+            ),
+            spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
+            readiness=_FreshDeploymentReadiness(
+                store=LocalFSForgetManifestStore(
+                    root=self._settings.forget_manifest_root
+                )
+            ),
+        )
+
+        if trust is not None:
+            attach_perimeter_trust_refresh(app=app, trust=trust)
+
+        @app.get("/healthz", include_in_schema=False)
+        def healthz() -> dict[str, str]:
+            """Prove the process can reach its authoritative PostgreSQL spine."""
+            with self._engine.connect() as connection:
+                connection.execute(text("SELECT 1")).scalar_one()
+            return {"status": "ok"}
+
+        from rememberstack.spine.cost_export import CostExportSettings
+        from rememberstack.surfaces.cost_export_api import attach_cost_export_listener
+
+        attach_cost_export_listener(
+            app=app,
+            engine=self._engine,
+            deployment_id=self._settings.deployment_id,
+            settings=CostExportSettings.model_validate({}),
+        )
+        return app
+
+    def api_deployment(self) -> ApiDeployment:
+        """This deployment's HTTP capabilities, as one request's context (D144).
+
+        A host serving several deployments returns one of these per request
+        from its override of ``deployment_context``.
+        """
         from rememberstack.adapters.converters import build_conversion_routes
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
@@ -1073,16 +1194,13 @@ class SelfHostProfile:
         from rememberstack.spine import ProjectionCatalog
         from rememberstack.spine import ReferenceCatalog
         from rememberstack.spine import SectionHistory
-        from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
-        from rememberstack.surfaces import build_api
         from rememberstack.surfaces import GraphQueries
         from rememberstack.surfaces import OperationExecutor
         from rememberstack.surfaces import OperationSurface
         from rememberstack.surfaces import QueryEngine
-        from rememberstack.surfaces.direct_admission import AdmissionLimits
-        from rememberstack.surfaces.direct_admission import DirectPathAdmission
+        from rememberstack.surfaces.http_api import ApiDeployment
         from rememberstack.surfaces.query_sandbox.audit import AuditTrail
         from rememberstack.surfaces.query_sandbox.audit import KillSwitches
         from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
@@ -1090,9 +1208,6 @@ class SelfHostProfile:
         from rememberstack.workers import P1Settings
         from rememberstack.workers.e0 import UploadIngestor
 
-        trust = resolve_selfhost_perimeter_trust(
-            settings=self._settings, store=PerimeterStateCatalog(engine=self._engine)
-        )
         # D94 has one active vector space across every P1 target.
         p1_settings = P1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
@@ -1160,31 +1275,10 @@ class SelfHostProfile:
             max_concurrency=self._settings.graph_max_concurrency,
             pool_wait_seconds=self._settings.graph_pool_timeout_s,
         )
-        admission_limits = AdmissionLimits(
-            key_per_minute=self._settings.api_admission_key_per_minute,
-            key_in_flight=self._settings.api_admission_key_in_flight,
-            deployment_per_minute=self._settings.api_admission_deployment_per_minute,
-            deployment_in_flight=self._settings.api_admission_deployment_in_flight,
-        )
-        app = build_api(
+        return ApiDeployment(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
-            ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
-            trusted_principal_source=self._settings.trusted_principal_source,
-            browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
-            auth=resolve_selfhost_api_auth(settings=self._settings, trust=trust),
-            direct_admission=(
-                DirectPathAdmission(limits=admission_limits)
-                if admission_limits.enabled
-                else None
-            ),
-            spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
-            readiness=_FreshDeploymentReadiness(
-                store=LocalFSForgetManifestStore(
-                    root=self._settings.forget_manifest_root
-                )
-            ),
             processing_layers=ProcessingLayerCatalog(engine=self._engine),
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
@@ -1210,7 +1304,7 @@ class SelfHostProfile:
                 engine=self._engine,
                 expected_components=_expected_components(),
                 projections=projection_catalog,
-                model_bindings=_model_bindings(),
+                model_bindings=self._model_bindings(),
                 build_revision=_build_revision(),
             ),
             documents=DocumentInventory(engine=self._engine),
@@ -1227,29 +1321,14 @@ class SelfHostProfile:
             ),
             effective_time=EffectiveTimeCatalog(engine=self._engine),
             graph=graph_queries,
-            build_info=_BuildInfo(engine=self._engine),
+            build_info=_BuildInfo(
+                engine=self._engine, model_bindings=self._model_bindings()
+            ),
         )
 
-        if trust is not None:
-            attach_perimeter_trust_refresh(app=app, trust=trust)
-
-        @app.get("/healthz", include_in_schema=False)
-        def healthz() -> dict[str, str]:
-            """Prove the process can reach its authoritative PostgreSQL spine."""
-            with self._engine.connect() as connection:
-                connection.execute(text("SELECT 1")).scalar_one()
-            return {"status": "ok"}
-
-        from rememberstack.spine.cost_export import CostExportSettings
-        from rememberstack.surfaces.cost_export_api import attach_cost_export_listener
-
-        attach_cost_export_listener(
-            app=app,
-            engine=self._engine,
-            deployment_id=self._settings.deployment_id,
-            settings=CostExportSettings.model_validate({}),
-        )
-        return app
+    def _model_bindings(self) -> dict[str, str]:
+        """This deployment's non-secret model bindings."""
+        return _model_bindings(openrouter=self._model_provider_settings)
 
     def _managed_meter_scope(self):  # noqa: ANN202
         """Return the fleet-authored commercial scope, or None for OSS self-host."""
@@ -1287,7 +1366,7 @@ class SelfHostProfile:
                 engine=self._engine,
                 expected_components=_expected_components(),
                 projections=ProjectionCatalog(engine=self._engine),
-                model_bindings=_model_bindings(),
+                model_bindings=self._model_bindings(),
                 build_revision=_build_revision(),
             ),
             raw_store=self._raw_store,
@@ -1312,12 +1391,61 @@ class SelfHostProfile:
 
     def worker_loop(self, *, stage: PipelineStage) -> SelfHostWorkerLoop:
         """Build one continuous route's ordinary LISTEN/NOTIFY worker loop."""
-        from rememberstack.adapters.selfhost import FanoutTelemetry
-        from rememberstack.adapters.selfhost import JsonLineTelemetry
-        from rememberstack.adapters.selfhost import SelfHostTaskQueue
         from rememberstack.adapters.selfhost import SelfHostWorkerLoop
         from rememberstack.adapters.selfhost import TokenBucket
         from rememberstack.model import ProcessingLane
+
+        return SelfHostWorkerLoop(
+            worker=self._worker(stage=stage),
+            deployment_id=self._settings.deployment_id,
+            stage=stage,
+            lane=ProcessingLane.STEADY,
+            bucket=TokenBucket(
+                rate_per_s=self._settings.worker_rate_per_s,
+                capacity=self._settings.worker_burst,
+            ),
+            database_url=self._engine.url.set(drivername="postgresql").render_as_string(
+                hide_password=False
+            ),
+            fallback_poll_s=self._settings.worker_fallback_poll_s,
+            serve_backfill=True,
+        )
+
+    def run_task(self, *, processing_id: UUID) -> RunResult:
+        """Claim and run one named task of this deployment, if it is due (D144).
+
+        The task's route is read from this deployment's database. A row that
+        is gone, not due, or already claimed elsewhere answers ``no_work``;
+        a row of another deployment is refused, because this context must
+        not run it.
+        """
+        from rememberstack.model import RunResultOutcome
+        from rememberstack.spine import WorkLedger
+        from rememberstack.spine import WorkLedgerSettings
+        from rememberstack.workers import RunResult
+
+        route = WorkLedger(engine=self._engine, settings=WorkLedgerSettings()).route_of(
+            processing_id=processing_id
+        )
+        if route is None:
+            return RunResult(processing_id=None, outcome=RunResultOutcome.NO_WORK)
+        if route.deployment_id != self._settings.deployment_id:
+            raise ValueError(
+                f"processing row {processing_id} belongs to deployment"
+                f" {route.deployment_id}, not {self._settings.deployment_id}"
+            )
+        return self._worker(stage=route.stage).run_one(
+            deployment_id=route.deployment_id,
+            stage=route.stage,
+            lane=route.lane,
+            processing_id=processing_id,
+        )
+
+    def _worker(self, *, stage: PipelineStage) -> Worker:
+        """One stage's claim-and-run boundary over this deployment's ledger."""
+        from rememberstack.adapters.selfhost import FanoutTelemetry
+        from rememberstack.adapters.selfhost import JsonLineTelemetry
+        from rememberstack.adapters.selfhost import SelfHostTaskQueue
         from rememberstack.spine import WorkLedger
         from rememberstack.spine import WorkLedgerSettings
         from rememberstack.workers import HandlerRegistry
@@ -1334,23 +1462,11 @@ class SelfHostProfile:
             if self._error_telemetry is None
             else FanoutTelemetry(sinks=(local_telemetry, self._error_telemetry))
         )
-        return SelfHostWorkerLoop(
-            worker=Worker(
-                ledger=ledger,
-                registry=registry,
-                queue=SelfHostTaskQueue(ledger=ledger),
-                telemetry=telemetry,
-            ),
-            deployment_id=self._settings.deployment_id,
-            stage=stage,
-            lane=ProcessingLane.STEADY,
-            bucket=TokenBucket(
-                rate_per_s=self._settings.worker_rate_per_s,
-                capacity=self._settings.worker_burst,
-            ),
-            database_url=_psycopg_url(),
-            fallback_poll_s=self._settings.worker_fallback_poll_s,
-            serve_backfill=True,
+        return Worker(
+            ledger=ledger,
+            registry=registry,
+            queue=self._task_queue or SelfHostTaskQueue(ledger=ledger),
+            telemetry=telemetry,
         )
 
     def run_worker(self, *, stage: PipelineStage) -> None:
@@ -1626,15 +1742,26 @@ class SelfHostProfile:
         raise ValueError(f"the self-host profile has no handler for stage {stage}")
 
 
+def run_task(context: SelfHostProfile, processing_id: UUID) -> RunResult:
+    """Run one claimed task of ``context``'s deployment (D144).
+
+    ``context`` is the deployment's profile, built from its own
+    :class:`EngineSettings`; the outcome is the worker's typed result.
+    """
+    return context.run_task(processing_id=processing_id)
+
+
 def create_api() -> FastAPI:
     """Uvicorn factory that initializes process-global API error tracking.
 
     The API process has no worker telemetry fanout, so the returned Sentry sink
     is intentionally unused after its process-global SDK initialization.
     """
-    settings = SelfHostSettings.model_validate({})
-    _initialize_error_tracking(command="api", deployment_slug=settings.deployment_slug)
-    return SelfHostProfile.from_settings().api()
+    settings = EngineSettings.from_env()
+    _initialize_error_tracking(
+        command="api", deployment_slug=settings.deployment.deployment_slug
+    )
+    return SelfHostProfile.from_settings(settings).api()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1685,7 +1812,9 @@ def main(argv: list[str] | None = None) -> int:
     error_telemetry = _initialize_error_tracking(
         command=args.command, deployment_slug=settings.deployment_slug
     )
-    profile = SelfHostProfile.from_settings(error_telemetry=error_telemetry)
+    profile = SelfHostProfile.from_settings(
+        EngineSettings.from_env(), error_telemetry=error_telemetry
+    )
     try:
         if args.command == "setup":
             profile.setup()
@@ -1727,12 +1856,6 @@ def _initialize_error_tracking(
     return initialize_sentry(
         dsn=dsn, environment=environment, sample_rate=settings.sample_rate
     )
-
-
-def _psycopg_url() -> str:
-    """Remove SQLAlchemy's driver suffix for psycopg's native connection parser."""
-    url = make_url(load_database_settings().sqlalchemy_url())
-    return url.set(drivername="postgresql").render_as_string(hide_password=False)
 
 
 def _expected_components() -> dict[PipelineStage, str]:
@@ -1826,9 +1949,10 @@ class _BuildInfo:
     rest of the surface rather than bolted onto the app afterwards.
     """
 
-    def __init__(self, *, engine: Engine) -> None:
+    def __init__(self, *, engine: Engine, model_bindings: dict[str, str]) -> None:
         """Bind the spine to read the binding generation from."""
         self._engine = engine
+        self._model_bindings = model_bindings
 
     def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
         """Report serving code and model bindings, plus the binding generation."""
@@ -1842,7 +1966,7 @@ class _BuildInfo:
             ).scalar_one()
         return DeploymentBuildInfo(
             build_revision=_build_revision(),
-            model_bindings=_model_bindings(),
+            model_bindings=self._model_bindings,
             document_binding_generation=document_binding_generation,
         )
 
@@ -1856,8 +1980,12 @@ def _build_revision() -> str:
     return BuildProvenanceSettings().build_revision
 
 
-def _model_bindings() -> dict[str, str]:
-    """Non-secret provider model identities used by the composed pipeline."""
+def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str, str]:
+    """Non-secret provider model identities used by the composed pipeline.
+
+    ``openrouter`` is the deployment's provider settings; without them they
+    are read from the environment.
+    """
     from rememberstack.spine import ObservationSettings
     from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
     from rememberstack.workers import E2Settings
@@ -1877,7 +2005,8 @@ def _model_bindings() -> dict[str, str]:
     observations = ObservationSettings.model_validate({})
     facts = FactAdjudicationSettings.model_validate({})
     p1 = P1Settings.model_validate({})
-    openrouter = OpenRouterSettings.model_validate({})
+    if openrouter is None:
+        openrouter = OpenRouterSettings.model_validate({})
     if facts.engine == "jev":
         fact_adjudication_model = TypeSafeSettings.model_validate({}).model
     else:
