@@ -154,15 +154,15 @@ INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
         "REMEMBERSTACK_TYPESAFE_MODEL": "jev-latest",
         "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT": "low",
         "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP": '{"openai/gpt-6-luna": "low"}',
-        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY": "openai/flex",
-        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER": "",
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY": "openai/flex,openai",
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER": "openai/flex,openai",
         "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER": "nebius",
         "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER": "",
         "REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS": "32000",
         "REMEMBERSTACK_P1_EMBEDDING_MODEL": "qwen/qwen3-embedding-8b",
         "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL": ANSWER_AGENT_MODEL,
         "REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT": "low",
-        "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY": '["openai/flex"]',
+        "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY": '["openai/flex","openai"]',
     }
 )
 
@@ -395,7 +395,7 @@ _CURRENT_PROTOCOL = LoCoMoProtocol(
         ingest_model_bindings=dict(EXPECTED_INGEST_MODEL_BINDINGS),
         ingest_component_versions=dict(EXPECTED_INGEST_COMPONENT_VERSIONS),
         ingest_environment=dict(INGEST_ENVIRONMENT),
-        chat_provider_only=("openai/flex",),
+        chat_provider_only=("openai/flex", "openai"),
         api_timeout_seconds=API_TIMEOUT_SECONDS,
     ),
 )

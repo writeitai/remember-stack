@@ -1657,13 +1657,106 @@ def test_chat_provider_order_sends_ordered_fallback_payload(
     assert response.output.answer == "Prague"
 
 
-def test_chat_provider_order_and_only_are_mutually_exclusive() -> None:
-    """One chat routing wins; two configured lists fail fast at startup."""
+def test_chat_provider_order_cannot_escape_the_allowlist() -> None:
+    """An ordered route cannot authorize a host outside the hard allowlist."""
     with pytest.raises(ValidationError):
         OpenRouterSettings(
             api_key="test-key",
             chat_provider_only=["deepinfra"],
             chat_provider_order=["relace"],
+        )
+
+
+def test_flex_rejection_502_falls_back_to_only_approved_standard_luna(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The captured admission rejection moves to standard without other hosts."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline",
+            chat_provider_only=["openai/flex", "openai"],
+            chat_provider_order=["openai/flex", "openai"],
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    def post(*, path: str, payload: dict[str, object]) -> httpx.Response:
+        """Replay the redacted captured gateway response, then a billed success."""
+        calls.append(payload.copy())
+        if len(calls) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "gen-captured-flex-admission-rejection",
+                    "error": {
+                        "code": 502,
+                        "message": "Flex processing is temporarily unavailable. Please try again later or use standard processing.",
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "openai/gpt-6-luna",
+                "provider": "OpenAI",
+                "service_tier": "default",
+                "choices": [{"message": {"content": '{"answer":"ok"}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": "0.002"},
+            },
+        )
+
+    monkeypatch.setattr(provider, "_post_once", post)
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda _delay: None
+    )
+    monkeypatch.setattr(
+        provider,
+        "_get_generation",
+        lambda **_kwargs: pytest.fail(
+            "uncharged rejection must not need accounting recovery"
+        ),
+    )
+    try:
+        response = provider.generate(
+            request=ModelRequest(
+                model="openai/gpt-6-luna", prompt="offline", reasoning_effort="high"
+            ),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+    assert response.output.answer == "ok"
+    assert response.usage.cost_usd == Decimal("0.002")
+    assert len(calls) == 2
+    assert calls[0]["provider"] == {
+        "only": ["openai/flex", "openai"],
+        "order": ["openai/flex", "openai"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+    }
+    assert calls[1]["provider"] == {
+        "only": ["openai"],
+        "order": ["openai"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+    }
+    assert all(call["model"] == "openai/gpt-6-luna" for call in calls)
+    assert all(call["reasoning"] == {"effort": "high"} for call in calls)
+
+
+@pytest.mark.parametrize(
+    "order", [["openai/flex"], ["openai", "openai"], ["openai", "azure"]]
+)
+def test_bounded_provider_order_must_cover_approved_hosts_once(
+    order: list[str],
+) -> None:
+    """An incomplete, repeated or widened order is rejected before HTTP work."""
+    with pytest.raises(ValidationError, match="exactly once"):
+        OpenRouterSettings(
+            api_key="offline",
+            chat_provider_only=["openai/flex", "openai"],
+            chat_provider_order=order,
         )
 
 
@@ -2011,7 +2104,7 @@ def test_invalid_terminal_under_rotation_attributes_targeted_slug(
 
 @pytest.mark.parametrize("routed", [False, True])
 @pytest.mark.parametrize("with_id", [False, True])
-@pytest.mark.parametrize("code", [None, 503])
+@pytest.mark.parametrize("code", [None, 429, 500, 502, 503, 504, 529])
 def test_unbilled_http_200_flex_capacity_error_is_retried(
     routed: bool, with_id: bool, code: int | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

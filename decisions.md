@@ -6179,6 +6179,15 @@ proxy was rejected per the D60/D61 library boundary.
 
 ## D127. Rotate OpenRouter chat providers on overload in the core engine
 
+**Routing clarification, 2026-11-06:** an identical hard allowlist and ordered
+list may be combined to permit fallback only within the approved set. The owner
+approved Flex followed by standard OpenAI Luna for current LoCoMo validation.
+Changing that benchmark policy creates a new run fingerprint; rotation within
+one fixed policy does not. This replaces the earlier unconditional fingerprint
+stability wording below for configuration changes. See the current
+[rotation contract](plan/designs/openrouter_provider_rotation_design.md) and
+[captured Flex-rejection analysis](plan/analysis/openrouter-flex-standard-fallback-20261106.md).
+
 **Status:** accepted 2026-09-17, binding when merged. R14 dead-lettered 45/997 work
 items, and the Langfuse autopsy (full payloads, `run_tag = r14-glm-c42`) shows a single
 cause: DeepInfra 429 `engine_overloaded` on the shared OpenRouter pool. The chat seat pins

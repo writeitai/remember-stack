@@ -7351,7 +7351,7 @@ These settings apply to every call through OpenRouter.
 | Variable | Default | Meaning |
 |---|---|---|
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. A call they cannot serve fails. Cannot be combined with the order. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. Alone it disables fallback. Combine with an order naming exactly the same unique slugs to allow fallback within this set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
 | `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. |
@@ -7370,7 +7370,11 @@ none of them set, OpenRouter applies your account's own routing settings.
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither
 choices nor usage, the adapter applies its bounded capacity retries while
-keeping your provider restriction. It does not switch to standard pricing.
+keeping your provider restriction. To prefer Flex and permit normal OpenAI
+processing when Flex is unavailable, set both chat provider variables to
+`openai/flex,openai`. This keeps the requested model and reasoning effort;
+standard processing can cost more, and no other provider is admitted. A
+Flex-only allowlist continues to forbid standard-price fallback.
 
 If a completed response has unusable token or cost accounting, the adapter
 looks up that existing generation's metadata. If recovery fails, the work item

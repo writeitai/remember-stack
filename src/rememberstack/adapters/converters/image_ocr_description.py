@@ -131,6 +131,7 @@ class ImageDescriptionSettings(BaseSettings):
     lane_concurrency: int = Field(default=2, ge=1, le=2)
     reasoning_effort: ReasoningEffort | None = None
     provider_only: tuple[str, ...] | None = None
+    """Approved vision endpoints in preference order; fallback stays in this set."""
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -516,11 +517,15 @@ class ImageOcrDescriptionConverter:
                 "effort": self._description_settings.reasoning_effort
             }
         if self._description_settings.provider_only is not None:
-            payload["provider"] = {
-                "only": list(self._description_settings.provider_only),
-                "allow_fallbacks": False,
+            approved = list(self._description_settings.provider_only)
+            routing: dict[str, object] = {
+                "only": approved,
+                "allow_fallbacks": len(approved) > 1,
                 "data_collection": "deny",
             }
+            if len(approved) > 1:
+                routing["order"] = approved
+            payload["provider"] = routing
         try:
             response = self._description_client.post("/chat/completions", json=payload)
         except httpx.HTTPError as err:

@@ -992,3 +992,27 @@ def test_empty_compose_description_effort_keeps_existing_identity() -> None:
         {"api_key": "offline", "reasoning_effort": ""}
     )
     assert old.version_fingerprint() == empty.version_fingerprint()
+
+
+def test_description_flex_then_standard_stays_within_approved_order() -> None:
+    """Vision uses the same model and low effort within its approved route."""
+    payloads: list[dict[str, object]] = []
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Capture the native vision request without a paid provider call."""
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json=_description_body())
+
+    converter = _converter(
+        description_transport=httpx.MockTransport(description),
+        reasoning_effort="low",
+        provider_only=("openai/flex", "openai"),
+    )
+    converter.convert(content=_PNG, mime="image/png")
+    assert payloads[0]["reasoning"] == {"effort": "low"}
+    assert payloads[0]["provider"] == {
+        "only": ["openai/flex", "openai"],
+        "order": ["openai/flex", "openai"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+    }
