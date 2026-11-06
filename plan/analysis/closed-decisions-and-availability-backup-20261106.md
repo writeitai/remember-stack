@@ -38,11 +38,23 @@ and measured usage. Never relabel native Decisions as an OpenRouter call.
 
 Classify availability errors separately from invalid credentials, bad requests,
 malformed answers and unaccounted responses. Unknown accounting must stay
-unknown; do not mask an accounting failure with a second paid call. The exact
-supported fallback errors and cost calculation must be fixed in the binding
-design before implementation. No direct OpenAI key is required for offline
+unknown; do not mask an accounting failure with a second paid call. The selected
+policy permits connection-establishment failures and documented TypeSafe 429/529
+rejections after bounded retries, excluding any response with answers or usage.
+Read timeouts and generic gateway errors remain ambiguous and do not authorize
+the backup. This narrower policy is chosen over falling back on every error:
+it preserves configuration failures and potentially billed responses for repair.
+No direct OpenAI key is required for offline
 mock-transport tests; live execution needs the native API credential, separate
 from the existing OpenRouter balance.
+
+The binding design fixes the native price basis, including implicit 30-minute
+cache writes, cache reads, long context and regional processing. The adapter
+retains reported tokens and computes costs with Decimal before persistence;
+it does not round small calls to zero. The native API and OpenRouter's chat
+Flex lane have separate prices and credentials. No live native probe or native
+account access is claimed by mock-transport tests. The already prepared conv-47
+run stays on its immutable 9266b8dd source and Jev-only policy.
 
 Sources retrieved 2026-11-06:
 
@@ -51,3 +63,4 @@ Sources retrieved 2026-11-06:
 - [TypeSafe Choice](https://docs.typesafe.ai/primitives/choice): criteria and probability distribution.
 - [TypeSafe confidence](https://docs.typesafe.ai/confidence): concentration is not an overall correctness guarantee; thresholds depend on the task.
 - [TypeSafe errors](https://docs.typesafe.ai/api/errors): request errors and explicit rate/overload responses.
+- [OpenAI pricing](https://developers.openai.com/api/docs/pricing): short/long input, cache read/write rates and regional multipliers.

@@ -7344,6 +7344,30 @@ refuse the new model.
 To use a different embedding model, start a new deployment and send the
 documents again.
 
+## Optional OpenAI Decisions backup for Jev
+
+With `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`, Jev stays primary. Set
+`REMEMBERSTACK_TYPESAFE_BACKUP=openai_decisions` and
+`REMEMBERSTACK_OPENAI_DECISIONS_API_KEY` to permit one native Decisions request
+after exhausted connection-establishment, rate-limit (429), or overload (529)
+failures. The default is `none`. The backup uses `gpt-6-luna` on OpenAI's native
+API; OpenRouter credit does not pay for it.
+
+Valid low confidence, invalid credentials, malformed answers, ambiguous read
+timeouts, generic gateway errors and missing usage do not trigger the backup.
+The adapter supports choice, yes/no and score questions and retains the full
+option set. Decisions cannot silently invent an option or replace an uncertain
+answer with one from another provider. Evaluate both providers on your own
+labeled cases before sharing a confidence threshold between them.
+
+Usage records identify `openai-decisions/<served-model>`. Costs include ordinary
+input, cache reads, 30-minute cache writes, long-context rates and regional
+multipliers; output tokens are free on this endpoint. The initial verified
+global short-context rates are $0.10/$0.01/$0.125 per million tokens for ordinary,
+cached and cache-write input, respectively. Price settings are configurable;
+keep them current with [OpenAI's pricing](https://developers.openai.com/api/docs/pricing).
+The current LoCoMo profile explicitly disables this backup.
+
 ## OpenRouter routing and limits
 
 Entity resolution gives the model a closed list of existing candidate IDs and
@@ -19096,6 +19120,17 @@ default; see [Processing layers](https://remember.dev/docs/concepts/pipeline#pro
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | required | string | OpenRouter key for every model call. |
+| `REMEMBERSTACK_TYPESAFE_BACKUP` | `none` | `none`, `openai_decisions` | Optional availability backup for the Jev adjudication engine. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_API_KEY` | unset | secret | Native OpenAI key, required only when the backup is enabled. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_MODEL` | `gpt-6-luna` | `gpt-6-luna` | Currently supported native Decisions model. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_BASE_URL` | `https://api.openai.com/v1` | HTTPS URL | Native endpoint; URLs containing credentials are rejected. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_TIMEOUT_S` | `30.0` | positive float | Timeout for the single backup request. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_INPUT_USD_PER_MILLION` | `0.10` | positive decimal | Global short-context ordinary-input cost basis. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_CACHED_INPUT_USD_PER_MILLION` | `0.01` | positive decimal | Cache-read cost basis. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_CACHE_WRITE_USD_PER_MILLION` | `0.125` | positive decimal | 30-minute cache-write cost basis. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_THRESHOLD` | `272000` | positive integer | Long-context rates apply above this reported input-token count. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_MULTIPLIER` | `2` | decimal ≥1 | Multiplier on all long-context input categories. |
+| `REMEMBERSTACK_OPENAI_DECISIONS_PRICING_MULTIPLIER` | `auto` | positive decimal or `auto` | Global 1 or native regional 1.1 automatically; custom endpoints require an explicit factor. |
 | `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | URL | OpenRouter API address. |
 | `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | Per-request timeout. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | Output allowance per chat call, reasoning included. |
@@ -19586,6 +19621,9 @@ nine model calls per question, with no hard answer length cap.
 
 The saved run records its non-secret ingestion environment, component/model
 bindings, approved provider order and 180-second API transport budget. CI checks
+the native System One backup remains disabled (`REMEMBERSTACK_TYPESAFE_BACKUP=none`),
+so adding an optional product adapter cannot silently change benchmark providers.
+CI also checks
 all component generations against the current engine. The shard runner
 attests workers against the profile, and backups preserve it. Superseded
 protocols are read-only historical records; they cannot be selected for

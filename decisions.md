@@ -6138,6 +6138,15 @@ building a managed mount/download service were also rejected. Full contract:
 
 ## D126. Configurable System One Jev fact adjudication engine
 
+**Availability-backup amendment, 2026-11-06:** Jev remains primary. An explicit
+`openai_decisions` backup can implement the same System One port using native
+GPT-6 Luna choice/predicate/score requests, after classified unavailability.
+The default is `none`; uncertainty, invalid results and accounting gaps never
+trigger it. Serving-model usage and non-secret backup bindings are retained.
+Current LoCoMo freezes the option off. The current
+[binding contract](plan/designs/jev_adjudication_design.md#optional-native-decisions-backup)
+defines supported errors, costs, configuration and unchanged paid reuse keys.
+
 **Status:** accepted 2026-09-17, binding when merged. Provide a dedicated,
 alternate fact adjudication engine powered by TypeSafe AI's System One model
 (`jev-latest`), selectable via the `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`

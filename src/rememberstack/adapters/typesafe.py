@@ -3,6 +3,7 @@
 from decimal import Decimal
 import time
 from typing import Any
+from typing import Literal
 from typing import Mapping
 
 import httpx
@@ -26,6 +27,10 @@ class TypeSafeProviderError(ProviderCallError):
     """A TypeSafe AI provider call failed."""
 
 
+class TypeSafeUnavailableError(TypeSafeProviderError):
+    """A connection or explicit rate/overload rejection exhausted bounded retries."""
+
+
 class TypeSafeSettings(BaseSettings):
     """TypeSafe AI System One provider settings."""
 
@@ -46,6 +51,7 @@ class TypeSafeSettings(BaseSettings):
     base_url: str = "https://api.typesafe.ai/v1"
     timeout_s: float = 30.0
     fallback_to_prompt: bool = False
+    backup: Literal["none", "openai_decisions"] = "none"
 
 
 class TypeSafeSystemOneClient(SystemOnePort):
@@ -101,12 +107,39 @@ class TypeSafeSystemOneClient(SystemOnePort):
                 last_error = error
                 if attempt < len(retry_delays):
                     continue
-                raise TypeSafeProviderError(
+                error_type = (
+                    TypeSafeUnavailableError
+                    if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
+                    else TypeSafeProviderError
+                )
+                raise error_type(
                     f"TypeSafe request failed after {len(retry_delays)} retries: {error}"
                 ) from error
 
             if response.status_code in (429, 500, 502, 503, 504, 529):
-                last_error = TypeSafeProviderError(
+                try:
+                    rejected = response.json()
+                except ValueError:
+                    rejected = None
+                if isinstance(rejected, dict) and any(
+                    key in rejected for key in ("answers", "usage")
+                ):
+                    usage = _typesafe_usage(
+                        body=rejected,
+                        target_model=target_model,
+                        elapsed_s=time.monotonic() - started_at,
+                    )
+                    raise TypeSafeProviderError(
+                        "TypeSafe error response carried completion accounting",
+                        usage=usage,
+                    )
+                unavailable = response.status_code in (429, 529) and isinstance(
+                    rejected, dict
+                )
+                error_type = (
+                    TypeSafeUnavailableError if unavailable else TypeSafeProviderError
+                )
+                last_error = error_type(
                     f"TypeSafe returned {response.status_code}: {response.text}"
                 )
                 if attempt < len(retry_delays):
@@ -122,35 +155,18 @@ class TypeSafeSystemOneClient(SystemOnePort):
             try:
                 data = response.json()
             except Exception as error:
-                raise ProviderInvalidResponseError(
+                raise ProviderAccountingError(
                     f"TypeSafe returned malformed JSON: {error}"
                 ) from error
 
-            usage = data.get("usage")
-            if not isinstance(usage, dict) or "input_tokens" not in usage:
-                raise ProviderAccountingError(
-                    "TypeSafe response carries no token usage"
-                )
-
-            tokens_in = int(usage["input_tokens"])
-            tokens_out = int(usage.get("output_tokens", 0))
-            cost_usd = Decimal(
-                str(round(Decimal(tokens_in) * Decimal("0.000000042"), 6))
-            )
-            latency_ms = int(elapsed_s * 1000)
-
-            call_usage = ProviderCallUsage(
-                model_name=f"typesafe/{data.get('model') or target_model}",
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                cost_usd=cost_usd,
-                latency_ms=latency_ms,
+            call_usage = _typesafe_usage(
+                body=data, target_model=target_model, elapsed_s=elapsed_s
             )
 
             answers = data.get("answers")
             if not isinstance(answers, dict):
                 raise ProviderInvalidResponseError(
-                    "TypeSafe response missing 'answers'"
+                    "TypeSafe response missing 'answers'", usage=call_usage
                 )
 
             return answers, call_usage
@@ -158,3 +174,32 @@ class TypeSafeSystemOneClient(SystemOnePort):
         if last_error is not None:
             raise last_error
         raise TypeSafeProviderError("TypeSafe request failed")
+
+    def close(self) -> None:
+        """Release the owned transport at process shutdown."""
+        self._client.close()
+
+
+def _typesafe_usage(
+    *, body: object, target_model: str, elapsed_s: float
+) -> ProviderCallUsage:
+    """Preserve known accounting before parsing answers or considering fallback."""
+    if not isinstance(body, Mapping) or not isinstance(body.get("usage"), Mapping):
+        raise ProviderAccountingError("TypeSafe response carries no token usage")
+    usage = body["usage"]
+    incoming = usage.get("input_tokens")
+    outgoing = usage.get("output_tokens", 0)
+    if (
+        type(incoming) is not int
+        or type(outgoing) is not int
+        or incoming < 0
+        or outgoing < 0
+    ):
+        raise ProviderAccountingError("TypeSafe response carries no valid token usage")
+    return ProviderCallUsage(
+        model_name=f"typesafe/{body.get('model') or target_model}",
+        tokens_in=incoming,
+        tokens_out=outgoing,
+        cost_usd=Decimal(incoming) * Decimal("0.000000042"),
+        latency_ms=int(elapsed_s * 1000),
+    )

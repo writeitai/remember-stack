@@ -66,6 +66,7 @@ MODEL_BINDING_ENVIRONMENT = {
     "section_summary": "REMEMBERSTACK_SUMMARY_MODEL",
     "skeleton_check": "REMEMBERSTACK_SKELETON_CHECK_MODEL",
     "structure_fallback": "REMEMBERSTACK_STRUCTURER_MODEL",
+    "systemone_backup": "REMEMBERSTACK_TYPESAFE_BACKUP",
 }
 UNSET_MODEL_BINDINGS = {
     "openrouter_embedding_provider": "auto",
@@ -73,6 +74,7 @@ UNSET_MODEL_BINDINGS = {
     "openrouter_max_completion_tokens": "unset",
     "openrouter_reasoning_effort": "auto",
     "openrouter_reasoning_effort_map": "unset",
+    "systemone_backup": "none",
 }
 
 NonEmpty = Annotated[str, Field(min_length=1)]
@@ -524,6 +526,7 @@ def _compose_runtime_command(
             "REMEMBERSTACK_FACT_CONFIDENCE_FLOOR",
             "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT",
             "REMEMBERSTACK_TYPESAFE_MODEL",
+            "REMEMBERSTACK_TYPESAFE_BACKUP",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY",

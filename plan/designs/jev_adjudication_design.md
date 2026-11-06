@@ -55,6 +55,67 @@ is controlled by environment variable `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
 
 ## 2. Configuration and environment bindings
 
+### Optional native Decisions backup
+
+The System One adjudication policy can use an explicit availability backup.
+`REMEMBERSTACK_TYPESAFE_BACKUP=none` is the default. Setting it to
+`openai_decisions` keeps Jev primary and composes the native OpenAI Decisions
+adapter behind the same `SystemOnePort`. This is a substrate change, not a
+generative-prompt fallback. The existing `fallback_to_prompt` option is separate.
+
+After TypeSafe's bounded attempts, only connection-establishment failures and
+documented HTTP 429/529 rejections with no answer or usage fields authorize one
+backup request. Authentication/configuration failures, invalid questions,
+ambiguous read timeouts, generic gateway errors, malformed completed replies,
+and unknown accounting do not authorize backup. A valid uncertain answer is
+accepted by the existing confidence policy, not sent to a second provider to
+obtain a preferred verdict. The backup itself is attempted once per evaluation;
+there is no provider cycle or automatic primary switching across requests.
+
+The native adapter supports Choice, Noul-to-predicate, and Score, preserving
+the complete supplied criteria and ordered levels. It rejects unsupported
+primitives or request shapes before HTTP. Validate response names, types,
+closed choices, complete probability distributions and numeric bounds locally.
+Provider refusal is an invalid typed result, not a fabricated answer. Confidence
+and probability distributions are preserved. Equal confidence values from
+different providers are not a proven equivalent error rate: evaluate labeled
+application examples before enabling the option. The existing confidence floor
+continues to express the adjudication policy; it is not an availability trigger.
+
+Native calls use `gpt-6-luna` at `POST /v1/decisions`, with a distinct native API
+credential (`REMEMBERSTACK_OPENAI_DECISIONS_API_KEY`). An OpenRouter key or
+balance does not authenticate this endpoint. Native Decisions has no configured
+chat reasoning-effort override. The adapter uses implicit prompt caching with
+the documented 30-minute TTL and no output-token charge. The verified global
+price basis on 2026-11-06, per million tokens, is:
+
+| Input category | Up to 272,000 input tokens | Above 272,000 input tokens |
+|---|---:|---:|
+| Ordinary input | $0.10 | $0.20 |
+| Cache read | $0.01 | $0.02 |
+| 30-minute cache write | $0.125 | $0.25 |
+
+Cache reads and writes are already included in the reported input total; price
+each category once. Native regional endpoints apply the documented 1.1
+multiplier. Custom endpoints require an explicit multiplier. Rates, threshold,
+long-context multiplier and endpoint multiplier are deployment settings and
+part of the non-secret backup binding; keys never are. For example, 10,000
+ordinary global short-context tokens cost $0.001, versus the current Jev adapter's
+$0.00042. Backup is opt-in so existing deployments add no spend accidentally.
+Use the actual serving model and reported token counts, not a Jev label or
+assumed zero cost. Preserve parsed usage on invalid answers or error responses;
+missing/inconsistent accounting raises nonretryable `ProviderAccountingError`.
+
+The readiness binding records backup selection and its non-secret configuration.
+Current LoCoMo explicitly freezes backup to `none`; changing its provider policy
+requires a new prepared identity. Accepted facts, extraction products and vectors
+are not reprocessed by adding an unused adapter. No extractor, normalizer,
+converter or embedding generation is bumped. Valid prior decisions remain valid;
+enabling backup affects newly evaluated work, not a retroactive store rewrite.
+
+Primary contracts and alternatives are recorded in the
+[decision-boundary analysis](../analysis/closed-decisions-and-availability-backup-20261106.md).
+
 Configuration is divided between the existing `FactAdjudicationSettings` and a
 sibling `TypeSafeSettings` class:
 

@@ -40,8 +40,8 @@ from rememberstack.adapters.selfhost import HashedBearerAuth
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
+from rememberstack.adapters.systemone import build_systemone_provider
 from rememberstack.adapters.typesafe import TypeSafeSettings
-from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
@@ -1557,7 +1557,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=fact_settings,
                     systemone_provider=(
-                        TypeSafeSystemOneClient(settings=TypeSafeSettings())
+                        build_systemone_provider(settings=TypeSafeSettings())
                         if fact_settings.engine == "jev"
                         else None
                     ),
@@ -1576,7 +1576,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=fact_settings,
                     systemone_provider=(
-                        TypeSafeSystemOneClient(settings=TypeSafeSettings())
+                        build_systemone_provider(settings=TypeSafeSettings())
                         if fact_settings.engine == "jev"
                         else None
                     ),
@@ -1884,7 +1884,7 @@ def _model_bindings() -> dict[str, str]:
         fact_adjudication_model = TypeSafeSettings.model_validate({}).model
     else:
         fact_adjudication_model = facts.model
-    return {
+    bindings = {
         "structure_fallback": structurer.model,
         "skeleton_check": skeleton_check.model,
         "section_role": roles.model,
@@ -1914,6 +1914,17 @@ def _model_bindings() -> dict[str, str]:
         if openrouter.reasoning_effort_map
         else "unset",
     }
+    if facts.engine == "jev":
+        settings = TypeSafeSettings.model_validate({})
+        bindings["systemone_backup"] = settings.backup
+        if settings.backup == "openai_decisions":
+            from rememberstack.adapters.openai_decisions import OpenAIDecisionsSettings
+
+            bindings["systemone_backup_config"] = json.dumps(
+                OpenAIDecisionsSettings().model_dump(mode="json", exclude={"api_key"}),
+                sort_keys=True,
+            )
+    return bindings
 
 
 if __name__ == "__main__":

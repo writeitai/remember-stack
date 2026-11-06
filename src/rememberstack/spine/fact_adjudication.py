@@ -576,7 +576,7 @@ class FactAdjudicator:
                 contradict_with=(),
                 confidence=match_confidence,
                 rationale=(
-                    f"Jev System One: sub-floor confidence ({match_confidence:.2f} < "
+                    f"System One ({usage.model_name}): sub-floor confidence ({match_confidence:.2f} < "
                     f"{self._settings.confidence_floor:.2f}); preserve coexistence."
                 ),
             )
@@ -585,7 +585,7 @@ class FactAdjudicator:
                 presentation=presentation,
                 mapping=mapping,
                 confidence=match_confidence,
-                rationale=f"Jev System One: new proposition (confidence {match_confidence:.2f})",
+                rationale=f"System One ({usage.model_name}): new proposition (confidence {match_confidence:.2f})",
             )
         else:
             stance = "contradicts" if stance_choice == "contradicts" else "supports"
@@ -666,7 +666,7 @@ class FactAdjudicator:
                 support_moves=(),
                 contradict_with=(),
                 confidence=match_confidence,
-                rationale=f"Jev System One: matched {match_choice} ({stance}) with confidence {match_confidence:.2f}",
+                rationale=f"System One ({usage.model_name}): matched {match_choice} ({stance}) with confidence {match_confidence:.2f}",
             )
 
         try:
