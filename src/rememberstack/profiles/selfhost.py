@@ -114,7 +114,7 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.REVIEW_FACT_WINDOWS,
 )
 
-#: The worker classes (D145). ``convert`` is the one input-size-dependent,
+#: The worker classes (D146). ``convert`` is the one input-size-dependent,
 #: CPU- and memory-heavy stage; ``llm`` is every other stage, which mostly
 #: waits on model and embedding calls or the database. Each class lists its
 #: stages downstream first: that is the order a worker drains them in.

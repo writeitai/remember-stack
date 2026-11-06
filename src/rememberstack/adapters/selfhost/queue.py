@@ -96,7 +96,7 @@ class SelfHostWorkerLoop:
     in their own thread. The calling thread sleeps on LISTEN with a slow
     fallback poll; every wake-up, and every successful claim, wakes one
     idle slot, so idle slots look for work one at a time instead of all at
-    once. The calling thread also sweeps expired claims (D144) at most once
+    once. The calling thread also sweeps expired claims (D145) at most once
     per fallback-poll interval.
     """
 
@@ -212,12 +212,16 @@ class SelfHostWorkerLoop:
                 self._wake.notify_all()
 
     def _run_next(self) -> RunResult | None:
-        """Claim and run the first due unit of work in route order, if any."""
-        if not self._bucket.try_acquire():
-            return None
+        """Claim and run the first due unit of work in route order, if any.
+
+        The probe comes first and costs no token, so idle slots never drain
+        the claim budget; each claim attempt takes one.
+        """
         for stage, lane in self._ledger.due_routes(
             deployment_id=self._deployment_id, routes=self._routes
         ):
+            if not self._bucket.try_acquire():
+                return None
             result = self._worker.run_one(
                 deployment_id=self._deployment_id,
                 stage=stage,

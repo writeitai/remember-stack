@@ -1,4 +1,4 @@
-"""Real-PostgreSQL proofs for stage-class workers (D145).
+"""Real-PostgreSQL proofs for stage-class workers (D146).
 
 One worker process serves every stage of its class with several tasks in
 flight. Downstream stages drain first, steady lanes before backfill lanes, and
@@ -342,6 +342,37 @@ def test_work_that_is_listed_but_cannot_be_claimed_does_not_spin_the_slots(
     assert loop.run_for(duration_s=1.0) == ()
     # One probe per wake-up (start plus about four polls), not a busy loop.
     assert ledger.probes <= 8
+
+
+def test_idle_wake_ups_spend_no_claim_tokens(database_url: str, engine: Engine) -> None:
+    """Probing for work is free; only a claim takes a token from the bucket."""
+    handler = _Recording()
+    ledger = _ledger(engine)
+    registry = HandlerRegistry()
+    for stage in _STAGES:
+        registry.register(stage=stage, handler=handler)
+    loop = SelfHostWorkerLoop(
+        worker=Worker(ledger=ledger, registry=registry),
+        ledger=ledger,
+        deployment_id=_DEPLOYMENT_A,
+        stages=_STAGES,
+        bucket=TokenBucket(rate_per_s=0.001, capacity=1.0),  # one claim in total
+        database_url=_psycopg_url(database_url),
+        fallback_poll_s=0.1,
+        concurrency=2,
+    )
+    outcomes: list[RunResultOutcome] = []
+    runner = threading.Thread(
+        target=lambda: outcomes.extend(
+            result.outcome for result in loop.run_for(duration_s=1.5)
+        )
+    )
+    runner.start()
+    time.sleep(0.8)  # several idle wake-ups pass first
+    _enqueue(ledger, deployment_id=_DEPLOYMENT_A, stage=_UPSTREAM)
+    runner.join()
+
+    assert outcomes == [RunResultOutcome.SUCCEEDED]
 
 
 def test_two_deployments_in_two_databases_interleave_in_one_process(
