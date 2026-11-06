@@ -5,7 +5,9 @@ from uuid import uuid4
 from pydantic import ValidationError
 import pytest
 
+from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.model import T4Selection
+from rememberstack.model.resolution import t4_selection_for_candidates
 from rememberstack.spine.resolver import _T4_PROMPT
 
 
@@ -48,3 +50,42 @@ def test_t4_prompt_requires_all_four_fields() -> None:
     )
     assert instruction in _T4_PROMPT
     assert _T4_PROMPT.index("OUTPUT FORMAT") < _T4_PROMPT.index("MENTION:")
+
+
+def test_t4_wire_schema_is_closed_over_the_actual_snapshot() -> None:
+    """The provider sees supplied IDs and null, never an unrestricted UUID slot."""
+    candidates = (uuid4(), uuid4())
+    response_type = t4_selection_for_candidates(candidate_ids=candidates)
+    schema = _strict_json_schema(response_type=response_type)
+    assert schema["properties"]["candidate_id"]["enum"] == [
+        *(str(value) for value in candidates),
+        None,
+    ]
+    assert (
+        response_type.model_validate(
+            {"decision": "match", "candidate_id": str(candidates[1]), "confidence": 0.8}
+        ).candidate_id
+        == candidates[1]
+    )
+    assert (
+        response_type.model_validate(
+            {"decision": "new", "candidate_id": None, "confidence": 0.8}
+        ).candidate_id
+        is None
+    )
+
+
+def test_t4_snapshot_types_cannot_leak_candidates_between_calls() -> None:
+    """Local validation rejects stale or invented IDs independently of the provider."""
+    first, second = uuid4(), uuid4()
+    first_type = t4_selection_for_candidates(candidate_ids=(first,))
+    second_type = t4_selection_for_candidates(candidate_ids=(second,))
+    for response_type, wrong in ((first_type, second), (second_type, first)):
+        with pytest.raises(ValidationError, match="outside the supplied snapshot"):
+            response_type.model_validate(
+                {"decision": "match", "candidate_id": str(wrong), "confidence": 0.9}
+            )
+    with pytest.raises(ValidationError, match="new forbids candidate_id"):
+        first_type.model_validate(
+            {"decision": "new", "candidate_id": str(first), "confidence": 0.9}
+        )

@@ -7346,6 +7346,11 @@ documents again.
 
 ## OpenRouter routing and limits
 
+Entity resolution gives the model a closed list of existing candidate IDs and
+an explicit new-entity outcome. Both the provider schema and local validation
+reject IDs outside that list. Choosing a new entity uses a null ID; the engine
+creates the ID. Invalid matches never implicitly create entities.
+
 These settings apply to every call through OpenRouter.
 
 | Variable | Default | Meaning |

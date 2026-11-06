@@ -13,7 +13,9 @@ from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
+from pydantic import create_model
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import model_validator
 
 _NonEmpty = Annotated[str, Field(min_length=1)]
@@ -79,3 +81,33 @@ class T4Selection(BaseModel):
         if self.decision == "new" and self.candidate_id is not None:
             raise ValueError("new forbids candidate_id")
         return self
+
+
+def t4_selection_for_candidates(
+    *, candidate_ids: tuple[UUID, ...]
+) -> type[T4Selection]:
+    """Constrain both provider JSON schema and local parsing to this snapshot."""
+    allowed = frozenset(candidate_ids)
+
+    def supplied_candidate(cls: type[T4Selection], value: UUID | None) -> UUID | None:
+        """Reject invented matches even if a provider ignores its closed schema."""
+        if value is not None and value not in allowed:
+            raise ValueError("T4 selected candidate_id outside the supplied snapshot")
+        return value
+
+    return create_model(
+        "T4Selection",
+        __base__=T4Selection,
+        __validators__={
+            "supplied_candidate": field_validator("candidate_id")(supplied_candidate)
+        },
+        candidate_id=(
+            UUID | None,
+            Field(
+                default=None,
+                json_schema_extra={
+                    "enum": [*(str(value) for value in candidate_ids), None]
+                },
+            ),
+        ),
+    )

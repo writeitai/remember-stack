@@ -4652,6 +4652,13 @@ D97's explicit ambiguity and zero-LLM engine query path, and D98's live graph.
 
 ## D100. T4 is one binary, match-biased candidate-selection call
 
+**Contract enforcement, 2026-11-06:** the provider response schema enumerates
+the exact supplied candidate IDs plus null, and local parsing validates the
+same set. `new` still requires null. Invalid matches never implicitly create
+an entity. This enforces the existing closed-choice contract without changing
+accepted decision semantics or paid reuse keys. See the
+[analysis](plan/analysis/closed-decisions-and-availability-backup-20261106.md).
+
 > **D102 amendment (2026-08-31).** A T4 match may establish the bounded
 > same-document exact-name binding used by later T0 replays. Global T0 and the
 > binary T4 contract below remain unchanged; D102 owns the exception.
