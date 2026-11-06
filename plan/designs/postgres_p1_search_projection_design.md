@@ -327,6 +327,13 @@ retrieval starts at requested terminal IDs and follows indexed redirects,
 rather than building an all-entity closure and filtering afterwards. Cycles
 and dangling chains emit no terminal, and no arbitrary depth cap is added.
 
+Final fact hydration must also keep its authority lookup inside a per-ID
+lateral `OFFSET 0` fence. A materialized requested-ID list followed by an
+ordinary join does not prevent PostgreSQL from scanning unrelated entity
+provenance. The inner lookup filters deployment, fixed fact kind and requested
+ID; outer temporal, entity, evidence and predicate gates remain unchanged.
+The fence changes the plan, not membership, ordering or requested counts.
+
 ### 8.3 Nominate, confirm, continue (D142)
 
 Ranking and eligibility are separate statements inside the context, so that

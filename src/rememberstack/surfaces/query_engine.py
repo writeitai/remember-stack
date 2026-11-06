@@ -5516,10 +5516,14 @@ def _confirm_facts_context_statement(
            fact.support_state_current AS support_state,
            {_FACTS_CONTEXT_COVERAGE} AS coverage
     FROM requested
-    JOIN memory_v1.facts_visible_history AS fact
-      ON fact.deployment_id = :deployment_id
-     AND fact.fact_kind = '{fact_kind}'
-     AND fact.fact_id = requested.fact_id
+    CROSS JOIN LATERAL (
+        SELECT visible.*
+        FROM memory_v1.facts_visible_history AS visible
+        WHERE visible.deployment_id = :deployment_id
+          AND visible.fact_kind = '{fact_kind}'
+          AND visible.fact_id = requested.fact_id
+        OFFSET 0
+    ) AS fact
     WHERE fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
       AND (CAST(:predicate AS text) IS NULL
            OR (fact.fact_kind = 'relation' AND fact.predicate = :predicate))

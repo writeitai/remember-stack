@@ -93,3 +93,16 @@ On the Beta 3 copy, all stored rows and complete entity/fact view values
 matched the prior definitions. Relation checks fell from 3.69 seconds to
 0.30 seconds with indexed provenance. RC1 measurements and a growing unrelated
 entity set are still required before making a scale claim.
+
+## Bound the final hydration too
+
+The actual scoped P1 adapter stayed near 0.4 seconds with 100,000 unrelated
+entities and identical 201 candidates. A complete context replay exposed a
+separate problem: final fact hydration still used an ordinary join from its
+materialized requested-ID list. PostgreSQL reordered that join into broad
+entity/provenance work; four confirmation batches consumed about 9.6 seconds.
+Materializing IDs alone does not bind the authority lookup. Put the filtered
+fact-ID lookup inside a correlated lateral subquery with `OFFSET 0`, keeping
+all current predicates and returned counts, so hydration is also proportional
+to requested candidates. This is the same planning constraint used for D142
+index-cursor confirmation, applied to the final value fetch.

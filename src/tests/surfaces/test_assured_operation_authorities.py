@@ -80,9 +80,12 @@ def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
     ranked_sql = inspect.getsource(PostgresP1Index.search_facts_scored)
     assert "memory_v1.facts_visible_history" in confirmation_sql
     assert "requested AS MATERIALIZED" in confirmation_sql
+    assert "CROSS JOIN LATERAL" in confirmation_sql
+    assert "visible.fact_id = requested.fact_id" in confirmation_sql
+    assert "OFFSET 0" in confirmation_sql
     assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in confirmation_sql
-    assert "fact.fact_kind = 'relation'" in confirmation_sql
-    assert "fact.fact_kind = 'observation'" in confirmation_sql
+    assert "visible.fact_kind = 'relation'" in confirmation_sql
+    assert "visible.fact_kind = 'observation'" in confirmation_sql
     assert "fact.predicate = :predicate" in confirmation_sql
     assert "memory_v1.facts_visible_history" in ranked_sql
     assert "coverage DESC" in ranked_sql
