@@ -1731,9 +1731,9 @@ fact's only support (see [Updating a source](https://remember.dev/docs/concepts/
 are never deleted by this: an invalidated fact stays in memory with the
 instant it ended.
 
-The graph operations take both clocks together, for a two-axis question:
-"what did the memory believe on `believed_at` about the world on
-`valid_at`?"
+The graph operations take both clocks together to select a past belief
+interval and a world-time instant. Their current-window limitation is stated
+below.
 
 ```python
 from datetime import datetime, UTC
@@ -1756,9 +1756,11 @@ result's `temporal_scope` has mode `as_of` and names both. See
 **Note:**
 
 A fact's window is corrected in place. A `believed_at` read filters on
-`ingested_at` and `invalidated_at`, and shows each fact with its window
-as it stands today. The windows a fact had before a correction are kept
-in its decision transcript, not replayed by the read.
+`ingested_at` and `invalidated_at`, then filters and displays world time using
+the fact's current window. A later correction can make a fact appear or
+disappear from the same past-belief query. Recorded earlier windows may be
+available in its decision transcript, subject to erasure; the read does not
+replay them or provide a full historical-window reconstruction.
 
 ## When a version is in force
 
@@ -5040,13 +5042,14 @@ Claims whose time is `unknown` have no window and are left out; the
 were said rather than when they happened, write a SQL query on
 `claims_live` with `asserted_at`; see [Explore memory with SQL](https://remember.dev/docs/guides/sql).
 
-## What the memory believed on an earlier day
+## Facts recorded on an earlier day
 
-The time modes answer "what was true then, as we know it now". To ask
-"what did the memory believe on 1 August about 1 July?", before the
-17 September correction arrived, use the `facts_as_of` function in a SQL
-query. SQL queries run over the query space, a set of prepared read-only
-views and functions; every statement is checked against it before it runs
+The time modes answer "what was true then, as we know it now". The separate
+`facts_as_of` function selects facts recorded by a belief instant and not yet
+invalidated then, and tests them against a world-time instant using their
+current corrected windows. It does not reconstruct earlier fact-window values.
+SQL queries run over the query space, a set of prepared read-only views and
+functions; every statement is checked against it before it runs
 ([Explore memory with SQL](https://remember.dev/docs/guides/sql)). `facts_as_of` takes a world-time
 instant and a belief instant:
 
@@ -5063,6 +5066,13 @@ for row in believed.rows:
 ```
 
 It returns at most 200 rows by default (its third argument, up to 1,000).
+Both filtering and the returned dates use the fact's window as it stands
+today. A later correction can make a fact appear or disappear from the same
+past-belief query. For example, a July start learned in August and corrected
+to June in September now matches a query about June with an August belief
+instant. A full reconstruction of the earlier window is not available through
+this function.
+
 The graph calls `graph_neighborhood` and `graph_path` take the same two
 clocks as `valid_at` and `believed_at`.
 
@@ -14843,9 +14853,14 @@ text in SQL.
 facts_as_of(valid_at timestamptz, believed_at timestamptz [, max_rows integer])
 ```
 
-The facts that were valid at `valid_at`, as the memory believed at
-`believed_at`. `max_rows` defaults to 200, hard cap 1,000. Category:
-bitemporal.
+Facts recorded by `believed_at` and not invalidated by that instant,
+matching `valid_at` under their current corrected world windows. `max_rows`
+defaults to 200, hard cap 1,000. Category: bitemporal.
+
+Belief time filters `ingested_at` and `invalidated_at`. Both the world-time
+filter and displayed dates use each fact's window as it stands now. A window
+correction made after `believed_at` can therefore add or remove facts from the
+result. This function does not reconstruct earlier fact-window revisions.
 
 | Column | Type |
 |---|---|

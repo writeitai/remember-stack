@@ -307,9 +307,12 @@ same instant. `at` or `from`/`to` echo the request after validation. The mode
 and its required fields are never inferred from null timestamps.
 
 These modes deliberately do not overload the separate audit question “what
-did the system believe at T?” That two-axis reconstruction remains the
-`facts_as_of(valid_at, believed_at, ...)`/open-SQL contract. Every returned fact
-still discloses `valid_from`, `valid_until`, `ingested_at`, and
+did the system believe at T?” The separate
+`facts_as_of(valid_at, believed_at, ...)`/open-SQL read accepts both clocks,
+but applies current fact windows rather than reconstructing their earlier
+revisions. Its limitation against the full historical requirement is explicit
+in [D118 §2](mutable_fact_windows_design.md#2-one-chosen-window-with-honest-precision).
+Every returned fact still discloses `valid_from`, `valid_until`, `ingested_at`, and
 `invalidated_at`. All four modes confirm against `facts_visible_history` with
 the predicates above, the current-system-belief predicate, and the same D48
 survivor/provenance conditions. For `current`, this is the parameterized form
@@ -574,8 +577,9 @@ AND (valid_from  IS NULL OR valid_from  <= T)
 AND (valid_until IS NULL OR valid_until >  T)
 ```
 
-Relation/observation fact world-validity alone uses half-open
-`[valid_from, valid_until)` intervals; null endpoints are open. Claim-evidence
+Relation/observation fact world-validity uses D118 half-open
+`[valid_from, valid_until)` intervals. `open` precision explicitly means an
+ongoing end; other missing endpoints are unknown. Claim-evidence
 overlap is inclusive because shipped `instant` precision requires
 `claim_valid_from = claim_valid_until`, which a half-open convention would make
 empty. All references to a current view in one SQL statement observe the same
@@ -587,11 +591,17 @@ default/hard `max_rows` bounds are defined only by the §4.3 limits table. It
 applies:
 
 ```sql
-ingested_at <= believed_at
+(ingested_at IS NULL OR ingested_at <= believed_at)
 AND (invalidated_at IS NULL OR invalidated_at > believed_at)
-AND (valid_from  IS NULL OR valid_from  <= valid_at)
-AND (valid_until IS NULL OR valid_until >  valid_at)
+AND valid_from <= valid_at
+AND (valid_precision = 'open' OR valid_until > valid_at)
 ```
+
+The world-window columns in this predicate are the fact's current values.
+A later window correction can therefore add or remove a fact from a query with
+fixed past `valid_at` and `believed_at`. This is historical belief-interval
+selection under corrected windows, not a snapshot of all fact values as known
+then. The full time-travel requirement is not claimed satisfied by this read.
 
 It emits both instants, `identity_regime = 'current'`, and
 `evidence_count_current`, `contradict_count_current`, and
@@ -600,8 +610,8 @@ this SRF does not offer as-of identity reconstruction. Manifest comments state
 that its `*_current` columns are live current-testimony values, not historical
 reconstructions. Graph helpers accept either neither instant (current semantics)
 or both; supplying only one raises PostgreSQL `invalid_parameter_value`, which
-the public surface maps to `invalid_parameter`. PostgreSQL's unbounded
-belief history is authoritative.
+the public surface maps to `invalid_parameter`. These PostgreSQL reads have
+no finite projection horizon, but do not reconstruct earlier fact windows.
 
 **D54 provenance and state.** `facts_visible_history` requires surviving
 historical provenance, not current support. A processing-withdrawn fact can

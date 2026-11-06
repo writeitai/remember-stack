@@ -222,9 +222,9 @@ fact's only support (see [Updating a source](/docs/concepts/updating-sources)). 
 are never deleted by this: an invalidated fact stays in memory with the
 instant it ended.
 
-The graph operations take both clocks together, for a two-axis question:
-"what did the memory believe on `believed_at` about the world on
-`valid_at`?"
+The graph operations take both clocks together to select a past belief
+interval and a world-time instant. Their current-window limitation is stated
+below.
 
 ```python
 from datetime import datetime, UTC
@@ -247,9 +247,11 @@ result's `temporal_scope` has mode `as_of` and names both. See
 <Callout type="note">
 
 A fact's window is corrected in place. A `believed_at` read filters on
-`ingested_at` and `invalidated_at`, and shows each fact with its window
-as it stands today. The windows a fact had before a correction are kept
-in its decision transcript, not replayed by the read.
+`ingested_at` and `invalidated_at`, then filters and displays world time using
+the fact's current window. A later correction can make a fact appear or
+disappear from the same past-belief query. Recorded earlier windows may be
+available in its decision transcript, subject to erasure; the read does not
+replay them or provide a full historical-window reconstruction.
 
 </Callout>
 
