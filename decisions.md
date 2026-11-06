@@ -7312,16 +7312,18 @@ deployment's values into another's work.
 
 1. **Explicit settings.** `EngineSettings` (`rememberstack.profiles`) holds every value
    that differs between two deployments' engines: `deployment` (`SelfHostSettings`:
-   identity, buckets, limits), `database`, `object_store` and `model_provider` (the
-   provider account and key). `SelfHostProfile.from_settings(settings)` builds one
+   identity, buckets, limits), `database`, `object_store`, `model_provider` (the
+   provider account and key) and `work_ledger` (retry backoff and spend budgets).
+   `SelfHostProfile.from_settings(settings)` builds one
    deployment's context (database engines, stores, model provider, optional
    `TaskQueuePort`) from it alone. `EngineSettings.from_env()` is just the default way to
    make one, and it is what `python -m rememberstack.profiles.selfhost` uses. The profile no
    longer reads the database URL or provider settings from the environment after
    construction. Migrations and the worker's `LISTEN` connection use the profile's own
    engine URL. Model *policy* (which model each stage calls, embedding model,
-   adjudication engine) still comes from the environment. It holds no deployment's data
-   and is the same for every deployment a process serves.
+   adjudication engine) and the accounts of the optional OCR (Mistral) and System One
+   providers still come from the environment. They are the same for every deployment a
+   process serves, so they are the host's accounts, not any one deployment's.
 2. **Run one named task.** `run_task(context, processing_id)` (`rememberstack.profiles`)
    reads the row's route from the context's database and runs it through the ordinary
    worker boundary (`Worker.run_one`, with a claim restricted to that row by

@@ -902,19 +902,7 @@ def build_api(
     if graph is not None:
         _mount_graph(app=app)
     if build_info is not None:
-        _mount_build_info(
-            app=app,
-            tools=_served_tools(
-                operations=surface is not None,
-                open_query=open_query is not None,
-                ingest=ingest is not None,
-                pipeline_readiness=pipeline_readiness is not None,
-                deletion=deletion is not None,
-                document_search=document_search is not None,
-                section_history=section_history is not None,
-                document_references=document_references is not None,
-            ),
-        )
+        _mount_build_info(app=app, tools=_deployment_tools(deployment))
 
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
@@ -1106,6 +1094,20 @@ def _served_tools(
     return {name: tool(name).tool_version for name in names}
 
 
+def _deployment_tools(deployment: ApiDeployment) -> dict[str, int]:
+    """The catalogue tools whose routes ``deployment`` has capabilities for."""
+    return _served_tools(
+        operations=deployment.surface is not None,
+        open_query=deployment.open_query is not None,
+        ingest=deployment.ingest is not None,
+        pipeline_readiness=deployment.pipeline_readiness is not None,
+        deletion=deployment.deletion is not None,
+        document_search=deployment.document_search is not None,
+        section_history=deployment.section_history is not None,
+        document_references=deployment.document_references is not None,
+    )
+
+
 def _mount_build_info(*, app: FastAPI, tools: dict[str, int]) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
@@ -1132,12 +1134,14 @@ def _mount_build_info(*, app: FastAPI, tools: dict[str, int]) -> None:
             layers=deployment.processing_layers, deployment_id=deployment.deployment_id
         )
         build_info = _served(deployment.build_info)
+        # Mounted routes this request's deployment also has capabilities for.
+        served = _deployment_tools(deployment)
         return build_info.build_info(deployment_id=deployment.deployment_id).model_copy(
             update={
                 "tools": {
                     name: version
                     for name, version in tools.items()
-                    if name not in unserved
+                    if name not in unserved and name in served
                 }
             }
         )

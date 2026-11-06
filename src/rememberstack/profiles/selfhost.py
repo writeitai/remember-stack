@@ -66,6 +66,7 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
+from rememberstack.spine.work_ledger import WorkLedgerSettings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -830,18 +831,21 @@ class EngineSettings:
     """Every value that differs between two deployments' engines (D144).
 
     The deployment's identity and buckets, its database, its object store and
-    its model-provider account. :meth:`from_env` is the default way to make
+    its model-provider account, and its work-ledger settings (retry backoff and
+    spend budgets). :meth:`from_env` is the default way to make
     one; a host that serves several deployments from one process makes one
     per deployment and builds each engine from it, so no deployment's values
     live in process globals. Model policy (which models each stage calls)
-    still comes from the environment and is the same for every deployment a
-    process serves.
+    and the accounts of the optional OCR and System One providers still come
+    from the environment and are the same for every deployment a process
+    serves.
     """
 
     deployment: SelfHostSettings
     database: DatabaseSettings
     object_store: MinIOSettings
     model_provider: OpenRouterSettings
+    work_ledger: WorkLedgerSettings
 
     @classmethod
     def from_env(cls) -> Self:
@@ -851,6 +855,7 @@ class EngineSettings:
             database=load_database_settings(),
             object_store=MinIOSettings.model_validate({}),
             model_provider=OpenRouterSettings.model_validate({}),
+            work_ledger=WorkLedgerSettings(),
         )
 
 
@@ -876,6 +881,7 @@ class SelfHostProfile:
         error_telemetry: TelemetryPort | None = None,
         task_queue: TaskQueuePort | None = None,
         model_provider_settings: OpenRouterSettings | None = None,
+        work_ledger_settings: WorkLedgerSettings | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process.
 
@@ -884,6 +890,8 @@ class SelfHostProfile:
         ``model_provider_settings`` are the settings ``model_provider`` was
         built from, reported (without secrets) as model bindings; without
         them the bindings are read from the environment.
+        ``work_ledger_settings`` (retry backoff, spend budgets) default to the
+        environment's.
         """
         self._settings = settings
         self._engine = engine
@@ -896,6 +904,7 @@ class SelfHostProfile:
         self._error_telemetry = error_telemetry
         self._task_queue = task_queue
         self._model_provider_settings = model_provider_settings
+        self._work_ledger_settings = work_ledger_settings or WorkLedgerSettings()
 
     @classmethod
     def from_settings(
@@ -939,6 +948,7 @@ class SelfHostProfile:
             error_telemetry=error_telemetry,
             task_queue=task_queue,
             model_provider_settings=settings.model_provider,
+            work_ledger_settings=settings.work_ledger,
         )
 
     def close(self) -> None:
@@ -1421,12 +1431,11 @@ class SelfHostProfile:
         """
         from rememberstack.model import RunResultOutcome
         from rememberstack.spine import WorkLedger
-        from rememberstack.spine import WorkLedgerSettings
         from rememberstack.workers import RunResult
 
-        route = WorkLedger(engine=self._engine, settings=WorkLedgerSettings()).route_of(
-            processing_id=processing_id
-        )
+        route = WorkLedger(
+            engine=self._engine, settings=self._work_ledger_settings
+        ).route_of(processing_id=processing_id)
         if route is None:
             return RunResult(processing_id=None, outcome=RunResultOutcome.NO_WORK)
         if route.deployment_id != self._settings.deployment_id:
@@ -1447,7 +1456,6 @@ class SelfHostProfile:
         from rememberstack.adapters.selfhost import JsonLineTelemetry
         from rememberstack.adapters.selfhost import SelfHostTaskQueue
         from rememberstack.spine import WorkLedger
-        from rememberstack.spine import WorkLedgerSettings
         from rememberstack.workers import HandlerRegistry
         from rememberstack.workers import Worker
 
@@ -1455,7 +1463,7 @@ class SelfHostProfile:
             raise ValueError(f"the self-host profile has no handler for stage {stage}")
         registry = HandlerRegistry()
         registry.register(stage=stage, handler=self._handler(stage=stage))
-        ledger = WorkLedger(engine=self._engine, settings=WorkLedgerSettings())
+        ledger = WorkLedger(engine=self._engine, settings=self._work_ledger_settings)
         local_telemetry = JsonLineTelemetry()
         telemetry = (
             local_telemetry

@@ -7,6 +7,7 @@ This proves the three seams together keep every row in its own database.
 """
 
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -177,6 +178,29 @@ def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
         listed = client.get("/documents", headers={"x-deployment": str(deployment_id)})
         assert listed.status_code == 200, listed.text
         assert len(listed.json()["documents"]) == 1
+
+    # A request's deployment without a capability neither serves nor
+    # advertises it, even though the composing deployment has it.
+    contexts["read-only"] = replace(contexts[str(_DEPLOYMENT_A)], ingest=None)
+    described = client.get("/deployment", headers={"x-deployment": "read-only"})
+    assert described.status_code == 200, described.text
+    assert "ingest" not in described.json()["tools"]
+    assert (
+        "ingest"
+        in client.get(
+            "/deployment", headers={"x-deployment": str(_DEPLOYMENT_A)}
+        ).json()["tools"]
+    )
+    refused = client.post(
+        "/ingest",
+        params={"filename": "note.md", "mime": "text/markdown"},
+        content=b"# Refused\n",
+        headers={
+            "x-deployment": "read-only",
+            "content-type": "application/octet-stream",
+        },
+    )
+    assert refused.status_code == 404
 
     pending = {
         deployment_id: _rows(
