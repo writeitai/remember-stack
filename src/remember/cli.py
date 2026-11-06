@@ -55,6 +55,14 @@ class _InternalOpsSettings(BaseSettings):
     )
 
 
+class _ClientRequestSettings(BaseSettings):
+    """The CLI request timeout, overridable by REMEMBER_TIMEOUT or a flag."""
+
+    model_config = SettingsConfigDict(env_prefix="REMEMBER_", extra="ignore")
+
+    timeout: float = Field(default=300.0, gt=0, allow_inf_nan=False)
+
+
 def main(argv: list[str] | None = None) -> int:
     """The ``remember`` entry point; returns the process exit code."""
     from pydantic import ValidationError
@@ -907,6 +915,9 @@ def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
         api_key=getattr(args, "api_key", None),
         base_url=getattr(args, "api_url", None),
         project=getattr(args, "project", None),
+        timeout=_ClientRequestSettings.model_validate(
+            {} if getattr(args, "timeout", None) is None else {"timeout": args.timeout}
+        ).timeout,
     )
 
 
@@ -1013,6 +1024,13 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         "--project",
         default=None,
         help="project id or name for a signed key (overrides REMEMBER_PROJECT)",
+    )
+
+    client_flags.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="HTTP request timeout in seconds (overrides REMEMBER_TIMEOUT; default 300)",
     )
 
     if include_internal_ops:

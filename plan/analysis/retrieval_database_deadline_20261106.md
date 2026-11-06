@@ -33,13 +33,14 @@ transport timeout alongside the new server setting, allowing both 120-second
 children plus overhead.
 Existing saved profiles and results are not rewritten.
 
-An unlimited timeout is rejected because expensive requests could monopolize a
+Budgets above 3600 seconds, including an unlimited timeout, are rejected because expensive requests could monopolize a
 slot indefinitely. Merely raising the deadline does not correct repeated SQL
 work. Candidate materialization and per-candidate authority checks will be
 measured on the copied store before changing resolution SQL. Bypassing the
 current-entity authority or weakening forgotten/merged-entity visibility is not
-an acceptable optimization. No schema, ingestion generation, extraction input,
-embedding identity, model call or paid-product reuse boundary changes here.
+an acceptable optimization. The schema change below replaces only a view. No ingestion generation,
+extraction input, embedding identity, model binding or paid-product reuse
+boundary changes here.
 
 ## Candidate-first identity check
 
@@ -57,3 +58,43 @@ current-entity authorities in one snapshot. The SQL barrier stops the planner
 from expanding a full current-entity view for every alias; it does not cache or
 materialize a stale entity projection. Existing identity tests must continue
 to exclude merged and forgotten entities and preserve homonym ambiguity.
+
+## Unused entity count work affects fact confirmation
+
+A complete fact-context replay still hit the raised 120-second deadline. One
+P1 confirmation statement took 94.525 seconds to confirm 804 observations;
+another took 18.300 seconds for 72 relations. A saved entity-scoped source
+request completed in 50.412 seconds with 50 claims and 50 chunks. These are
+SQL costs, not an answering-model delay. Its query embeddings took 0.84–2.49
+seconds and their recorded charges totaled $0.00000021 for the two requests.
+
+`entities_current` joins a one-row count aggregate with CROSS JOIN LATERAL.
+Even identity-only consumers then execute the unused mention/document count
+work repeatedly as fact views check entity visibility. Replacing this join
+with LEFT JOIN LATERAL ... ON true allows PostgreSQL to remove it when neither
+count is selected. The aggregate has no GROUP BY or HAVING and always returns
+exactly one row, so count values and row membership are unchanged. Explicit
+provenance EXISTS checks remain mandatory.
+
+A rollback-only copied-store prototype preserved both counts for all 118
+entities. The original unmodified exact-name SQL completed in 0.370 seconds.
+The 72-relation and 804-observation statements completed in 3.966 and 3.863
+seconds respectively, with identical candidate counts. Apply this as a view-only
+Alembic migration; it rewrites no data or paid artifacts. Existing visibility,
+forgetting, merge and exact-count checks remain applicable. Add a PostgreSQL
+EXPLAIN regression proving identity reads omit the sum aggregate while explicit
+count reads still calculate it. This guards the performance contract rather
+than matching the SQL spelling.
+
+The longer server budget also requires longer first-party transport defaults.
+Set Python and TypeScript request defaults to 300 seconds, and expose the CLI
+request timeout through --timeout and REMEMBER_TIMEOUT with the same default.
+Keep explicit client overrides and the one-second admission wait independent.
+A larger operator-selected server budget also requires a correspondingly larger
+client/proxy timeout. Transport expiry can leave server SQL running until its
+own deadline; this change does not add disconnect-driven cancellation.
+
+Frozen older v39 profiles remain readable as recorded runs, but current-pin
+validation correctly refuses to execute them under different query settings.
+Prepare a new identity to run the changed policy on a restored store. Do not
+rewrite an old fingerprint or trigger re-ingestion.

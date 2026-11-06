@@ -60,8 +60,8 @@ One fact-context result carries at most `max(60, 2*k)` evidence links in
 total. Allocation gives every selected fact its available supporting and
 contradicting evidence before adding deeper evidence, within
 `evidence_per_fact` per stance (fixed at 3 for `combined_context`).
-Fact retrieval has a 25-second
-database budget; if the database cannot answer inside it you get a
+Fact retrieval has a configurable database budget (default 120 seconds;
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`); if the database cannot answer inside it you get a
 `boundary` result, not a partial one.
 
 ## Call it from Python

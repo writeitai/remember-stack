@@ -47,6 +47,7 @@ from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
 from remember.retrieval import DEFAULT_CONTEXT_K
 from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from remember.retrieval import MAX_CONTEXT_K
+from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -439,8 +440,13 @@ class QueryEngine:
         shared by admission and every nested PostgreSQL read in an operation.
         It belongs to this engine instance; changing it never reprocesses data.
         """
-        if not math.isfinite(database_budget_seconds) or database_budget_seconds <= 0:
-            raise ValueError("database_budget_seconds must be finite and positive")
+        if (
+            not math.isfinite(database_budget_seconds)
+            or not 0 < database_budget_seconds <= MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
+        ):
+            raise ValueError(
+                "database_budget_seconds must be finite and positive, at most 3600 seconds"
+            )
         self._database_budget_seconds = database_budget_seconds
         self._engine = engine
         self._search_index = search_index

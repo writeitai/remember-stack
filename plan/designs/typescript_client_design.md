@@ -222,7 +222,7 @@ call counts. See
 Engine error envelopes do not trigger moved-host refresh. A failed refresh
 surfaces the original failure rather than silently selecting a fallback.
 
-Provide a finite request timeout (30 seconds by default) and AbortSignal.
+Provide a finite request timeout (300 seconds by default) and AbortSignal.
 Cancellation covers issuer discovery, routing, requests and polling waits.
 The HTTP timeout is a total operation deadline including routing, upload and
 response buffering, unlike httpx's per-phase idle timeout. Raise timeoutMs for
@@ -345,7 +345,7 @@ Checks must answer different questions; one regenerate-and-diff is not enough.
 Anything absent from this table must match current Python behavior. Options
 use camelCase; nested schema-owned input types retain snake_case fields. Nested
 dates accept ISO strings, not Date; top-level Date options become UTC ISO.
-Timeout API units are milliseconds: timeoutMs=30000, wait timeoutMs=1800000,
+Timeout API units are milliseconds: timeoutMs=300000, wait timeoutMs=1800000,
 pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 
 | Python behavior | TypeScript behavior and reason | Required test |

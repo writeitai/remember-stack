@@ -738,13 +738,16 @@ homonyms, bypass provenance checks, or change fuzzy/phonetic ordering.
 
 The default operation has one absolute PostgreSQL budget, configurable per
 engine instance with a finite positive `database_budget_seconds` (starting
-default: 120 seconds). The stock profile reads
+default: 120 seconds, maximum 3600 seconds). The stock profile reads
 `REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`; an explicit library
 `EngineSettings.deployment.retrieval_database_budget_s` overrides that process
 environment for its own deployment. Clients and proxies must allow more than
 this budget. `combined_context` runs two independently bounded children, so
 its transport must allow their sum plus overhead (for example, a 300-second
 client timeout for two 120-second budgets).
+The Python and TypeScript SDKs and the CLI default to a 300-second request
+timeout. The CLI accepts `--timeout` and `REMEMBER_TIMEOUT`. Operators raising
+the database budget must raise their client and proxy timeouts accordingly.
 This read policy never changes ingestion or paid-product reuse. Pool
 admission, P1 channel-readiness checks, semantic fact nomination, optional
 entity-profile rescue, anchor/neighbor authority checks, graph expansion, and

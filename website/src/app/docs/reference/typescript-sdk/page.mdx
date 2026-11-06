@@ -45,7 +45,7 @@ import { Client } from '@rememberdev/client';
 const client = new Client({
   apiKey: process.env.REMEMBER_API_KEY,
   baseUrl: 'http://127.0.0.1:8000',
-  timeoutMs: 30_000,
+  timeoutMs: 300_000,
 });
 try {
   const info = await client.deploymentBuildInfo();
@@ -233,7 +233,7 @@ npm connector libraries on the client machine.
 
 ## Transport and errors
 
-Ordinary requests default to `timeoutMs: 30_000`. Caller cancellation raises
+Ordinary requests default to `timeoutMs: 300_000`. Caller cancellation raises
 AbortError with the signal reason; an HTTP deadline raises RequestTimeoutError;
 readiness expiry raises TimeoutError with its last report. These are distinct.
 

@@ -215,7 +215,7 @@ Client(
     api_key: str | None = None,
     base_url: str | None = None,
     project: str | None = None,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
     client: httpx.Client | None = None,
     transport: httpx.BaseTransport | None = None,
 )
@@ -228,7 +228,7 @@ All parameters are keyword-only.
 | `api_key` | The API key. A bare key or a full `Bearer …` value. |
 | `base_url` | The deployment address. |
 | `project` | Which project to use, by id or name, when the key covers several.<Cloud> Only a remember.dev key uses it.</Cloud> |
-| `timeout` | Seconds per HTTP request. Default 30. |
+| `timeout` | Seconds per HTTP request. Default 300. |
 | `client` | An `httpx.Client` you built yourself, with its own address and headers. It cannot be combined with any other parameter, and nothing is resolved. The SDK does not close a client you pass in. |
 | `transport` | An `httpx` transport to use instead of the network (for tests or a proxy). |
 

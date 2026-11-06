@@ -3927,8 +3927,11 @@ and `facts_visible_history` compose those helpers and apply
 state from base tables.
 
 `fact_context` confirms P1 nominations in bounded exact-key batches, but every
-statement while it holds one pooled connection shares one 25-second monotonic
-database deadline. Each statement receives only the remaining time. Exhaustion
+statement while it holds one pooled connection shares one monotonic database
+deadline. **Updated 2026-11-06:** the fixed 25-second value is superseded by a
+per-engine configurable budget (default 120 seconds, maximum 3600); see
+[deadline analysis](plan/analysis/retrieval_database_deadline_20261106.md) and
+the [D97 contract](plan/designs/entity_identity_and_retrieval_design.md). Each statement receives only the remaining time. Exhaustion
 fails the operation and releases the connection instead of multiplying the
 transport timeout by the number of refill batches.
 

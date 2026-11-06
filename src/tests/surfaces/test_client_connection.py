@@ -684,3 +684,26 @@ def test_read_retries_when_another_request_already_repinned(issuer: FakeIssuer) 
     assert [
         (request.url.host, request.method) for request in issuer.engine_requests()
     ] == [("dp-a.test", "GET"), ("dp-a.test", "POST"), ("dp-b.test", "GET")]
+
+
+@pytest.mark.parametrize(
+    ("environment", "flag", "expected"),
+    [(None, None, 300.0), ("240", None, 240.0), ("240", "75", 75.0)],
+)
+def test_cli_timeout_reaches_the_http_transport(
+    issuer: FakeIssuer,
+    monkeypatch: pytest.MonkeyPatch,
+    environment: str | None,
+    flag: str | None,
+    expected: float,
+) -> None:
+    """CLI flags override the environment and reach real HTTP request settings."""
+    if environment is None:
+        monkeypatch.delenv("REMEMBER_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("REMEMBER_TIMEOUT", environment)
+    argv = ["operations", "list"]
+    if flag is not None:
+        argv += ["--timeout", flag]
+    assert main(argv) == 0
+    assert issuer.engine_requests()[-1].extensions["timeout"]["read"] == expected

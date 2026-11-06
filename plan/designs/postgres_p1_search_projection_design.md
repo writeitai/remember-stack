@@ -304,6 +304,14 @@ transaction. The deadline is configured per query-engine instance (stock
 seconds), not per statement or channel. Every nested read consumes the same
 remaining time; the short connection-admission wait remains a separate limit.
 
+Current-entity identity and fact-visibility reads must not compute unrequested
+mention/document statistics. `entities_current` attaches its one-row count
+aggregate with `LEFT JOIN LATERAL ... ON true`, allowing the planner to remove
+it when neither count column is selected. The aggregate has no grouping or
+HAVING and always produces one row, so this preserves count values and all
+provenance/merge/forgetting membership checks. No counts are cached and no
+stored ingestion products are rewritten.
+
 ### 8.3 Nominate, confirm, continue (D142)
 
 Ranking and eligibility are separate statements inside the context, so that

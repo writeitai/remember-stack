@@ -276,7 +276,8 @@ more) have been confirmed, and their evidence is attached — up to
 of `max(60, 2*k)`. Evidence is allocated across every selected fact and both
 stances before additional claims are attached to earlier facts.
 
-The operation has a 25-second database budget. If it runs out, or the live
+The operation has a configurable database budget (default 120 seconds;
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`). If it runs out, or the live
 graph or search index cannot answer, the result is `negative.kind`
 `boundary` with an explanation, never a silently smaller answer.
 

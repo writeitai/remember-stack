@@ -503,7 +503,7 @@ def test_retired_model_settings_are_gone_from_compose_and_env_example() -> None:
         assert name not in example
 
 
-@pytest.mark.parametrize("budget", [0.0, -1.0, float("inf"), float("nan")])
+@pytest.mark.parametrize("budget", [0.0, -1.0, 3601.0, float("inf"), float("nan")])
 def test_retrieval_database_budget_rejects_unbounded_values(budget: float) -> None:
     """The operator cannot accidentally disable the operation deadline."""
     with pytest.raises(ValidationError, match="retrieval_database_budget_s"):
@@ -519,10 +519,9 @@ def test_retrieval_database_budget_is_environment_configurable_and_deployment_lo
     explicit = SelfHostSettings(deployment_id=uuid4(), retrieval_database_budget_s=75)
     assert from_env.retrieval_database_budget_s == 240
     assert explicit.retrieval_database_budget_s == 75
-    assert from_env.retrieval_database_budget_s == 240
 
 
-@pytest.mark.parametrize("budget", [0.0, -1.0, float("inf"), float("nan")])
+@pytest.mark.parametrize("budget", [0.0, -1.0, 3601.0, float("inf"), float("nan")])
 def test_query_engine_rejects_invalid_database_budget(budget: float) -> None:
     """Direct library composition enforces the same finite positive contract."""
     from rememberstack.surfaces import QueryEngine
