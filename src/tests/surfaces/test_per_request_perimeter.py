@@ -8,9 +8,11 @@ that deployment's credential check, admission limits and spend lease.
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Annotated
 from typing import cast
 from uuid import UUID
 
+from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi.testclient import TestClient
@@ -160,3 +162,19 @@ def test_without_an_override_the_composed_perimeter_applies() -> None:
         client.get("/probe", headers={"Authorization": "Bearer a-key"}).status_code
         == 200
     )
+
+
+def test_a_hosts_own_route_sees_the_resolved_deployment() -> None:
+    """``Depends(deployment_context)`` in a host route is the request's deployment."""
+    client, _, _ = _client()
+    app = client.app
+
+    @app.get("/whoami")  # type: ignore[union-attr]
+    def whoami(
+        deployment: Annotated[ApiDeployment, Depends(deployment_context)],
+    ) -> dict[str, str]:
+        return {"deployment": str(deployment.deployment_id)}
+
+    served = client.get("/whoami", headers=_headers("b", "b-key"))
+    assert served.status_code == 200, served.text
+    assert served.json() == {"deployment": str(_B)}

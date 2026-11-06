@@ -569,9 +569,11 @@ def deployment_context(request: Request) -> ApiDeployment:
     request alone; the body is not read yet) once per request, before
     authentication, and every route, the D74 barrier and the perimeter use
     the result. ``resolve`` may raise ``HTTPException`` to refuse, for
-    example 401 for a credential it cannot place.
+    example 401 for a credential it cannot place. Used as a dependency in a
+    host's own route, it returns the deployment the gate resolved for the
+    request.
     """
-    return request.app.state.api_deployment
+    return _request_deployment(request)
 
 
 async def _resolve_deployment(scope: Scope) -> ApiDeployment:
