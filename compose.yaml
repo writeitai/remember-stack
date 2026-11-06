@@ -237,7 +237,7 @@ services:
       # otherwise; set a token before publishing on another address.
       - "${REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS:-127.0.0.1}:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
 
-  # Two worker classes (D146): `convert` runs one conversion at a time, so its
+  # Two worker classes (D145): `convert` runs one conversion at a time, so its
   # memory is bounded by the largest allowed input; `llm` serves every other
   # stage with many tasks in flight. Scale either with `--scale` or with its
   # concurrency.

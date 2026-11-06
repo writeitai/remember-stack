@@ -135,11 +135,11 @@ are hints, never inputs to a state transition.
   routes of its **worker class** whose `not_before <= now()`, using
   `SELECT … FOR UPDATE SKIP LOCKED LIMIT n` and the schema §2 due-work index. A **slow fallback
   poll (~30 s)** exists only as a safety net for missed notifications and scheduled work becoming
-  due; crash recovery is the lease reaper (orchestration §6, D145). Application attempts/backoff
+  due; crash recovery is the lease reaper (orchestration §6, D144). Application attempts/backoff
   remain row state; a per-process rate limit is a token bucket consulted around the claim.
   Scaling = raise a class's concurrency, or `docker compose up --scale worker-llm=N`.
 
-  **Worker classes (D146).** One worker process serves every stage of one class, with a fixed
+  **Worker classes (D145).** One worker process serves every stage of one class, with a fixed
   number of tasks in flight (its *concurrency*), each in its own thread:
 
   | Class | Stages | Tasks in flight (starting point) | Why |
@@ -150,7 +150,7 @@ are hints, never inputs to a state transition.
   Memory is safe by construction rather than by accounting: a class's process is sized as peak
   memory per task × concurrency + headroom, measured once per class. A process that still runs
   out of memory loses only its own in-flight tasks; their leases expire and they are retried,
-  and a task that kills its worker every time dead-letters after `max_attempts` (D145).
+  and a task that kills its worker every time dead-letters after `max_attempts` (D144).
 
   **Fair order.** A class process lists its routes as every stage's steady lane, then every
   stage's backfill lane, each in pipeline order **downstream first** (e.g. `label_relation`

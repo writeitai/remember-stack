@@ -122,7 +122,7 @@ isolate state the two lanes share (below). Rules:
   predecessors (D143 lineage order). The duplicate-promotion rule above is unchanged.
 - **The self-host profile serves the backfill lane** from the same worker process: a worker
   class claims from its stages' backfill routes whenever none of their steady routes has a due
-  row ([packaging §3, worker classes](packaging_distribution_design.md#3-task-execution--one-model-two-delivery-shells), D146).
+  row ([packaging §3, worker classes](packaging_distribution_design.md#3-task-execution--one-model-two-delivery-shells), D145).
 - **Lane budgets are separate** (§4): backfill spend is a knob turned deliberately; apart from the
   shared-entity applications above, it does not draw on the steady-state budget. The two dominant
   backfill costs are metered per lane

@@ -174,7 +174,7 @@ Connector-cycle finalization SQL must likewise wait on pending/running/failed
 
 `processing_state` aggregates by `stage` already power readiness. After this
 change, `extract_claims` pending/running counts approximate **chunk** backlog.
-Document for operators and UMC: scale the `llm` worker class (D146) on that depth.
+Document for operators and UMC: scale the `llm` worker class (D145) on that depth.
 
 No new public HTTP API is required for v1.
 
@@ -207,7 +207,7 @@ Chunk ids are internal UUIDs; no new mount surface.
 
 ### 9.1 Auto-deploy
 
-- Same container image, same worker entrypoint (`worker --class llm`, D146).
+- Same container image, same worker entrypoint (`worker --class llm`, D145).
 - No new Coolify service names, secrets, or migrations of the `processing_target`
   enum (CHUNK already exists). Alembic may still be needed only if readiness SQL
   lives purely in app code (preferred).
@@ -224,7 +224,7 @@ UMC must **not** manufacture extract work. It may:
 
 1. Observe OSS `processing_state` (or a safe aggregate export) for
    `stage=extract_claims`, statuses pending/running.
-2. Set the concurrency or replica count of the data-plane `llm` worker class (D146).
+2. Set the concurrency or replica count of the data-plane `llm` worker class (D145).
 
 Chunk-level grain makes that observation **useful**. Control plane remains non-
 authoritative for work truth (D2/D6/D67 as used in UMC integration analysis).

@@ -293,7 +293,7 @@ retry then drop; systemic provider/DB re-raise; mint defense; cost keys
 ## 9. UMC / compose
 
 Same image; `normalize_relations` runs in the `llm` worker class
-(`worker --class llm`, D146). Scale that class's concurrency or containers on
+(`worker --class llm`, D145). Scale that class's concurrency or containers on
 claim-grain pending/running. No control-plane work manufacture (D67). Single-revision
 deploy for all normalize workers.
 
