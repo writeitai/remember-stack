@@ -90,3 +90,39 @@ def test_enumeration_filters_deployment_and_detects_filename_tampering(
     tampered.write_bytes(own.canonical_bytes())
     with pytest.raises(ForgetManifestConflictError):
         store.manifests(deployment_id=_DEPLOYMENT_ID)
+
+
+def test_object_store_manifests_keep_the_same_contract() -> None:
+    """D147: the bucket-backed store appends once, filters and detects tampering."""
+    from rememberstack.adapters.selfhost import MinIOObjectStore
+    from rememberstack.adapters.selfhost import ObjectStoreForgetManifestStore
+    from rememberstack.core.storage_routing import HOT
+    from rememberstack.model import ObjectKey
+    from tests.adapters.test_minio_store import _MemoryS3
+
+    client = _MemoryS3()
+    bucket = MinIOObjectStore(bucket="forget", client=client)
+    store: ForgetManifestPort = ObjectStoreForgetManifestStore(store=bucket)
+    own = _manifest()
+    other = _manifest(
+        forget_id=UUID("74000000-0000-0000-0000-000000000006"),
+        deployment_id=_OTHER_DEPLOYMENT_ID,
+    )
+    store.append(manifest=own)
+    store.append(manifest=own)
+    store.append(manifest=other)
+
+    assert store.manifests(deployment_id=_DEPLOYMENT_ID) == (own,)
+    assert client.objects[("forget", f"forget-manifests/{_FORGET_ID}.json")][0] == (
+        own.canonical_bytes()
+    )
+    with pytest.raises(ForgetManifestConflictError):
+        store.append(manifest=_manifest(doc_id=UUID(int=5)))
+
+    bucket.write_bytes(
+        key=ObjectKey("forget-manifests/74000000-0000-0000-0000-000000000007.json"),
+        content=own.canonical_bytes(),
+        storage_class=HOT,
+    )
+    with pytest.raises(ForgetManifestConflictError):
+        store.manifests(deployment_id=_DEPLOYMENT_ID)

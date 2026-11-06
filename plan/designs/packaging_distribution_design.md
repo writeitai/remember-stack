@@ -251,6 +251,11 @@ ports and published extension points, keeping it portable off GCP too.
   `api_deployment()`, and a push delivery naming B's `processing_id` runs `run_task(profile_B,
   processing_id)`. Choosing the deployment for a request or task is the host's job, not the
   library's (D60).
+  A push-delivery host also gets: the rows a task or request creates announced through the
+  context's `TaskQueuePort` after it finishes (collected in `enqueue_on`; the janitor stays the
+  backstop); conversion routes it can replace; hard-forget manifests in a dedicated bucket
+  (`forget_manifest_bucket_name`) instead of a local root; a credential per bucket; and extra
+  engine options for its pools (D147 item 4).
 
 ## 6. Releases, upgrades, portability
 

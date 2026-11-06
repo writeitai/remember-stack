@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import AsyncIterator
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from dataclasses import field
 from functools import partial
 import json
 import logging
@@ -13,6 +15,7 @@ from pathlib import Path
 import sys
 import time
 from typing import Annotated
+from typing import Any
 from typing import Self
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -81,8 +84,11 @@ if TYPE_CHECKING:
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
         ControlPlaneSpendLease,
     )
+    from rememberstack.core import Converter
+    from rememberstack.ports.forget import ForgetManifestPort
     from rememberstack.ports.queue import TaskQueuePort
     from rememberstack.ports.telemetry import TelemetryPort
+    from rememberstack.spine import WorkLedger
     from rememberstack.surfaces.http_api import ApiDeployment
     from rememberstack.workers import RunResult
     from rememberstack.workers import StageHandler
@@ -191,6 +197,10 @@ class SelfHostSettings(BaseSettings):
     Paths are bucket roots, so object keys from P3 append directly to them."""
     projection_work_root: Path = Path("/var/lib/rememberstack/projection-work")
     forget_manifest_root: Path = Path("/var/lib/rememberstack/forget-manifests")
+    #: D147: keep hard-forget manifests in this dedicated bucket instead of
+    #: ``forget_manifest_root``, so a process keeps no deployment state on
+    #: local disk. Never one of the ordinary data buckets above.
+    forget_manifest_bucket_name: str | None = Field(default=None, min_length=1)
     migration_config: Path = Path("alembic.ini")
     api_host: str = "0.0.0.0"
     api_port: int = Field(default=8000, ge=1, le=65_535)
@@ -634,7 +644,7 @@ class _FreshDeploymentReadiness:
     hard-forget recovery composition; finding any manifest stops startup.
     """
 
-    def __init__(self, *, store: LocalFSForgetManifestStore) -> None:
+    def __init__(self, *, store: ForgetManifestPort) -> None:
         """Bind the separately durable manifest root."""
         self._store = store
 
@@ -830,15 +840,16 @@ def _provision_query_role_password(
 class EngineSettings:
     """Every value that differs between two deployments' engines (D147).
 
-    The deployment's identity and buckets, its database, its object store and
-    its model-provider account, and its work-ledger settings (retry backoff and
-    spend budgets). :meth:`from_env` is the default way to make
-    one; a host that serves several deployments from one process makes one
-    per deployment and builds each engine from it, so no deployment's values
-    live in process globals. Model policy (which models each stage calls)
-    and the accounts of the optional converter providers (OCR, image
-    description) and of System One still come from the environment and are the same for every deployment a process
-    serves.
+    The deployment's identity and buckets, its database, its object store
+    (one credential, optionally overridden per bucket), its model-provider
+    account, and its work-ledger settings (retry backoff and spend budgets).
+    :meth:`from_env` is the default way to make one; a host that serves
+    several deployments from one process makes one per deployment and builds
+    each engine from it, so no deployment's values live in process globals.
+    Model policy (which models each stage calls) and the accounts of the
+    optional converter providers (OCR, image description) and of System One
+    still come from the environment and are the same for every deployment a
+    process serves.
     """
 
     deployment: SelfHostSettings
@@ -846,6 +857,16 @@ class EngineSettings:
     object_store: MinIOSettings
     model_provider: OpenRouterSettings
     work_ledger: WorkLedgerSettings
+    #: Credentials for one bucket, by bucket name, where a store issues a key
+    #: per bucket; every other bucket uses ``object_store``.
+    object_store_by_bucket: Mapping[str, MinIOSettings] = field(default_factory=dict)
+
+    def object_store_for(self, *, bucket: str) -> MinIOObjectStore:
+        """The object store for one of this deployment's buckets."""
+        return MinIOObjectStore(
+            bucket=bucket,
+            settings=self.object_store_by_bucket.get(bucket, self.object_store),
+        )
 
     @classmethod
     def from_env(cls) -> Self:
@@ -882,6 +903,8 @@ class SelfHostProfile:
         task_queue: TaskQueuePort | None = None,
         model_provider_settings: OpenRouterSettings | None = None,
         work_ledger_settings: WorkLedgerSettings | None = None,
+        conversion_routes: Mapping[str, Converter] | None = None,
+        forget_manifests: ForgetManifestPort | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process.
 
@@ -891,7 +914,10 @@ class SelfHostProfile:
         built from, reported (without secrets) as model bindings; without
         them the bindings are read from the environment.
         ``work_ledger_settings`` (retry backoff, spend budgets) default to the
-        environment's.
+        environment's. ``conversion_routes`` (MIME type to converter) replace
+        the routes named by ``settings.conversion_routes``, for a host that
+        runs conversion elsewhere. ``forget_manifests`` replaces the local
+        ``forget_manifest_root`` store.
         """
         self._settings = settings
         self._engine = engine
@@ -905,6 +931,8 @@ class SelfHostProfile:
         self._task_queue = task_queue
         self._model_provider_settings = model_provider_settings
         self._work_ledger_settings = work_ledger_settings or WorkLedgerSettings()
+        self._conversion_routes = conversion_routes
+        self._forget_manifests = forget_manifests
 
     @classmethod
     def from_settings(
@@ -913,14 +941,27 @@ class SelfHostProfile:
         *,
         error_telemetry: TelemetryPort | None = None,
         task_queue: TaskQueuePort | None = None,
+        engine_options: Mapping[str, Any] | None = None,
+        conversion_routes: Mapping[str, Converter] | None = None,
     ) -> Self:
-        """Build one deployment's engine from its explicit settings (D147)."""
+        """Build one deployment's engine from its explicit settings (D147).
+
+        ``engine_options`` are extra ``sqlalchemy.create_engine`` keywords for
+        the main engine, which setup, workers and API writes use (for example
+        ``{"poolclass": NullPool}`` or ``{"pool_size": 8}``). The graph and
+        retrieval engines keep their bounded pools; they open nothing until
+        an API read uses them.
+        """
+        from rememberstack.adapters.selfhost import ObjectStoreForgetManifestStore
+
         profile_settings = settings.deployment
-        minio_settings = settings.object_store
         database_url = settings.database.sqlalchemy_url()
+        forget_bucket = profile_settings.forget_manifest_bucket_name
         return cls(
             settings=profile_settings,
-            engine=sqlalchemy.create_engine(database_url, pool_pre_ping=True),
+            engine=sqlalchemy.create_engine(
+                database_url, pool_pre_ping=True, **(engine_options or {})
+            ),
             graph_engine=sqlalchemy.create_engine(
                 database_url,
                 pool_pre_ping=True,
@@ -935,20 +976,28 @@ class SelfHostProfile:
                 max_overflow=0,
                 pool_timeout=profile_settings.retrieval_pool_timeout_s,
             ),
-            raw_store=MinIOObjectStore(
-                bucket=profile_settings.raw_bucket_name, settings=minio_settings
+            raw_store=settings.object_store_for(
+                bucket=profile_settings.raw_bucket_name
             ),
-            artifact_store=MinIOObjectStore(
-                bucket=profile_settings.artifacts_bucket_name, settings=minio_settings
+            artifact_store=settings.object_store_for(
+                bucket=profile_settings.artifacts_bucket_name
             ),
-            corpusfs_store=MinIOObjectStore(
-                bucket=profile_settings.corpusfs_bucket_name, settings=minio_settings
+            corpusfs_store=settings.object_store_for(
+                bucket=profile_settings.corpusfs_bucket_name
             ),
             model_provider=OpenRouterModelProvider(settings=settings.model_provider),
             error_telemetry=error_telemetry,
             task_queue=task_queue,
             model_provider_settings=settings.model_provider,
             work_ledger_settings=settings.work_ledger,
+            conversion_routes=conversion_routes,
+            forget_manifests=(
+                None
+                if forget_bucket is None
+                else ObjectStoreForgetManifestStore(
+                    store=settings.object_store_for(bucket=forget_bucket)
+                )
+            ),
         )
 
     def close(self) -> None:
@@ -1001,7 +1050,8 @@ class SelfHostProfile:
         self._raw_store.ensure_bucket()
         self._artifact_store.ensure_bucket()
         self._corpusfs_store.ensure_bucket()
-        self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
+        if self._forget_manifests is None:
+            self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
         self._settings.projection_work_root.mkdir(parents=True, exist_ok=True)
         DeploymentBootstrapper(engine=self._engine).bootstrap_deployment(
             deployment_input=DeploymentBootstrapInput(
@@ -1159,11 +1209,7 @@ class SelfHostProfile:
                 else None
             ),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
-            readiness=_FreshDeploymentReadiness(
-                store=LocalFSForgetManifestStore(
-                    root=self._settings.forget_manifest_root
-                )
-            ),
+            readiness=_FreshDeploymentReadiness(store=self._forget_manifest_store()),
         )
 
         if trust is not None:
@@ -1193,7 +1239,6 @@ class SelfHostProfile:
         A host serving several deployments returns one of these per request
         from its override of ``deployment_context``.
         """
-        from rememberstack.adapters.converters import build_conversion_routes
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import DocumentInventory
@@ -1304,11 +1349,7 @@ class SelfHostProfile:
                 admission=ForgetCatalog(engine=self._engine),
                 meter_scope=self._managed_meter_scope(),
                 # The OCR provider is optional; only composed routes are routable.
-                routable_mimes=frozenset(
-                    build_conversion_routes(
-                        route_names=self._settings.conversion_routes
-                    )
-                ),
+                routable_mimes=frozenset(self._conversion_route_table()),
             ),
             pipeline_readiness=PipelineReadinessCatalog(
                 engine=self._engine,
@@ -1331,6 +1372,7 @@ class SelfHostProfile:
             ),
             effective_time=EffectiveTimeCatalog(engine=self._engine),
             graph=graph_queries,
+            task_queue=self._task_queue,
             build_info=_BuildInfo(
                 engine=self._engine, model_bindings=self._model_bindings()
             ),
@@ -1427,15 +1469,18 @@ class SelfHostProfile:
         The task's route is read from this deployment's database. A row that
         is gone, not due, or already claimed elsewhere answers ``no_work``;
         a row of another deployment is refused, because this context must
-        not run it.
+        not run it. Work the task creates (its stage's successors) is
+        announced through the context's task queue once the task has
+        finished; see :mod:`rememberstack.spine.new_work`.
         """
         from rememberstack.model import RunResultOutcome
         from rememberstack.spine import WorkLedger
+        from rememberstack.spine.new_work import announce_new_work
+        from rememberstack.spine.new_work import collect_new_work
         from rememberstack.workers import RunResult
 
-        route = WorkLedger(
-            engine=self._engine, settings=self._work_ledger_settings
-        ).route_of(processing_id=processing_id)
+        ledger = WorkLedger(engine=self._engine, settings=self._work_ledger_settings)
+        route = ledger.route_of(processing_id=processing_id)
         if route is None:
             return RunResult(processing_id=None, outcome=RunResultOutcome.NO_WORK)
         if route.deployment_id != self._settings.deployment_id:
@@ -1443,18 +1488,40 @@ class SelfHostProfile:
                 f"processing row {processing_id} belongs to deployment"
                 f" {route.deployment_id}, not {self._settings.deployment_id}"
             )
-        return self._worker(stage=route.stage).run_one(
-            deployment_id=route.deployment_id,
-            stage=route.stage,
-            lane=route.lane,
-            processing_id=processing_id,
-        )
+        with collect_new_work() as created:
+            result = self._worker(stage=route.stage).run_one(
+                deployment_id=route.deployment_id,
+                stage=route.stage,
+                lane=route.lane,
+                processing_id=processing_id,
+            )
+        announce_new_work(queue=self._queue(ledger=ledger), work=created)
+        return result
+
+    def _conversion_route_table(self) -> Mapping[str, Converter]:
+        """The context's conversion routes, or those its settings name."""
+        if self._conversion_routes is not None:
+            return self._conversion_routes
+        from rememberstack.adapters.converters import build_conversion_routes
+
+        return build_conversion_routes(route_names=self._settings.conversion_routes)
+
+    def _forget_manifest_store(self) -> ForgetManifestPort:
+        """The context's manifest store, or the local manifest root."""
+        if self._forget_manifests is not None:
+            return self._forget_manifests
+        return LocalFSForgetManifestStore(root=self._settings.forget_manifest_root)
+
+    def _queue(self, *, ledger: WorkLedger) -> TaskQueuePort:
+        """The context's task queue, or the ``pg_notify`` shell."""
+        from rememberstack.adapters.selfhost import SelfHostTaskQueue
+
+        return self._task_queue or SelfHostTaskQueue(ledger=ledger)
 
     def _worker(self, *, stage: PipelineStage) -> Worker:
         """One stage's claim-and-run boundary over this deployment's ledger."""
         from rememberstack.adapters.selfhost import FanoutTelemetry
         from rememberstack.adapters.selfhost import JsonLineTelemetry
-        from rememberstack.adapters.selfhost import SelfHostTaskQueue
         from rememberstack.spine import WorkLedger
         from rememberstack.workers import HandlerRegistry
         from rememberstack.workers import Worker
@@ -1473,7 +1540,7 @@ class SelfHostProfile:
         return Worker(
             ledger=ledger,
             registry=registry,
-            queue=self._task_queue or SelfHostTaskQueue(ledger=ledger),
+            queue=self._queue(ledger=ledger),
             telemetry=telemetry,
         )
 
@@ -1531,7 +1598,6 @@ class SelfHostProfile:
 
     def _handler(self, *, stage: PipelineStage) -> StageHandler:
         """Compose exactly one implemented stage handler for one worker process."""
-        from rememberstack.adapters.converters import build_conversion_routes
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams
@@ -1605,11 +1671,7 @@ class SelfHostProfile:
                 catalog=documents,
                 raw_store=self._raw_store,
                 artifact_store=self._artifact_store,
-                router=ConversionRouter(
-                    routes=build_conversion_routes(
-                        route_names=self._settings.conversion_routes
-                    )
-                ),
+                router=ConversionRouter(routes=dict(self._conversion_route_table())),
             )
         if stage is PipelineStage.STRUCTURE:
             return StructureHandler(

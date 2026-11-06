@@ -148,9 +148,13 @@ Three things are shared across the server, so keep them in mind:
   owns the public query views. The first migration on a server creates it.
   If several first migrations run at once, the later ones wait for the first
   one to finish and then continue.
-- **Partition maintenance names its databases.** The `pg_partman_bgw.dbname`
-  server setting lists the databases whose partitions the background worker
-  maintains, separated by commas. Add each deployment's database to it.
+- **Partition maintenance runs per database.** pg_partman's background worker
+  maintains only the databases listed, comma-separated, in the
+  `pg_partman_bgw.dbname` server setting, so add each deployment's database
+  there. Or leave the background worker out of `shared_preload_libraries` and
+  run `CALL run_maintenance_proc();` in each database on a schedule (hourly is
+  ample for monthly partitions). RememberStack does not depend on the
+  background worker itself.
 
 ## PostgreSQL prerelease versions
 

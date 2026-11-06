@@ -17,6 +17,7 @@ overrides that dependency and returns the request's deployment (D147); each
 request is still served by exactly one deployment.
 """
 
+from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -136,6 +137,9 @@ from rememberstack.model.processing_layers import LayerAdmission
 from rememberstack.model.processing_layers import LayerSelectionError
 from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.ports.auth import AuthPerimeterPort
+from rememberstack.ports.queue import TaskQueuePort
+from rememberstack.spine.new_work import announce_new_work
+from rememberstack.spine.new_work import collect_new_work
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionRefused
 from rememberstack.surfaces.direct_admission import DirectPathAdmission
@@ -529,6 +533,10 @@ class ApiDeployment:
     graph: GraphQueryPort | None = None
     build_info: BuildInfoPort | None = None
     processing_layers: ProcessingLayersPort | None = None
+    #: When set, work rows a request creates are announced through it after
+    #: the route returns (D147); unset, the database's insert trigger wakes
+    #: listening workers, as in the self-host shell.
+    task_queue: TaskQueuePort | None = None
 
     def __post_init__(self) -> None:
         """One deployment is one trust domain (D50): bound parts must agree."""
@@ -593,6 +601,7 @@ def build_api(
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
     processing_layers: ProcessingLayersPort | None = None,
+    task_queue: TaskQueuePort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
     browser_origins: tuple[str, ...] = (),
@@ -651,6 +660,7 @@ def build_api(
         graph=graph,
         build_info=build_info,
         processing_layers=processing_layers,
+        task_queue=task_queue,
     )
     readiness.ensure_ready(deployment_id=deployment_id)
     # One perimeter dependency instance so app-level gating and open-query
@@ -666,6 +676,7 @@ def build_api(
         # keeps answering 401, so documenting the contract cannot change it.
         *([Depends(HTTPBearer(auto_error=False))] if perimeter_dep is not None else []),
         Depends(_admission),
+        Depends(_announce_new_work),
     ]
     app = FastAPI(
         title="RememberStack query API",
@@ -2488,6 +2499,23 @@ def _perimeter(*, deployment_id: UUID):  # noqa: ANN202
         return context
 
     return dependency
+
+
+async def _announce_new_work(deployment: _Deployment) -> AsyncIterator[None]:
+    """Announce the work rows a request created through its deployment's queue.
+
+    Async, so the collector it opens is in the request's context, which the
+    route's worker thread copies; the announcements run after the route has
+    returned and its writes have committed (D147).
+    """
+    queue = deployment.task_queue
+    if queue is None:
+        yield
+        return
+    with collect_new_work() as created:
+        yield
+    if created:
+        await run_in_threadpool(announce_new_work, queue=queue, work=tuple(created))
 
 
 def _admission(deployment: _Deployment) -> None:
