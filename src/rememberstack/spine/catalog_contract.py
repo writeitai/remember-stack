@@ -399,7 +399,7 @@ DECISION_OBJECTS: Final = {
     "D57": ("document_sections", "document_representations"),
     "D65": ("documents", "document_versions", "document_representations"),
     "D67": ("processing_state", "cost_ledger", "ix_procstate_due"),
-    "D144": ("processing_state", "ix_procstate_running_lease"),
+    "D145": ("processing_state", "ix_procstate_running_lease"),
     "D68": ("deployments", "ix_entities_name_trgm"),
     "D69": ("relations", "v_memory_entity_survivor"),
     "D74": ("forget_manifests", "ix_forget_content_guard"),
