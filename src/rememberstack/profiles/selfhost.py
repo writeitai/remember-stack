@@ -836,8 +836,8 @@ class EngineSettings:
     one; a host that serves several deployments from one process makes one
     per deployment and builds each engine from it, so no deployment's values
     live in process globals. Model policy (which models each stage calls)
-    and the accounts of the optional OCR and System One providers still come
-    from the environment and are the same for every deployment a process
+    and the accounts of the optional converter providers (OCR, image
+    description) and of System One still come from the environment and are the same for every deployment a process
     serves.
     """
 

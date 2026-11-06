@@ -7321,9 +7321,10 @@ deployment's values into another's work.
    longer reads the database URL or provider settings from the environment after
    construction. Migrations and the worker's `LISTEN` connection use the profile's own
    engine URL. Model *policy* (which model each stage calls, embedding model,
-   adjudication engine) and the accounts of the optional OCR (Mistral) and System One
-   providers still come from the environment. They are the same for every deployment a
-   process serves, so they are the host's accounts, not any one deployment's.
+   adjudication engine) and the accounts of the optional converter providers (Mistral OCR,
+   image description) and of System One still come from the environment. They are the
+   same for every deployment a process serves, so they are the host's accounts, not any
+   one deployment's.
 2. **Run one named task.** `run_task(context, processing_id)` (`rememberstack.profiles`)
    reads the row's route from the context's database and runs it through the ordinary
    worker boundary (`Worker.run_one`, with a claim restricted to that row by

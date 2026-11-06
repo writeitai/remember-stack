@@ -1134,8 +1134,9 @@ def _mount_build_info(*, app: FastAPI, tools: dict[str, int]) -> None:
             layers=deployment.processing_layers, deployment_id=deployment.deployment_id
         )
         build_info = _served(deployment.build_info)
-        # Mounted routes this request's deployment also has capabilities for.
-        served = _deployment_tools(deployment)
+        # Mounted routes this request's deployment also has capabilities for;
+        # adjacent chunks is served by the engine every deployment has.
+        served = {*_deployment_tools(deployment), ADJACENT_CHUNKS_TOOL_NAME}
         return build_info.build_info(deployment_id=deployment.deployment_id).model_copy(
             update={
                 "tools": {

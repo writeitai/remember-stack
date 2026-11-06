@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import make_url
 
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.model import DeploymentBootstrapInput
@@ -185,6 +186,14 @@ def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
     described = client.get("/deployment", headers={"x-deployment": "read-only"})
     assert described.status_code == 200, described.text
     assert "ingest" not in described.json()["tools"]
+    # Adjacent chunks needs only the engine, so it stays advertised.
+    no_operations = "no-operations"
+    contexts[no_operations] = replace(contexts[str(_DEPLOYMENT_A)], surface=None)
+    tools = client.get("/deployment", headers={"x-deployment": no_operations}).json()[
+        "tools"
+    ]
+    assert ADJACENT_CHUNKS_TOOL_NAME in tools
+    assert "facts_context" not in tools
     assert (
         "ingest"
         in client.get(
