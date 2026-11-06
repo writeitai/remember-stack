@@ -166,13 +166,16 @@ class BudgetParked(BaseModel):
 class RecordCall(BaseModel):
     """One billed model/provider call to attribute to the claimed row's attempt.
 
-    Attribution fields (stage, lane, attempt) are copied from the locked
+    Attribution fields (stage, lane, target) are copied from the locked
     ``processing_state`` row by the spine and can never be supplied here (D67).
+    ``attempt`` is the caller's claim: the call is recorded only while that
+    attempt still holds the row (D144).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     processing_id: UUID
+    attempt: int = Field(ge=1)
     call_key: str
     model_name: str | None = None
     tier: str | None = None

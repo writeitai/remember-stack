@@ -185,10 +185,10 @@ class StageHandler(Protocol):
 class _LedgerCostMeter:
     """Bind provider accounting to one claimed processing attempt."""
 
-    def __init__(self, *, ledger: WorkLedger, processing_id: UUID) -> None:
-        """Bind every call record to the authoritative running row."""
+    def __init__(self, *, ledger: WorkLedger, work: ClaimedWork) -> None:
+        """Bind every call record to the claimed attempt of its row."""
         self._ledger = ledger
-        self._processing_id = processing_id
+        self._work = work
 
     def record(
         self,
@@ -201,7 +201,8 @@ class _LedgerCostMeter:
         """Persist one provider-reported call through the spine attribution path."""
         self._ledger.record_call(
             call=RecordCall(
-                processing_id=self._processing_id,
+                processing_id=self._work.processing_id,
+                attempt=self._work.attempt,
                 call_key=call_key,
                 model_name=usage.model_name,
                 tier=tier,
@@ -373,9 +374,7 @@ class Worker:
                 processing_id=claimed.processing_id,
                 outcome=RunResultOutcome.BUDGET_PARKED,
             )
-        meter = _LedgerCostMeter(
-            ledger=self._ledger, processing_id=claimed.processing_id
-        )
+        meter = _LedgerCostMeter(ledger=self._ledger, work=claimed)
         try:
             with _LeaseRenewal(ledger=self._ledger, work=claimed):
                 outcome = handler.handle(work=claimed, meter=meter)

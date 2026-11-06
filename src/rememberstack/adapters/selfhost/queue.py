@@ -116,14 +116,15 @@ class SelfHostWorkerLoop:
     def drain_due(self) -> tuple[RunResult, ...]:
         """Claim and run due work on the route until none remains or tokens run out.
 
-        At most once per fallback-poll interval it first takes back expired
-        claims on its stage, so work a killed worker held runs again.
+        At most once per fallback-poll interval, also between tasks of a long
+        drain, it takes back expired claims on its stage, so work a killed
+        worker held runs again.
         """
-        if time.monotonic() - self._reaped_at >= self._fallback_poll_s:
-            self._reaped_at = time.monotonic()
-            self._worker.reap_expired_leases(deployment_id=self._deployment_id)
         results: list[RunResult] = []
-        while self._bucket.try_acquire():
+        while True:
+            self._reap_if_due()
+            if not self._bucket.try_acquire():
+                break
             result = self._worker.run_one(
                 deployment_id=self._deployment_id, stage=self._stage, lane=self._lane
             )
@@ -137,6 +138,12 @@ class SelfHostWorkerLoop:
                 break
             results.append(result)
         return tuple(results)
+
+    def _reap_if_due(self) -> None:
+        """Sweep expired claims when a fallback-poll interval has passed."""
+        if time.monotonic() - self._reaped_at >= self._fallback_poll_s:
+            self._reaped_at = time.monotonic()
+            self._worker.reap_expired_leases(deployment_id=self._deployment_id)
 
     def run_for(self, *, duration_s: float) -> tuple[RunResult, ...]:
         """Listen, drain on every wake, and fall back to polling, for a bounded time.

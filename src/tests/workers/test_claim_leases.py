@@ -32,6 +32,7 @@ from rememberstack.model import EnqueueWork
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import RecordCall
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import WorkNotRunningError
 from rememberstack.ports.cost_meter import CostMeterPort
@@ -153,16 +154,6 @@ class _Success:
         return HandlerOutcome()
 
 
-class _Sleep:
-    def __init__(self, seconds: float) -> None:
-        self._seconds = seconds
-
-    def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        del work, meter
-        time.sleep(self._seconds)
-        return HandlerOutcome()
-
-
 class _FinalizingSuccess(_Success):
     def __init__(self) -> None:
         self.finalized: list[tuple[UUID, str]] = []
@@ -212,6 +203,12 @@ def test_a_stale_attempt_cannot_renew_complete_or_fail_a_newer_one(
 
     assert not ledger.renew_lease(processing_id=first.processing_id, attempt=1)
     with pytest.raises(WorkNotRunningError):
+        ledger.record_call(
+            call=RecordCall(
+                processing_id=first.processing_id, attempt=1, call_key="selection"
+            )
+        )
+    with pytest.raises(WorkNotRunningError):
         ledger.complete(processing_id=first.processing_id, attempt=1)
     with pytest.raises(WorkNotRunningError):
         ledger.fail(
@@ -223,6 +220,11 @@ def test_a_stale_attempt_cannot_renew_complete_or_fail_a_newer_one(
     assert _row(database_engine, first.processing_id)["status"] == "running"
 
     assert ledger.renew_lease(processing_id=second.processing_id, attempt=2)
+    assert ledger.record_call(
+        call=RecordCall(
+            processing_id=second.processing_id, attempt=2, call_key="selection"
+        )
+    )
     ledger.complete(processing_id=second.processing_id, attempt=2)
     assert _row(database_engine, second.processing_id)["status"] == "succeeded"
 
@@ -299,12 +301,27 @@ def test_the_worker_announces_requeued_rows_and_finalizes_dead_letters(
 def test_the_worker_renews_its_lease_while_the_handler_runs(
     database_engine: Engine,
 ) -> None:
-    """A handler that outlives the lease keeps its claim and completes."""
-    ledger = _ledger(database_engine, lease_s=0.6)
+    """A handler that outlives its first lease is not reaped and completes."""
+    lease_s = 0.6
+    ledger = _ledger(database_engine, lease_s=lease_s)
     processing_id = ledger.enqueue(work=_work()).processing_id
-    result = _worker(ledger, _Sleep(2.0)).run_one(
+    reaped_while_running: list[object] = []
+
+    class _OutliveTheLease:
+        def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
+            del work, meter
+            time.sleep(lease_s * 3)
+            reaped_while_running.extend(
+                ledger.reap_expired_leases(
+                    deployment_id=_DEPLOYMENT_ID, stages=(_STAGE,)
+                )
+            )
+            return HandlerOutcome()
+
+    result = _worker(ledger, _OutliveTheLease()).run_one(
         deployment_id=_DEPLOYMENT_ID, stage=_STAGE, lane=ProcessingLane.STEADY
     )
+    assert reaped_while_running == []
     assert result.outcome is RunResultOutcome.SUCCEEDED
     row = _row(database_engine, processing_id)
     assert row["status"] == "succeeded" and row["attempts"] == 1

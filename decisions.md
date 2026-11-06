@@ -7420,8 +7420,9 @@ blocked running workers anywhere they can be stopped at short notice, and any au
 - Claiming sets `processing_state.lease_until = now() + lease` (default 60 s,
   `REMEMBERSTACK_WORK_LEASE_S`). The claimed attempt number identifies the claim.
 - The worker renews the lease every third of the lease while the handler runs.
-- Renewal, complete and fail succeed only for the row's current `running` attempt. A worker
-  whose attempt no longer matches discards its result and reports `lease_lost`.
+- Renewal, complete, fail and cost recording succeed only for the row's current `running`
+  attempt. A worker whose attempt no longer matches discards its result and reports
+  `lease_lost`; a provider call it finishes after that is not recorded, like a killed worker's.
 - Each worker periodically sweeps the stages it serves: an expired `running` row with attempts
   left returns to `pending`, due now, and is announced; a row whose `attempts` reached
   `max_attempts` is dead-lettered (claiming requires `attempts < max_attempts`, so requeueing it

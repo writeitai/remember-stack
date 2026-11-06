@@ -265,8 +265,8 @@ is killed mid-task (out of memory, a container restart, a preempted instance) wo
 - **Renewal.** While the handler runs, its worker extends the lease every third of the lease
   from a background thread. A slow LLM call therefore never loses its claim, but a dead process
   stops renewing within one lease.
-- **Attempt-conditional transitions.** Renewal, complete and fail succeed only for the row's
-  current attempt (`status = 'running' AND attempts = <claimed attempt>`). Example: attempt 1
+- **Attempt-conditional transitions.** Renewal, complete, fail and cost recording succeed only
+  for the row's current attempt (`status = 'running' AND attempts = <claimed attempt>`). Example: attempt 1
   stalls, the reaper takes the row back, attempt 2 claims it; when attempt 1 wakes up and tries
   to complete, nothing matches and its result is discarded (`lease_lost`), so it can never
   overwrite or finish attempt 2. A complete after the lease has expired but before any reaper
@@ -281,8 +281,11 @@ is killed mid-task (out of memory, a container restart, a preempted instance) wo
   each other's rows (`SKIP LOCKED`).
 
 Handlers already tolerate a second attempt (D12: idempotent writes, put-if-absent objects), so a
-reaped attempt that had partly run is safe to repeat. Provider calls the lost attempt made stay
-on its own attempt's cost rows. The lease length is a trade-off between how quickly a dead
+reaped attempt that had partly run is safe to repeat. Cost rows are attempt-conditional too: the
+meter records a call under the claimed attempt only while that attempt holds the row. Calls the
+lost attempt recorded before losing its claim stay on its own attempt's rows; a call it finishes
+afterwards is refused, exactly as a killed worker's in-flight calls are never recorded, so it can
+never land on (and deduplicate) the newer attempt's calls with the same call key. The lease length is a trade-off between how quickly a dead
 worker's task runs again and how much database renewal traffic a busy worker makes; it must stay
 well above the longest pause a live worker can have between renewals.
 

@@ -528,7 +528,7 @@ FOR EACH ROW EXECUTE FUNCTION notify_due_processing_insert();
 -- transition. Exhaustion leaves it pending with defer_reason='budget' and not_before at the window
 -- roll. Otherwise the transaction clears defer_reason, changes status to running, increments
 -- attempts exactly once immediately before the handler begins, and sets lease_until to now() plus
--- the lease (D144). Renewal, complete and fail match `attempts = <the claimed attempt>` as well as
+-- the lease (D144). Renewal, complete, fail and cost recording match `attempts = <the claimed attempt>` as well as
 -- `status = 'running'`, so an attempt whose claim was taken back changes nothing.
 SELECT processing_id
 FROM processing_state

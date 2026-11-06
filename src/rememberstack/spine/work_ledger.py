@@ -1028,8 +1028,11 @@ class WorkLedger:
 
         Stage, lane, attempt, and target attribution are copied from the locked
         running row (D67) — a caller or delivery envelope can never choose them.
-        Returns False when the (processing, attempt, call_key) row already exists,
-        so an acknowledged-late retry cannot double-bill.
+        The call must come from the attempt that holds the row (D144): a call
+        finished by an attempt whose claim was taken back is refused, so it can
+        never land on (and deduplicate) a newer attempt's calls. Returns False
+        when the (processing, attempt, call_key) row already exists, so an
+        acknowledged-late retry cannot double-bill.
         """
         with self._engine.begin() as connection:
             connection.execute(text("SET LOCAL statement_timeout = '15s'"))
@@ -1047,10 +1050,10 @@ class WorkLedger:
                 raise WorkNotFoundError(
                     f"processing row {call.processing_id} does not exist"
                 )
-            if row["status"] != "running":
+            if row["status"] != "running" or int(row["attempts"]) != call.attempt:
                 raise WorkNotRunningError(
-                    f"processing row {call.processing_id} is not running; "
-                    "cost attribution requires a running attempt"
+                    f"processing row {call.processing_id} is not running attempt"
+                    f" {call.attempt}; cost attribution requires the running attempt"
                 )
             inserted = connection.execute(
                 _INSERT_COST,
