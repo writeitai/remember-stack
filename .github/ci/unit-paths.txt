@@ -8,6 +8,7 @@ src/tests/adapters/test_hashed_bearer_auth.py
 src/tests/adapters/test_managed_metering.py
 src/tests/adapters/test_minio_store.py
 src/tests/adapters/test_mistral_ocr.py
+src/tests/adapters/test_openai_decisions.py
 src/tests/adapters/test_openrouter.py
 src/tests/adapters/test_p1_ranked.py
 src/tests/adapters/test_postgres_p1.py
