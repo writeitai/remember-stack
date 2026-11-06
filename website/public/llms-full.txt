@@ -9324,7 +9324,7 @@ database that already has them changes nothing.
 Three things are shared across the server, so keep them in mind:
 
 - **Database names are at most 43 characters of `a`–`z`, `0`–`9` and `_`,
-  not starting with a digit.** Each database gets its own login roles,
+  not starting with a digit.** Each database gets its own roles,
   `rememberstack_query_<database>` and `rememberstack_graph_<database>`.
   PostgreSQL lowercases those role names and cuts them at 63 bytes, so a
   longer or mixed-case database name could share a role with another
