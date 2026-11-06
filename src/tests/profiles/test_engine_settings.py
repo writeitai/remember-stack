@@ -66,3 +66,30 @@ def test_from_settings_keeps_no_state_on_local_disk_and_takes_engine_options() -
         assert _access_key(manifests._store) == "forget"  # noqa: SLF001
     finally:
         profile.close()
+
+
+def test_customer_sql_can_bypass_the_pooler(monkeypatch) -> None:  # noqa: ANN001
+    """The query role connects to the configured host and port, else the URL's."""
+    import sqlalchemy
+
+    from rememberstack.profiles import selfhost
+
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        selfhost.psycopg, "connect", lambda **kwargs: seen.append(kwargs)
+    )
+    engine = sqlalchemy.create_engine(
+        "postgresql+psycopg://u:p@pgbouncer.invalid:6432/project_a"
+    )
+    try:
+        selfhost._query_role_connect_factory(engine=engine)()  # noqa: SLF001
+        selfhost._query_role_connect_factory(  # noqa: SLF001
+            engine=engine, host="postgres.invalid", port=5432
+        )()
+    finally:
+        engine.dispose()
+    assert [(item["host"], item["port"], item["dbname"]) for item in seen] == [
+        ("pgbouncer.invalid", 6432, "project_a"),
+        ("postgres.invalid", 5432, "project_a"),
+    ]
+    assert seen[1]["user"] == "rememberstack_query_project_a"

@@ -511,8 +511,9 @@ class ApiDeployment:
     has, and every route reads them from the request's deployment through
     :func:`deployment_context`, never from values captured when the app was
     built. A capability absent from the request's deployment answers 404,
-    as an unmounted route would. The perimeter gate, direct admission, the
-    spend lease and the startup readiness check stay composed per app.
+    as an unmounted route would. Its perimeter (``auth``, ``direct_admission``,
+    ``spend_lease``) is applied per request too; only the startup readiness
+    check stays composed per app.
     """
 
     deployment_id: UUID
@@ -537,6 +538,13 @@ class ApiDeployment:
     #: the route returns (D147); unset, the database's insert trigger wakes
     #: listening workers, as in the self-host shell.
     task_queue: TaskQueuePort | None = None
+    #: The perimeter credential check: a credential must be valid for this
+    #: deployment. ``None``: no perimeter (infrastructure's job).
+    auth: AuthPerimeterPort | None = None
+    #: Per-credential and per-deployment rate and in-flight limits (D136 §7.6).
+    direct_admission: DirectPathAdmission | None = None
+    #: The D46 spend hold around memory reads, ingest and operations.
+    spend_lease: SpendLeasePort | None = None
 
     def __post_init__(self) -> None:
         """One deployment is one trust domain (D50): bound parts must agree."""
@@ -555,16 +563,45 @@ def deployment_context(request: Request) -> ApiDeployment:
     """The deployment this request is served from (D147).
 
     The default is the deployment `build_api` was composed with. A host that
-    serves several deployments replaces it per app, for example
-    ``app.dependency_overrides[deployment_context] = resolve``, where
-    ``resolve`` may take the request (and its credential) and returns that
-    request's :class:`ApiDeployment`. FastAPI resolves it once per request,
-    so the D74 barrier and the route see the same deployment.
+    serves several deployments replaces it per app with
+    ``app.dependency_overrides[deployment_context] = resolve``. The perimeter
+    gate calls ``resolve(request)`` (a plain or ``async`` function of the
+    request alone; the body is not read yet) once per request, before
+    authentication, and every route, the D74 barrier and the perimeter use
+    the result. ``resolve`` may raise ``HTTPException`` to refuse, for
+    example 401 for a credential it cannot place. On its first request the
+    gate takes ``resolve`` over (keeping it as the app's resolver) and points
+    the override back at the resolved value, so FastAPI never calls
+    ``resolve`` a second time: as a dependency anywhere, including a host's
+    own routes and included routers, ``deployment_context`` returns the
+    deployment the gate resolved and authenticated for the request.
     """
-    return request.app.state.api_deployment
+    return _request_deployment(request)
 
 
-_Deployment = Annotated[ApiDeployment, Depends(deployment_context)]
+async def _resolve_deployment(scope: Scope) -> ApiDeployment:
+    """Call the app's resolver (its ``deployment_context`` override) once."""
+    app = scope["app"]
+    overrides = app.dependency_overrides
+    registered = overrides.get(deployment_context)
+    if registered is None:
+        return app.state.api_deployment
+    if registered is not _request_deployment:
+        app.state.deployment_resolver = registered
+        overrides[deployment_context] = _request_deployment
+    resolve = app.state.deployment_resolver
+    request = Request(scope)
+    if inspect.iscoroutinefunction(resolve):
+        return await resolve(request)
+    return await run_in_threadpool(resolve, request)
+
+
+def _request_deployment(request: Request) -> ApiDeployment:
+    """The deployment the gate resolved for this request (or the app's own)."""
+    return getattr(request.state, "api_deployment", request.app.state.api_deployment)
+
+
+_Deployment = Annotated[ApiDeployment, Depends(_request_deployment)]
 
 
 def _served[T](capability: T | None) -> T:
@@ -661,20 +698,20 @@ def build_api(
         build_info=build_info,
         processing_layers=processing_layers,
         task_queue=task_queue,
+        auth=auth,
+        direct_admission=direct_admission,
+        spend_lease=spend_lease,
     )
     readiness.ensure_ready(deployment_id=deployment_id)
-    # One perimeter dependency instance so app-level gating and open-query
-    # principal injection share the same authenticate call per request.
-    perimeter_dep = (
-        _perimeter(deployment_id=deployment_id) if auth is not None else None
-    )
     dependencies = [
-        *([Depends(perimeter_dep)] if perimeter_dep is not None else []),
+        # The route's scope check; the gate has authenticated already. One
+        # instance, so open-query principal injection reuses its result.
+        Depends(_perimeter),
         # Declares the bearer scheme in the OpenAPI document so a generated
         # client knows to send a credential. `auto_error=False` means it never
-        # raises: `perimeter_dep` above stays the sole enforcement point and
-        # keeps answering 401, so documenting the contract cannot change it.
-        *([Depends(HTTPBearer(auto_error=False))] if perimeter_dep is not None else []),
+        # raises: the gate and `_perimeter` stay the enforcement points and
+        # keep answering 401, so documenting the contract cannot change it.
+        *([Depends(HTTPBearer(auto_error=False))] if auth is not None else []),
         Depends(_admission),
         Depends(_announce_new_work),
     ]
@@ -687,9 +724,10 @@ def build_api(
         dependencies=dependencies,
     )
     app.state.api_deployment = deployment
-    if direct_admission is not None:
-        # Before any route is declared, so every one is built held.
-        app.router.route_class = _HeldRoute
+    # Before any route is declared, so every one is built held: a request's
+    # deployment may bring admission limits even when this one has none. A
+    # held callable without a hold runs unchanged.
+    app.router.route_class = _HeldRoute
 
     @app.exception_handler(ProviderCallError)
     def model_provider_unavailable(
@@ -882,13 +920,12 @@ def build_api(
     if processing_layers is not None:
         _mount_processing_layers(app=app)
     if open_query is not None:
-        _mount_open_query(app=app, perimeter=perimeter_dep)
+        _mount_open_query(app=app)
     if ingest is not None:
         _mount_ingest(
             app=app,
             max_body_bytes=ingest_body_max_bytes,
             trusted_principal_source=trusted_principal_source,
-            attribution_requires_write=auth is not None,
         )
         if ingest_body_max_bytes is not None:
             app.add_middleware(_IngestBodyLimit, max_bytes=ingest_body_max_bytes)
@@ -915,18 +952,12 @@ def build_api(
     if build_info is not None:
         _mount_build_info(app=app, tools=_deployment_tools(deployment))
 
-    if spend_lease is not None:
-        _install_spend_lease(app=app, spend_lease=spend_lease)
-    if auth is not None or direct_admission is not None:
-        # Added after the spend lease, so it runs before it: a request is
-        # authenticated and admitted before any hold is placed, and before
-        # routing, so an unknown path is counted like any other.
-        app.add_middleware(
-            _PerimeterGate,
-            auth=auth,
-            deployment_id=deployment_id,
-            admission=direct_admission,
-        )
+    _install_spend_lease(app=app)
+    # Added after the spend lease, so it runs before it: a request's
+    # deployment is resolved, then it is authenticated and admitted before any
+    # hold is placed, and before routing, so an unknown path is counted like
+    # any other.
+    app.add_middleware(_PerimeterGate)
 
     # Last, so it is outermost. Starlette runs middleware in reverse order of
     # addition, and a CORS layer installed early sits *inside* everything
@@ -935,7 +966,7 @@ def build_api(
     # opaque network failures. The whole point of naming an origin is that its
     # errors are legible, and a refusal nobody can read is the one this screen
     # was built to avoid.
-    _install_browser_origins(app=app, origins=browser_origins)
+    install_browser_origins(app=app, origins=browser_origins)
 
     return app
 
@@ -1007,7 +1038,7 @@ def _canonical_browser_origin(value: str) -> str | None:
     return f"{scheme}://{rendered}" + (f":{port}" if port is not None else "")
 
 
-def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
+def install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     """Allow named browser origins to call this deployment (D59).
 
     A browser holding a valid credential still cannot reach a deployment
@@ -1283,18 +1314,19 @@ def _mount_graph(*, app: FastAPI) -> None:
             )
 
 
-def _mount_open_query(*, app: FastAPI, perimeter: Any | None = None) -> None:
+def _mount_open_query(*, app: FastAPI) -> None:
     """Add the seven §3.1 open-query routes when the facade is composed.
 
     Paths are short and consistent under `/query/…`. Sandbox and registry failures map to typed
     HTTP status + public error code without private engine detail.
 
-    When a perimeter dependency is composed, every execution-bearing route
-    forwards ``AuthenticatedContext.principal`` into the facade. Content-only
-    discovery and metadata routes stay content-free and do not invent
-    principals. Without auth, the facade default principal is unchanged.
+    When the request's deployment has a perimeter, every execution-bearing
+    route forwards ``AuthenticatedContext.principal`` into the facade.
+    Content-only discovery and metadata routes stay content-free and do not
+    invent principals. Without auth, the facade default principal is
+    unchanged.
     """
-    principal_dep = _open_query_principal_dependency(perimeter=perimeter)
+    principal_dep = _open_query_principal
 
     @app.post("/query/sql", response_model=QueryResult)
     def query_sql(
@@ -1460,30 +1492,6 @@ def _mount_open_query(*, app: FastAPI, perimeter: Any | None = None) -> None:
                 layers=_layer_selection(layers),
             )
         )
-
-
-def _open_query_principal_dependency(*, perimeter: Any | None) -> Any:
-    """Build the FastAPI dependency that yields the execution principal.
-
-    With a perimeter, reuses the same ``_perimeter`` dependency and returns
-    ``AuthenticatedContext.principal``. Without auth, returns ``None`` so the
-    facade keeps its default principal — no invented identity.
-    """
-    if perimeter is None:
-
-        def anonymous_principal() -> None:
-            """No auth perimeter; leave principal selection to the facade."""
-            return None
-
-        return anonymous_principal
-
-    def authenticated_principal(
-        ctx: Annotated[AuthenticatedContext, Depends(perimeter)],
-    ) -> str:
-        """Forward the perimeter principal into execution-bearing open routes."""
-        return ctx.principal
-
-    return authenticated_principal
 
 
 def _open_call(action):  # noqa: ANN001, ANN202
@@ -2157,11 +2165,7 @@ def _forgotten_source_http_error() -> HTTPException:
 
 
 def _mount_ingest(
-    *,
-    app: FastAPI,
-    max_body_bytes: int | None,
-    attribution_requires_write: bool,
-    trusted_principal_source: bool = False,
+    *, app: FastAPI, max_body_bytes: int | None, trusted_principal_source: bool = False
 ) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
@@ -2285,6 +2289,7 @@ def _mount_ingest(
         # configured perimeter publishes its context before this handler; only
         # full WRITE authority may make the immutable attribution assertion.
         context = getattr(request.state, "perimeter_context", None)
+        attribution_requires_write = deployment.auth is not None
         may_assert_principal = not attribution_requires_write or (
             context is not None and context.may(required=PerimeterScope.WRITE)
         )
@@ -2460,45 +2465,58 @@ def _is_healthz(*, method: str, path: str) -> bool:
     return method == "GET" and path.rstrip("/") == "/healthz"
 
 
-def _perimeter(*, deployment_id: UUID):  # noqa: ANN202
-    """A FastAPI dependency that checks the authenticated credential's scope.
+def _perimeter(
+    request: Request, deployment: _Deployment
+) -> AuthenticatedContext | None:
+    """Check the authenticated credential's scope for the matched route.
 
     :class:`_PerimeterGate` has already authenticated the request before
     routing and published its context; this runs per matched route because
-    the scope a route needs is a property of the route.
+    the scope a route needs is a property of the route. ``None`` when the
+    request's deployment has no perimeter.
     """
-
-    def dependency(request: Request) -> AuthenticatedContext:
-        context: AuthenticatedContext | None = getattr(
-            request.state, "perimeter_context", None
+    if deployment.auth is None:
+        return None
+    context: AuthenticatedContext | None = getattr(
+        request.state, "perimeter_context", None
+    )
+    if context is None:
+        if _is_healthz(method=request.method, path=request.url.path):
+            return AuthenticatedContext(
+                deployment_id=deployment.deployment_id, principal="healthz"
+            )
+        # The gate authenticates whenever the deployment has `auth`; reaching
+        # here without a context is a wiring fault, refused rather than let
+        # through.
+        raise HTTPException(
+            status_code=401, detail="a perimeter credential is required"
         )
-        if context is None:
-            if _is_healthz(method=request.method, path=request.url.path):
-                return AuthenticatedContext(
-                    deployment_id=deployment_id, principal="healthz"
-                )
-            # The gate is composed whenever `auth` is; reaching here without a
-            # context is a wiring fault, refused rather than let through.
-            raise HTTPException(
-                status_code=401, detail="a perimeter credential is required"
-            )
 
-        # Authentication answered "who"; this answers "may they". It lives here
-        # rather than in the port because the port is handed a credential and
-        # never sees the request — and because the method alone cannot tell a
-        # read from a write on this API (`POST /graph/path` reads,
-        # `POST /ingest` does not). See ``route_scope``.
-        required = required_scope(method=request.method, path=request.url.path)
-        # ``None`` means the route decides for itself, because its authority is
-        # a property of registry data rather than of the path. Today that is
-        # only ``POST /operations/{name}``, whose handler asks the descriptor.
-        if required is not None and not context.may(required=required):
-            raise HTTPException(
-                status_code=403, detail="credential may not perform this operation"
-            )
-        return context
+    # Authentication answered "who"; this answers "may they". It lives here
+    # rather than in the port because the port is handed a credential and
+    # never sees the request — and because the method alone cannot tell a
+    # read from a write on this API (`POST /graph/path` reads,
+    # `POST /ingest` does not). See ``route_scope``.
+    required = required_scope(method=request.method, path=request.url.path)
+    # ``None`` means the route decides for itself, because its authority is
+    # a property of registry data rather than of the path. Today that is
+    # only ``POST /operations/{name}``, whose handler asks the descriptor.
+    if required is not None and not context.may(required=required):
+        raise HTTPException(
+            status_code=403, detail="credential may not perform this operation"
+        )
+    return context
 
-    return dependency
+
+def _open_query_principal(
+    context: Annotated[AuthenticatedContext | None, Depends(_perimeter)],
+) -> str | None:
+    """The perimeter principal for execution-bearing open routes, or None.
+
+    Reuses the app-level ``_perimeter`` result. Without a perimeter the
+    facade keeps its default principal — no invented identity.
+    """
+    return None if context is None else context.principal
 
 
 async def _announce_new_work(deployment: _Deployment) -> AsyncIterator[None]:
@@ -2542,29 +2560,21 @@ _CURRENT_HOLD: ContextVar[RequestHold | None] = ContextVar(
 
 
 class _PerimeterGate:
-    """Authenticate and admit every request before routing (D136 §7.6).
+    """Resolve, authenticate and admit every request before routing (D136 §7.6).
 
-    Pure ASGI and installed outside the spend lease, so the order is
-    authentication, then admission, then the spend hold, then routing. Running
-    before routing means an unknown path is authenticated and counted like any
-    other. ``GET /healthz`` passes untouched. Without ``auth`` (no perimeter)
-    only admission runs, against the deployment limits; the shared secret
-    likewise has no credential id and meets the deployment limits only.
+    Pure ASGI and installed outside the spend lease, so the order is the
+    request's deployment (:func:`deployment_context`, D147), authentication,
+    admission, the spend hold, then routing. Running before routing means an
+    unknown path is authenticated and counted like any other. ``GET /healthz``
+    passes untouched. Without ``auth`` (no perimeter) only admission runs,
+    against the deployment limits; the shared secret likewise has no
+    credential id and meets the deployment limits only. Each check is the
+    request's deployment's, so one app can serve several deployments.
     """
 
-    def __init__(
-        self,
-        app: ASGIApp,
-        *,
-        auth: AuthPerimeterPort | None,
-        deployment_id: UUID,
-        admission: DirectPathAdmission | None,
-    ) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         """Wrap the inner ASGI app."""
         self._app = app
-        self._auth = auth
-        self._deployment_id = deployment_id
-        self._admission = admission
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Refuse, or run the request holding its admission slot."""
@@ -2575,23 +2585,28 @@ class _PerimeterGate:
             return
         context: AuthenticatedContext | None = None
         try:
-            if self._auth is not None:
+            deployment = await _resolve_deployment(scope)
+            # `request.state` reads this dict: routes, the spend lease, the
+            # scope dependency and the ingest attribution check find the
+            # deployment and the perimeter context there.
+            state = scope.setdefault("state", {})
+            state["api_deployment"] = deployment
+            if deployment.auth is not None:
                 authorization = Headers(scope=scope).get("authorization")
                 # The port may do I/O (a key or revocation lookup); keep it off
                 # the event loop, as the dependency it replaces was.
                 context = await run_in_threadpool(
                     _authenticate,
-                    auth=self._auth,
-                    deployment_id=self._deployment_id,
+                    auth=deployment.auth,
+                    deployment_id=deployment.deployment_id,
                     authorization=authorization,
                 )
-                # `request.state` reads this dict; the scope dependency and
-                # the ingest attribution check find the context there.
-                scope.setdefault("state", {})["perimeter_context"] = context
-            if self._admission is None:
+                state["perimeter_context"] = context
+            admission = deployment.direct_admission
+            if admission is None:
                 await self._app(scope, receive, send)
                 return
-            slot = self._admission.admit(key=admission_key(context))
+            slot = admission.admit(key=admission_key(context))
         except HTTPException as error:
             refusal = JSONResponse(
                 status_code=error.status_code,
@@ -2613,7 +2628,7 @@ class _PerimeterGate:
             )
             await refusal(scope, receive, send)
             return
-        hold = RequestHold(admission=self._admission, slot=slot)
+        hold = RequestHold(admission=admission, slot=slot)
         token = _CURRENT_HOLD.set(hold)
         try:
             await self._app(scope, receive, send)
@@ -2632,11 +2647,14 @@ class _HeldRoute(APIRoute):
     :class:`RequestHold` sees the thread start and end, and the slot is
     released only when the work really stops. Coroutines are cancelled with
     their request, and generator dependencies are left as they are, so both
-    need nothing.
+    need nothing. FastAPI finds dependency overrides by the original callable;
+    :class:`_HeldOverrides` keeps them found (and held) after wrapping.
     """
 
     def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
         """Build the route, then hold every synchronous callable it runs."""
+        overrides = _HeldOverrides(provider=kwargs.get("dependency_overrides_provider"))
+        kwargs["dependency_overrides_provider"] = overrides
         super().__init__(path, endpoint, **kwargs)
         # One wrapper per callable, so a dependency used twice keeps one
         # identity and FastAPI's per-request dependency cache still applies.
@@ -2657,9 +2675,55 @@ class _HeldRoute(APIRoute):
             wrapper = wrappers.get(id(call))
             if wrapper is None:
                 wrapper = wrappers[id(call)] = _held_handler(call)
+                overrides.originals[wrapper] = call
             # The wrapper is sync like the original (and FastAPI inspects the
             # unwrapped callable), so it is still run on a worker thread.
             dependant.call = wrapper
+
+
+class _HeldOverrides:
+    """The app's dependency overrides, also keyed by a held route's wrappers.
+
+    FastAPI looks an override up by the dependency's current callable, which a
+    held route has replaced with its wrapper. This provider answers that
+    lookup with the override registered for the original callable, itself
+    held when it is synchronous, so an override is never silently skipped.
+    """
+
+    def __init__(self, *, provider: Any | None) -> None:
+        """Wrap the app (or router) that owns ``dependency_overrides``."""
+        self._provider = provider
+        self.originals: dict[Callable[..., Any], Callable[..., Any]] = {}
+        self._held: dict[int, Callable[..., Any]] = {}
+
+    @property
+    def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
+        """The overrides, plus the same overrides under each wrapper."""
+        overrides: dict[Callable[..., Any], Callable[..., Any]] = getattr(
+            self._provider, "dependency_overrides", {}
+        )
+        if not overrides:
+            return overrides
+        result = dict(overrides)
+        for wrapper, original in self.originals.items():
+            override = overrides.get(original)
+            if override is not None:
+                result[wrapper] = self._held_override(override)
+        return result
+
+    def _held_override(self, override: Callable[..., Any]) -> Callable[..., Any]:
+        """Hold a synchronous plain-function override like the callable it replaces."""
+        if (
+            inspect.isclass(override)
+            or inspect.iscoroutinefunction(override)
+            or inspect.isgeneratorfunction(override)
+            or inspect.isasyncgenfunction(override)
+        ):
+            return override
+        held = self._held.get(id(override))
+        if held is None:
+            held = self._held[id(override)] = _held_handler(override)
+        return held
 
 
 def _held_handler(call: Callable[..., Any]) -> Callable[..., Any]:
@@ -2765,11 +2829,18 @@ def _content_length(*, request: Request) -> int | None:
         return None
 
 
-def _install_spend_lease(*, app: FastAPI, spend_lease: SpendLeasePort) -> None:
-    """Reserve metadata on spend-gated routes; commit 2xx, release otherwise."""
+def _install_spend_lease(*, app: FastAPI) -> None:
+    """Reserve metadata on spend-gated routes; commit 2xx, release otherwise.
+
+    The lease is the request's deployment's (resolved by the gate outside);
+    a deployment without one passes straight through.
+    """
 
     @app.middleware("http")
     async def spend_lease_middleware(request: Request, call_next: Any) -> Any:
+        spend_lease = _request_deployment(request).spend_lease
+        if spend_lease is None:
+            return await call_next(request)
         gated = _spend_gated_route(method=request.method, path=request.url.path)
         if gated is None:
             return await call_next(request)
