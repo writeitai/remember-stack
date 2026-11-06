@@ -828,7 +828,7 @@ def _provision_query_role_password(
 
 @dataclass(frozen=True, kw_only=True)
 class EngineSettings:
-    """Every value that differs between two deployments' engines (D144).
+    """Every value that differs between two deployments' engines (D147).
 
     The deployment's identity and buckets, its database, its object store and
     its model-provider account, and its work-ledger settings (retry backoff and
@@ -864,7 +864,7 @@ class SelfHostProfile:
 
     One profile is one deployment's context: its settings, database engines,
     stores and model provider. Nothing it composes reads another deployment's
-    values, so a host may hold several profiles in one process (D144).
+    values, so a host may hold several profiles in one process (D147).
     """
 
     def __init__(
@@ -914,7 +914,7 @@ class SelfHostProfile:
         error_telemetry: TelemetryPort | None = None,
         task_queue: TaskQueuePort | None = None,
     ) -> Self:
-        """Build one deployment's engine from its explicit settings (D144)."""
+        """Build one deployment's engine from its explicit settings (D147)."""
         profile_settings = settings.deployment
         minio_settings = settings.object_store
         database_url = settings.database.sqlalchemy_url()
@@ -1130,7 +1130,7 @@ class SelfHostProfile:
         """Build the existing HTTP surface over this self-host dependency graph.
 
         Every route reads this profile's :meth:`api_deployment` through the
-        overridable ``deployment_context`` dependency (D144).
+        overridable ``deployment_context`` dependency (D147).
         """
         from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.surfaces import build_api
@@ -1188,7 +1188,7 @@ class SelfHostProfile:
         return app
 
     def api_deployment(self) -> ApiDeployment:
-        """This deployment's HTTP capabilities, as one request's context (D144).
+        """This deployment's HTTP capabilities, as one request's context (D147).
 
         A host serving several deployments returns one of these per request
         from its override of ``deployment_context``.
@@ -1422,7 +1422,7 @@ class SelfHostProfile:
         )
 
     def run_task(self, *, processing_id: UUID) -> RunResult:
-        """Claim and run one named task of this deployment, if it is due (D144).
+        """Claim and run one named task of this deployment, if it is due (D147).
 
         The task's route is read from this deployment's database. A row that
         is gone, not due, or already claimed elsewhere answers ``no_work``;
@@ -1751,7 +1751,7 @@ class SelfHostProfile:
 
 
 def run_task(context: SelfHostProfile, processing_id: UUID) -> RunResult:
-    """Run one claimed task of ``context``'s deployment (D144).
+    """Run one claimed task of ``context``'s deployment (D147).
 
     ``context`` is the deployment's profile, built from its own
     :class:`EngineSettings`; the outcome is the worker's typed result.
