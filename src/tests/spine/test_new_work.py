@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from datetime import UTC
+import logging
 from uuid import UUID
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import QueueRoute
+from rememberstack.spine import new_work
 from rememberstack.spine.new_work import announce_new_work
 from rememberstack.spine.new_work import collect_new_work
 from rememberstack.spine.new_work import NewWork
@@ -63,8 +65,11 @@ def test_only_rows_created_inside_the_collector_are_announced_once() -> None:
 
 
 def test_a_failed_announcement_is_logged_not_raised(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Alembic's logging config, run by earlier database tests in the same
+    # session, disables already-created loggers; this test needs this one.
+    monkeypatch.setattr(logging.getLogger(new_work.__name__), "disabled", False)
     announce_new_work(
         queue=_Queue(fail=True),
         work=(NewWork(processing_id=UUID(int=1), route=_ROUTE, not_before=None),),
