@@ -45,6 +45,7 @@ from rememberstack.adapters.converters.mistral_ocr import MistralOcrProviderErro
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
 from rememberstack.adapters.openrouter import read_generation_metadata
 from rememberstack.adapters.openrouter import recover_completion_usage
+from rememberstack.adapters.openrouter import unbilled_capacity_rejection
 from rememberstack.core.conversion import LaneCheckpointStore
 from rememberstack.core.conversion import LaneUsageRecorder
 from rememberstack.model import ConversionCoverage
@@ -131,6 +132,7 @@ class ImageDescriptionSettings(BaseSettings):
     lane_concurrency: int = Field(default=2, ge=1, le=2)
     reasoning_effort: ReasoningEffort | None = None
     provider_only: tuple[str, ...] | None = None
+    """Approved vision endpoints in preference order; fallback stays in this set."""
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -515,20 +517,23 @@ class ImageOcrDescriptionConverter:
             payload["reasoning"] = {
                 "effort": self._description_settings.reasoning_effort
             }
-        if self._description_settings.provider_only is not None:
-            payload["provider"] = {
-                "only": list(self._description_settings.provider_only),
-                "allow_fallbacks": False,
-                "data_collection": "deny",
-            }
         try:
-            response = self._description_client.post("/chat/completions", json=payload)
+            response = self._post_description(payload=payload)
         except httpx.HTTPError as err:
             return _LaneOutcome(
                 result=None,
                 usage_events=(),
                 error=ProviderCallError(
                     f"image description transport failure: {type(err).__name__}"
+                ),
+                retryable=True,
+            )
+        if unbilled_capacity_rejection(response=response):
+            return _LaneOutcome(
+                result=None,
+                usage_events=(),
+                error=ProviderCallError(
+                    "image description capacity rejected before generation"
                 ),
                 retryable=True,
             )
@@ -591,6 +596,29 @@ class ImageOcrDescriptionConverter:
         return _LaneOutcome(
             result=parsed, usage_events=(event,), error=None, retryable=True
         )
+
+    def _post_description(self, *, payload: dict[str, object]) -> httpx.Response:
+        """Try each approved endpoint once, only after proven unbilled rejection."""
+        remaining = self._description_settings.provider_only
+        while True:
+            if remaining is not None:
+                approved = list(remaining)
+                routing: dict[str, object] = {
+                    "only": approved,
+                    "allow_fallbacks": len(approved) > 1,
+                    "data_collection": "deny",
+                }
+                if len(approved) > 1:
+                    routing["order"] = approved
+                payload["provider"] = routing
+            response = self._description_client.post("/chat/completions", json=payload)
+            if (
+                not unbilled_capacity_rejection(response=response)
+                or remaining is None
+                or len(remaining) == 1
+            ):
+                return response
+            remaining = remaining[1:]
 
     def _fetch_generation(self, *, generation_id: str) -> dict[str, Any]:
         """Recover accounting for an already-created description generation."""

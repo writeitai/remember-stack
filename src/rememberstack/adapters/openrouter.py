@@ -47,6 +47,7 @@ _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
     ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 )
 _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
+_TRANSIENT_UPSTREAM_CODES: Final = frozenset({429, 500, 502, 503, 504, 529})
 _GENERATION_USAGE_POLL_DELAYS_S: Final[tuple[float, ...]] = (0.0, 1.0, 2.0, 3.0, 5.0)
 _GENERATION_USAGE_TIMEOUT_S: Final[float] = 10.0
 _IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S: Final[float] = 120.0
@@ -132,8 +133,8 @@ class OpenRouterSettings(BaseSettings):
 
     Env: ``REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY`` as a comma-separated
     list of *provider slugs*. Unlike the embedding order, there is no
-    marketplace fallback: ``allow_fallbacks`` is False, so a request the
-    listed hosts cannot serve fails instead of routing to an unapproved host.
+    marketplace escape. Alone it disables fallback. Combine it with an order
+    naming exactly the same hosts to allow fallback within this approved set.
     """
     chat_provider_order: list[str] | None = None
     """Ordered OpenRouter chat providers (``provider.order`` + fallbacks).
@@ -142,8 +143,8 @@ class OpenRouterSettings(BaseSettings):
     list of *provider slugs* (same slug rules as the embedding order). Default
     ``None`` keeps automatic routing: a hardcoded list here would break every
     other model on this shared adapter, so per-model orders (e.g. GLM) belong
-    in deployment configuration, not in code. Mutually exclusive with
-    ``chat_provider_only``.
+    in deployment configuration, not in code. When paired with
+    ``chat_provider_only``, it must name the same approved hosts exactly once.
     """
     chat_throttle_retries: int = Field(default=3, ge=0)
     """Dedicated 429 attempts per rotating chat call, separate from the ledger.
@@ -228,12 +229,19 @@ class OpenRouterSettings(BaseSettings):
         )
 
     @model_validator(mode="after")
-    def require_single_chat_routing(self) -> "OpenRouterSettings":
-        """Reject a chat allowlist together with an ordered shortlist."""
+    def require_consistent_chat_routing(self) -> "OpenRouterSettings":
+        """Keep an optional provider order inside the complete hard allowlist."""
         if self.chat_provider_only and self.chat_provider_order:
-            raise ValueError(
-                "chat_provider_only and chat_provider_order are mutually exclusive"
-            )
+            only = self.chat_provider_only
+            order = self.chat_provider_order
+            if (
+                set(only) != set(order)
+                or len(only) != len(order)
+                or len(set(order)) != len(order)
+            ):
+                raise ValueError(
+                    "chat_provider_order must name chat_provider_only hosts exactly once"
+                )
         return self
 
     @field_validator("max_completion_tokens", mode="before")
@@ -734,7 +742,7 @@ class OpenRouterModelProvider:
                     raise OpenRouterProviderError(
                         last_error,
                         provider_host=slug,
-                        retryable_unbilled=_unbilled_capacity_rejection(
+                        retryable_unbilled=unbilled_capacity_rejection(
                             response=response
                         ),
                     )
@@ -874,9 +882,10 @@ class OpenRouterModelProvider:
         if order:
             payload["order"] = list(slugs)
             payload["allow_fallbacks"] = True
-        elif only:
+        if only:
             payload["only"] = list(slugs)
-            payload["allow_fallbacks"] = False
+            if not order:
+                payload["allow_fallbacks"] = False
         if settings.zdr:
             payload["zdr"] = True
         return payload
@@ -984,7 +993,7 @@ class OpenRouterModelProvider:
                 raise OpenRouterProviderError(
                     f"OpenRouter {path} returned {response.status_code}: "
                     "transient capacity retries exhausted",
-                    retryable_unbilled=_unbilled_capacity_rejection(response=response),
+                    retryable_unbilled=unbilled_capacity_rejection(response=response),
                 )
             if response.status_code >= 400:
                 raise OpenRouterProviderError(
@@ -1058,7 +1067,7 @@ def _response_retry_after_s(*, response: httpx.Response) -> float | None:
     return parsed
 
 
-def _unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
+def unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
     """Identify a received pre-generation rejection, never infer it from a timeout."""
     try:
         body = response.json()
@@ -1073,8 +1082,14 @@ def _unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
     if str(code).isdecimal() and 400 <= int(str(code)) < 500 and str(code) != "429":
         return False
     if (
-        response.status_code in (200, 429, 503)
-        and (code is None or str(code) in ("429", "503"))
+        (
+            response.status_code == 200
+            or response.status_code in _TRANSIENT_UPSTREAM_CODES
+        )
+        and (
+            code is None
+            or str(code) in {str(value) for value in _TRANSIENT_UPSTREAM_CODES}
+        )
         and "flex processing is temporarily unavailable"
         in str(error.get("message", "")).lower()
     ):
@@ -1091,8 +1106,8 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
     validation and ordinary successful-but-malformed responses are not capacity
     retries. This applies equally to Flex and standard providers.
     """
-    transient_codes = {429, 500, 502, 503, 504, 529}
-    if _unbilled_capacity_rejection(response=response):
+    transient_codes = _TRANSIENT_UPSTREAM_CODES
+    if unbilled_capacity_rejection(response=response):
         return True
     try:
         body = response.json()

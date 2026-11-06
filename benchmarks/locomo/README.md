@@ -1,8 +1,10 @@
 # RS-LoCoMo-Full-v39 setup
 
-One current execution profile uses Luna 6/Flex for ingestion and vision at low
-reasoning, Luna 6/Flex for answering and judging at high reasoning, and Jev
-for adjudication. Historical protocols are retained in saved run artifacts
+One current execution profile uses Luna 6 for ingestion and vision at low
+reasoning, Luna 6 for answering and judging at high reasoning, and Jev
+for adjudication. All Luna seats prefer OpenAI Flex and allow normal OpenAI
+Luna as the only fallback; actual provider usage records the higher price when
+standard processing serves a call. Historical protocols are retained in saved run artifacts
 and Git, not as runnable branches. No new benchmark score is claimed.
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or

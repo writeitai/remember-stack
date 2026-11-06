@@ -205,7 +205,9 @@ def _seat_provider(
         settings=OpenRouterSettings.model_validate(
             {
                 "chat_provider_only": list(chat_provider_only),
-                "chat_provider_order": None,
+                "chat_provider_order": (
+                    list(chat_provider_only) if len(chat_provider_only) > 1 else None
+                ),
             }
             if chat_provider_only is not None
             else {}

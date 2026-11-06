@@ -126,14 +126,16 @@ The summary reports:
 ### The current protocol
 
 Execution uses one profile, `RS-LoCoMo-Full-v39` (key `full-v39`). It selects
-Luna 6 with Flex and low reasoning for ingestion and visual descriptions,
-Jev (`jev-latest`) for adjudication, and Luna 6 with Flex and high reasoning for
-answering and judging. Embeddings remain Qwen through Nebius. The existing
+Luna 6 with low reasoning for ingestion and visual descriptions,
+Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
+answering and judging. All these Luna seats prefer OpenAI Flex and permit
+normal OpenAI Luna as the only fallback. Standard processing can cost more;
+provider-returned usage determines the recorded cost. Embeddings remain Qwen through Nebius. The existing
 semantic judge policy is retained. The limits remain eight tool calls and
 nine model calls per question, with no hard answer length cap.
 
 The saved run records its non-secret ingestion environment, component/model
-bindings, Flex restriction and 180-second API transport budget. CI checks
+bindings, approved provider order and 180-second API transport budget. CI checks
 all component generations against the current engine. The shard runner
 attests workers against the profile, and backups preserve it. Superseded
 protocols are read-only historical records; they cannot be selected for

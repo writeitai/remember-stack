@@ -45,8 +45,9 @@ def test_luna_profile_matches_composed_models_and_versions(
         == "high"
     )
     assert provider._chat_provider_payload() == {
-        "only": ["openai/flex"],
-        "allow_fallbacks": False,
+        "only": ["openai/flex", "openai"],
+        "order": ["openai/flex", "openai"],
+        "allow_fallbacks": True,
         "data_collection": "deny",
     }
     assert protocol.judge_reasoning_effort == "high"
@@ -82,4 +83,11 @@ def test_backup_preserves_jev_engine_and_flex_instead_of_dormant_prompt_slot(
     assert environment["REMEMBERSTACK_FACT_ADJUDICATION_ENGINE"] == "jev"
     assert environment["REMEMBERSTACK_TYPESAFE_MODEL"] == "jev-latest"
     assert environment["REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT"] == "false"
-    assert environment["REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY"] == "openai/flex"
+    assert (
+        environment["REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY"]
+        == "openai/flex,openai"
+    )
+    assert (
+        environment["REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER"]
+        == "openai/flex,openai"
+    )

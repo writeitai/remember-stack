@@ -190,7 +190,7 @@ default; see [Processing layers](/docs/concepts/pipeline#processing-layers).
 | `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | Per-request timeout. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | Output allowance per chat call, reasoning included. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred chat providers, with fallback. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers, no fallback. Exclusive with the order. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers. Alone it disables fallback; combine with an order naming the same unique slugs to allow fallback within the set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
 | `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat. |
@@ -249,7 +249,7 @@ See [File formats and converters](/docs/self-hosting/converters).
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | model id | Vision model; must accept image input. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Hard OpenRouter endpoint allowlist; for Flex use `["openai/flex"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Approved endpoints in preference order. One entry disables fallback; multiple entries allow fallback only within the list. The LoCoMo profile uses `["openai/flex","openai"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |

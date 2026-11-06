@@ -992,3 +992,125 @@ def test_empty_compose_description_effort_keeps_existing_identity() -> None:
         {"api_key": "offline", "reasoning_effort": ""}
     )
     assert old.version_fingerprint() == empty.version_fingerprint()
+
+
+def test_description_flex_then_standard_stays_within_approved_order() -> None:
+    """A captured Flex rejection advances vision to standard with no cost GET."""
+    payloads: list[dict[str, object]] = []
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Capture the native vision request without a paid provider call."""
+        assert request.method == "POST"
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "gen-uncharged-vision-admission",
+                    "error": {
+                        "code": 502,
+                        "message": "Flex processing is temporarily unavailable.",
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                },
+            )
+        return httpx.Response(200, json=_description_body())
+
+    converter = _converter(
+        description_transport=httpx.MockTransport(description),
+        reasoning_effort="low",
+        provider_only=("openai/flex", "openai"),
+    )
+    result = converter.convert(content=_PNG, mime="image/png")
+    assert len(payloads) == 2
+    assert payloads[0]["reasoning"] == {"effort": "low"}
+    assert payloads[0]["provider"] == {
+        "only": ["openai/flex", "openai"],
+        "order": ["openai/flex", "openai"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+    }
+    assert payloads[1]["provider"] == {
+        "only": ["openai"],
+        "allow_fallbacks": False,
+        "data_collection": "deny",
+    }
+    assert payloads[0]["model"] == payloads[1]["model"] == DEFAULT_VISION_MODEL
+    assert payloads[0]["reasoning"] == payloads[1]["reasoning"]
+    description_events = [e for e in result.usage_events if e.call_key == "description"]
+    assert len(description_events) == 1
+    assert description_events[0].usage.cost_usd == Decimal("0.0025")
+
+
+def test_description_all_approved_capacity_rejections_are_bounded() -> None:
+    """Exhausting an uncharged route is retryable and preserves completed OCR."""
+    posts: list[dict[str, object]] = []
+    calls: list[str] = []
+
+    def rejected(request: httpx.Request) -> httpx.Response:
+        """Every approved route rejects admission without generated output."""
+        assert request.method == "POST"
+        posts.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "gen-uncharged-admission",
+                "error": {
+                    "code": 502,
+                    "message": "Flex processing is temporarily unavailable.",
+                },
+            },
+        )
+
+    store = MemoryLaneCheckpoints()
+    converter = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=httpx.MockTransport(rejected),
+        provider_only=("openai/flex", "openai"),
+    )
+    for _attempt in range(2):
+        with pytest.raises(ConverterLaneError, match="capacity rejected") as failure:
+            converter.convert(content=_PNG, mime="image/png", checkpoints=store)
+        assert failure.value.retryable is True
+    assert len(posts) == 4
+    assert calls == ["ocr"]
+
+
+@pytest.mark.parametrize("extra", [{"usage": None}, {"choices": []}, {}])
+def test_description_never_replays_potentially_billed_rejections(
+    monkeypatch: pytest.MonkeyPatch, extra: dict[str, object]
+) -> None:
+    """Choices/usage or a generic generation ID still require reconciliation."""
+    methods: list[str] = []
+
+    def ambiguous(request: httpx.Request) -> httpx.Response:
+        """Return an unreconciled generation, never a second completion."""
+        methods.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(404, json={"error": {"message": "not visible"}})
+        return httpx.Response(
+            200,
+            json={
+                "id": "gen-possibly-billed",
+                "error": {
+                    "code": 502,
+                    "message": (
+                        "Flex processing is temporarily unavailable."
+                        if extra
+                        else "upstream failed"
+                    ),
+                },
+                **extra,
+            },
+        )
+
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", lambda _: None)
+    converter = _converter(
+        description_transport=httpx.MockTransport(ambiguous),
+        provider_only=("openai/flex", "openai"),
+    )
+    with pytest.raises(ConverterLaneError, match="usage accounting") as failure:
+        converter.convert(content=_PNG, mime="image/png")
+    assert failure.value.retryable is False
+    assert methods.count("POST") == 1
+    assert methods.count("GET") == 5
