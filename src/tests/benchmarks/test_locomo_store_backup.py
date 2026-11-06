@@ -1038,13 +1038,11 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
         "REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR="
         "/var/lib/rememberstack/invalid-completions"
     ) in script
-    assert "extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}" in script
-    assert "ground_claim_workers=${LOCOMO_GROUND_CLAIM_WORKERS:-8}" in script
-    assert '--scale "worker-ground-claims=$ground_claim_workers"' in script
+    assert "llm_concurrency=${LOCOMO_LLM_CONCURRENCY:-40}" in script
     assert (
-        "adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}"
-        in script
-    )
+        'REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY="$llm_concurrency" \\\n'
+        '    "${compose[@]}" up --detach --wait --no-recreate'
+    ) in script
     assert (
         "REMEMBERSTACK_BUILD_REVISION"
         in script[script.index("attest_worker_environment") :]

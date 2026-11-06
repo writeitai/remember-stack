@@ -9,6 +9,7 @@ running row and callers can never supply it.
 """
 
 from collections.abc import Collection
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
@@ -809,6 +810,34 @@ class WorkLedger:
             )
             return None
 
+    def due_routes(
+        self,
+        *,
+        deployment_id: UUID,
+        routes: Sequence[tuple[PipelineStage, ProcessingLane]],
+    ) -> tuple[tuple[PipelineStage, ProcessingLane], ...]:
+        """Return, in the given order, the laned routes that have claimable work now.
+
+        One round trip probes every route with the claim's own due predicate,
+        so a worker serving many routes does not open a claim transaction per
+        empty route. The answer is a hint: a claim on a listed route can still
+        find nothing (another worker took it, or a hold applies).
+        """
+        if not routes:
+            return ()
+        with self._engine.connect() as connection:
+            due = set(
+                connection.execute(
+                    _DUE_ROUTES,
+                    {
+                        "deployment_id": deployment_id,
+                        "stages": [stage.value for stage, _ in routes],
+                        "lanes": [lane.value for _, lane in routes],
+                    },
+                ).scalars()
+            )
+        return tuple(route for index, route in enumerate(routes, 1) if index in due)
+
     @property
     def lease_renewal_interval_s(self) -> float:
         """How often a worker renews its claims: a third of the lease."""
@@ -835,9 +864,13 @@ class WorkLedger:
             )
 
     def reap_expired_leases(
-        self, *, deployment_id: UUID, stages: Collection[PipelineStage]
+        self, *, deployment_id: UUID, stages: Collection[PipelineStage] | None = None
     ) -> tuple[ExpiredLease, ...]:
-        """Take back running attempts on ``stages`` whose lease expired.
+        """One sweep: take back running attempts whose lease expired.
+
+        ``stages`` limits the sweep (a worker sweeps the stages it serves);
+        ``None`` sweeps every stage, for a sweeper that serves a database
+        without running its handlers.
 
         Such an attempt's worker was killed or stalled. A row with attempts
         left returns to ``pending``, due now, so the next claim retries it; a
@@ -845,14 +878,18 @@ class WorkLedger:
         requires ``attempts < max_attempts`` and requeueing it would strand it.
         A task that kills its worker every time therefore dead-letters after
         ``max_attempts`` instead of looping. Rows another reaper is taking are
-        skipped. The caller announces the requeued rows.
+        skipped. The caller announces the requeued rows and runs the
+        terminal-failure finalizer of each dead-lettered row's stage (for
+        ``convert``, marking the version failed), as ``Worker`` does.
         """
         with self._engine.begin() as connection:
             rows = connection.execute(
                 _REAP_EXPIRED_LEASES,
                 {
                     "deployment_id": deployment_id,
-                    "stages": [stage.value for stage in stages],
+                    "stages": None
+                    if stages is None
+                    else [stage.value for stage in stages],
                 },
             ).mappings()
             return tuple(
@@ -1967,11 +2004,9 @@ _RESUME_NO_ROUTE = text(
     """
 )
 
-_CLAIM_DUE_ON_ROUTE = """
-    deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND status IN ('pending', 'failed')
+# The claimable-now predicate shared by the claims and the due-route probe.
+_CLAIMABLE = """
+      status IN ('pending', 'failed')
       AND not_before <= now()
       AND attempts < max_attempts
       -- D117: no_route work is parked on a CONFIGURATION fact, not a clock.
@@ -1979,6 +2014,13 @@ _CLAIM_DUE_ON_ROUTE = """
       -- its reason rather than by a sentinel timestamp; registering the
       -- converter and resuming is what releases it.
       AND (defer_reason IS NULL OR defer_reason::text <> 'no_route')
+"""
+
+_CLAIM_DUE_ON_ROUTE = f"""
+    deployment_id = :deployment_id
+      AND stage = :stage
+      AND lane IS NOT DISTINCT FROM :lane
+      AND {_CLAIMABLE}
 """
 
 _CLAIM_SELECT = text(
@@ -1999,6 +2041,23 @@ _CLAIM_SELECT_NAMED = text(
     WHERE processing_id = :processing_id
       AND {_CLAIM_DUE_ON_ROUTE}
     FOR UPDATE SKIP LOCKED
+    """
+)
+
+_DUE_ROUTES = text(
+    f"""
+    SELECT r.ordinal
+    FROM unnest(
+        CAST(:stages AS pipeline_stage[]), CAST(:lanes AS processing_lane[])
+    ) WITH ORDINALITY AS r(stage, lane, ordinal)
+    WHERE EXISTS (
+        SELECT 1
+        FROM processing_state
+        WHERE deployment_id = :deployment_id
+          AND stage = r.stage
+          AND lane = r.lane
+          AND {_CLAIMABLE}
+    )
     """
 )
 
@@ -2076,7 +2135,10 @@ _REAP_EXPIRED_LEASES = text(
         SELECT processing_id
         FROM processing_state
         WHERE deployment_id = :deployment_id
-          AND stage = ANY(CAST(:stages AS pipeline_stage[]))
+          AND (
+              CAST(:stages AS pipeline_stage[]) IS NULL
+              OR stage = ANY(CAST(:stages AS pipeline_stage[]))
+          )
           AND status = 'running'
           AND lease_until < now()
         FOR UPDATE SKIP LOCKED

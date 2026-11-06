@@ -280,7 +280,7 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 
 ### 5.9 Workers and indexes
 
-- Stage name unchanged; scale `worker-adjudicate-observations`.  
+- Stage name unchanged; it runs in the `llm` worker class (D146): scale that class's concurrency or containers.
 - Handler dispatches: entity unit (`target_kind=entity` + fan-out version) vs
   legacy document_version + pre-fanout version.  
 - Indexes: membership by version; processing partial index on entity target_kind

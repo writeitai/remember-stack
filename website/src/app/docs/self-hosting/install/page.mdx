@@ -92,24 +92,14 @@ RememberStack image, and starts everything in dependency order:
 | `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
-| `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](/docs/self-hosting/converters). |
-| `worker-structure` | `worker --stage structure` | Finds the document's sections and writes section summaries. |
-| `worker-crossref` | `worker --stage crossref` | Writes the references a caller supplied for a version, after checking them against the version's sections. See [Versions in force](/docs/guides/versions-in-force#supply-references). |
-| `worker-chunk` | `worker --stage chunk` | Splits the document into chunks. |
-| `worker-embed-chunk` | `worker --stage embed_chunk` | Embeds chunks for semantic search. |
-| `worker-extract-claims` | `worker --stage extract_claims` | Reads each chunk and selects the sentences that state something. |
-| `worker-ground-claims` | `worker --stage ground_claims` | Turns those sentences into claims (what the source said), each tied to its passage. |
-| `worker-normalize-relations` | `worker --stage normalize_relations` | Resolves entities and turns claims into relations and facts. |
-| `worker-adjudicate-observations` | `worker --stage adjudicate_observations` | Decides, entity by entity, whether a new statement confirms, contradicts or replaces a fact the memory holds. |
-| `worker-adjudicate-supersession` | `worker --stage adjudicate_supersession` | Records the follow-up of those decisions for the version and refreshes affected entity profiles. |
-| `worker-embed-claim` | `worker --stage embed_claim` | Embeds claims for semantic search. |
-| `worker-reconcile` | `worker --stage reconcile` | Settles the version's lifecycle once the other stages are done. |
-| `worker-review-fact-windows` | `worker --stage review_fact_windows` | Rechecks the dates of facts whose evidence comes from documents with declared periods, when those periods change. Idle unless you declare periods. See [Versions in force](/docs/guides/versions-in-force#withdraw-an-edition). |
-| `worker-label-relation` | `worker --stage label_relation` | Writes the searchable label of each relation and embeds facts for semantic search. |
+| `worker-convert` | `worker --class convert` | Turns an uploaded file into Markdown using the configured [converter](/docs/self-hosting/converters), one file at a time. |
+| `worker-llm` | `worker --class llm` | Runs every other pipeline stage, up to 20 items at once: finds sections and writes summaries, checks supplied references, splits documents into chunks, embeds them, selects the sentences that state something and turns them into claims, resolves entities into relations and facts, decides whether a new statement confirms, contradicts or replaces a fact, embeds claims and facts, writes relation labels, settles each version's lifecycle, and rechecks fact dates when declared periods change. |
 | `projections` | `project --plane p3` | Profile `operations` only. Builds a [filesystem view](/docs/self-hosting/filesystem-views) snapshot on demand. |
 
-Each worker handles one stage and wakes when new work for that stage is
-committed. [The pipeline and readiness](/docs/concepts/pipeline) explains
+Each worker wakes when new work for one of its stages is committed. The
+`llm` worker finishes items further along the pipeline before it starts
+new ones, so a large upload does not hold back documents that are nearly
+done. [The pipeline and readiness](/docs/concepts/pipeline) explains
 what the stages produce.
 
 ## 4. Check that it is healthy
@@ -166,7 +156,7 @@ a query sent straight away may find nothing yet.
 how to wait for a version. To watch the work happen:
 
 ```bash
-docker compose logs -f worker-extract-claims worker-normalize-relations
+docker compose logs -f worker-llm
 ```
 
 <Callout type="note">

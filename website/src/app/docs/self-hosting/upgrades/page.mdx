@@ -78,11 +78,13 @@ documents again. Keep your source files for this reason. See
    that is being migrated:
 
     ```bash
-    docker compose down
+    docker compose down --remove-orphans
     ```
 
     `down` removes the containers and keeps the volumes, and with them the
-    memory.
+    memory. `--remove-orphans` also stops containers of services the new
+    `compose.yaml` no longer has, such as the per-stage workers of releases
+    before the two worker containers.
 
 5. **Get the new images:**
 

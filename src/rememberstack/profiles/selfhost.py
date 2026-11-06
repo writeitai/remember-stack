@@ -114,6 +114,23 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.REVIEW_FACT_WINDOWS,
 )
 
+#: The worker classes (D146). ``convert`` is the one input-size-dependent,
+#: CPU- and memory-heavy stage; ``llm`` is every other stage, which mostly
+#: waits on model and embedding calls or the database. Each class lists its
+#: stages downstream first: that is the order a worker drains them in.
+WORKER_CLASSES: dict[str, tuple[PipelineStage, ...]] = {
+    "convert": (PipelineStage.CONVERT,),
+    "llm": tuple(
+        stage
+        for stage in reversed(_SUPPORTED_WORKER_STAGES)
+        if stage is not PipelineStage.CONVERT
+    ),
+}
+#: Tasks in flight per worker process when ``--concurrency`` is not given.
+#: Starting points to be measured: one conversion at a time bounds memory by
+#: the largest allowed input; LLM-bound tasks spend most of their time waiting.
+DEFAULT_WORKER_CONCURRENCY: dict[str, int] = {"convert": 1, "llm": 20}
+
 
 class BuildProvenanceSettings(BaseSettings):
     """The source revision stamped into this image when it was built.
@@ -1468,17 +1485,18 @@ class SelfHostProfile:
                 return
             time.sleep(self._settings.meter_receipt_poll_s)
 
-    def worker_loop(self, *, stage: PipelineStage) -> SelfHostWorkerLoop:
-        """Build one continuous route's ordinary LISTEN/NOTIFY worker loop."""
+    def worker_loop(self, *, worker_class: str, concurrency: int) -> SelfHostWorkerLoop:
+        """Build one worker class's LISTEN/NOTIFY loop over all of its stages (D146)."""
         from rememberstack.adapters.selfhost import SelfHostWorkerLoop
         from rememberstack.adapters.selfhost import TokenBucket
-        from rememberstack.model import ProcessingLane
+        from rememberstack.spine import WorkLedger
 
+        stages = WORKER_CLASSES[worker_class]
         return SelfHostWorkerLoop(
-            worker=self._worker(stage=stage),
+            worker=self._worker(stages=stages),
+            ledger=WorkLedger(engine=self._engine, settings=self._work_ledger_settings),
             deployment_id=self._settings.deployment_id,
-            stage=stage,
-            lane=ProcessingLane.STEADY,
+            stages=stages,
             bucket=TokenBucket(
                 rate_per_s=self._settings.worker_rate_per_s,
                 capacity=self._settings.worker_burst,
@@ -1487,7 +1505,7 @@ class SelfHostProfile:
                 hide_password=False
             ),
             fallback_poll_s=self._settings.worker_fallback_poll_s,
-            serve_backfill=True,
+            concurrency=concurrency,
         )
 
     def run_task(self, *, processing_id: UUID) -> RunResult:
@@ -1515,8 +1533,12 @@ class SelfHostProfile:
                 f"processing row {processing_id} belongs to deployment"
                 f" {route.deployment_id}, not {self._settings.deployment_id}"
             )
+        if route.stage not in _SUPPORTED_WORKER_STAGES:
+            raise ValueError(
+                f"the self-host profile has no handler for stage {route.stage}"
+            )
         with collect_new_work() as created:
-            result = self._worker(stage=route.stage).run_one(
+            result = self._worker(stages=(route.stage,)).run_one(
                 deployment_id=route.deployment_id,
                 stage=route.stage,
                 lane=route.lane,
@@ -1545,18 +1567,17 @@ class SelfHostProfile:
 
         return self._task_queue or SelfHostTaskQueue(ledger=ledger)
 
-    def _worker(self, *, stage: PipelineStage) -> Worker:
-        """One stage's claim-and-run boundary over this deployment's ledger."""
+    def _worker(self, *, stages: tuple[PipelineStage, ...]) -> Worker:
+        """The claim-and-run boundary for some stages over this deployment's ledger."""
         from rememberstack.adapters.selfhost import FanoutTelemetry
         from rememberstack.adapters.selfhost import JsonLineTelemetry
         from rememberstack.spine import WorkLedger
         from rememberstack.workers import HandlerRegistry
         from rememberstack.workers import Worker
 
-        if stage not in _SUPPORTED_WORKER_STAGES:
-            raise ValueError(f"the self-host profile has no handler for stage {stage}")
         registry = HandlerRegistry()
-        registry.register(stage=stage, handler=self._handler(stage=stage))
+        for stage in stages:
+            registry.register(stage=stage, handler=self._handler(stage=stage))
         ledger = WorkLedger(engine=self._engine, settings=self._work_ledger_settings)
         local_telemetry = JsonLineTelemetry()
         telemetry = (
@@ -1571,9 +1592,9 @@ class SelfHostProfile:
             telemetry=telemetry,
         )
 
-    def run_worker(self, *, stage: PipelineStage) -> None:
-        """Run one configured continuous route until stopped or failed."""
-        loop = self.worker_loop(stage=stage)
+    def run_worker(self, *, worker_class: str, concurrency: int) -> None:
+        """Run one worker class until stopped or failed."""
+        loop = self.worker_loop(worker_class=worker_class, concurrency=concurrency)
         while True:
             loop.run_for(duration_s=self._settings.worker_session_s)
 
@@ -1624,7 +1645,7 @@ class SelfHostProfile:
         ).publish(deployment_id=self._settings.deployment_id)
 
     def _handler(self, *, stage: PipelineStage) -> StageHandler:
-        """Compose exactly one implemented stage handler for one worker process."""
+        """Compose the handler of one implemented stage."""
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams
@@ -1867,11 +1888,14 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("setup", help="migrate and bootstrap the deployment")
     subparsers.add_parser("api", help="serve the deployment HTTP API")
-    worker = subparsers.add_parser("worker", help="run one continuous worker route")
+    worker = subparsers.add_parser("worker", help="run every stage of one worker class")
     worker.add_argument(
-        "--stage",
-        choices=tuple(stage.value for stage in _SUPPORTED_WORKER_STAGES),
-        required=True,
+        "--class", dest="worker_class", choices=tuple(WORKER_CLASSES), required=True
+    )
+    worker.add_argument(
+        "--concurrency",
+        type=_positive_int,
+        help="tasks in flight (default: 1 for convert, 20 for llm)",
     )
     meter = subparsers.add_parser(
         "meter-receipts", help="replay managed ingest measurement/outcome receipts"
@@ -1909,8 +1933,15 @@ def main(argv: list[str] | None = None) -> int:
     error_telemetry = _initialize_error_tracking(
         command=args.command, deployment_slug=settings.deployment_slug
     )
+    concurrency = (
+        (args.concurrency or DEFAULT_WORKER_CONCURRENCY[args.worker_class])
+        if args.command == "worker"
+        else 0
+    )
     profile = SelfHostProfile.from_settings(
-        EngineSettings.from_env(), error_telemetry=error_telemetry
+        EngineSettings.from_env(),
+        error_telemetry=error_telemetry,
+        engine_options=_worker_pool(concurrency=concurrency) if concurrency else None,
     )
     try:
         if args.command == "setup":
@@ -1931,7 +1962,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "meter-receipts":
             profile.run_meter_receipts(once=args.once, limit=args.limit)
             return 0
-        profile.run_worker(stage=PipelineStage(args.stage))
+        profile.run_worker(worker_class=args.worker_class, concurrency=concurrency)
         return 0
     finally:
         profile.close()
@@ -1953,6 +1984,23 @@ def _initialize_error_tracking(
     return initialize_sentry(
         dsn=dsn, environment=environment, sample_rate=settings.sample_rate
     )
+
+
+def _worker_pool(*, concurrency: int) -> dict[str, Any]:
+    """A worker's main pool: every in-flight task may hold two connections.
+
+    One code path nests a read inside a transaction, and lease renewals and
+    the reaper need a few more, so SQLAlchemy's fixed 5 + 10 would not do.
+    """
+    return {"pool_size": concurrency + 2, "max_overflow": concurrency}
+
+
+def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer command-line value."""
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
 
 
 def _expected_components() -> dict[PipelineStage, str]:

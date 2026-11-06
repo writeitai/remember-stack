@@ -179,13 +179,14 @@ connections as it needs them, up to these ceilings:
 | Process | General pool | Other | Ceiling |
 |---|---|---|---|
 | `api` | 15 (5 kept open, 10 more under load) | retrieval pool 4, graph pool 4 | 23 |
-| Each `worker-…` | 15 (5 kept open, 10 more under load) | 1 held open to listen for new work | 16 |
+| `worker-llm` (20 at once) | 42 (22 kept open, 20 more under load) | 1 held open to listen for new work | 43 |
+| `worker-convert` (1 at once) | 4 (3 kept open, 1 more under load) | 1 held open to listen for new work | 5 |
 
-The ceilings of the default stack add up to 23 + 13 × 16 = 231, which fits
-within 300 with room to spare. They are ceilings, not what a stack holds:
-pools open connections only on demand. Nothing caps the total, though, so
-budget against the ceilings when you add replicas or API processes: each
-worker replica can add 16 connections and each API process 23, plus any
+A worker's ceiling is 2 × its concurrency + 3. The ceilings of the default
+stack add up to 23 + 43 + 5 = 71, which fits within 300 with room to spare.
+They are ceilings, not what a stack holds: pools open connections only on
+demand. Nothing caps the total, though, so budget against the ceilings when
+you raise concurrency or add worker containers or API processes, plus any
 increase in the retrieval and graph pool sizes. When the sum passes the limit,
 raise it by setting `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` in `.env`; see
 [Scaling](/docs/self-hosting/scaling#database-connections).
@@ -194,8 +195,8 @@ Other configured bounds:
 
 | Bound | Default |
 |---|---|
-| Containers started by `docker compose up` | 16: `postgres`, `object-store`, `setup` (exits), `api`, 13 workers |
-| Items one worker process runs at once | 1 |
+| Containers started by `docker compose up` | 6: `postgres`, `object-store`, `setup` (exits), `api`, `worker-convert`, `worker-llm` |
+| Items one worker process runs at once | 1 for `worker-convert`, 20 for `worker-llm` |
 | Claims per second per worker process | 20, burst 20 |
 | Graph connection pool in the API | 4 connections, at most 2 graph queries at once |
 | Graph query `work_mem` | 16,384 KiB |

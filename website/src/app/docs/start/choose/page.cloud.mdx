@@ -36,8 +36,8 @@ needs the pgvector, pg_textsearch, pg_partman, pg_trgm, fuzzystrmatch,
 unaccent, btree_gist and pgcrypto extensions. The Compose file builds that
 database for you.
 
-Each document passes through the pipeline's stages, and each stage runs as its own
-worker. You provide model access for them, keep them healthy, and upgrade
+Each document passes through the pipeline's stages, which run in two worker
+containers. You provide model access for them, keep them healthy, and upgrade
 them together. You are responsible for authentication, TLS, backups and
 monitoring. [Requirements](/docs/self-hosting/requirements) lists every
 piece.

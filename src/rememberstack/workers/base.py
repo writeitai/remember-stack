@@ -6,6 +6,7 @@ handler failure is logged with its full traceback, recorded on the row, and
 either retried with backoff or dead-lettered — it never disappears.
 """
 
+from collections.abc import Callable
 from datetime import datetime
 from datetime import UTC
 import logging
@@ -329,18 +330,16 @@ class Worker:
         stage: PipelineStage,
         lane: ProcessingLane | None,
         processing_id: UUID | None = None,
+        on_claimed: Callable[[], None] | None = None,
     ) -> RunResult:
         """Claim and run at most one due unit of work on the route.
 
         ``processing_id`` restricts the claim to that one row (D147).
-
-        This is the worker's single catch-to-log boundary (core value 6): the
-        full traceback is logged and recorded on the row; a
-        `NonRetryableHandlerError` dead-letters immediately, anything else
-        retries with backoff until the attempt limit dead-letters it.
+        ``on_claimed`` is called after a claim succeeds and before the handler
+        runs (a concurrent worker loop uses it to wake another slot).
         """
         started_ns = time.monotonic_ns()
-        handler = self._registry.handler_for(stage=stage)  # before any claim:
+        self._registry.handler_for(stage=stage)  # before any claim:
         # an unregistered stage must never strand a claimed row as running.
         claimed = self._ledger.claim_one(
             deployment_id=deployment_id,
@@ -374,6 +373,19 @@ class Worker:
                 processing_id=claimed.processing_id,
                 outcome=RunResultOutcome.BUDGET_PARKED,
             )
+        if on_claimed is not None:
+            on_claimed()
+        return self.run_claimed(claimed=claimed, started_ns=started_ns)
+
+    def run_claimed(self, *, claimed: ClaimedWork, started_ns: int) -> RunResult:
+        """Run one claimed attempt and record how it ended.
+
+        This is the worker's single catch-to-log boundary (core value 6): the
+        full traceback is logged and recorded on the row; a
+        `NonRetryableHandlerError` dead-letters immediately, anything else
+        retries with backoff until the attempt limit dead-letters it.
+        """
+        handler = self._registry.handler_for(stage=claimed.stage)
         meter = _LedgerCostMeter(ledger=self._ledger, work=claimed)
         try:
             with _LeaseRenewal(ledger=self._ledger, work=claimed):
@@ -465,7 +477,9 @@ class Worker:
                 self._queue.announce(
                     processing_id=claimed.processing_id,
                     route_snapshot=QueueRoute(
-                        deployment_id=deployment_id, stage=stage, lane=lane
+                        deployment_id=claimed.deployment_id,
+                        stage=claimed.stage,
+                        lane=claimed.lane,
                     ),
                     not_before_snapshot=retry_at,
                 )

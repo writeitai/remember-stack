@@ -237,100 +237,20 @@ services:
       # otherwise; set a token before publishing on another address.
       - "${REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS:-127.0.0.1}:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
 
+  # Two worker classes (D146): `convert` runs one conversion at a time, so its
+  # memory is bounded by the largest allowed input; `llm` serves every other
+  # stage with many tasks in flight. Scale either with `--scale` or with its
+  # concurrency.
   worker-convert:
     <<: *app
-    command: ["worker", "--stage", "convert"]
+    command: ["worker", "--class", "convert", "--concurrency", "${REMEMBERSTACK_SELFHOST_CONVERT_CONCURRENCY:-1}"]
     depends_on:
       setup:
         condition: service_completed_successfully
 
-  worker-structure:
+  worker-llm:
     <<: *app
-    command: ["worker", "--stage", "structure"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-crossref:
-    <<: *app
-    command: ["worker", "--stage", "crossref"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-chunk:
-    <<: *app
-    command: ["worker", "--stage", "chunk"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-embed-chunk:
-    <<: *app
-    command: ["worker", "--stage", "embed_chunk"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-extract-claims:
-    <<: *app
-    command: ["worker", "--stage", "extract_claims"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-ground-claims:
-    <<: *app
-    command: ["worker", "--stage", "ground_claims"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-normalize-relations:
-    <<: *app
-    command: ["worker", "--stage", "normalize_relations"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-adjudicate-observations:
-    <<: *app
-    command: ["worker", "--stage", "adjudicate_observations"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-adjudicate-supersession:
-    <<: *app
-    command: ["worker", "--stage", "adjudicate_supersession"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-embed-claim:
-    <<: *app
-    command: ["worker", "--stage", "embed_claim"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-reconcile:
-    <<: *app
-    command: ["worker", "--stage", "reconcile"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-label-relation:
-    <<: *app
-    command: ["worker", "--stage", "label_relation"]
-    depends_on:
-      setup:
-        condition: service_completed_successfully
-
-  worker-review-fact-windows:
-    <<: *app
-    command: ["worker", "--stage", "review_fact_windows"]
+    command: ["worker", "--class", "llm", "--concurrency", "${REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY:-20}"]
     depends_on:
       setup:
         condition: service_completed_successfully

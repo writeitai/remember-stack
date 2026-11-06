@@ -339,11 +339,7 @@ jobs:
           running_services="$(
             docker compose --env-file .env ps --status running --services
           )"
-          for service in \
-            api worker-convert worker-structure worker-chunk worker-embed-chunk \
-            worker-extract-claims worker-normalize-relations \
-            worker-adjudicate-observations worker-adjudicate-supersession \
-            worker-embed-claim worker-reconcile worker-label-relation; do
+          for service in api worker-convert worker-llm; do
             printf '%s\n' "$running_services" | grep -qx "$service"
           done
           ingested="$(
@@ -389,11 +385,7 @@ jobs:
 
       - name: Stage an upgrade from the prior schema
         run: |
-          docker compose --env-file .env stop \
-            api worker-convert worker-structure worker-chunk worker-embed-chunk \
-            worker-extract-claims worker-normalize-relations \
-            worker-adjudicate-observations worker-adjudicate-supersession \
-            worker-embed-claim worker-reconcile worker-label-relation
+          docker compose --env-file .env stop api worker-convert worker-llm
           # Build an empty pre-D119 fixture. Temporal/span migrations refuse
           # lossy conversion or downgrade of populated stores.
           docker compose --env-file .env run --rm --no-deps -T \
@@ -466,7 +458,7 @@ jobs:
             docker compose "${compose_args[@]}" ps --status running --services
           )"
           test -z "$(printf '%s\n' "$running_services" \
-            | grep -E '^(api|worker-(convert|structure|chunk|embed-chunk|extract-claims|normalize-relations|adjudicate-observations|adjudicate-supersession|embed-claim|reconcile|label-relation))$' || true)"
+            | grep -E '^(api|worker-(convert|llm))$' || true)"
           test "$(docker compose "${compose_args[@]}" exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT version_num FROM alembic_version')" = 'p9_31_0052'
@@ -483,11 +475,7 @@ jobs:
           running_services="$(
             docker compose "${compose_args[@]}" ps --status running --services
           )"
-          for service in \
-            api worker-convert worker-structure worker-chunk worker-embed-chunk \
-            worker-extract-claims worker-normalize-relations \
-            worker-adjudicate-observations worker-adjudicate-supersession \
-            worker-embed-claim worker-reconcile worker-label-relation; do
+          for service in api worker-convert worker-llm; do
             printf '%s\n' "$running_services" | grep -qx "$service"
           done
           curl --fail http://localhost:8000/healthz

@@ -120,8 +120,9 @@ isolate state the two lanes share (below). Rules:
   metered for) a backfill version's earlier application on a shared entity, and opens its repair on
   the steady lane; and a fresh version of a lineage that is still being backfilled waits for its
   predecessors (D143 lineage order). The duplicate-promotion rule above is unchanged.
-- **The self-host profile serves the backfill lane** from the same per-stage worker: a worker
-  claims from its stage's backfill route whenever its steady route has no due row.
+- **The self-host profile serves the backfill lane** from the same worker process: a worker
+  class claims from its stages' backfill routes whenever none of their steady routes has a due
+  row ([packaging §3, worker classes](packaging_distribution_design.md#3-task-execution--one-model-two-delivery-shells), D146).
 - **Lane budgets are separate** (§4): backfill spend is a knob turned deliberately; apart from the
   shared-entity applications above, it does not draw on the steady-state budget. The two dominant
   backfill costs are metered per lane
@@ -278,7 +279,10 @@ is killed mid-task (out of memory, a container restart, a preempted instance) wo
   finalizer runs), because claiming requires `attempts < max_attempts` and a pending row at the
   limit could never be claimed again. Since `attempts` increments at claim, a task that kills its
   worker every time dead-letters after `max_attempts` instead of looping. Concurrent sweeps skip
-  each other's rows (`SKIP LOCKED`).
+  each other's rows (`SKIP LOCKED`). A sweep is one plain pass over one database
+  (`WorkLedger.reap_expired_leases`, all stages when none are named), so a process that serves
+  many deployment databases without running their handlers can sweep each in turn; it then
+  announces the requeued rows and runs the dead-lettered rows' terminal-failure finalizers itself.
 
 Handlers already tolerate a second attempt (D12: idempotent writes, put-if-absent objects), so a
 reaped attempt that had partly run is safe to repeat. Cost rows are attempt-conditional too: the

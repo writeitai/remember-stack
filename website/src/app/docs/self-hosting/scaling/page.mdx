@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Scaling",
-  description: "The bounds a self-hosted RememberStack runs within \u2014 worker claim rates, replicas per stage, connection pools for retrieval and graph queries, API admission limits, and SQL query limits.",
+  description: "The bounds a self-hosted RememberStack runs within \u2014 worker concurrency and claim rates, connection pools for retrieval and graph queries, API admission limits, and SQL query limits.",
 };
 
 # Scaling
@@ -11,7 +11,7 @@ RememberStack publishes no throughput figures: how many documents per hour,
 or queries per second, a machine handles depends mostly on your model
 provider and corpus. What exists are explicit bounds on every process, so a
 busy deployment slows down or refuses work. The one budget you keep
-yourself is PostgreSQL's connection limit, once you add replicas. This
+yourself is PostgreSQL's connection limit, once you raise concurrency or add containers. This
 page lists those bounds and how to move them.
 
 The model provider is usually the first limit you meet. Most pipeline
@@ -20,10 +20,14 @@ own rate limits apply to your account.
 
 ## Workers
 
-Each pipeline stage runs in its own container. A worker process claims one
-item of work at a time from PostgreSQL, runs it, and claims the next. It
-wakes on a notification when new work is committed and also polls in case a
-notification was missed.
+The pipeline runs in two worker containers. `worker-convert` converts
+uploaded files one at a time, so its memory stays bounded by the largest
+file you accept. `worker-llm` runs every other stage with up to 20 items in
+flight at once, because those stages spend most of their time waiting on
+model calls. Both claim work from PostgreSQL, wake on a notification when
+new work is committed, and also poll in case a notification was missed. The
+`llm` worker takes items further along the pipeline before new ones, and
+live work before [backfill](/docs/self-hosting/operating) work.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -33,26 +37,38 @@ notification was missed.
 | `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600` | Length of one worker session in seconds; the worker then starts the next one. |
 
 Set them in `.env`. Lowering the rate is the way to stay under a provider's rate limit; the
-rate applies per process, so it multiplies with replicas.
+rate applies per process, so it multiplies with containers.
 
-### More replicas of a stage
+### More items in flight
 
-Items are claimed with `SELECT … FOR UPDATE SKIP LOCKED`, so several
-processes can serve the same stage without taking the same item. Add
-replicas of the stage that is behind:
+Raise a worker's concurrency in `.env` and recreate it:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY` | `20` | Items `worker-llm` runs at once. |
+| `REMEMBERSTACK_SELFHOST_CONVERT_CONCURRENCY` | `1` | Files `worker-convert` converts at once. Each conversion can take as much memory as the file needs. |
 
 ```bash
-docker compose up -d --scale worker-extract-claims=3 --scale worker-normalize-relations=2
+echo 'REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY=40' >> .env
+docker compose up -d worker-llm
 ```
 
-To find the stage that is behind, look at the pending counts per stage in
+Items are claimed with `SELECT … FOR UPDATE SKIP LOCKED`, so you can also
+run more than one container of a worker without two taking the same item:
+
+```bash
+docker compose up -d --scale worker-llm=2
+```
+
+To see which stage is behind, look at the pending counts per stage in
 `remember ops inspect` ([Operating the pipeline](/docs/self-hosting/operating#inspect-the-pipeline)).
 The claim-heavy stages (`extract_claims`, `ground_claims`,
 `normalize_relations`, `adjudicate_observations`) make the most model calls
-per document.
+per document. A higher concurrency also means more calls at once to your
+model provider, whose rate limits still apply.
 
-Every replica holds its own database connections; see
-[Database connections](#database-connections) before adding many.
+Every container holds its own database connections, and more items in
+flight need more of them; see [Database connections](#database-connections).
 
 ## Database connections
 
@@ -64,16 +80,17 @@ size itself against that limit. The ceilings per process are:
 | Process | Ceiling | Made of |
 |---|---|---|
 | `api` | 23 | General pool 15 (5 kept open, 10 more under load), retrieval pool 4, graph pool 4 |
-| Each `worker-…` replica | 16 | General pool 15, plus 1 connection that listens for new work |
+| Each worker container | 2 × concurrency + 3 | General pool of concurrency + 2 kept open and as many more under load (one task can briefly need two connections), plus 1 connection that listens for new work. `worker-llm` at 20: 43; `worker-convert` at 1: 5 |
 
-The general pool's size is fixed. The retrieval and graph pools follow
+The API's general pool size is fixed. The retrieval and graph pools follow
 `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` and
 `REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` (see
 [Retrieval and graph queries](#retrieval-and-graph-queries)).
 
 Pools open connections only on demand, so a running stack holds fewer than
-the sum of its ceilings. The default stack's ceilings add up to 231 (23 +
-13 × 16), within the default limit of 300. When you add replicas or API
+the sum of its ceilings. The default stack's ceilings add up to 71 (23 +
+43 + 5), within the default limit of 300. When you raise concurrency or add
+containers or API
 processes, keep the sum of their ceilings under the limit, and when
 PostgreSQL refuses connections (`too many clients already` in the logs),
 raise it in `.env` and restart PostgreSQL:

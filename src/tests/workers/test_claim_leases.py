@@ -269,6 +269,10 @@ def test_the_reaper_requeues_expired_claims_and_dead_letters_exhausted_ones(
     assert _row(database_engine, other_stage_id)["status"] == "running"
     assert _claim(ledger).processing_id == retryable_id
 
+    # A sweeper without handlers sweeps every stage of the database.
+    (swept,) = ledger.reap_expired_leases(deployment_id=_DEPLOYMENT_ID)
+    assert (swept.work.processing_id, swept.requeued) == (other_stage_id, True)
+
 
 def test_the_worker_announces_requeued_rows_and_finalizes_dead_letters(
     database_engine: Engine,
