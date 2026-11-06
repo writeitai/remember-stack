@@ -7350,7 +7350,7 @@ These settings apply to every call through OpenRouter.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback unless the same set is also supplied as the hard allowlist. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. Alone it disables fallback. Combine with an order naming exactly the same unique slugs to allow fallback within this set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
@@ -7487,8 +7487,17 @@ converter, `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` selects the vision model.
 `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` optionally pins its effort;
 an unset value preserves the provider default. Set
 `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` to a JSON list of OpenRouter
-endpoint slugs, for example `["openai/flex"]`, to restrict the description lane
-without marketplace fallback. OCR keeps its independent provider settings.
+endpoint slugs, for example `["openai/flex"]`, to restrict the description lane.
+One entry disables fallback; multiple entries are tried in preference order
+without admitting hosts outside the list. For Flex followed by normal OpenAI
+Luna, use `["openai/flex","openai"]`. An explicit uncharged capacity rejection
+advances to the next approved endpoint without a generation-cost lookup. A
+response with choices or usage, or a generic ID-bearing error, never triggers
+that replay. OCR keeps its independent provider settings.
+
+Existing multi-entry lists now permit ordered fallback within the same set.
+That transport change does not change an unchanged list's checkpoint identity;
+previously completed descriptions remain reusable.
 
 These settings join the description checkpoint identity. Changing effort or
 routing redoes that lane once and reuses a successful unchanged OCR lane.
@@ -7774,7 +7783,7 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | API address. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON endpoint allowlist; the LoCoMo Luna profile uses `["openai/flex"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | Approved endpoints in preference order; the LoCoMo Luna profile uses `["openai/flex","openai"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |
@@ -19086,7 +19095,7 @@ default; see [Processing layers](https://remember.dev/docs/concepts/pipeline#pro
 | `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | Per-request timeout. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | Output allowance per chat call, reasoning included. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred chat providers, with fallback. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers, no fallback. Exclusive with the order. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers. Alone it disables fallback; combine with an order naming the same unique slugs to allow fallback within the set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
 | `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat. |
@@ -19145,7 +19154,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | model id | Vision model; must accept image input. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Hard OpenRouter endpoint allowlist; for Flex use `["openai/flex"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Approved endpoints in preference order. One entry disables fallback; multiple entries allow fallback only within the list. The LoCoMo profile uses `["openai/flex","openai"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |

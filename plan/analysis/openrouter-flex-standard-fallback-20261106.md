@@ -30,8 +30,12 @@ The LoCoMo profile's stored endpoint tuple and worker environment record this
 policy. They participate in the run fingerprint, so existing single-Flex runs
 cannot silently resume under a changed pricing policy. No new executable legacy
 protocol is added. Native image-description requests use the same ordered
-approved pair, while the caption-based LoCoMo adapter still does not exercise
-native OCR. Embeddings and Jev are unchanged.
+approved pair. Both chat and native vision recognize the same proven uncharged
+rejection before cost recovery; native vision tries each approved endpoint at
+most once per conversion attempt. A terminal capacity rejection remains a
+retryable provider failure, while generic accounting failures stay nonretryable.
+The caption-based LoCoMo adapter still does not exercise native OCR. Embeddings
+and Jev are unchanged.
 
 The normal endpoint can cost more than Flex; charge/report provider-returned
 usage and preserve that cost, rather than assuming the Flex rate. No prompt,

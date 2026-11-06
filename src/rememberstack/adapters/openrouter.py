@@ -742,7 +742,7 @@ class OpenRouterModelProvider:
                     raise OpenRouterProviderError(
                         last_error,
                         provider_host=slug,
-                        retryable_unbilled=_unbilled_capacity_rejection(
+                        retryable_unbilled=unbilled_capacity_rejection(
                             response=response
                         ),
                     )
@@ -993,7 +993,7 @@ class OpenRouterModelProvider:
                 raise OpenRouterProviderError(
                     f"OpenRouter {path} returned {response.status_code}: "
                     "transient capacity retries exhausted",
-                    retryable_unbilled=_unbilled_capacity_rejection(response=response),
+                    retryable_unbilled=unbilled_capacity_rejection(response=response),
                 )
             if response.status_code >= 400:
                 raise OpenRouterProviderError(
@@ -1067,7 +1067,7 @@ def _response_retry_after_s(*, response: httpx.Response) -> float | None:
     return parsed
 
 
-def _unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
+def unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
     """Identify a received pre-generation rejection, never infer it from a timeout."""
     try:
         body = response.json()
@@ -1107,7 +1107,7 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
     retries. This applies equally to Flex and standard providers.
     """
     transient_codes = _TRANSIENT_UPSTREAM_CODES
-    if _unbilled_capacity_rejection(response=response):
+    if unbilled_capacity_rejection(response=response):
         return True
     try:
         body = response.json()

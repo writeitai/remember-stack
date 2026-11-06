@@ -2214,7 +2214,7 @@ def test_flex_message_never_overrides_possible_paid_output(
 ) -> None:
     """Even an explicit Flex message cannot erase choices or usage evidence."""
     from rememberstack.adapters.openrouter import _retryable_upstream_error
-    from rememberstack.adapters.openrouter import _unbilled_capacity_rejection
+    from rememberstack.adapters.openrouter import unbilled_capacity_rejection
 
     response = httpx.Response(
         200,
@@ -2228,13 +2228,13 @@ def test_flex_message_never_overrides_possible_paid_output(
         },
     )
     assert not _retryable_upstream_error(response=response)
-    assert not _unbilled_capacity_rejection(response=response)
+    assert not unbilled_capacity_rejection(response=response)
 
 
 def test_generic_error_with_generation_id_is_not_assumed_unbilled() -> None:
     """An id-bearing generic provider failure still needs reconciliation."""
     from rememberstack.adapters.openrouter import _retryable_upstream_error
-    from rememberstack.adapters.openrouter import _unbilled_capacity_rejection
+    from rememberstack.adapters.openrouter import unbilled_capacity_rejection
 
     response = httpx.Response(
         200,
@@ -2244,7 +2244,7 @@ def test_generic_error_with_generation_id_is_not_assumed_unbilled() -> None:
         },
     )
     assert not _retryable_upstream_error(response=response)
-    assert not _unbilled_capacity_rejection(response=response)
+    assert not unbilled_capacity_rejection(response=response)
 
 
 @pytest.mark.parametrize("routed", [False, True])
@@ -2347,7 +2347,7 @@ def test_flex_phrase_cannot_override_terminal_client_error(
 ) -> None:
     """Even a contradictory status cannot turn a client rejection into overload."""
     from rememberstack.adapters.openrouter import _retryable_upstream_error
-    from rememberstack.adapters.openrouter import _unbilled_capacity_rejection
+    from rememberstack.adapters.openrouter import unbilled_capacity_rejection
 
     response = httpx.Response(
         status,
@@ -2359,7 +2359,7 @@ def test_flex_phrase_cannot_override_terminal_client_error(
         },
     )
     assert not _retryable_upstream_error(response=response)
-    assert not _unbilled_capacity_rejection(response=response)
+    assert not unbilled_capacity_rejection(response=response)
 
 
 def test_accounting_diagnostic_does_not_echo_invalid_generation_id() -> None:

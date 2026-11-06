@@ -118,7 +118,7 @@ These settings apply to every call through OpenRouter.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback unless the same set is also supplied as the hard allowlist. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. Alone it disables fallback. Combine with an order naming exactly the same unique slugs to allow fallback within this set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |

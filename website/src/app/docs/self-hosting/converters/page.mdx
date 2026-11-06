@@ -72,8 +72,17 @@ converter, `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` selects the vision model.
 `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` optionally pins its effort;
 an unset value preserves the provider default. Set
 `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` to a JSON list of OpenRouter
-endpoint slugs, for example `["openai/flex"]`, to restrict the description lane
-without marketplace fallback. OCR keeps its independent provider settings.
+endpoint slugs, for example `["openai/flex"]`, to restrict the description lane.
+One entry disables fallback; multiple entries are tried in preference order
+without admitting hosts outside the list. For Flex followed by normal OpenAI
+Luna, use `["openai/flex","openai"]`. An explicit uncharged capacity rejection
+advances to the next approved endpoint without a generation-cost lookup. A
+response with choices or usage, or a generic ID-bearing error, never triggers
+that replay. OCR keeps its independent provider settings.
+
+Existing multi-entry lists now permit ordered fallback within the same set.
+That transport change does not change an unchanged list's checkpoint identity;
+previously completed descriptions remain reusable.
 
 These settings join the description checkpoint identity. Changing effort or
 routing redoes that lane once and reuses a successful unchanged OCR lane.
@@ -359,7 +368,7 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | API address. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON endpoint allowlist; the LoCoMo Luna profile uses `["openai/flex"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | Approved endpoints in preference order; the LoCoMo Luna profile uses `["openai/flex","openai"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |
