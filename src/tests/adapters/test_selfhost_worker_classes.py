@@ -297,6 +297,53 @@ def test_slots_run_tasks_of_several_stages_at_once(
     assert _overlap(handler.runs, _UPSTREAM, _DOWNSTREAM)
 
 
+class _HeldLedger(WorkLedger):
+    """Lists due work but never hands it out, like a held review route."""
+
+    def __init__(self, *, engine: Engine) -> None:
+        super().__init__(
+            engine=engine,
+            settings=WorkLedgerSettings(
+                retry_backoff_base_s=0.0, retry_backoff_max_s=0.0
+            ),
+        )
+        self.probes = 0
+
+    def due_routes(
+        self, **kwargs: object
+    ) -> tuple[tuple[PipelineStage, ProcessingLane], ...]:
+        self.probes += 1
+        return super().due_routes(**kwargs)  # type: ignore[arg-type]
+
+    def claim_one(self, **_: object) -> None:  # type: ignore[override]
+        return None
+
+
+def test_work_that_is_listed_but_cannot_be_claimed_does_not_spin_the_slots(
+    database_url: str, engine: Engine
+) -> None:
+    """Only real claims wake further slots; otherwise slots wait for a wake-up."""
+    _enqueue(_ledger(engine), deployment_id=_DEPLOYMENT_A, stage=_UPSTREAM)
+    ledger = _HeldLedger(engine=engine)
+    registry = HandlerRegistry()
+    for stage in _STAGES:
+        registry.register(stage=stage, handler=_Recording())
+    loop = SelfHostWorkerLoop(
+        worker=Worker(ledger=ledger, registry=registry),
+        ledger=ledger,
+        deployment_id=_DEPLOYMENT_A,
+        stages=_STAGES,
+        bucket=TokenBucket(rate_per_s=1_000.0, capacity=1_000.0),
+        database_url=_psycopg_url(database_url),
+        fallback_poll_s=0.25,
+        concurrency=4,
+    )
+
+    assert loop.run_for(duration_s=1.0) == ()
+    # One probe per wake-up (start plus about four polls), not a busy loop.
+    assert ledger.probes <= 8
+
+
 def test_two_deployments_in_two_databases_interleave_in_one_process(
     database_url: str, second_database_url: str, engine: Engine
 ) -> None:

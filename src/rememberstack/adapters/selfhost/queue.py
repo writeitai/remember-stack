@@ -94,7 +94,7 @@ class SelfHostWorkerLoop:
     downstream stages first, so work already in the pipeline drains before new
     uploads take the slots). ``concurrency`` slots each run one task at a time
     in their own thread. The calling thread sleeps on LISTEN with a slow
-    fallback poll; every wake-up, and every claim that found work, wakes one
+    fallback poll; every wake-up, and every successful claim, wakes one
     idle slot, so idle slots look for work one at a time instead of all at
     once. The calling thread also sweeps expired claims (D144) at most once
     per fallback-poll interval.
@@ -215,14 +215,17 @@ class SelfHostWorkerLoop:
         """Claim and run the first due unit of work in route order, if any."""
         if not self._bucket.try_acquire():
             return None
-        due = self._ledger.due_routes(
+        for stage, lane in self._ledger.due_routes(
             deployment_id=self._deployment_id, routes=self._routes
-        )
-        if due:
-            self._signal()  # there may be more: let one idle slot look too
-        for stage, lane in due:
+        ):
             result = self._worker.run_one(
-                deployment_id=self._deployment_id, stage=stage, lane=lane
+                deployment_id=self._deployment_id,
+                stage=stage,
+                lane=lane,
+                # A claim succeeded, so more may be due: let one idle slot
+                # look too. Only real claims wake slots, so a route the probe
+                # lists but nobody can claim never keeps slots spinning.
+                on_claimed=self._signal,
             )
             if result.outcome is not RunResultOutcome.NO_WORK:
                 return result
