@@ -916,3 +916,18 @@ def test_an_encoded_delimiter_in_a_saved_query_name_is_still_gated(
         headers={"Authorization": f"Bearer {_SECRET}"},
     )
     assert response.status_code == 423
+
+
+@pytest.mark.parametrize("suffix", ["%0A", "%0D", "%00"])
+def test_a_control_character_in_the_path_is_refused_before_any_read(
+    suffix: str,
+) -> None:
+    """``/documents%0A`` would route like ``/documents``; it is refused instead."""
+    lease = _FakeLease()
+    inventory = _EmptyInventory()
+    response = _documents_app(lease=lease, inventory=inventory).get(
+        f"/documents{suffix}", headers={"Authorization": f"Bearer {_SECRET}"}
+    )
+    assert response.status_code == 400
+    assert inventory.calls == 0
+    assert lease.reserves == []

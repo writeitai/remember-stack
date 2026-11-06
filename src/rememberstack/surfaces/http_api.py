@@ -29,6 +29,7 @@ import functools
 import inspect
 import json
 import logging
+import re
 from typing import Annotated
 from typing import Any
 from typing import Final
@@ -2560,6 +2561,10 @@ _CURRENT_HOLD: ContextVar[RequestHold | None] = ContextVar(
 )
 
 
+#: ASCII control characters, refused anywhere in a decoded request path.
+_CONTROL_CHARACTER: Final = re.compile(r"[\x00-\x1f\x7f]")
+
+
 class _PerimeterGate:
     """Resolve, authenticate and admit every request before routing (D136 §7.6).
 
@@ -2579,6 +2584,12 @@ class _PerimeterGate:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Refuse, or run the request holding its admission slot."""
+        if scope["type"] == "http" and _CONTROL_CHARACTER.search(scope["path"]):
+            # A decoded control character has no place in any route, and a
+            # final newline even matches a route pattern's ``$``, so the
+            # route and the spend classification could see different paths.
+            await _send_json_error(send=send, status=400, detail="invalid_path")
+            return
         if scope["type"] != "http" or _is_healthz(
             method=scope["method"], path=scope["path"]
         ):
