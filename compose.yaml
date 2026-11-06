@@ -9,7 +9,7 @@ x-app: &app
       # Empty when the caller does not supply it; released images get the tag's
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
-  image: ghcr.io/writeitai/remember-stack:0.17.2
+  image: ghcr.io/writeitai/remember-stack:0.17.3
   # Every variable in .env reaches the engine, so any engine setting can be
   # set there. The environment list below adds defaults and the values
   # Compose fixes itself (database URL, object-store endpoint, container port);
@@ -134,11 +134,11 @@ services:
     # Pulled from the release (linux/amd64 and linux/arm64). Compose builds it
     # from Dockerfile.postgres only when the pull fails or with --build.
     # Between releases, start a main checkout with --build: the published engine
-    # of the version above may not match this PostgreSQL (0.17.2 needs Beta 3).
+    # of the version above may not match this PostgreSQL (0.17.3 needs Beta 3).
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: ghcr.io/writeitai/remember-stack-postgres:19rc1-0.17.2
+    image: ghcr.io/writeitai/remember-stack-postgres:19rc1-0.17.3
     command:
       - postgres
       - -c
