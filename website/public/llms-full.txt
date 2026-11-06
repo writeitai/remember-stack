@@ -3747,8 +3747,9 @@ remember ingest notes/2026-09-17-standup.md \
   --source-modified-at 2026-09-17T09:30:00+00:00
 ```
 
-The CLI prints the same fields as one JSON line. It has no `--filename`
-flag: the filename is always the file's own name.
+The CLI prints the same fields as one JSON line. Use `--filename NAME` to
+choose the stored name; otherwise it uses the file's own name. MIME inference
+still follows the actual source file unless you supply `--mime`.
 
 ## Three ways to pass the body
 
@@ -3762,8 +3763,9 @@ extension.
 client.ingest("specs/billing-migration.md")
 ```
 
-A string that is not an existing file raises `ValueError("file not found:
-…")`. The client never treats a string as document text.
+A missing path raises `FileNotFoundError`, whether given as a string or a
+`Path`. Other filesystem read failures raise `OSError`. The client never
+treats a string as document text.
 
 **Bytes as the first argument.** You must name the file.
 
@@ -16266,7 +16268,7 @@ results.
 | Parameter | Meaning |
 |---|---|
 | `source` | A `Path` or `str` file path (read from disk), or `bytes`. |
-| `content` | Raw bytes. Wins over `source` when both are given; `source` then only supplies the filename. |
+| `content` | Raw bytes. Wins over `source` when both are given; `source` then only supplies the fallback filename. For a string path this is `str(Path(source))`, which normalizes redundant separators and `./`. Set `filename` explicitly to control the name. |
 | `filename` | Required for bytes. Defaults to the file's name for a path. |
 | `mime` | Media type; an explicit value always wins. Defaults to the type of the extension of the file's real name (for a path) or of `filename` (for bytes): `.md` is `text/markdown`, `.pdf` is `application/pdf`, on every Python installation; the full table is in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type). An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. The engine converts only media types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | `title` | A human title for the document. |

@@ -70,8 +70,9 @@ remember ingest notes/2026-09-17-standup.md \
   --source-modified-at 2026-09-17T09:30:00+00:00
 ```
 
-The CLI prints the same fields as one JSON line. It has no `--filename`
-flag: the filename is always the file's own name.
+The CLI prints the same fields as one JSON line. Use `--filename NAME` to
+choose the stored name; otherwise it uses the file's own name. MIME inference
+still follows the actual source file unless you supply `--mime`.
 
 ## Three ways to pass the body
 
@@ -85,8 +86,9 @@ extension.
 client.ingest("specs/billing-migration.md")
 ```
 
-A string that is not an existing file raises `ValueError("file not found:
-…")`. The client never treats a string as document text.
+A missing path raises `FileNotFoundError`, whether given as a string or a
+`Path`. Other filesystem read failures raise `OSError`. The client never
+treats a string as document text.
 
 **Bytes as the first argument.** You must name the file.
 

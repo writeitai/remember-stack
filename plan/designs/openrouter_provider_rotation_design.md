@@ -58,7 +58,7 @@ rotation, a split throttle budget, and per-call host recording.
   - `chat_throttle_retries: int = 3` (env `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES`,
     dedicated 429 attempts per logical call, shared across slugs in the rotation).
   - `chat_upstream_overload_max_retry_after_s: float = 30.0` (env
-    `REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S`, per-wait cap; an explicit
+    `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S`, per-wait cap; an explicit
     Retry-After below the cap wins, anything above is clamped to the cap).
 
 ### 4. Record the serving host per call
