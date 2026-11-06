@@ -58,6 +58,7 @@ from pydantic import SecretBytes
 from pydantic import ValidationError
 from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
+from starlette._utils import get_route_path
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp
@@ -2845,7 +2846,12 @@ def _install_spend_lease(*, app: FastAPI) -> None:
         spend_lease = _request_deployment(request).spend_lease
         if spend_lease is None:
             return await call_next(request)
-        gated = _spend_gated_route(method=request.method, path=request.url.path)
+        # The path the router matches: decoded, and relative to any mount
+        # (``root_path``). ``request.url.path`` is neither, so a mounted app or
+        # an encoded ``?``/``#`` inside a parameter would read ungated.
+        gated = _spend_gated_route(
+            method=request.method, path=get_route_path(request.scope)
+        )
         if gated is None:
             return await call_next(request)
         authorization = request.headers.get("authorization")
