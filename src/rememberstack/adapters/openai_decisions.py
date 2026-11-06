@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 import json
 import math
+import re
 import time
 from typing import Any
 from typing import Literal
@@ -254,8 +255,12 @@ def _decision_usage(
         if not isinstance(body, Mapping):
             raise ValueError("Response is not an object")
         resolved = body["model"]
-        if not isinstance(resolved, str) or not (
-            resolved == settings.model or resolved.startswith(f"{settings.model}-")
+        if (
+            not isinstance(resolved, str)
+            or re.fullmatch(
+                rf"{re.escape(settings.model)}(?:-\d{{4}}-\d{{2}}-\d{{2}})?", resolved
+            )
+            is None
         ):
             raise ValueError("Response model has no configured price basis")
         usage = body["usage"]

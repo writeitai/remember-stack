@@ -158,7 +158,16 @@ def test_native_accounts_for_cache_writes_long_context_and_region(
 
 
 @pytest.mark.parametrize(
-    "fault", ["missing", "details", "boolean", "negative", "overflow", "unknown_model"]
+    "fault",
+    [
+        "missing",
+        "details",
+        "boolean",
+        "negative",
+        "overflow",
+        "unknown_model",
+        "other_model_family",
+    ],
 )
 def test_native_missing_or_inconsistent_accounting_stops_without_replay(
     fault: str,
@@ -175,6 +184,8 @@ def test_native_missing_or_inconsistent_accounting_stops_without_replay(
         body["usage"]["output_tokens"] = -1
     elif fault == "overflow":
         body["usage"]["input_tokens_details"]["cached_tokens"] = 1_001
+    elif fault == "other_model_family":
+        body["model"] = "gpt-6-luna-pro"
     else:
         body["model"] = "unpriced-model"
     calls: list[str] = []
