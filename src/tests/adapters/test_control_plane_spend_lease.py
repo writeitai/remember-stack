@@ -778,6 +778,10 @@ def test_parked_deployment_refuses_the_document_list() -> None:
         ("PUT", f"/documents/{_DEPLOYMENT}/versions/{_DEPLOYMENT}/references", None),
         ("GET", "/connectors", None),
         ("GET", "/query/saved//x", None),
+        # A section key is a path parameter: empty segments still route.
+        ("GET", "/documents/x/sections/a//b/history", ("search", None)),
+        ("GET", "/documents/x/sections//history", ("search", None)),
+        ("GET", "/documents/x/sections/a//history/", ("search", None)),
     ],
 )
 def test_memory_reads_are_spend_gated(
@@ -875,3 +879,55 @@ def test_every_published_route_is_gated_or_named_ungated() -> None:
             route = (method.upper(), path)
             gated = _spend_gated_route(method=route[0], path=concrete)
             assert (gated is None) == (route in ungated), route
+
+
+def test_a_mounted_api_still_gates_its_reads() -> None:
+    """Under a mount (``root_path``) a refused lease still stops the read."""
+    from fastapi import FastAPI
+
+    lease = _FakeLease()
+    lease.reserve_error = SpendLeaseRefused(
+        status_code=423, detail="dispatch_parked:INSUFFICIENT_BALANCE"
+    )
+    inventory = _EmptyInventory()
+    parent = FastAPI()
+    parent.mount("/api", _documents_app(lease=lease, inventory=inventory).app)
+    response = TestClient(parent).get(
+        "/api/documents", headers={"Authorization": f"Bearer {_SECRET}"}
+    )
+    assert response.status_code == 423
+    assert inventory.calls == 0
+
+
+@pytest.mark.parametrize("namespace", ["a%3Fb", "a%23b"])
+def test_an_encoded_delimiter_in_a_saved_query_name_is_still_gated(
+    namespace: str,
+) -> None:
+    """An encoded ``?`` or ``#`` routes as part of the name; the lease sees it too."""
+    lease = _FakeLease()
+    lease.reserve_error = SpendLeaseRefused(
+        status_code=423, detail="dispatch_parked:INSUFFICIENT_BALANCE"
+    )
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.post(
+        f"/query/saved/{namespace}/x/run",
+        json={"parameters": []},
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 423
+
+
+@pytest.mark.parametrize("suffix", ["%0A", "%0D", "%00"])
+def test_a_control_character_in_the_path_is_refused_before_any_read(
+    suffix: str,
+) -> None:
+    """``/documents%0A`` would route like ``/documents``; it is refused instead."""
+    lease = _FakeLease()
+    inventory = _EmptyInventory()
+    response = _documents_app(lease=lease, inventory=inventory).get(
+        f"/documents{suffix}", headers={"Authorization": f"Bearer {_SECRET}"}
+    )
+    assert response.status_code == 400
+    assert inventory.calls == 0
+    assert lease.reserves == []

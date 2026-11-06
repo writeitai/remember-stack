@@ -29,6 +29,7 @@ import functools
 import inspect
 import json
 import logging
+import re
 from typing import Annotated
 from typing import Any
 from typing import Final
@@ -58,6 +59,7 @@ from pydantic import SecretBytes
 from pydantic import ValidationError
 from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
+from starlette._utils import get_route_path
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp
@@ -2559,6 +2561,10 @@ _CURRENT_HOLD: ContextVar[RequestHold | None] = ContextVar(
 )
 
 
+#: ASCII control characters, refused anywhere in a decoded request path.
+_CONTROL_CHARACTER: Final = re.compile(r"[\x00-\x1f\x7f]")
+
+
 class _PerimeterGate:
     """Resolve, authenticate and admit every request before routing (D136 §7.6).
 
@@ -2578,6 +2584,12 @@ class _PerimeterGate:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Refuse, or run the request holding its admission slot."""
+        if scope["type"] == "http" and _CONTROL_CHARACTER.search(scope["path"]):
+            # A decoded control character has no place in any route, and a
+            # final newline even matches a route pattern's ``$``, so the
+            # route and the spend classification could see different paths.
+            await _send_json_error(send=send, status=400, detail="invalid_path")
+            return
         if scope["type"] != "http" or _is_healthz(
             method=scope["method"], path=scope["path"]
         ):
@@ -2783,8 +2795,6 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
     parts = normalized.split("/")[1:]
     if method == "POST" and len(parts) == 2 and parts[0] == "operations" and parts[1]:
         return ("recipe", parts[1])
-    if not all(parts):
-        return None
     if (
         method == "GET"
         and len(parts) >= 5
@@ -2792,8 +2802,14 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
         and parts[2] == "sections"
         and parts[-1] == "history"
     ):
-        # /documents/{doc_id}/sections/{section_key}/history (keys may hold '/')
+        # /documents/{doc_id}/sections/{section_key}/history. The key is a
+        # path parameter, so it may hold '/' and empty segments ('a//b')
+        # and still route: it is matched before empty segments are refused.
         return ("search", None)
+    if not all(parts):
+        # Every other route's parameters are single non-empty segments, so a
+        # path with an empty segment matches no route (404) and spends nothing.
+        return None
     if (
         method == "GET"
         and len(parts) == 5
@@ -2841,7 +2857,12 @@ def _install_spend_lease(*, app: FastAPI) -> None:
         spend_lease = _request_deployment(request).spend_lease
         if spend_lease is None:
             return await call_next(request)
-        gated = _spend_gated_route(method=request.method, path=request.url.path)
+        # The path the router matches: decoded, and relative to any mount
+        # (``root_path``). ``request.url.path`` is neither, so a mounted app or
+        # an encoded ``?``/``#`` inside a parameter would read ungated.
+        gated = _spend_gated_route(
+            method=request.method, path=get_route_path(request.scope)
+        )
         if gated is None:
             return await call_next(request)
         authorization = request.headers.get("authorization")
