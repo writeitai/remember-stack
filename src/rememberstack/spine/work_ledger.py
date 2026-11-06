@@ -864,9 +864,13 @@ class WorkLedger:
             )
 
     def reap_expired_leases(
-        self, *, deployment_id: UUID, stages: Collection[PipelineStage]
+        self, *, deployment_id: UUID, stages: Collection[PipelineStage] | None = None
     ) -> tuple[ExpiredLease, ...]:
-        """Take back running attempts on ``stages`` whose lease expired.
+        """One sweep: take back running attempts whose lease expired.
+
+        ``stages`` limits the sweep (a worker sweeps the stages it serves);
+        ``None`` sweeps every stage, for a sweeper that serves a database
+        without running its handlers.
 
         Such an attempt's worker was killed or stalled. A row with attempts
         left returns to ``pending``, due now, so the next claim retries it; a
@@ -874,14 +878,18 @@ class WorkLedger:
         requires ``attempts < max_attempts`` and requeueing it would strand it.
         A task that kills its worker every time therefore dead-letters after
         ``max_attempts`` instead of looping. Rows another reaper is taking are
-        skipped. The caller announces the requeued rows.
+        skipped. The caller announces the requeued rows and runs the
+        terminal-failure finalizer of each dead-lettered row's stage (for
+        ``convert``, marking the version failed), as ``Worker`` does.
         """
         with self._engine.begin() as connection:
             rows = connection.execute(
                 _REAP_EXPIRED_LEASES,
                 {
                     "deployment_id": deployment_id,
-                    "stages": [stage.value for stage in stages],
+                    "stages": None
+                    if stages is None
+                    else [stage.value for stage in stages],
                 },
             ).mappings()
             return tuple(
@@ -2127,7 +2135,10 @@ _REAP_EXPIRED_LEASES = text(
         SELECT processing_id
         FROM processing_state
         WHERE deployment_id = :deployment_id
-          AND stage = ANY(CAST(:stages AS pipeline_stage[]))
+          AND (
+              CAST(:stages AS pipeline_stage[]) IS NULL
+              OR stage = ANY(CAST(:stages AS pipeline_stage[]))
+          )
           AND status = 'running'
           AND lease_until < now()
         FOR UPDATE SKIP LOCKED

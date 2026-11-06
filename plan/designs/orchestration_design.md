@@ -279,7 +279,10 @@ is killed mid-task (out of memory, a container restart, a preempted instance) wo
   finalizer runs), because claiming requires `attempts < max_attempts` and a pending row at the
   limit could never be claimed again. Since `attempts` increments at claim, a task that kills its
   worker every time dead-letters after `max_attempts` instead of looping. Concurrent sweeps skip
-  each other's rows (`SKIP LOCKED`).
+  each other's rows (`SKIP LOCKED`). A sweep is one plain pass over one database
+  (`WorkLedger.reap_expired_leases`, all stages when none are named), so a process that serves
+  many deployment databases without running their handlers can sweep each in turn; it then
+  announces the requeued rows and runs the dead-lettered rows' terminal-failure finalizers itself.
 
 Handlers already tolerate a second attempt (D12: idempotent writes, put-if-absent objects), so a
 reaped attempt that had partly run is safe to repeat. Cost rows are attempt-conditional too: the
