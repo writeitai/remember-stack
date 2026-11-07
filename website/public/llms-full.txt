@@ -19952,6 +19952,7 @@ need action from you are marked **Action needed**.
   and the result are unchanged. Only a single page over the byte limit is
   refused. `PdfConverter.convert_path` and `MistralOcrConverter.convert_path`
   convert a PDF from a file on disk without reading it whole.
+
 **Integration.**
 
 - **Action needed.** `UploadIngestor.ingest_stored` deletes an object it
