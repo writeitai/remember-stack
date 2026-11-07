@@ -7,6 +7,7 @@ from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.mounts import MountPublisherPort
 from rememberstack.ports.object_store import ObjectStorePort
+from rememberstack.ports.object_store import PresignedReadPort
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.ports.purge import KGitPurgePort
 from rememberstack.ports.purge import ObjectPurgePort
@@ -24,6 +25,7 @@ __all__ = (
     "MeterReceiptPort",
     "MountPublisherPort",
     "ObjectStorePort",
+    "PresignedReadPort",
     "PostgresReadPoolPort",
     "ObjectPurgePort",
     "ProjectionPurgePort",

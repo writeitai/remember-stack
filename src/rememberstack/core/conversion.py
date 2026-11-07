@@ -156,6 +156,39 @@ class FileHintConverter(Protocol):
         ...
 
 
+@runtime_checkable
+class UrlConverter(Protocol):
+    """A converter that reads its input itself, from a short-lived URL (D147).
+
+    When the raw store can lend objects by pre-signed URL, the convert worker
+    hands such a route the URL, the size and the MIME type instead of
+    reading the bytes; it still writes the artifacts and records the result.
+    Every other route, and every store that cannot presign, keeps the bytes
+    path. Usage the route incurs travels in ``ConversionResult.usage_events``.
+    """
+
+    accepts_url: bool
+    #: Lifetime of the URL the worker signs for this route, in seconds; long
+    #: enough for the route's whole call.
+    url_ttl_s: int
+
+    @property
+    def name(self) -> str:
+        """The route name recorded on representations."""
+        ...
+
+    @property
+    def version(self) -> str:
+        """The converter version (D38): a bump creates new representations."""
+        ...
+
+    def convert_from_url(
+        self, *, url: str, size: int, mime: str, hints: FileHints
+    ) -> ConversionResult:
+        """Produce the Markdown reading of the object behind ``url``."""
+        ...
+
+
 class ConversionRouter:
     """Route an input MIME type to its configured converter (D38 routing table)."""
 

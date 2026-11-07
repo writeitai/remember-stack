@@ -76,6 +76,7 @@ _PORT_EXPORTS = {
     "MountPublisherPort",
     "ObjectStorePort",
     "ObjectPurgePort",
+    "PresignedReadPort",
     "PostgresReadPoolPort",
     "ProjectionPurgePort",
     "SystemOnePort",
@@ -256,11 +257,11 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_fourteen_defined_protocols() -> None:
-    """Keep D61/D74 seams plus bounded PostgreSQL read admission explicit."""
+def test_inventory_exports_exactly_fifteen_defined_protocols() -> None:
+    """Keep D61/D74 seams, bounded PostgreSQL reads and presigned reads explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 14
+    assert len(_defined_protocols()) == 15
 
 
 def test_representative_fakes_conform_structurally() -> None:
