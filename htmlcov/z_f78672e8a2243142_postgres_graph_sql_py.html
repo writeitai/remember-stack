@@ -55,8 +55,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">15 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">15<span class="text"> run</span></button>
+            <span class="text">17 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">17<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_f78672e8a2243142_processing_layers_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-06 13:24 +0000
+            created at 2026-11-07 13:00 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -82,13 +82,13 @@
     </div>
 </header>
 <main id="source">
-    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">&quot;&quot;&quot;Static PostgreSQL 19 SQL/PGQ statements used by the typed graph API.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">&quot;&quot;&quot;Static one-hop graph statements used by the typed graph API (D98).</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">PostgreSQL 19 supports fixed graph patterns but not quantified or shortest</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">paths, so the one-hop neighborhood shape lives here. A separate</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">bounded relational guard runs first in the same repeatable-read transaction.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">Application code executes ``GRAPH_TABLE`` only when that guard admits the</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">request; refusal therefore cannot rely on planner short-circuit behavior.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">The one-hop neighborhood is plain relational SQL over the live graph&#x27;s edge</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">views. A separate bounded relational guard runs first in the same</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">repeatable-read transaction. Application code executes the one-hop read only</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">when that guard admits the request; refusal therefore cannot rely on planner</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">short-circuit behavior.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="str">Every edge scan also applies the D140 &#167;8.1 evidence gate</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="str">(``rememberstack_graph_internal.relation_evidence_in_scope``) in the same</span>&nbsp;</span><span class="r"></span></p>
@@ -104,14 +104,14 @@
     <p class="run"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t">    <span class="nam">observed</span> <span class="op">=</span> <span class="nam">statement</span><span class="op">.</span><span class="nam">count</span><span class="op">(</span><span class="nam">old</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t">    <span class="key">if</span> <span class="nam">observed</span> <span class="op">!=</span> <span class="nam">count</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t">        <span class="key">raise</span> <span class="nam">RuntimeError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">            <span class="fst">f&quot;</span><span class="fst">SQL/PGQ template marker expected </span><span class="op">{</span><span class="nam">count</span><span class="op">}</span><span class="fst"> occurrence(s), observed </span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">            <span class="fst">f&quot;</span><span class="fst">graph SQL template marker expected </span><span class="op">{</span><span class="nam">count</span><span class="op">}</span><span class="fst"> occurrence(s), observed </span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">            <span class="fst">f&quot;</span><span class="op">{</span><span class="nam">observed</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">old</span><span class="op">!</span><span class="nam">r</span><span class="op">}</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">    <span class="key">return</span> <span class="nam">statement</span><span class="op">.</span><span class="nam">replace</span><span class="op">(</span><span class="nam">old</span><span class="op">,</span> <span class="nam">new</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t"><span class="com"># This guard selects only identifiers and counts. Both endpoint lookups start</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t"><span class="com"># with deployment_id and the anchor; budget + 1 proves refusal without PGQ.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t"><span class="com"># with deployment_id and the anchor; budget + 1 proves refusal before the read.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t"><span class="nam">CURRENT_NEIGHBORHOOD_GUARD</span><span class="op">:</span> <span class="nam">Final</span> <span class="op">=</span> <span class="str">r&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t"><span class="str">WITH</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t"><span class="str">bounds AS (</span>&nbsp;</span><span class="r"></span></p>
@@ -231,52 +231,62 @@
     <p class="run run2"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t"><span class="com"># PostgreSQL 19 Beta 3 produces an unbounded two-hop view-backed plan, so the</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t"><span class="com"># request path uses PGQ here and the bounded frontier helper for depth two up.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t"><span class="nam">CURRENT_NEIGHBORHOOD_PGQ</span><span class="op">:</span> <span class="nam">Final</span> <span class="op">=</span> <span class="str">r&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t"><span class="str">WITH bounds AS (</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t"><span class="str">  SELECT CAST(:deployment_id AS uuid) AS deployment_id,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t"><span class="str">         CAST(:anchor_id AS uuid) AS anchor_id</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t"><span class="str">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t"><span class="str">SELECT 1 AS hops, ARRAY[g.relation_id] AS relation_ids,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t"><span class="str">       ARRAY[b.anchor_id, g.neighbor_id] AS node_ids</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t"><span class="str">FROM bounds AS b,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t"><span class="str">     GRAPH_TABLE (</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t"><span class="str">       memory_v1.memory_current</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t"><span class="str">       MATCH (x IS entity)-[r IS relates]-(y IS entity)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t"><span class="str">       WHERE x.deployment_id = b.deployment_id</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t"><span class="str">         AND r.deployment_id = b.deployment_id</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t"><span class="str">         AND y.deployment_id = b.deployment_id</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t"><span class="str">         AND x.entity_id = b.anchor_id</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t"><span class="str">         AND y.entity_id &lt;&gt; x.entity_id</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t"><span class="str">         AND (CAST(:predicates AS text[]) IS NULL</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t"><span class="str">              OR r.predicate = ANY(CAST(:predicates AS text[])))</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t"><span class="str">         AND rememberstack_graph_internal.relation_evidence_in_scope(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t"><span class="str">               b.deployment_id, r.relation_id,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t172" href="#t172">172</a></span><span class="t"><span class="str">               statement_timestamp(), statement_timestamp(), statement_timestamp())</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t"><span class="str">       COLUMNS (r.relation_id AS relation_id, y.entity_id AS neighbor_id)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t"><span class="str">     ) AS g</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t177" href="#t177">177</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t178" href="#t178">178</a></span><span class="t"><span class="nam">HISTORY_NEIGHBORHOOD_PGQ</span><span class="op">:</span> <span class="nam">Final</span> <span class="op">=</span> <span class="nam">_replace_exact</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t179" href="#t179">179</a></span><span class="t">    <span class="nam">statement</span><span class="op">=</span><span class="nam">_replace_exact</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t180" href="#t180">180</a></span><span class="t">        <span class="nam">statement</span><span class="op">=</span><span class="nam">_replace_exact</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t181" href="#t181">181</a></span><span class="t">            <span class="nam">statement</span><span class="op">=</span><span class="nam">CURRENT_NEIGHBORHOOD_PGQ</span><span class="op">,</span> <span class="nam">old</span><span class="op">=</span><span class="nam">_GATE_NOW</span><span class="op">,</span> <span class="nam">new</span><span class="op">=</span><span class="nam">_GATE_HISTORY</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t182" href="#t182">182</a></span><span class="t">        <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t183" href="#t183">183</a></span><span class="t">        <span class="nam">old</span><span class="op">=</span><span class="str">&quot;memory_v1.memory_current&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t184" href="#t184">184</a></span><span class="t">        <span class="nam">new</span><span class="op">=</span><span class="str">&quot;memory_v1.memory_history&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t">    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t">    <span class="nam">old</span><span class="op">=</span><span class="str">&quot;AND (CAST(:predicates AS text[]) IS NULL\n              OR r.predicate&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t">    <span class="nam">new</span><span class="op">=</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">        <span class="str">&quot;AND (r.ingested_at IS NULL OR r.ingested_at &lt;= CAST(:believed_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t">        <span class="str">&quot;         AND (r.invalidated_at IS NULL OR r.invalidated_at &gt; CAST(:believed_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t">        <span class="str">&quot;         AND r.valid_from &lt;= CAST(:valid_at AS timestamptz)\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t">        <span class="str">&quot;         AND (r.valid_precision=&#x27;open&#x27; OR r.valid_until &gt; CAST(:valid_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t192" href="#t192">192</a></span><span class="t">        <span class="str">&quot;         AND (CAST(:predicates AS text[]) IS NULL\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t193" href="#t193">193</a></span><span class="t">        <span class="str">&quot;              OR r.predicate&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t194" href="#t194">194</a></span><span class="t">    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t195" href="#t195">195</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t"><span class="com"># The one-hop read joins the live edge views directly. Both endpoints of every</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t"><span class="com"># edge row are already live entity vertices (the views join entities_live), so</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t"><span class="com"># no vertex join is needed. One branch per edge direction keeps each scan</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t"><span class="com"># anchored on an indexed endpoint; a self-loop is never a neighbor. The D140</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t"><span class="com"># evidence gate runs above an OFFSET 0 fence, as in the guard. Depth two and</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t"><span class="com"># above use the bounded frontier helpers.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t"><span class="nam">_ONE_HOP</span> <span class="op">=</span> <span class="str">r&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t"><span class="str">WITH bounds AS (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t"><span class="str">  SELECT CAST(:deployment_id AS uuid) AS deployment_id,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t"><span class="str">         CAST(:anchor_id AS uuid) AS anchor_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t"><span class="str">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t"><span class="str">SELECT 1 AS hops, ARRAY[edge.relation_id] AS relation_ids,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t"><span class="str">       ARRAY[b.anchor_id, edge.neighbor_id] AS node_ids</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t"><span class="str">FROM bounds AS b</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t"><span class="str">CROSS JOIN LATERAL (</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t"><span class="str">  SELECT r.relation_id, r.object_entity_id AS neighbor_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t"><span class="str">  FROM {edges} AS r</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t"><span class="str">  WHERE r.deployment_id = b.deployment_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t"><span class="str">    AND r.subject_entity_id = b.anchor_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t"><span class="str">    AND r.object_entity_id &lt;&gt; b.anchor_id{clock}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t"><span class="str">    AND (CAST(:predicates AS text[]) IS NULL</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t"><span class="str">         OR r.predicate = ANY(CAST(:predicates AS text[])))</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t172" href="#t172">172</a></span><span class="t"><span class="str">  UNION ALL</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t"><span class="str">  SELECT r.relation_id, r.subject_entity_id AS neighbor_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t"><span class="str">  FROM {edges} AS r</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t"><span class="str">  WHERE r.deployment_id = b.deployment_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t"><span class="str">    AND r.object_entity_id = b.anchor_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t177" href="#t177">177</a></span><span class="t"><span class="str">    AND r.subject_entity_id &lt;&gt; b.anchor_id{clock}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t178" href="#t178">178</a></span><span class="t"><span class="str">    AND (CAST(:predicates AS text[]) IS NULL</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t179" href="#t179">179</a></span><span class="t"><span class="str">         OR r.predicate = ANY(CAST(:predicates AS text[])))</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t180" href="#t180">180</a></span><span class="t"><span class="str">  -- fence: the gate must run on the anchored edges only, never be pushed</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t181" href="#t181">181</a></span><span class="t"><span class="str">  -- down to every relation row of the deployment inside the edge view</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t182" href="#t182">182</a></span><span class="t"><span class="str">  OFFSET 0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t183" href="#t183">183</a></span><span class="t"><span class="str">) AS edge</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t184" href="#t184">184</a></span><span class="t"><span class="str">WHERE rememberstack_graph_internal.relation_evidence_in_scope(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t"><span class="str">      b.deployment_id, edge.relation_id,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t"><span class="str">      {gate}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t"><span class="nam">_HISTORY_CLOCK</span> <span class="op">=</span> <span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t"><span class="str">    AND (r.ingested_at IS NULL OR r.ingested_at &lt;= CAST(:believed_at AS timestamptz))</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t"><span class="str">    AND (r.invalidated_at IS NULL OR r.invalidated_at &gt; CAST(:believed_at AS timestamptz))</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t192" href="#t192">192</a></span><span class="t"><span class="str">    AND r.valid_from &lt;= CAST(:valid_at AS timestamptz)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t193" href="#t193">193</a></span><span class="t"><span class="str">    AND (r.valid_precision=&#x27;open&#x27; OR r.valid_until &gt; CAST(:valid_at AS timestamptz))&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t194" href="#t194">194</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t195" href="#t195">195</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t"><span class="nam">CURRENT_NEIGHBORHOOD_ONE_HOP</span><span class="op">:</span> <span class="nam">Final</span> <span class="op">=</span> <span class="nam">_ONE_HOP</span><span class="op">.</span><span class="nam">format</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t">    <span class="nam">edges</span><span class="op">=</span><span class="str">&quot;rememberstack_graph_internal.relations_current&quot;</span><span class="op">,</span> <span class="nam">clock</span><span class="op">=</span><span class="str">&quot;&quot;</span><span class="op">,</span> <span class="nam">gate</span><span class="op">=</span><span class="nam">_GATE_NOW</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t"><span class="nam">HISTORY_NEIGHBORHOOD_ONE_HOP</span><span class="op">:</span> <span class="nam">Final</span> <span class="op">=</span> <span class="nam">_ONE_HOP</span><span class="op">.</span><span class="nam">format</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">    <span class="nam">edges</span><span class="op">=</span><span class="str">&quot;rememberstack_graph_internal.relations_history&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t203" href="#t203">203</a></span><span class="t">    <span class="nam">clock</span><span class="op">=</span><span class="nam">_HISTORY_CLOCK</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t204" href="#t204">204</a></span><span class="t">    <span class="nam">gate</span><span class="op">=</span><span class="nam">_GATE_HISTORY</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -286,7 +296,7 @@
             <a class="nav" href="z_f78672e8a2243142_processing_layers_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-06 13:24 +0000
+            created at 2026-11-07 13:00 +0000
         </p>
     </div>
 </footer>
