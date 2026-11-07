@@ -230,28 +230,15 @@ for it; it will not become ready on its own.
 
 <Cloud>
 
-Text metering on remember.dev adds these:
-
-| Status | `detail` | Cause |
-|---|---|---|
-| `413` | `source_bytes_limit_exceeded` | Text metering is on and the file is over 10,000,000 bytes. |
-| `409` | `rate_class_unavailable` | Text metering is on and the bytes are a binary format (PDF, PNG, JPEG, GIF, ZIP, gzip, RIFF, Ogg, MP3, MP4). |
-| `422` | `rate_class_ambiguous` | Text metering is on and the file is not plain UTF-8 text or Markdown: the MIME type is not `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or empty; or the text starts with HTML, XML, SVG or RTF markup; or it is not valid UTF-8; or it contains control characters other than tab, newline and carriage return. |
-| `422` | `empty_text` | Text metering is on and the file is empty or only whitespace. |
-
-</Cloud>
-
-<Cloud>
-
 remember.dev caps bodies at 100,000,000 bytes and requires `Content-Length`.
 On remember.dev the spend hold is placed before the body cap is checked, and
 the control plane refuses an over-cap hold itself. The engine then answers an
 over-cap body with `503` `spend_lease_unavailable` rather than `413`. Treat
 both as "too large" when the body is over 100,000,000 bytes.
 
-Text metering applies on deployments that measure processed text for billing,
-which is remember.dev. There, today, `POST /ingest` accepts plain text and
-Markdown only.
+A metered deployment (remember.dev) refuses no type or size of file at
+ingest: it measures each new version in the convert stage, and a file no
+route reads is stored and carded without a processing charge.
 
 </Cloud>
 

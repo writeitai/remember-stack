@@ -14,25 +14,18 @@ balance and caps) are in [Spend caps and auto top-up](/docs/cloud/spend-controls
 
 ## Ingest
 
-remember.dev accepts text only. Every document you send to
-`POST /ingest` is checked before anything is stored, processed or charged.
+remember.dev reads the same formats as a stock self-hosted engine:
+text, Markdown, code, HTML, EPUB, Word, PowerPoint, Excel, CSV, email, notebooks and PDF (every page read with OCR). Images, audio, video and archives are stored and described by a
+card; they are not read and carry no processing charge. Every file is
+stored first; processing starts once its measurement is approved against
+your balance and caps.
 
 | Check | Limit | Refusal |
 |---|---|---|
 | Request body | 100,000,000 bytes | `413`, `body_too_large` |
-| Document text | 10,000,000 bytes | `413`, `source_bytes_limit_exceeded` |
-| Empty or whitespace-only document | not accepted | `422`, `empty_text` |
-| Binary file (PDF, PNG, JPEG, GIF, ZIP-based formats such as DOCX, gzip, audio or video containers) | not accepted | `409`, `rate_class_unavailable` |
-| Declared type other than `text/markdown`, `text/x-markdown`, `text/plain` or `application/octet-stream` | not accepted | `422`, `rate_class_ambiguous` |
-| Not valid UTF-8, or contains control characters other than tab, line feed and carriage return | not accepted | `422`, `rate_class_ambiguous` |
-| Starts with markup: HTML, XML, SVG, RTF, or any tag such as `<details>` as the first non-blank content | not accepted | `422`, `rate_class_ambiguous` |
 
-In practice the text limit is the one that matters: a document can be at
-most 10,000,000 bytes of UTF-8 text. A Markdown document is stored as
-`text/markdown`; anything else that passes is stored as `text/plain`.
-
-To ingest a PDF, a Word document or a web page, convert it to Markdown or
-plain text yourself first and send the text. Keep the original; see
+A larger file goes through a direct upload instead of one request body.
+Keep your originals; see
 [Data handling and security](/docs/cloud/data-and-security).
 
 ## Storage

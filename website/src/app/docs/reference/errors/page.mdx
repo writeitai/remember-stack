@@ -91,19 +91,6 @@ seconds. `wait_for_readiness` raises
 
 <Cloud>
 
-remember.dev meters processed text and adds these:
-
-| Status | `detail` | Meaning | What to do |
-|---|---|---|---|
-| `409` | `rate_class_unavailable` | Text metering: the file is a binary format. | Send plain text or Markdown. |
-| `413` | `source_bytes_limit_exceeded` | Text metering: the file is over 10,000,000 bytes. | Split the document. |
-| `422` | `rate_class_ambiguous` | Text metering: the file is not plain UTF-8 text or Markdown. | Convert it to plain text or Markdown first. |
-| `422` | `empty_text` | Text metering: the file is empty or whitespace. | Send content. |
-
-</Cloud>
-
-<Cloud>
-
 ### Spend refusals (remember.dev)
 
 Returned by ingest, search, SQL query and operation routes before any work

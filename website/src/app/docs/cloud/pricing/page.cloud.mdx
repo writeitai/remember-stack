@@ -69,9 +69,10 @@ takes.
 The charge is taken only after processing succeeds. A rate may set a
 minimum billable quantity per document; the rate card shows it.
 
-Text is the only kind of input with a customer price, and remember.dev
-accepts only text: UTF-8 Markdown and plain text. Other kinds of input are
-refused before anything is stored or charged; see
+Processing is priced by kind of input on the rate card: a text document
+by its characters, a PDF by its pages (every page is read with OCR). A file
+that is stored but not read (an image, audio, video or an archive) has no
+processing charge; its storage is charged as stored data. See
 [Limits](/docs/cloud/limits#ingest).
 
 ### Stored data
