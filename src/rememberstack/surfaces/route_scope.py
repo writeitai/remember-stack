@@ -29,7 +29,6 @@ permission.
 
 from __future__ import annotations
 
-from collections.abc import Collection
 import re
 
 from remember.http_routes import _READ_ROUTES
@@ -57,12 +56,7 @@ _ROUTE_DECIDES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-def required_scope(
-    *,
-    method: str,
-    path: str,
-    extra_ingest_routes: tuple[tuple[str, re.Pattern[str]], ...] = (),
-) -> PerimeterScope | None:
+def required_scope(*, method: str, path: str) -> PerimeterScope | None:
     """The scope a caller needs for this route.
 
     ``None`` means the route decides for itself (see :data:`_ROUTE_DECIDES`);
@@ -76,32 +70,13 @@ def required_scope(
     for route_method, pattern in _ROUTE_DECIDES:
         if route_method == upper and pattern.match(normalised):
             return None
-    for route_method, pattern in (*_INGEST_ROUTES, *extra_ingest_routes):
+    for route_method, pattern in _INGEST_ROUTES:
         if route_method == upper and pattern.match(normalised):
             return PerimeterScope.INGEST
     for route_method, pattern in _READ_ROUTES:
         if route_method == upper and pattern.match(normalised):
             return PerimeterScope.READ
     return PerimeterScope.WRITE
-
-
-def ingest_route_patterns(
-    routes: Collection[tuple[str, str]],
-) -> tuple[tuple[str, re.Pattern[str]], ...]:
-    """Compile host routes ``(METHOD, "/path/{param}")`` that ingest scope may reach.
-
-    For a host that mounts its own upload routes in the engine app (D147): a
-    narrow ingest credential may then call them as it may call
-    ``POST /ingest``. Each ``{param}`` matches one non-empty path segment.
-    """
-    compiled = []
-    for method, template in routes:
-        parts = re.split(r"(\{[^{}/]+\})", template.rstrip("/") or "/")
-        body = "".join(
-            "[^/]+" if part.startswith("{") else re.escape(part) for part in parts
-        )
-        compiled.append((method.upper(), re.compile(f"^{body}$")))
-    return tuple(compiled)
 
 
 def routes_that_decide_for_themselves() -> tuple[tuple[str, str], ...]:

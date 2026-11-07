@@ -288,6 +288,11 @@ def test_a_host_route_can_be_opened_to_ingest_credentials() -> None:
         ingest_scope_routes=(("POST", "/uploads/{upload_id}/complete"),),
     )
 
+    # Declared first, so it wins for /uploads/admin/complete; it is not listed.
+    @app.post("/uploads/admin/complete")
+    def admin_complete() -> dict[str, str]:
+        return {"admin": "yes"}
+
     @app.post("/uploads/{upload_id}/complete")
     def complete(upload_id: str) -> dict[str, str]:
         return {"completed": upload_id}
@@ -303,6 +308,10 @@ def test_a_host_route_can_be_opened_to_ingest_credentials() -> None:
     ingest = {"Authorization": "Bearer ingest"}
     assert client.post("/d/one/uploads/u1/complete", headers=ingest).status_code == 200
     assert client.post("/d/one/uploads/u1/share", headers=ingest).status_code == 403
+    # The listed template never covers another handler matching its pattern.
+    assert (
+        client.post("/d/one/uploads/admin/complete", headers=ingest).status_code == 403
+    )
     assert (
         client.post(
             "/d/one/uploads/u1/share", headers={"Authorization": "Bearer write"}

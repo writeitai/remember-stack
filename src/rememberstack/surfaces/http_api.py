@@ -162,7 +162,6 @@ from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
 from rememberstack.surfaces.query_sandbox.result import QueryResult
-from rememberstack.surfaces.route_scope import ingest_route_patterns
 from rememberstack.surfaces.route_scope import operation_scope
 from rememberstack.surfaces.route_scope import required_scope
 
@@ -679,8 +678,10 @@ def build_api(
     otherwise valid ingest.
 
     `ingest_scope_routes` names a host's own routes mounted in this app, as
-    ``(METHOD, "/path/{param}")``, that a narrow ingest credential may reach
-    as it may reach `POST /ingest` (D147); every other host route needs WRITE.
+    ``(METHOD, "/path/{param}")`` exactly as the route is declared, that a
+    narrow ingest credential may reach as it may reach `POST /ingest` (D147).
+    A grant applies to the declared route only, never to a route the scope
+    table already classifies; every other host route needs WRITE.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).
@@ -733,7 +734,9 @@ def build_api(
         dependencies=dependencies,
     )
     app.state.api_deployment = deployment
-    app.state.ingest_scope_routes = ingest_route_patterns(ingest_scope_routes)
+    app.state.ingest_scope_routes = frozenset(
+        (method.upper(), path) for method, path in ingest_scope_routes
+    )
     # Before any route is declared, so every one is built held: a request's
     # deployment may bring admission limits even when this one has none. A
     # held callable without a hold runs unchanged.
@@ -2509,11 +2512,19 @@ def _perimeter(
     # `POST /ingest` does not). See ``route_scope``.
     # The router's own path: relative to any mount and decoded, so a mounted
     # app classifies its routes exactly as an unmounted one.
-    required = required_scope(
-        method=request.method,
-        path=get_route_path(request.scope),
-        extra_ingest_routes=request.app.state.ingest_scope_routes,
-    )
+    required = required_scope(method=request.method, path=get_route_path(request.scope))
+    # D147: a host route the app was built to open to ingest credentials,
+    # matched by the route FastAPI selected (its method and template), so a
+    # listed template never covers another handler. Only routes the table
+    # leaves at WRITE can be opened this way.
+    route = request.scope.get("route")
+    if (
+        required is PerimeterScope.WRITE
+        and isinstance(route, APIRoute)
+        and (request.method.upper(), route.path)
+        in request.app.state.ingest_scope_routes
+    ):
+        required = PerimeterScope.INGEST
     # ``None`` means the route decides for itself, because its authority is
     # a property of registry data rather than of the path. Today that is
     # only ``POST /operations/{name}``, whose handler asks the descriptor.
