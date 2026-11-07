@@ -124,6 +124,8 @@ def upgrade() -> None:
 
 
 _DOWN = """
+LOCK TABLE managed_ingest_measurements IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
   IF EXISTS (

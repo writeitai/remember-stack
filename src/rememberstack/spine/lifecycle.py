@@ -1553,10 +1553,12 @@ _SELECT_READY_CYCLES = text(
           WHERE v.sync_cycle_id = y.cycle_id
             AND w.status IN ('pending', 'running', 'failed')
             -- D117: live no-route work still lacks conversion evidence and
-            -- holds the retraction barrier. Explicitly deleted sources no
-            -- longer participate, and must not strand their cycle forever.
+            -- holds the retraction barrier; so does work parked for the
+            -- meter's approval (D150). Explicitly deleted sources no longer
+            -- participate, and must not strand their cycle forever.
             AND (
-                w.defer_reason IS DISTINCT FROM 'no_route'::processing_defer_reason
+                w.defer_reason IS NULL
+                OR w.defer_reason::text NOT IN ('no_route', 'admission')
                 OR (
                     v.deleted_at IS NULL
                     AND EXISTS (
