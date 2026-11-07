@@ -328,3 +328,107 @@ def test_an_oversized_file_is_carded_without_reading_it(
     assert "- Not read: the file is larger than the 10-byte reading limit" in (
         card.read_text(encoding="utf-8")
     )
+
+
+@pytest.mark.parametrize(
+    ("mime", "filename", "body"),
+    [
+        ("text/markdown", "notes.md", _BODY),
+        ("application/pdf", "scan.pdf", b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"),
+    ],
+)
+def test_an_oversized_file_reaches_a_url_route(
+    database_engine: Engine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mime: str,
+    filename: str,
+    body: bytes,
+) -> None:
+    """D147: no size refusal or card when the route fetches the file by URL."""
+    import dataclasses
+
+    from rememberstack.core import file_card
+    from rememberstack.core import format_registry
+    from rememberstack.model import ConversionResult
+    from rememberstack.model import FileHints
+
+    original = format_registry.family_for_mime
+
+    def small(*, mime: str):  # noqa: ANN202
+        return dataclasses.replace(original(mime=mime), reading_limit_bytes=10)
+
+    monkeypatch.setattr(format_registry, "family_for_mime", small)
+    monkeypatch.setattr(file_card, "family_for_mime", small)
+
+    class _PresigningStore(LocalFSObjectStore):
+        reads = 0
+
+        def read_bytes(self, *, key: ObjectKey) -> bytes:
+            type(self).reads += 1
+            return super().read_bytes(key=key)
+
+        def presign_get(self, *, key: ObjectKey, ttl_s: int) -> str:
+            return f"memory://{key.root}?ttl={ttl_s}"
+
+    class _UrlRoute:
+        accepts_url = True
+        url_ttl_s = 60
+        calls: list[tuple[int, str]] = []
+
+        @property
+        def name(self) -> str:
+            return "remote"
+
+        @property
+        def version(self) -> str:
+            return "remote-1"
+
+        def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+            raise AssertionError("the bytes path must not run")
+
+        def convert_from_url(
+            self, *, url: str, size: int, mime: str, hints: FileHints
+        ) -> ConversionResult:
+            type(self).calls.append((size, mime))
+            return MarkdownPassthroughConverter().convert(
+                content=b"# Remote\n", mime="text/markdown"
+            )
+
+    raw = _PresigningStore(root=tmp_path / "raw")
+    artifacts = LocalFSObjectStore(root=tmp_path / "artifacts")
+    ingestor = UploadIngestor(
+        catalog=DocumentCatalog(engine=database_engine),
+        raw_store=raw,
+        admission=ForgetCatalog(engine=database_engine),
+        routable_mimes=frozenset({mime}),
+    )
+    ingestor.ingest_stored(
+        deployment_id=_DEPLOYMENT_ID,
+        key=_put(raw, "uploads/dddddddddddddddd", body),
+        size=len(body),
+        mime=mime,
+        filename=filename,
+    )
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.CONVERT,
+        handler=ConvertHandler(
+            catalog=DocumentCatalog(engine=database_engine),
+            raw_store=raw,
+            artifact_store=artifacts,
+            router=ConversionRouter(routes={mime: _UrlRoute()}),
+        ),
+    )
+    worker = Worker(
+        ledger=WorkLedger(engine=database_engine, settings=WorkLedgerSettings()),
+        registry=registry,
+    )
+    result = worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.CONVERT,
+        lane=ProcessingLane.STEADY,
+    )
+    assert result.outcome is RunResultOutcome.SUCCEEDED
+    assert _UrlRoute.calls == [(len(body), mime)]
+    assert _PresigningStore.reads == 0

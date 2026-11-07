@@ -392,6 +392,23 @@ def test_adapter_maps_403() -> None:
     assert error.value.detail == "dispatch_refused:x"
 
 
+def test_adapter_passes_an_oversize_refusal_through() -> None:
+    """CP 413 becomes SpendLeaseRefused, so the caller sees 413, not 503."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(413, json={"detail": "hold_too_large"})
+
+    lease = ControlPlaneSpendLease(
+        base_url="https://example.test/v1/spend", transport=httpx.MockTransport(handler)
+    )
+    with pytest.raises(SpendLeaseRefused) as error:
+        lease.reserve(
+            authorization="Bearer x", path_id="ingest", content_length=1 << 40
+        )
+    assert error.value.status_code == 413
+    assert error.value.detail == "hold_too_large"
+
+
 def test_lease_200_open_query_sql_commits() -> None:
     """D109: POST /query/sql reserves under path_id='search' and commits on 200."""
     lease = _FakeLease()

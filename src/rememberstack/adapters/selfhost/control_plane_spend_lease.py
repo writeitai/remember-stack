@@ -95,7 +95,9 @@ class ControlPlaneSpendLease:
             raise SpendLeaseUnavailable("spend lease timed out") from error
         except httpx.HTTPError as error:
             raise SpendLeaseUnavailable("spend lease unreachable") from error
-        if response.status_code in {401, 403, 423}:
+        # 413: the control plane refuses a hold for an over-size request;
+        # the caller gets that answer, not "unavailable".
+        if response.status_code in {401, 403, 413, 423}:
             raise SpendLeaseRefused(
                 status_code=response.status_code,
                 detail=_detail_from_response(response=response),

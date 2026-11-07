@@ -24,6 +24,7 @@ from pathlib import PurePosixPath
 import re
 import tempfile
 from typing import Final
+from typing import NoReturn
 from typing import Protocol
 from uuid import NAMESPACE_URL
 from uuid import UUID
@@ -690,22 +691,26 @@ class ConvertHandler:
         source = self._catalog.convert_source(
             version_id=_payload_uuid(work=work, field="version_id")
         )
-        if (
-            source.mime == "application/pdf"
-            and source.byte_size is not None
-            and exceeds_reading_limit(mime=source.mime, byte_size=source.byte_size)
-        ):
-            limit = family_for_mime(mime=source.mime).reading_limit_bytes
-            error = f"PDF exceeds the pre-OCR reading limit of {limit} bytes"
-            self._catalog.mark_version_failed(version_id=source.version_id, error=error)
-            raise NonRetryableHandlerError(error)
+        oversized = source.byte_size is not None and exceeds_reading_limit(
+            mime=source.mime, byte_size=source.byte_size
+        )
         try:
             converter = self._converter_for(source=source)
         except UnroutableMimeError as err:
+            if source.mime == "application/pdf" and oversized:
+                self._fail_oversized_pdf(source=source)
             # Configuration can differ from the ingestor or resume command.
             # This runs before reading bytes or making a provider call, so the
             # runner may park and return the unused attempt (D117).
             raise NoRouteHandlerError(str(err), mime=source.mime) from err
+        if (
+            source.mime == "application/pdf"
+            and oversized
+            and not self._reads_by_url(converter)
+        ):
+            # The reading limit guards this process, which would read the PDF;
+            # a route that fetches it by URL is not bound by it (D147).
+            self._fail_oversized_pdf(source=source)
         provider_limit = getattr(converter, "provider_limit_bytes", None)
         if (
             source.mime == "application/pdf"
@@ -949,16 +954,35 @@ class ConvertHandler:
     def _converter_for(self, *, source: ConvertSource) -> Converter:
         """The routed converter, or a card for an oversized non-PDF file.
 
-        D138 §3: an oversized file is always carded, whatever the deployment's
-        route table maps; the card states the limit it exceeded.
+        D138 §3: an oversized file is carded, and the card states the limit it
+        exceeded, because converting it would read it into this process. A
+        route that fetches its input by URL from a presigning store reads
+        nothing here, so an oversized file goes to that route (D147).
         """
         if (
             source.mime != "application/pdf"
             and source.byte_size is not None
             and exceeds_reading_limit(mime=source.mime, byte_size=source.byte_size)
         ):
-            return CardConverter()
+            try:
+                routed = self._router.converter_for(mime=source.mime)
+            except UnroutableMimeError:
+                return CardConverter()
+            return routed if self._reads_by_url(routed) else CardConverter()
         return self._router.converter_for(mime=source.mime)
+
+    def _reads_by_url(self, converter: Converter) -> bool:
+        """Whether this route would fetch its input by URL instead of bytes."""
+        return isinstance(converter, UrlConverter) and isinstance(
+            self._raw_store, PresignedReadPort
+        )
+
+    def _fail_oversized_pdf(self, *, source: ConvertSource) -> NoReturn:
+        """Refuse a PDF this process would have to read beyond its limit."""
+        limit = family_for_mime(mime=source.mime).reading_limit_bytes
+        error = f"PDF exceeds the pre-OCR reading limit of {limit} bytes"
+        self._catalog.mark_version_failed(version_id=source.version_id, error=error)
+        raise NonRetryableHandlerError(error)
 
     def finalize_terminal_failure(self, *, work: ClaimedWork, error: str) -> None:
         """A convert whose retries exhausted must not leave the version in-flight."""

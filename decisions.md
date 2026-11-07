@@ -7417,7 +7417,12 @@ deployment's values into another's work.
      for any route; the size and pre-OCR limits are checked before the URL is signed. A non-PDF
      file over its family's reading limit is carded from its size and MIME alone
      (`CardConverter.convert_unread`), so the convert stage never reads an oversized
-     object, whichever route or store the deployment has.
+     object, whichever route or store the deployment has. The reading limits
+     (100 MB for office and PDF, 200 MB for spreadsheets; D138, D139) guard this process,
+     which would read the file, so they apply only on the bytes path (owner,
+     2026-11-07): a file over its limit whose route fetches it by URL from a presigning
+     store goes to that route instead of being refused (PDF) or carded. A route's own
+     declared `provider_limit_bytes` still applies.
    - *Register a stored object (2026-11-07).* `UploadIngestor.ingest_stored(deployment_id,
      key, size, mime, filename, title=None, source_path=None, ingested_by=None)` ingests a
      file a client wrote to the raw store itself (direct multipart upload by pre-signed
