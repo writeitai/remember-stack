@@ -255,7 +255,7 @@ class MistralOcrConverter:
         merged: dict[str, Any] | None = None
         pages: list[dict[str, Any]] = []
         billed = 0
-        processed = 0
+        totals: list[object] = []
 
         def billed_usage() -> tuple[ConverterUsageEvent, ...]:
             usage = _usage(
@@ -266,51 +266,55 @@ class MistralOcrConverter:
             )
             return (ConverterUsageEvent(call_key="ocr", usage=usage),)
 
-        for first, count, batch in pdf_page_batches(
+        batches = pdf_page_batches(
             source=source,
             max_bytes=settings.max_document_bytes,
             max_pages=settings.max_document_pages,
-        ):
-            try:
+        )
+        try:
+            for first, count, batch in batches:
                 raw = self._process(
                     content=batch, mime="application/pdf", allow_empty_pages=True
                 )
-            except (ConversionError, MistralOcrProviderError) as err:
-                if not billed:
-                    raise
-                raise ConverterLaneError(
-                    f"PDF OCR batch at page {first + 1} failed: {err}",
-                    usage_events=billed_usage(),
-                    failed_call_keys=("ocr",),
-                    retryable=isinstance(err, MistralOcrProviderError),
-                ) from err
-            billed += count
-            batch_pages = raw.get("pages")
-            indexes = (
-                [page.get("index") for page in batch_pages]
-                if isinstance(batch_pages, list)
-                and all(isinstance(page, dict) for page in batch_pages)
-                else []
-            )
-            if merged is None:
-                merged = raw
-            if not all(type(index) is int for index in indexes) or sorted(
-                indexes
-            ) != list(range(count)):
-                raise ConverterLaneError(
-                    f"PDF OCR incomplete: expected {count} pages from the batch at "
-                    f"page {first + 1}, received page indexes {indexes}",
-                    usage_events=billed_usage(),
-                    failed_call_keys=("ocr",),
-                    retryable=False,
+                billed += count
+                batch_pages = raw.get("pages")
+                indexes = (
+                    [page.get("index") for page in batch_pages]
+                    if isinstance(batch_pages, list)
+                    and all(isinstance(page, dict) for page in batch_pages)
+                    else []
                 )
-            assert isinstance(batch_pages, list)
-            pages.extend(
-                {**page, "index": page["index"] + first} for page in batch_pages
-            )
-            info = raw.get("usage_info")
-            if isinstance(info, dict) and isinstance(info.get("pages_processed"), int):
-                processed += info["pages_processed"]
+                if merged is None:
+                    merged = raw
+                if not all(type(index) is int for index in indexes) or sorted(
+                    indexes
+                ) != list(range(count)):
+                    raise ConverterLaneError(
+                        f"PDF OCR incomplete: expected {count} pages from the batch "
+                        f"at page {first + 1}, received page indexes {indexes}",
+                        usage_events=billed_usage(),
+                        failed_call_keys=("ocr",),
+                        retryable=False,
+                    )
+                assert isinstance(batch_pages, list)
+                pages.extend(
+                    {**page, "index": page["index"] + first}
+                    for page in sorted(batch_pages, key=lambda page: page["index"])
+                )
+                totals.append(raw.get("usage_info"))
+        except (ConversionError, MistralOcrProviderError) as err:
+            # Splitting or a later call failed after earlier batches were
+            # billed: their usage must still reach the ledger.
+            if not billed:
+                raise
+            raise ConverterLaneError(
+                f"PDF OCR stopped after {billed} of {source_pages} pages: {err}",
+                usage_events=billed_usage(),
+                failed_call_keys=("ocr",),
+                retryable=isinstance(err, MistralOcrProviderError),
+            ) from err
+        finally:
+            batches.close()
         assert merged is not None
         if billed != source_pages:
             raise ConverterLaneError(
@@ -322,9 +326,16 @@ class MistralOcrConverter:
             )
         merged = {**merged, "pages": pages}
         if isinstance(merged.get("usage_info"), dict):
+            # Diagnostic totals across every batch's response.
             merged["usage_info"] = {
-                **merged["usage_info"],
-                "pages_processed": processed,
+                key: sum(
+                    info[key]
+                    for info in totals
+                    if isinstance(info, dict) and type(info.get(key)) is int
+                )
+                if type(value) is int
+                else value
+                for key, value in merged["usage_info"].items()
             }
         usage = billed_usage()[0].usage
         try:

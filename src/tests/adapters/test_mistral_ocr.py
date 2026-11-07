@@ -685,3 +685,53 @@ def test_below_both_ceilings_the_request_is_the_single_whole_document() -> None:
     assert bodies == [
         "data:application/pdf;base64," + base64.b64encode(content).decode("ascii")
     ]
+
+
+def test_a_splitter_failure_after_billed_batches_carries_their_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Usage already billed survives a later split failure (D147)."""
+    from rememberstack.adapters.converters import mistral_ocr
+
+    real = mistral_ocr.pdf_page_batches
+
+    def one_then_fail(**kwargs: object):  # noqa: ANN202
+        batches = real(**kwargs)  # type: ignore[arg-type]
+        yield next(batches)
+        raise ConversionError("PDF page 5 alone is too large")
+
+    monkeypatch.setattr(mistral_ocr, "pdf_page_batches", one_then_fail)
+    with pytest.raises(ConverterLaneError) as failure:
+        _converter(_page_echo_transport([]), max_document_pages=4).convert(
+            content=_pdf(pages=_TEN_PAGES), mime="application/pdf"
+        )
+    assert not failure.value.retryable
+    assert failure.value.usage_events[0].usage.cost_usd == Decimal("0.004")
+
+
+def test_batch_pages_are_stitched_by_index_not_response_order() -> None:
+    """A batch answering its pages out of order still reads in page order."""
+    echo = _page_echo_transport([])
+
+    def reversed_pages(request: httpx.Request) -> httpx.Response:
+        response = echo.handle_request(request)
+        body = json.loads(response.content)
+        body["pages"].reverse()
+        return httpx.Response(200, json=body)
+
+    result = _converter(
+        httpx.MockTransport(reversed_pages), max_document_pages=2
+    ).convert(content=_pdf(pages=_TEN_PAGES), mime="application/pdf")
+    headings = [
+        line for line in result.document_md.splitlines() if line.startswith("#")
+    ]
+    assert headings == [f"# {text}" for text in _TEN_PAGES]
+
+
+def test_batching_leaves_pdfium_unlocked() -> None:
+    from rememberstack.adapters.converters import pdf as pdf_module
+
+    _converter(_page_echo_transport([]), max_document_pages=3).convert(
+        content=_pdf(pages=_TEN_PAGES), mime="application/pdf"
+    )
+    assert not pdf_module._PDFIUM_LOCK.locked()  # noqa: SLF001

@@ -1,18 +1,19 @@
 """PDF admission and metadata around the mandatory every-page OCR route."""
 
 from collections.abc import Callable
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from functools import partial
-import io
 import logging
 import mmap
 from pathlib import Path
 import re
+import tempfile
 import threading
+from typing import BinaryIO
 from typing import cast
 from typing import Final
 
@@ -263,71 +264,75 @@ def pdf_source_page_count(*, source: PdfSource) -> int:
 
 def pdf_page_batches(
     *, source: PdfSource, max_bytes: int, max_pages: int | None
-) -> Iterator[tuple[int, int, bytes]]:
+) -> Generator[tuple[int, int, bytes]]:
     """Split a PDF into page-range PDFs that each fit a provider's limits.
 
     Yields ``(first page index, page count, batch PDF bytes)`` in page order,
-    covering every page exactly once; only one batch is held at a time. A
-    batch is sized from the source's average page size, then shrunk until
-    its saved bytes fit ``max_bytes``; a single page larger than that fails
-    the conversion, because no split can send it.
+    covering every page exactly once. Each candidate batch is built in one
+    locked pdfium operation that opens the source, copies the pages, saves
+    them to a temporary file on disk and closes everything, so memory never
+    grows with the source or with an oversized candidate; only a batch that
+    fits ``max_bytes`` is read into memory. A batch is sized from the
+    source's average page size and shrunk until it fits; a single page
+    larger than ``max_bytes`` fails the conversion, because no split can
+    send it.
     """
-    document = _with_pdfium(
-        work=lambda: _open(source=source), what="PDF open for page batches"
-    )
-    try:
-        page_count = _with_pdfium(work=lambda: len(document), what="PDF page count")
-        total = pdf_source_size(source=source)
-        start = 0
-        while start < page_count:
-            remaining = page_count - start
-            size = max(1, min(remaining, int(page_count * max_bytes * 0.9 / total)))
-            if max_pages is not None:
-                size = min(size, max_pages)
-            while True:
-                batch = _with_pdfium(
+    page_count = pdf_source_page_count(source=source)
+    total = pdf_source_size(source=source)
+    start = 0
+    while start < page_count:
+        remaining = page_count - start
+        size = max(1, min(remaining, int(page_count * max_bytes * 0.9 / total)))
+        if max_pages is not None:
+            size = min(size, max_pages)
+        while True:
+            with tempfile.TemporaryFile() as spool:
+                saved = _with_pdfium(
                     work=partial(
-                        _batch_bytes, document=document, first=start, count=size
+                        _save_pages, source=source, first=start, count=size, out=spool
                     ),
                     what="PDF page batch",
                 )
-                if len(batch) <= max_bytes:
+                if saved <= max_bytes:
+                    spool.seek(0)
+                    batch = spool.read()
                     break
-                if size == 1:
-                    raise ConversionError(
-                        f"PDF page {start + 1} alone is {len(batch)} bytes, over "
-                        f"the OCR provider limit of {max_bytes} bytes"
-                    )
-                size = max(1, min(size - 1, int(size * max_bytes * 0.9 / len(batch))))
-            yield start, size, batch
-            start += size
-    finally:
-        _with_pdfium(work=document.close, what="PDF close")
+            if size == 1:
+                raise ConversionError(
+                    f"PDF page {start + 1} alone is {saved} bytes, over "
+                    f"the OCR provider limit of {max_bytes} bytes"
+                )
+            size = max(1, min(size - 1, int(size * max_bytes * 0.9 / saved)))
+        yield start, size, batch
+        start += size
 
 
 def _pdfium_input(*, source: PdfSource) -> bytes | str:
     return source if isinstance(source, bytes) else str(source)
 
 
-def _open(*, source: PdfSource) -> pypdfium2.PdfDocument:
+def _save_pages(*, source: PdfSource, first: int, count: int, out: BinaryIO) -> int:
+    """Copy pages ``first`` .. ``first + count - 1`` into a new PDF on ``out``.
+
+    Opens and closes every native document inside the one locked operation,
+    so nothing pdfium owns outlives the lock. Returns the saved size.
+    """
     try:
-        return pypdfium2.PdfDocument(_pdfium_input(source=source))
+        document = pypdfium2.PdfDocument(_pdfium_input(source=source))
     except pypdfium2.PdfiumError as err:
         raise ConversionError(f"the PDF could not be opened: {err}") from err
-
-
-def _batch_bytes(*, document: pypdfium2.PdfDocument, first: int, count: int) -> bytes:
-    """Save pages ``first`` .. ``first + count - 1`` as one new PDF."""
-    batch = pypdfium2.PdfDocument.new()
     try:
-        batch.import_pages(document, pages=list(range(first, first + count)))
-        buffer = io.BytesIO()
-        batch.save(buffer)
-        return buffer.getvalue()
-    except pypdfium2.PdfiumError as err:
-        raise ConversionError(f"the PDF pages could not be split: {err}") from err
+        batch = pypdfium2.PdfDocument.new()
+        try:
+            batch.import_pages(document, pages=list(range(first, first + count)))
+            batch.save(out)
+        except pypdfium2.PdfiumError as err:
+            raise ConversionError(f"the PDF pages could not be split: {err}") from err
+        finally:
+            batch.close()
     finally:
-        batch.close()
+        document.close()
+    return out.tell()
 
 
 def _with_pdfium[T](*, work: Callable[[], T], what: str) -> T:

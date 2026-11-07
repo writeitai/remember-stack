@@ -7431,10 +7431,13 @@ deployment's values into another's work.
      and the folded response is metered (every source page, one `ocr` usage event) and
      normalized exactly like one call, so every page is still OCR'd. Below both ceilings
      the request and the result are unchanged, so no version changes. Only a single page
-     over the byte ceiling fails. `PdfConverter.convert_path(path, mime)` and
-     `MistralOcrConverter.convert_path` do the same from a file on disk, reading one
-     batch at a time, for a host (such as a conversion service fed by URL) that must not
-     hold a large PDF in memory; the PDF route no longer declares a pre-OCR byte limit.
+     over the byte ceiling fails. Each candidate batch is built in one locked pdfium
+     operation (open, copy pages, save to a temporary file, close), so memory never
+     grows with the source or an oversized candidate; only a batch that fits is read.
+     A failure after billed batches carries their usage. `PdfConverter.convert_path(path,
+     mime)` and `MistralOcrConverter.convert_path` do the same from a file on disk, for a
+     host (such as a conversion service fed by URL) that must not hold a large PDF in
+     memory; the PDF route no longer declares a pre-OCR byte limit.
    - *Register a stored object (2026-11-07).* `UploadIngestor.ingest_stored(deployment_id,
      key, size, mime, filename, title=None, source_path=None, ingested_by=None)` ingests a
      file a client wrote to the raw store itself (direct multipart upload by pre-signed
