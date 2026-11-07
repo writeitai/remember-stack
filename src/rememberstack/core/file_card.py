@@ -26,6 +26,7 @@ import zlib
 from PIL import Image
 from PIL import UnidentifiedImageError
 
+from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import FORMAT_MIMES
 from rememberstack.model import ConversionCoverage
@@ -74,6 +75,24 @@ class CardConverter:
         self, *, content: bytes, mime: str, hints: FileHints | None = None
     ) -> ConversionResult:
         """Build the card; its facts come from headers and directories only."""
+        return self._card(size=len(content), content=content, mime=mime, hints=hints)
+
+    def convert_unread(
+        self, *, size: int, mime: str, hints: FileHints | None = None
+    ) -> ConversionResult:
+        """The card of a file over its reading limit, built without its bytes.
+
+        Such a card holds only metadata, so the convert stage never reads an
+        oversized object (D147); the result equals :meth:`convert`'s.
+        """
+        if not exceeds_reading_limit(mime=mime, byte_size=size):
+            raise ValueError("only a file over its reading limit is carded unread")
+        return self._card(size=size, content=None, mime=mime, hints=hints)
+
+    def _card(
+        self, *, size: int, content: bytes | None, mime: str, hints: FileHints | None
+    ) -> ConversionResult:
+        """Build the card from the size, the format and (within limits) bytes."""
         family = family_for_mime(mime=mime)
         file_name = _one_line(value=hints.file_name if hints is not None else None)
         source_path = _one_line(value=hints.source_path if hints is not None else None)
@@ -82,12 +101,12 @@ class CardConverter:
             ("Source path", source_path or "unknown"),
             ("Family", family.name),
             ("Format", mime),
-            ("Byte size", f"{len(content):,} bytes"),
+            ("Byte size", f"{size:,} bytes"),
         ]
         sections: list[str] = []
         warnings: list[str] = []
         limit = family.reading_limit_bytes
-        if limit is not None and len(content) > limit:
+        if limit is not None and size > limit:
             fields.append(
                 (
                     "Not read",
@@ -95,6 +114,8 @@ class CardConverter:
                     f"for {family.name} files",
                 )
             )
+        elif content is None:
+            raise ValueError("a card within the reading limit reads the bytes")
         elif family.name == "image":
             fields.append(_image_field(content=content, mime=mime, warnings=warnings))
         elif mime == _ZIP_MIME:

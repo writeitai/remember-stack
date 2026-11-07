@@ -7414,7 +7414,10 @@ deployment's values into another's work.
      keeps the in-process bytes path, the self-host default. The same capability lets an
      OCR or vision route have its provider fetch the input by URL instead of receiving
      uploaded bytes. Usage the route incurs is returned in `usage_events` and metered as
-     for any route; the size and pre-OCR limits are checked before the URL is signed.
+     for any route; the size and pre-OCR limits are checked before the URL is signed. A
+     file over its family's reading limit is carded from its size and MIME alone
+     (`CardConverter.convert_unread`), so the convert stage never reads an oversized
+     object, whichever route or store the deployment has.
    - *Register a stored object (2026-11-07).* `UploadIngestor.ingest_stored(deployment_id,
      key, size, mime, filename, title=None, source_path=None, ingested_by=None)` ingests a
      file a client wrote to the raw store itself (direct multipart upload by pre-signed

@@ -328,3 +328,23 @@ def test_oversized_file_card_states_the_reason(monkeypatch: pytest.MonkeyPatch) 
         "- Not read: the file is larger than the 10-byte reading limit for pdf files"
         in result.document_md
     )
+
+
+def test_an_oversized_card_needs_no_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D147: the card of a file over its limit is built from its size alone."""
+    from rememberstack.core import format_registry
+
+    original = format_registry.family_for_mime
+
+    def small(*, mime: str):  # noqa: ANN202
+        return dataclasses.replace(original(mime=mime), reading_limit_bytes=10)
+
+    monkeypatch.setattr(format_registry, "family_for_mime", small)
+    monkeypatch.setattr(card_module, "family_for_mime", small)
+    hints = FileHints(file_name="scan.pdf", source_path="archive")
+    content = b"%PDF-1.7 more than ten bytes"
+    assert CardConverter().convert_unread(
+        size=len(content), mime="application/pdf", hints=hints
+    ) == CardConverter().convert(content=content, mime="application/pdf", hints=hints)
+    with pytest.raises(ValueError, match="reading limit"):
+        CardConverter().convert_unread(size=5, mime="application/pdf", hints=hints)
