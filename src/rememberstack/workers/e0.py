@@ -339,6 +339,8 @@ class UploadIngestor:
         object at ``key`` (only the kept object is ever purged by hard
         forget). A repeated registration of the same key changes nothing.
         Callers never delete registered objects; hard forget removes them.
+        On a refusal the object stays; :meth:`discard_unregistered` deletes
+        it unless a content keeps it.
 
         ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
         characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
@@ -444,6 +446,33 @@ class UploadIngestor:
             deployment_id=deployment_id, content_hash=content_hash, key=key
         )
         return ingested
+
+    def discard_unregistered(self, *, deployment_id: UUID, key: ObjectKey) -> bool:
+        """Delete a directly uploaded object that no content keeps (D147).
+
+        For a host whose :meth:`ingest_stored` call was refused: only the
+        engine knows whether ``key`` is already some content's raw object (a
+        refused re-registration of a registered key, for example). Returns
+        ``False`` and keeps the object when a content keeps it, so hard
+        forget still finds it; otherwise deletes it (absence succeeds) and
+        returns ``True``. ``key`` must be in the ``uploads/`` namespace.
+
+        The check and the delete are not one transaction: the caller must not
+        run this while an :meth:`ingest_stored` of the same key is in flight
+        (serialize per key, for example on the host's upload record).
+        """
+        if _STORED_KEY.fullmatch(key.root) is None:
+            raise ValueError(
+                "a stored object's key must be uploads/<16-128 of [A-Za-z0-9_-]>"
+            )
+        if not isinstance(self._raw_store, ObjectPurgePort):
+            raise TypeError("discarding needs a raw store that purges")
+        if self._catalog.raw_object_registered(
+            deployment_id=deployment_id, key=key.root
+        ):
+            return False
+        self._raw_store.purge_objects(keys=(key,), prefixes=())
+        return True
 
     def ingest_observed(
         self,

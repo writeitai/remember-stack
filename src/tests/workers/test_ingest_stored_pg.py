@@ -432,3 +432,55 @@ def test_an_oversized_file_reaches_a_url_route(
     assert result.outcome is RunResultOutcome.SUCCEEDED
     assert _UrlRoute.calls == [(len(body), mime)]
     assert _PresigningStore.reads == 0
+
+
+def test_a_refused_object_is_discarded_only_when_no_content_keeps_it(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """The host deletes a refused upload through the engine, never a kept one."""
+    raw = LocalFSObjectStore(root=tmp_path / "raw")
+    ingestor = _ingestor(engine=database_engine, raw=raw)
+    kept = _put(raw, "uploads/kkkkkkkkkkkkkkkk", _BODY)
+    ingestor.ingest_stored(
+        deployment_id=_DEPLOYMENT_ID,
+        key=kept,
+        size=len(_BODY),
+        mime="text/markdown",
+        filename="notes.md",
+    )
+    # A refused re-registration of a registered key keeps the object.
+    with pytest.raises(ContentDetectionError):
+        ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=kept,
+            size=len(_BODY),
+            mime="application/pdf",
+            filename="notes.pdf",
+        )
+    assert (
+        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=kept) is False
+    )
+    assert raw.read_bytes(key=kept) == _BODY
+
+    refused = _put(raw, "uploads/rrrrrrrrrrrrrrrr", b"other bytes\n")
+    with pytest.raises(ValueError, match="declared"):
+        ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=refused,
+            size=1,
+            mime="text/markdown",
+            filename="other.md",
+        )
+    assert (
+        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=refused) is True
+    )
+    with pytest.raises(FileNotFoundError):
+        raw.read_bytes(key=refused)
+    # Absence succeeds; keys outside the namespace are refused.
+    assert (
+        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=refused) is True
+    )
+    with pytest.raises(ValueError, match="uploads/"):
+        ingestor.discard_unregistered(
+            deployment_id=_DEPLOYMENT_ID, key=ObjectKey("a/b/original.md")
+        )

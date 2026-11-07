@@ -19983,6 +19983,9 @@ Compose file and its default conversion are unchanged.
   deletes the new copy. `ingest` now does the same, so each content keeps
   one raw object, the one a hard forget purges. On a deployment with managed
   text metering a stored object is measured exactly as an upload is.
+- `UploadIngestor.discard_unregistered` deletes a directly uploaded object
+  whose registration was refused, unless a content already keeps it as its
+  raw object.
 - `ingest_scope_routes` lets an ingest-scoped credential call named host
   routes.
 - Route scopes and the health check now work for an API mounted under a path
