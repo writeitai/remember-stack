@@ -19,6 +19,7 @@ request is still served by exactly one deployment.
 
 from collections.abc import AsyncIterator
 from collections.abc import Callable
+from collections.abc import Collection
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -641,6 +642,7 @@ def build_api(
     build_info: BuildInfoPort | None = None,
     processing_layers: ProcessingLayersPort | None = None,
     task_queue: TaskQueuePort | None = None,
+    ingest_scope_routes: Collection[tuple[str, str]] = (),
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
     browser_origins: tuple[str, ...] = (),
@@ -674,6 +676,12 @@ def build_api(
     never becomes attribution. Elsewhere an asserted `X-Ingest-Principal-*`
     pair is **ignored, never rejected** — metadata must not be able to fail an
     otherwise valid ingest.
+
+    `ingest_scope_routes` names a host's own routes mounted in this app, as
+    ``(METHOD, "/path/{param}")`` exactly as the route is declared, that a
+    narrow ingest credential may reach as it may reach `POST /ingest` (D147).
+    A grant applies to the declared route only, never to a route the scope
+    table already classifies; every other host route needs WRITE.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).
@@ -726,6 +734,9 @@ def build_api(
         dependencies=dependencies,
     )
     app.state.api_deployment = deployment
+    app.state.ingest_scope_routes = frozenset(
+        (method.upper(), path) for method, path in ingest_scope_routes
+    )
     # Before any route is declared, so every one is built held: a request's
     # deployment may bring admission limits even when this one has none. A
     # held callable without a hold runs unchanged.
@@ -2483,7 +2494,7 @@ def _perimeter(
         request.state, "perimeter_context", None
     )
     if context is None:
-        if _is_healthz(method=request.method, path=request.url.path):
+        if _is_healthz(method=request.method, path=get_route_path(request.scope)):
             return AuthenticatedContext(
                 deployment_id=deployment.deployment_id, principal="healthz"
             )
@@ -2499,7 +2510,21 @@ def _perimeter(
     # never sees the request — and because the method alone cannot tell a
     # read from a write on this API (`POST /graph/path` reads,
     # `POST /ingest` does not). See ``route_scope``.
-    required = required_scope(method=request.method, path=request.url.path)
+    # The router's own path: relative to any mount and decoded, so a mounted
+    # app classifies its routes exactly as an unmounted one.
+    required = required_scope(method=request.method, path=get_route_path(request.scope))
+    # D147: a host route the app was built to open to ingest credentials,
+    # matched by the route FastAPI selected (its method and template), so a
+    # listed template never covers another handler. Only routes the table
+    # leaves at WRITE can be opened this way.
+    route = request.scope.get("route")
+    if (
+        required is PerimeterScope.WRITE
+        and isinstance(route, APIRoute)
+        and (request.method.upper(), route.path)
+        in request.app.state.ingest_scope_routes
+    ):
+        required = PerimeterScope.INGEST
     # ``None`` means the route decides for itself, because its authority is
     # a property of registry data rather than of the path. Today that is
     # only ``POST /operations/{name}``, whose handler asks the descriptor.
@@ -2591,7 +2616,7 @@ class _PerimeterGate:
             await _send_json_error(send=send, status=400, detail="invalid_path")
             return
         if scope["type"] != "http" or _is_healthz(
-            method=scope["method"], path=scope["path"]
+            method=scope["method"], path=get_route_path(scope)
         ):
             await self._app(scope, receive, send)
             return

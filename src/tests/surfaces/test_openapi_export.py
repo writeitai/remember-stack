@@ -188,7 +188,7 @@ _CAPABILITY_PORTS = frozenset(
 #: A task queue only announces the work a request created (D147); it mounts
 #: no route.
 _POLICY_PARAMETERS = frozenset(
-    {"ingest_body_max_bytes", "direct_admission", "task_queue"}
+    {"ingest_body_max_bytes", "direct_admission", "task_queue", "ingest_scope_routes"}
 )
 
 

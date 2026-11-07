@@ -262,3 +262,59 @@ def test_removing_the_override_returns_to_the_composed_deployment() -> None:
     app.dependency_overrides.clear()  # type: ignore[union-attr]
     # No resolver any more: the composed deployment (no perimeter) serves it.
     assert client.get("/whoami").json() == {"deployment": str(_A)}
+
+
+class _ScopedAuth:
+    """``Bearer ingest`` may only ingest; ``Bearer write`` may do anything."""
+
+    def authenticate(self, *, credential: PerimeterCredential) -> AuthenticatedContext:
+        from rememberstack.model.auth import PerimeterScope
+
+        value = credential.value.get_secret_value().decode()
+        scope = {"ingest": PerimeterScope.INGEST, "write": PerimeterScope.WRITE}[value]
+        return AuthenticatedContext(deployment_id=_A, principal=value, scope=scope)
+
+
+def test_a_host_route_can_be_opened_to_ingest_credentials() -> None:
+    """D147: host upload routes listed at build time take the ingest scope."""
+    from fastapi import FastAPI
+
+    app = build_api(
+        engine=cast(QueryEngine, object()),
+        deployment_id=_A,
+        admission=_Open(),
+        readiness=_Ready(),
+        auth=_ScopedAuth(),
+        ingest_scope_routes=(("POST", "/uploads/{upload_id}/complete"),),
+    )
+
+    # Declared first, so it wins for /uploads/admin/complete; it is not listed.
+    @app.post("/uploads/admin/complete")
+    def admin_complete() -> dict[str, str]:
+        return {"admin": "yes"}
+
+    @app.post("/uploads/{upload_id}/complete")
+    def complete(upload_id: str) -> dict[str, str]:
+        return {"completed": upload_id}
+
+    @app.post("/uploads/{upload_id}/share")
+    def share(upload_id: str) -> dict[str, str]:
+        return {"shared": upload_id}
+
+    # Mounted under a prefix, as a host serving many deployments may do.
+    host = FastAPI()
+    host.mount("/d/one", app)
+    client = TestClient(host)
+    ingest = {"Authorization": "Bearer ingest"}
+    assert client.post("/d/one/uploads/u1/complete", headers=ingest).status_code == 200
+    assert client.post("/d/one/uploads/u1/share", headers=ingest).status_code == 403
+    # The listed template never covers another handler matching its pattern.
+    assert (
+        client.post("/d/one/uploads/admin/complete", headers=ingest).status_code == 403
+    )
+    assert (
+        client.post(
+            "/d/one/uploads/u1/share", headers={"Authorization": "Bearer write"}
+        ).status_code
+        == 200
+    )

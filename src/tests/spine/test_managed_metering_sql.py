@@ -23,12 +23,15 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.selfhost import LocalFSObjectStore
+from rememberstack.core.text_metering import classify_doc_text
+from rememberstack.core.text_metering import DOC_TEXT_MAX_SOURCE_BYTES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import ObjectKey
 from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
 from rememberstack.model.metering import ManagedIngestMeasurementV2
 from rememberstack.model.metering import ManagedMeterScope
+from rememberstack.model.metering import ManagedTextClassificationError
 from rememberstack.model.metering import MeterAdmissionResult
 from rememberstack.model.metering import MeterReceiptConflict
 from rememberstack.ports.metering import MeterReceiptPort
@@ -585,3 +588,74 @@ def test_missing_managed_text_route_parks_only_after_meter_approval(
         == "converting"
     )
     assert receipts.outcomes == []
+
+
+def test_a_stored_object_is_metered_like_an_upload(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """D147: a directly uploaded text is measured, held and released as ingest is."""
+    receipts = ControlledReceipts()
+    readiness = ControlledReadiness()
+    raw_store = LocalFSObjectStore(root=tmp_path / "raw")
+    meter = ManagedMeterCatalog(
+        engine=database_engine,
+        receipts=receipts,
+        readiness=cast(PipelineReadinessCatalog, readiness),
+        raw_store=raw_store,
+    )
+    ingestor = UploadIngestor(
+        catalog=DocumentCatalog(engine=database_engine),
+        raw_store=raw_store,
+        admission=AllowIngest(),
+        routable_mimes=frozenset({"text/markdown", "text/plain"}),
+        meter_scope=ManagedMeterScope(
+            org_id=_ORG_ID,
+            project_id=_PROJECT_ID,
+            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+        ),
+    )
+    content = b"stored  hello\n\nworld"
+    key = ObjectKey("uploads/meteredmetered0001")
+    raw_store.write_bytes(key=key, content=content, storage_class="cold")
+
+    version = ingestor.ingest_stored(
+        deployment_id=_DEPLOYMENT_ID,
+        key=key,
+        size=len(content),
+        mime="text/plain",
+        filename="stored.txt",
+    )
+    assert version.created is True and version.processing_admission == "pending"
+    assert _work_count(engine=database_engine, version_id=version.version_id) == 0
+    with database_engine.connect() as connection:
+        measured = connection.execute(
+            text(
+                "SELECT normalized_character_count, canonical_source_bytes"
+                " FROM managed_ingest_measurements WHERE version_id = :version_id"
+            ),
+            {"version_id": version.version_id},
+        ).one()
+    assert tuple(measured) == (
+        classify_doc_text(
+            content=content, declared_mime="text/plain"
+        ).normalized_character_count,
+        len(content),
+    )
+    approved = meter.drain_once()
+    assert approved.measurements_accepted == 1
+    # Released to convert, with the raw object still where the client put it.
+    assert _work_count(engine=database_engine, version_id=version.version_id) == 1
+    assert raw_store.read_bytes(key=key) == content
+
+    too_large = ObjectKey("uploads/meteredmetered0002")
+    big = b"x" * (DOC_TEXT_MAX_SOURCE_BYTES + 1)
+    raw_store.write_bytes(key=too_large, content=big, storage_class="cold")
+    with pytest.raises(ManagedTextClassificationError) as refused:
+        ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=too_large,
+            size=len(big),
+            mime="text/plain",
+            filename="big.txt",
+        )
+    assert refused.value.code == "source_bytes_limit_exceeded"

@@ -71,6 +71,7 @@ from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.core.text_metering import classify_doc_text
 from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
+from rememberstack.core.text_metering import DOC_TEXT_MAX_SOURCE_BYTES
 from rememberstack.core.text_metering import DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
@@ -109,6 +110,7 @@ from rememberstack.model import StructureSource
 from rememberstack.model import UnroutableMimeError
 from rememberstack.model import UploadRecord
 from rememberstack.model.metering import ManagedMeterScope
+from rememberstack.model.metering import ManagedTextClassificationError
 from rememberstack.model.metering import ManagedTextMeasurementDraft
 from rememberstack.model.occurrence_provenance import (
     parse_persisted_conversion_manifest,
@@ -342,14 +344,15 @@ class UploadIngestor:
         key in every store, so a key outside this namespace could name
         another object, and file names would enter the immutable forget
         manifests. ``size`` must match the stored object. The uploader
-        chooses the storage class (D51 routing is not applied). Managed text
-        metering needs the whole bytes, so a deployment that meters ingest
-        refuses this path; use :meth:`ingest`.
+        chooses the storage class (D51 routing is not applied).
+
+        A deployment with managed text metering measures the object exactly
+        as :meth:`ingest` does. That profile accepts only native text of at
+        most ``DOC_TEXT_MAX_SOURCE_BYTES`` (10 MB), so a larger object is
+        refused before anything is read into memory, and an accepted one is
+        measured from the spooled copy; its staged bytes are released to the
+        raw store on approval, where the object already is.
         """
-        if self._meter_scope is not None:
-            raise ValueError(
-                "managed ingest metering needs the bytes; register through ingest"
-            )
         if _STORED_KEY.fullmatch(key.root) is None:
             raise ValueError(
                 "a stored object's key must be uploads/<16-128 of [A-Za-z0-9_-]>"
@@ -390,6 +393,24 @@ class UploadIngestor:
                     detected = self._detected_mime(
                         content=mapped, filename=filename, mime=mime
                     )
+            metering: ManagedTextMeasurementDraft | None = None
+            if self._meter_scope is not None:
+                if received > DOC_TEXT_MAX_SOURCE_BYTES:
+                    raise ManagedTextClassificationError(
+                        code="source_bytes_limit_exceeded"
+                    )
+                spool.seek(0)
+                measured, metering = self._prepare_managed_text(
+                    deployment_id=deployment_id,
+                    upload=DocumentUpload(
+                        filename=filename,
+                        mime=detected,
+                        content=spool.read(),
+                        title=title,
+                        source_path=source_path,
+                    ),
+                )
+                detected = measured.mime
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
         )
@@ -415,7 +436,7 @@ class UploadIngestor:
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
-            metering=None,
+            metering=metering,
             routable_mimes=routable,
         )
         self._release_unretained(
