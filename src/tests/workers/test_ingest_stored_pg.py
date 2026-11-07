@@ -29,6 +29,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import RunResultOutcome
+from rememberstack.model import StoredObjectRefusedError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
@@ -178,22 +179,24 @@ def test_a_stored_object_meets_the_same_checks_as_an_upload(
     ingestor = _ingestor(engine=database_engine, raw=raw)
     key = _put(raw, "uploads/0123456789abcdef", _BODY)
 
-    with pytest.raises(ValueError, match="declared"):
-        ingestor.ingest_stored(
-            deployment_id=_DEPLOYMENT_ID,
-            key=key,
-            size=len(_BODY) + 1,
-            mime="text/markdown",
-            filename="notes.md",
-        )
     # Text declared as a PDF is refused, exactly as an upload would be.
-    with pytest.raises(ContentDetectionError):
+    with pytest.raises(StoredObjectRefusedError) as refused:
         ingestor.ingest_stored(
             deployment_id=_DEPLOYMENT_ID,
             key=key,
             size=len(_BODY),
             mime="application/pdf",
             filename="notes.pdf",
+        )
+    assert isinstance(refused.value.refusal, ContentDetectionError)
+    key = _put(raw, "uploads/0123456789abcdef", _BODY)
+    with pytest.raises(StoredObjectRefusedError, match="declared"):
+        ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=key,
+            size=len(_BODY) + 1,
+            mime="text/markdown",
+            filename="notes.md",
         )
     # Only opaque keys in the uploads namespace: hard forget purges a raw
     # key in every store, and file names must not reach forget manifests.
@@ -434,12 +437,27 @@ def test_an_oversized_file_reaches_a_url_route(
     assert _PresigningStore.reads == 0
 
 
-def test_a_refused_object_is_discarded_only_when_no_content_keeps_it(
+def test_a_refused_object_is_deleted_unless_a_content_keeps_it(
     database_engine: Engine, tmp_path: Path
 ) -> None:
-    """The host deletes a refused upload through the engine, never a kept one."""
+    """Refused uploads do not linger; a registered key's object is never deleted."""
     raw = LocalFSObjectStore(root=tmp_path / "raw")
     ingestor = _ingestor(engine=database_engine, raw=raw)
+
+    refused = _put(raw, "uploads/rrrrrrrrrrrrrrrr", _BODY)
+    with pytest.raises(StoredObjectRefusedError) as failure:
+        ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=refused,
+            size=len(_BODY),
+            mime="application/pdf",
+            filename="notes.pdf",
+        )
+    assert isinstance(failure.value.refusal, ContentDetectionError)
+    assert failure.value.raw_object_deleted is True
+    with pytest.raises(FileNotFoundError):
+        raw.read_bytes(key=refused)
+
     kept = _put(raw, "uploads/kkkkkkkkkkkkkkkk", _BODY)
     ingestor.ingest_stored(
         deployment_id=_DEPLOYMENT_ID,
@@ -448,39 +466,18 @@ def test_a_refused_object_is_discarded_only_when_no_content_keeps_it(
         mime="text/markdown",
         filename="notes.md",
     )
-    # A refused re-registration of a registered key keeps the object.
-    with pytest.raises(ContentDetectionError):
+    # A refused replay of a registered key keeps its object.
+    with pytest.raises(StoredObjectRefusedError) as replay:
         ingestor.ingest_stored(
             deployment_id=_DEPLOYMENT_ID,
             key=kept,
-            size=len(_BODY),
-            mime="application/pdf",
-            filename="notes.pdf",
-        )
-    assert (
-        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=kept) is False
-    )
-    assert raw.read_bytes(key=kept) == _BODY
-
-    refused = _put(raw, "uploads/rrrrrrrrrrrrrrrr", b"other bytes\n")
-    with pytest.raises(ValueError, match="declared"):
-        ingestor.ingest_stored(
-            deployment_id=_DEPLOYMENT_ID,
-            key=refused,
-            size=1,
+            size=len(_BODY) + 1,
             mime="text/markdown",
-            filename="other.md",
+            filename="notes.md",
         )
-    assert (
-        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=refused) is True
-    )
-    with pytest.raises(FileNotFoundError):
-        raw.read_bytes(key=refused)
-    # Absence succeeds; keys outside the namespace are refused.
-    assert (
-        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=refused) is True
-    )
-    with pytest.raises(ValueError, match="uploads/"):
-        ingestor.discard_unregistered(
-            deployment_id=_DEPLOYMENT_ID, key=ObjectKey("a/b/original.md")
-        )
+    assert replay.value.raw_object_deleted is False
+    assert raw.read_bytes(key=kept) == _BODY
+    with database_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT raw_uri FROM content_objects")
+        ).one() == (kept.root,)

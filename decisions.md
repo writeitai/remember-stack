@@ -7463,11 +7463,13 @@ deployment's values into another's work.
      first one recorded, and only that one is purged by hard forget; so when identical
      bytes are already stored under another key, that version answers and every ingest
      path (`ingest`, `ingest_observed`, `ingest_stored`) deletes the copy it wrote or was
-     given. Callers never delete registered objects. A refused registration leaves the
-     object in place; `UploadIngestor.discard_unregistered(deployment_id, key) -> bool`
-     deletes it unless a content keeps it as its raw object (only the engine knows; a
-     refused re-registration of a registered key must keep it), and the caller
-     serializes it with any registration of the same key. The declared size must
+     given. Callers never delete registered objects. A refusal (declared size, content type,
+     managed metering, a forgotten identity, invalid metadata) raises
+     `StoredObjectRefusedError(refusal, raw_object_deleted)`: the engine deletes the refused
+     object unless a content keeps the key as its raw object (only the engine knows; a
+     refused re-registration of a registered key keeps it), so refused uploads do not stay
+     in storage unbilled. Storage and database failures delete nothing, so a retry can
+     succeed. The caller does not register the same key concurrently. The declared size must
      match, and the uploader chooses the storage class (D51 routing is not applied). A
      deployment with managed text metering measures the object exactly as `ingest` does;
      that profile accepts only native text up to 10 MB, so a larger object is refused
