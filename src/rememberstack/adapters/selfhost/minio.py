@@ -4,6 +4,7 @@ The module and `REMEMBERSTACK_MINIO_` names predate the bundled SeaweedFS store;
 any S3 API with path-style addressing and `If-None-Match: *` works.
 """
 
+from collections.abc import Iterator
 from typing import cast
 from typing import NotRequired
 from typing import Protocol
@@ -38,8 +39,8 @@ class MinIOSettings(BaseSettings):
 class _StreamingBody(Protocol):
     """The two response-body operations used by this adapter."""
 
-    def read(self) -> bytes:
-        """Read the complete response body."""
+    def read(self, amt: int | None = None) -> bytes:
+        """Read the rest of the body, or at most ``amt`` bytes of it."""
         ...
 
     def close(self) -> None:
@@ -238,6 +239,25 @@ class MinIOObjectStore:
             raise RuntimeError(
                 f"object purge verification found: {sorted(remaining)!r}"
             )
+
+    def iter_bytes(self, *, key: ObjectKey, chunk_size: int) -> Iterator[bytes]:
+        """Stream one object's body, at most ``chunk_size`` bytes at a time."""
+        try:
+            response = self._client.get_object(
+                Bucket=self._bucket, Key=_validated_key(key=key)
+            )
+        except ClientError as error:
+            if _error_code(error=error) in {"404", "NoSuchKey", "NotFound"}:
+                raise FileNotFoundError(
+                    f"object key {key.root!r} does not exist"
+                ) from error
+            raise
+        body = response["Body"]
+        try:
+            while chunk := body.read(chunk_size):
+                yield chunk
+        finally:
+            body.close()
 
     def presign_get(self, *, key: ObjectKey, ttl_s: int) -> str:
         """A SigV4 query-signed ``GET`` URL for one object, valid ``ttl_s`` seconds."""

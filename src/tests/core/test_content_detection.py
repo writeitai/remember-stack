@@ -253,3 +253,55 @@ def test_every_production_object_write_declares_a_class() -> None:
     ):
         if "store.write_bytes(key=" in line:
             assert "storage_class=" in line, f"{workflow}:{line_number}"
+
+
+def _verdict(content: object, declared: str) -> str:
+    try:
+        return detect_content_mime(content=content, declared_mime=declared)  # type: ignore[arg-type]
+    except ContentDetectionError as error:
+        return f"refused:{error.code}"
+
+
+_MAPPED_SAMPLES: tuple[tuple[bytes, str], ...] = (
+    (b"", "text/markdown"),
+    (b"hello\r\nworld", "text/csv"),
+    (b"  \n\t <!DOCTYPE html><p>x</p>", "text/plain"),
+    (b"\xef\xbb\xbf<html>\n", "text/html"),
+    (b"bad \xff utf8", "text/plain"),
+    (b"bell \x07 char", "text/plain"),
+    (b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF", "application/pdf"),
+    (b"%PDF-1.4 1 0 obj\n<<>>\nendobj\n%%EOF\n", "application/pdf"),
+    (b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n", "application/pdf"),
+    (b"Quoting %PDF-1.7 in prose\n1 0 obj\nendobj\n%%EOF", "text/plain"),
+    (_docx_bytes(), "application/zip"),
+    (b"PK\x03\x04not really a zip", "application/zip"),
+    (b"\x89PNG\r\n\x1a\n" + b"bytes", "image/png"),
+    (b"GIF89a\x01\x00\x01\x00\x80\x00\x00;", "image/gif"),
+    (
+        b"PAR1" + b"\x00" * 8 + (4).to_bytes(4, "little") + b"PAR1",
+        "application/x-unknown",
+    ),
+    # a multibyte character split across the 1 MiB decoding windows
+    (b"a" * ((1 << 20) - 1) + "é".encode() + b"tail", "text/plain"),
+    (b"a" * ((1 << 20) - 1) + b"\xc3", "text/plain"),
+    (b" " * (1 << 20) + b"<html>", "text/plain"),
+)
+
+
+@pytest.mark.parametrize(("content", "declared"), _MAPPED_SAMPLES)
+def test_a_memory_mapped_file_is_classified_like_its_bytes(
+    content: bytes, declared: str, tmp_path: Path
+) -> None:
+    """D147: registering a stored object maps it; the verdict must not change."""
+    import mmap
+
+    path = tmp_path / "object"
+    path.write_bytes(content)
+    if not content:
+        # mmap cannot map an empty file; registration passes b"" instead
+        return
+    with (
+        path.open("rb") as handle,
+        mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+    ):
+        assert _verdict(mapped, declared) == _verdict(content, declared)

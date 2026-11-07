@@ -1,5 +1,6 @@
 """Local-filesystem object store adapter: immutable bytes under one root (D61/D62)."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 from rememberstack.core.storage_routing import COLD
@@ -20,6 +21,12 @@ class LocalFSObjectStore:
     def read_bytes(self, *, key: ObjectKey) -> bytes:
         """Read all bytes stored under an existing object key."""
         return self._path_for(key=key).read_bytes()
+
+    def iter_bytes(self, *, key: ObjectKey, chunk_size: int) -> Iterator[bytes]:
+        """Stream one object's bytes, at most ``chunk_size`` at a time (D147)."""
+        with self._path_for(key=key).open("rb") as handle:
+            while chunk := handle.read(chunk_size):
+                yield chunk
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str

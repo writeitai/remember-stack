@@ -25,7 +25,7 @@ from rememberstack.workers.e0 import UploadIngestor
 
 _PACKAGE = Path(inspect.getfile(UploadIngestor)).parents[1]
 _CATALOG = _PACKAGE / "spine" / "document_catalog.py"
-_GATED_METHODS = {"ingest", "ingest_observed"}
+_GATED_METHODS = {"ingest", "ingest_observed", "ingest_stored"}
 
 
 def _enclosing_scope(tree: ast.Module, target: ast.AST) -> tuple[str, ...]:
@@ -63,10 +63,10 @@ def _record_upload_callers() -> Counter[tuple[str, tuple[str, ...]]]:
 
 
 def test_only_the_gated_e0_methods_create_document_versions() -> None:
-    """`record_upload` is called only from the two guarded `UploadIngestor` methods.
+    """`record_upload` is called only from the three guarded `UploadIngestor` methods.
 
     Checking the enclosing scope, not just the file, is the point: a second
-    call inside `e0.py` but outside `ingest`/`ingest_observed` would skip
+    call inside `e0.py` but outside `ingest`/`ingest_observed`/`ingest_stored` would skip
     the D74 admission check and route configuration wiring. If this fails,
     route the new caller through the ingestor rather than widening this audit.
     """

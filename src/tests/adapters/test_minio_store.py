@@ -24,9 +24,9 @@ class _Body:
         self._stream = BytesIO(content)
         self.closed = False
 
-    def read(self) -> bytes:
-        """Read all remaining bytes."""
-        return self._stream.read()
+    def read(self, amt: int | None = None) -> bytes:
+        """Read all remaining bytes, or at most ``amt``."""
+        return self._stream.read(amt)
 
     def close(self) -> None:
         """Record connection release."""
@@ -234,3 +234,22 @@ def test_presigned_get_is_signed_locally_for_one_object() -> None:
     assert query["X-Amz-Signature"]
     with pytest.raises(ValueError, match="positive"):
         store.presign_get(key=ObjectKey("doc/hash/original.pdf"), ttl_s=0)
+
+
+def test_an_object_streams_in_bounded_chunks() -> None:
+    """D147: registration reads a stored object without holding it whole."""
+    from rememberstack.ports import StreamingReadPort
+
+    client = _MemoryS3()
+    store = MinIOObjectStore(bucket="raw", client=client)
+    store.ensure_bucket()
+    store.write_bytes(key=ObjectKey("a/b"), content=b"0123456789", storage_class="hot")
+    assert isinstance(store, StreamingReadPort)
+    assert list(store.iter_bytes(key=ObjectKey("a/b"), chunk_size=4)) == [
+        b"0123",
+        b"4567",
+        b"89",
+    ]
+    assert client.last_body is not None and client.last_body.closed
+    with pytest.raises(FileNotFoundError):
+        list(store.iter_bytes(key=ObjectKey("a/missing"), chunk_size=4))

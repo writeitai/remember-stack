@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import codecs
 import io
+import mmap
 import re
+from typing import cast
+from typing import IO
 import zipfile
 
 from rememberstack.core.format_registry import family_for_mime
@@ -43,10 +47,32 @@ _IMAGE_MIME_ALIASES = {
 }
 _AUDIO_MIME_ALIASES = {"audio/x-m4a": "audio/mp4"}
 
+Content = bytes | mmap.mmap
+"""A file's whole content: bytes, or a memory map of a file on disk (D147).
 
-def _looks_like_bmp(*, content: bytes) -> bool:
+Every check reads it by indexing, slicing a bounded window or searching in
+place, so a large mapped file is never copied into memory as a whole.
+"""
+
+_TEXT_CHUNK_BYTES = 1 << 20
+#: Characters after leading whitespace enough to recognise an HTML opener.
+_HTML_LOOKAHEAD = 64
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _starts(content: Content, prefix: bytes) -> bool:
+    return content[: len(prefix)] == prefix
+
+
+def _ends(content: Content, suffix: bytes) -> bool:
+    return (
+        len(content) >= len(suffix) and content[len(content) - len(suffix) :] == suffix
+    )
+
+
+def _looks_like_bmp(*, content: Content) -> bool:
     """Require BMP file and DIB header fields, not the printable `BM` alone."""
-    if len(content) < 26 or not content.startswith(b"BM"):
+    if len(content) < 26 or not _starts(content, b"BM"):
         return False
     size = int.from_bytes(content[2:6], "little")
     pixel_offset = int.from_bytes(content[10:14], "little")
@@ -59,9 +85,9 @@ def _looks_like_bmp(*, content: bytes) -> bool:
     )
 
 
-def _looks_like_id3(*, content: bytes) -> bool:
+def _looks_like_id3(*, content: Content) -> bool:
     """Require a bounded ID3v2 header and synchsafe tag length."""
-    if len(content) < 10 or not content.startswith(b"ID3"):
+    if len(content) < 10 or not _starts(content, b"ID3"):
         return False
     if content[3] not in {2, 3, 4} or content[4] == 0xFF:
         return False
@@ -73,7 +99,7 @@ def _looks_like_id3(*, content: bytes) -> bool:
     return tag_size <= len(content) - 10
 
 
-def _looks_like_gif(*, content: bytes) -> bool:
+def _looks_like_gif(*, content: Content) -> bool:
     """Require a logical screen descriptor after the printable GIF marker."""
     return (
         len(content) >= 13
@@ -85,13 +111,13 @@ def _looks_like_gif(*, content: bytes) -> bool:
             or (
                 len(content) >= 15
                 and content[13] in {0x21, 0x2C}
-                and content.endswith(b"\x3b")
+                and _ends(content, b"\x3b")
             )
         )
     )
 
 
-def _looks_like_psd(*, content: bytes) -> bool:
+def _looks_like_psd(*, content: Content) -> bool:
     """Require Photoshop header fields beyond the printable signature."""
     if (
         len(content) < 26
@@ -113,26 +139,26 @@ def _looks_like_psd(*, content: bytes) -> bool:
     )
 
 
-def _looks_like_flac(*, content: bytes) -> bool:
+def _looks_like_flac(*, content: Content) -> bool:
     """Require the mandatory 34-byte STREAMINFO block after the marker."""
     return (
         len(content) >= 42
-        and content.startswith(b"fLaC")
+        and _starts(content, b"fLaC")
         and content[4] & 0x7F == 0
         and int.from_bytes(content[5:8], "big") == 34
     )
 
 
-def _looks_like_ogg(*, content: bytes) -> bool:
+def _looks_like_ogg(*, content: Content) -> bool:
     """Require an Ogg page header and its segment table."""
     return (
         len(content) >= 27
-        and content.startswith(b"OggS\x00")
+        and _starts(content, b"OggS\x00")
         and len(content) >= 27 + content[26]
     )
 
 
-def _looks_like_mpeg_frame(*, content: bytes) -> bool:
+def _looks_like_mpeg_frame(*, content: Content) -> bool:
     """Accept a complete MPEG audio frame with non-reserved header fields."""
     if len(content) < 24 or content[0] != 0xFF or content[1] & 0xE0 != 0xE0:
         return False
@@ -182,7 +208,7 @@ def _looks_like_mpeg_frame(*, content: bytes) -> bool:
     return frame_size <= len(content)
 
 
-def _looks_like_adts(*, content: bytes) -> bool:
+def _looks_like_adts(*, content: Content) -> bool:
     """Require a complete AAC ADTS frame rather than a two-byte sync guess."""
     if len(content) < 7 or content[0] != 0xFF or content[1] & 0xF6 != 0xF0:
         return False
@@ -192,7 +218,7 @@ def _looks_like_adts(*, content: bytes) -> bool:
     return 7 <= frame_size <= len(content)
 
 
-def _bmff_mime(*, content: bytes) -> str | None:
+def _bmff_mime(*, content: Content) -> str | None:
     """Classify ISO BMFF by validated major and compatible file-type brands."""
     if len(content) < 16 or content[4:8] != b"ftyp":
         return None
@@ -210,7 +236,7 @@ def _bmff_mime(*, content: bytes) -> str | None:
     return "video/mp4"
 
 
-def has_pdf_body(*, content: bytes) -> bool:
+def has_pdf_body(*, content: Content) -> bool:
     """Find a bounded PDF header, complete object, and trailing end marker."""
     header = re.search(rb"%PDF-[12]\.\d", content[:8200])
     if header is None or header.start() > 8192:
@@ -223,26 +249,47 @@ def has_pdf_body(*, content: bytes) -> bool:
     if len(preamble_text.split()) >= 2:
         # A prose sentence quoting a PDF header is not a PDF preamble.
         return False
-    body = content[header.end() :]
-    object_match = re.search(
-        rb"(?:^|[\r\n])[ \t]*\d+[ \t]+\d+[ \t]+obj[ \t]*(?:\r\n|[\r\n])"
-        rb".*?(?:^|[\r\n])[ \t]*endobj[ \t]*(?:\r\n|[\r\n])",
-        body,
-        re.DOTALL,
+    # Searched in place from the header's end rather than on a copied body;
+    # each pattern's "start of the body" alternative is tried as an anchored
+    # match at that position first, which is what ``^`` meant on the copy.
+    object_match = _search_from(
+        content, header.end(), at_start=_PDF_OBJECT_AT, anywhere=_PDF_OBJECT
     )
     return bool(
         object_match is not None
-        and re.search(
-            rb"(?:^|[\r\n])[ \t]*%%EOF(?:[ \t]*[\r\n]|[ \t]*$)",
-            body[object_match.end() :],
+        and _search_from(
+            content, object_match.end(), at_start=_PDF_EOF_AT, anywhere=_PDF_EOF
         )
     )
 
 
-def _office_zip_mime(*, content: bytes) -> str | None:
+_PDF_OBJECT_BODY = (
+    rb"[ \t]*\d+[ \t]+\d+[ \t]+obj[ \t]*(?:\r\n|[\r\n])"
+    rb".*?(?:^|[\r\n])[ \t]*endobj[ \t]*(?:\r\n|[\r\n])"
+)
+_PDF_OBJECT_AT = re.compile(_PDF_OBJECT_BODY, re.DOTALL)
+_PDF_OBJECT = re.compile(rb"[\r\n]" + _PDF_OBJECT_BODY, re.DOTALL)
+_PDF_EOF_BODY = rb"[ \t]*%%EOF(?:[ \t]*[\r\n]|[ \t]*$)"
+_PDF_EOF_AT = re.compile(_PDF_EOF_BODY)
+_PDF_EOF = re.compile(rb"[\r\n]" + _PDF_EOF_BODY)
+
+
+def _search_from(
+    content: Content,
+    position: int,
+    *,
+    at_start: re.Pattern[bytes],
+    anywhere: re.Pattern[bytes],
+) -> re.Match[bytes] | None:
+    """``re.search(pattern, content[position:])`` without copying the tail."""
+    return at_start.match(content, position) or anywhere.search(content, position)
+
+
+def _office_zip_mime(*, content: Content) -> str | None:
     """Recognize document package members without decompressing untrusted payloads."""
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        source = io.BytesIO(content) if isinstance(content, bytes) else content
+        with zipfile.ZipFile(cast("IO[bytes]", source)) as archive:
             names = set(archive.namelist())
             if "[Content_Types].xml" in names:
                 for body, mime in (
@@ -272,14 +319,14 @@ def _office_zip_mime(*, content: bytes) -> str | None:
     return None
 
 
-def _detected_mime(*, content: bytes) -> str:
+def _detected_mime(*, content: Content) -> str:
     """Choose a class from signatures, package structure, or strict UTF-8."""
     if has_pdf_body(content=content):
         return "application/pdf"
     if (
         len(content) >= 13
-        and content.startswith(b"PAR1")
-        and content.endswith(b"PAR1")
+        and _starts(content, b"PAR1")
+        and _ends(content, b"PAR1")
         and 0 < int.from_bytes(content[-8:-4], "little") <= len(content) - 12
     ):
         return "application/vnd.apache.parquet"
@@ -290,7 +337,7 @@ def _detected_mime(*, content: bytes) -> str:
         (b"MM\x00*", "image/tiff"),
         (b"\x1a\x45\xdf\xa3", "video/webm"),
     ):
-        if content.startswith(signature):
+        if _starts(content, signature):
             return mime
     if _looks_like_bmp(content=content):
         return "image/bmp"
@@ -304,7 +351,7 @@ def _detected_mime(*, content: bytes) -> str:
         return "audio/ogg"
     if _looks_like_id3(content=content):
         return "audio/mpeg"
-    if content.startswith(b"RIFF") and len(content) >= 12:
+    if _starts(content, b"RIFF") and len(content) >= 12:
         riff_size = int.from_bytes(content[4:8], "little") + 8
         if 12 <= riff_size <= len(content):
             if content[8:12] == b"WAVE":
@@ -320,29 +367,33 @@ def _detected_mime(*, content: bytes) -> str:
         return "audio/aac"
     if _looks_like_mpeg_frame(content=content):
         return "audio/mpeg"
-    if content.startswith(b"PK\x03\x04"):
+    if _starts(content, b"PK\x03\x04"):
         office = _office_zip_mime(content=content)
         if office is not None:
             return office
         return "application/octet-stream"
-    if content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+    if _starts(content, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
         return "application/x-ole-office"
-    try:
-        decoded = content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return "application/octet-stream"
-    if any(
-        (ord(char) < 32 and char not in "\t\r\n") or ord(char) == 127
-        for char in decoded
-    ):
-        return "application/octet-stream"
-    stripped_text = decoded.lstrip("\ufeff \t\r\n")
+    # Strict UTF-8 without control characters, decoded a window at a time.
+    decoder = codecs.getincrementaldecoder("utf-8-sig")()
+    leading = ""
+    for start in range(0, max(len(content), 1), _TEXT_CHUNK_BYTES):
+        window = content[start : start + _TEXT_CHUNK_BYTES]
+        try:
+            text = decoder.decode(window, final=start + len(window) >= len(content))
+        except UnicodeDecodeError:
+            return "application/octet-stream"
+        if _CONTROL_CHARACTERS.search(text):
+            return "application/octet-stream"
+        if len(leading.lstrip("\ufeff \t\r\n")) < _HTML_LOOKAHEAD:
+            leading += text
+    stripped_text = leading.lstrip("\ufeff \t\r\n")
     if re.match(r"(?:<!doctype\s+html\b|<html(?:\s|>))", stripped_text, re.IGNORECASE):
         return "text/html"
     return "text/plain"
 
 
-def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
+def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     """Return byte-authoritative MIME, refusing a contradictory declaration."""
     detected = _detected_mime(content=content)
     declared = declared_mime.partition(";")[0].strip().lower()
