@@ -76,19 +76,22 @@ full input. Unknown binary remains stored as a card under D138.
 conversion-route setting **adds or overrides** entries (for example, routing images to the D115
 OCR-and-description converter once provider keys exist); it no longer replaces the table.
 The PDF invariant survives overlays: a PDF route must OCR every page and cannot
-be replaced by text-layer extraction or by a per-page split.
+be replaced by text-layer extraction. Sending a large PDF to the OCR provider in
+page-range batches is not a replacement: every page of every batch is still OCR'd
+(D147).
 
 **Size.** Every file is stored. A file larger than its family's reading limit
-gets a card that says why, except a PDF. The PDF has one **effective pre-OCR
-limit**, the lower of the family reading limit and the configured OCR
-provider's input ceiling. Exceeding it leaves the original stored but fails
-the version with a typed limit reason, no card and no `document.md` reading;
-the check runs before any converter call. If a provider reports a smaller
-ceiling only after admission, conversion fails with a typed provider-limit
-reason, again without a card. Starting family values: 100 MB for office
-documents and PDF, 200 MB for spreadsheets (profiled from sheet dimensions
-only above 50 MB). For example, a 100 MB PDF family limit and a 50 MB OCR
-provider ceiling give one effective pre-OCR limit of 50 MB.
+gets a card that says why, except a PDF: a PDF over its family limit leaves the
+original stored but fails the version with a typed limit reason, no card and no
+`document.md` reading; the check runs before any converter call. The reading
+limits guard the engine process, which would read the file, so they do not
+apply when the file's route fetches it by URL (D147). The OCR provider's
+per-request ceilings (bytes and pages) are not a limit on the PDF: a larger PDF
+is OCR'd in page-range batches that each fit, and only a single page over the
+byte ceiling fails. Starting family values: 100 MB for office documents and
+PDF, 200 MB for spreadsheets (profiled from sheet dimensions only above 50 MB).
+For example, a 70 MB PDF with a 50 MB OCR provider ceiling is OCR'd in two or
+more batches.
 
 ## 4. The family table
 
