@@ -268,52 +268,67 @@ def pdf_page_batches(
     """Split a PDF into page-range PDFs that each fit a provider's limits.
 
     Yields ``(first page index, page count, batch PDF bytes)`` in page order,
-    covering every page exactly once. Each candidate batch is built in one
-    locked pdfium operation that opens the source, copies the pages, saves
-    them to a temporary file on disk and closes everything, so nothing
-    native outlives the lock; only a batch that fits ``max_bytes`` is read
-    into memory. Candidates start from the previous batch's size (one page
-    at first), grow towards the limit at most doubling, and then binary
-    search, so no candidate runs far past what fits. A single page larger
-    than ``max_bytes`` fails the conversion, because no split can send it.
+    covering every page exactly once. Each page is first measured alone (a
+    one-page PDF saved to a counter, nothing kept), and a batch takes pages
+    while their one-page sizes add up to at most ``max_bytes``; shared
+    resources are counted once per page there, so the batch itself is
+    normally smaller and no candidate's native memory runs past the limit
+    whatever the page sizes. The batch is built in one locked pdfium
+    operation that opens the source, copies the pages, saves them to a
+    temporary file on disk and closes everything, and is read into memory
+    only if it fits; otherwise it is shrunk. A single page larger than
+    ``max_bytes`` fails the conversion, because no split can send it.
     """
     page_count = pdf_source_page_count(source=source)
+    sizes: list[int] = []  # one-page sizes, measured lazily from ``start``
     start = 0
-    previous = 1
     while start < page_count:
         cap = page_count - start
         if max_pages is not None:
             cap = min(cap, max_pages)
-        fitting, batch = 0, b""  # the largest page count known to fit
-        overflowing: int | None = None  # the smallest known not to
-        count = min(cap, previous)
+        count, total = 0, 0
+        while count < cap:
+            if count == len(sizes):
+                sizes.extend(
+                    _with_pdfium(
+                        work=partial(
+                            _measure_pages,
+                            source=source,
+                            first=start + count,
+                            count=min(_MEASURED_PAGES, page_count - start - count),
+                        ),
+                        what="PDF page measurement",
+                    )
+                )
+            if total + sizes[count] > max_bytes:
+                break
+            total += sizes[count]
+            count += 1
+        if count == 0:
+            raise _single_page_too_large(page=start, size=sizes[0], limit=max_bytes)
         while True:
-            saved, data = _trial(
+            saved, batch = _trial(
                 source=source, first=start, count=count, limit=max_bytes
             )
-            if data is not None:
-                fitting, batch = count, data
-            else:
-                overflowing = count
-            if overflowing == 1:
-                raise ConversionError(
-                    f"PDF page {start + 1} alone is {saved} bytes, over "
-                    f"the OCR provider limit of {max_bytes} bytes"
-                )
-            if fitting == cap or (
-                overflowing is not None and overflowing == fitting + 1
-            ):
+            if batch is not None:
                 break
-            if overflowing is None:
-                # Grow towards the limit from the pages seen, at most doubling,
-                # so a trial never runs far past what fits.
-                estimate = int(count * max_bytes * 0.9 / max(saved, 1))
-                count = min(cap, max(count + 1, min(2 * count, estimate)))
-            else:
-                count = (fitting + overflowing) // 2
-        yield start, fitting, batch
-        start += fitting
-        previous = fitting
+            if count == 1:
+                raise _single_page_too_large(page=start, size=saved, limit=max_bytes)
+            count = max(1, min(count - 1, int(count * max_bytes * 0.9 / saved)))
+        yield start, count, batch
+        del sizes[:count]
+        start += count
+
+
+_MEASURED_PAGES = 64
+"""Pages measured per locked pdfium operation while sizing batches."""
+
+
+def _single_page_too_large(*, page: int, size: int, limit: int) -> ConversionError:
+    return ConversionError(
+        f"PDF page {page + 1} alone is {size} bytes, over the OCR provider "
+        f"limit of {limit} bytes"
+    )
 
 
 def _trial(
@@ -337,28 +352,83 @@ def _pdfium_input(*, source: PdfSource) -> bytes | str:
     return source if isinstance(source, bytes) else str(source)
 
 
+class _Sink:
+    """pdfium's save target: counts bytes and keeps the first write error.
+
+    pdfium's write callback cannot raise (ctypes reports and drops the
+    exception), so a failed write is recorded here and raised after saving.
+    """
+
+    def __init__(self, out: BinaryIO | None) -> None:
+        self.out = out
+        self.size = 0
+        self.error: OSError | None = None
+
+    def write(self, data: bytes) -> int:
+        if self.error is None and self.out is not None:
+            try:
+                self.out.write(data)
+            except OSError as err:
+                self.error = err
+        self.size += len(data)
+        return len(data)
+
+
+def _save_copy(
+    *, document: pypdfium2.PdfDocument, pages: list[int], sink: _Sink
+) -> None:
+    """Save ``pages`` of ``document`` as a new PDF into ``sink``."""
+    batch = pypdfium2.PdfDocument.new()
+    try:
+        batch.import_pages(document, pages=pages)
+        batch.save(sink)
+    except pypdfium2.PdfiumError as err:
+        raise ConversionError(f"the PDF pages could not be split: {err}") from err
+    finally:
+        batch.close()
+    if sink.error is not None:
+        raise sink.error
+
+
+def _open_source(*, source: PdfSource) -> pypdfium2.PdfDocument:
+    try:
+        return pypdfium2.PdfDocument(_pdfium_input(source=source))
+    except pypdfium2.PdfiumError as err:
+        raise ConversionError(f"the PDF could not be opened: {err}") from err
+
+
+def _measure_pages(*, source: PdfSource, first: int, count: int) -> list[int]:
+    """Each page's size saved alone as a PDF, for ``count`` pages from ``first``.
+
+    Opens and closes every native document inside the one locked operation.
+    """
+    document = _open_source(source=source)
+    try:
+        sizes = []
+        for page in range(first, first + count):
+            sink = _Sink(out=None)
+            _save_copy(document=document, pages=[page], sink=sink)
+            sizes.append(sink.size)
+        return sizes
+    finally:
+        document.close()
+
+
 def _save_pages(*, source: PdfSource, first: int, count: int, out: BinaryIO) -> int:
     """Copy pages ``first`` .. ``first + count - 1`` into a new PDF on ``out``.
 
     Opens and closes every native document inside the one locked operation,
     so nothing pdfium owns outlives the lock. Returns the saved size.
     """
+    document = _open_source(source=source)
     try:
-        document = pypdfium2.PdfDocument(_pdfium_input(source=source))
-    except pypdfium2.PdfiumError as err:
-        raise ConversionError(f"the PDF could not be opened: {err}") from err
-    try:
-        batch = pypdfium2.PdfDocument.new()
-        try:
-            batch.import_pages(document, pages=list(range(first, first + count)))
-            batch.save(out)
-        except pypdfium2.PdfiumError as err:
-            raise ConversionError(f"the PDF pages could not be split: {err}") from err
-        finally:
-            batch.close()
+        sink = _Sink(out=out)
+        _save_copy(
+            document=document, pages=list(range(first, first + count)), sink=sink
+        )
+        return sink.size
     finally:
         document.close()
-    return out.tell()
 
 
 def _with_pdfium[T](*, work: Callable[[], T], what: str) -> T:

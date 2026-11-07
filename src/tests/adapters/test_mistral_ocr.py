@@ -9,6 +9,9 @@ import base64
 from decimal import Decimal
 import json
 from pathlib import Path
+import random
+import string
+from typing import Any
 from typing import cast
 
 import httpx
@@ -738,34 +741,57 @@ def test_batching_leaves_pdfium_unlocked() -> None:
     assert not pdf_module._PDFIUM_LOCK.locked()  # noqa: SLF001
 
 
-def test_byte_split_trials_grow_from_one_page_at_most_doubling(
+def test_no_candidate_batch_runs_past_the_byte_ceiling_on_uneven_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No candidate batch runs far past what is known to fit (D147)."""
+    """Small pages then heavy ones: candidates stay under the limit (D147)."""
     from rememberstack.adapters.converters import pdf as pdf_module
 
-    trials: list[tuple[int, int]] = []
+    trials: list[int] = []
     real = pdf_module._save_pages  # noqa: SLF001
 
     def record(**kwargs: object) -> int:
         saved = real(**kwargs)  # type: ignore[arg-type]
-        trials.append((cast(int, kwargs["count"]), saved))
+        trials.append(saved)
         return saved
 
     monkeypatch.setattr(pdf_module, "_save_pages", record)
-    content = _pdf(pages=_TEN_PAGES)
-    limit = len(content) // 2
+    letters = random.Random(7)
+    texts: list[str | None] = [f"Small {n}" for n in range(8)]
+    texts += [  # incompressible, so each heavy page saves to about 30 kB
+        f"Heavy {n} " + "".join(letters.choices(string.ascii_letters, k=40_000))
+        for n in range(8)
+    ]
+    limit = 100_000  # about three heavy pages
     calls: list[int] = []
-    _converter(_page_echo_transport(calls), max_document_bytes=limit).convert(
-        content=content, mime="application/pdf"
+    result = _converter(_page_echo_transport(calls), max_document_bytes=limit).convert(
+        content=_pdf(pages=texts), mime="application/pdf"
     )
-    assert sum(calls) == 10
-    assert trials[0][0] == 1
-    largest_fit = 1
-    for count, saved in trials:
-        assert count <= 2 * largest_fit
-        if saved <= limit:
-            largest_fit = max(largest_fit, count)
+    assert sum(calls) == 16 and len(calls) > 1
+    assert max(trials) <= limit
+    headings = [
+        " ".join(line.split()[:3])
+        for line in result.document_md.splitlines()
+        if line.startswith("#")
+    ]
+    assert headings == [" ".join(f"# {text}".split()[:3]) for text in texts if text]
+
+
+def test_a_failed_spool_write_raises_instead_of_saving_an_empty_batch() -> None:
+    """pdfium drops write-callback exceptions; the split re-raises them."""
+    from rememberstack.adapters.converters import pdf as pdf_module
+
+    class _FullDisk:
+        def write(self, data: bytes) -> int:
+            raise OSError(28, "No space left on device")
+
+    with pytest.raises(OSError, match="No space"):
+        pdf_module._save_pages(  # noqa: SLF001
+            source=_pdf(pages=_TEN_PAGES),
+            first=0,
+            count=2,
+            out=cast("Any", _FullDisk()),
+        )
 
 
 def test_a_spool_failure_after_billed_batches_carries_their_usage(
