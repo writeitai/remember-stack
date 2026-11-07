@@ -6767,7 +6767,7 @@ Graviton, Ampere) runs them natively, without emulation:
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
-when you pass `--build`. Version 0.18.2 is the first release on the `19rc1`
+when you pass `--build`. Version 0.18.1 is the first release on the `19rc1`
 image; releases up to 0.17.2 ran Beta 3 (`19beta3`), and moving an existing
 Beta 3 deployment needs the steps in
 [Upgrades](https://remember.dev/docs/self-hosting/upgrades#postgresql-prerelease-versions).
@@ -19966,8 +19966,11 @@ Compose file and its default conversion are unchanged.
   bytes itself.
 - `UploadIngestor.ingest_stored` registers a raw object that a client
   uploaded directly under `uploads/<id>`. The engine streams it once to hash
-  and classify it, and keeps it at that key. On a deployment with managed
-  text metering it is measured exactly as an upload is.
+  and classify it, and keeps it at that key. If the same content is already
+  stored under another key, the earlier version answers and the engine
+  deletes the new copy. `ingest` now does the same, so each content keeps
+  one raw object, the one a hard forget purges. On a deployment with managed
+  text metering a stored object is measured exactly as an upload is.
 - `ingest_scope_routes` lets an ingest-scoped credential call named host
   routes.
 - Route scopes and the health check now work for an API mounted under a path

@@ -49,8 +49,11 @@ Compose file and its default conversion are unchanged.
   bytes itself.
 - `UploadIngestor.ingest_stored` registers a raw object that a client
   uploaded directly under `uploads/<id>`. The engine streams it once to hash
-  and classify it, and keeps it at that key. On a deployment with managed
-  text metering it is measured exactly as an upload is.
+  and classify it, and keeps it at that key. If the same content is already
+  stored under another key, the earlier version answers and the engine
+  deletes the new copy. `ingest` now does the same, so each content keeps
+  one raw object, the one a hard forget purges. On a deployment with managed
+  text metering a stored object is measured exactly as an upload is.
 - `ingest_scope_routes` lets an ingest-scoped credential call named host
   routes.
 - Route scopes and the health check now work for an API mounted under a path
