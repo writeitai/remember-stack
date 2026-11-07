@@ -7438,8 +7438,11 @@ deployment's values into another's work.
      bytes are already stored under another key, that version answers and every ingest
      path (`ingest`, `ingest_observed`, `ingest_stored`) deletes the copy it wrote or was
      given. Callers never delete registered objects. The declared size must
-     match, the uploader chooses the storage class (D51 routing is not applied), and a
-     deployment with managed ingest metering (which needs the bytes) refuses this path.
+     match, and the uploader chooses the storage class (D51 routing is not applied). A
+     deployment with managed text metering measures the object exactly as `ingest` does;
+     that profile accepts only native text up to 10 MB, so a larger object is refused
+     before it is read into memory, and an accepted one is measured from the spooled copy
+     and released to the raw store on approval, where it already is.
    - *No deployment state on local disk.* `SelfHostSettings.forget_manifest_bucket_name`
      keeps D74 hard-forget manifests as immutable objects in that dedicated bucket
      (`ObjectStoreForgetManifestStore`, same contract as the local root) instead of
@@ -7466,6 +7469,11 @@ deployment's values into another's work.
    open-query principal forwarding all read the same resolved deployment, and every route
    is built held so per-request admission keeps its slot accounting.
    `install_browser_origins(app=…, origins=…)` is public for a host composing its own app.
+   `build_api(ingest_scope_routes=[("POST", "/uploads/{id}/complete"), …])` (and
+   `SelfHostProfile.api(ingest_scope_routes=…)`) lets a narrow ingest credential reach a
+   host's own routes mounted in the app, as it reaches `POST /ingest`; every other host
+   route needs write. Route scopes are matched on the router's own path, so an app
+   mounted under a prefix classifies its routes exactly as an unmounted one.
    `SelfHostSettings.query_role_host` / `query_role_port` send customer SQL straight to
    PostgreSQL when the database URL points at a pooler, and `query_role_sslmode` /
    `query_role_sslrootcert` set that connection's TLS (unset: libpq defaults).

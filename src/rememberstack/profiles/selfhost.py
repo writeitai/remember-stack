@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import AsyncIterator
+from collections.abc import Collection
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -1242,11 +1243,14 @@ class SelfHostProfile:
             # for the previous served set.
             self.run_projection(plane="p3")
 
-    def api(self) -> FastAPI:
+    def api(self, *, ingest_scope_routes: Collection[tuple[str, str]] = ()) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph.
 
         Every route reads this profile's :meth:`api_deployment` through the
         overridable ``deployment_context`` dependency (D147).
+        ``ingest_scope_routes`` are a host's own routes, mounted in the
+        returned app, that an ingest-scoped credential may call (see
+        ``build_api``).
         """
         from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.surfaces import build_api
@@ -1277,6 +1281,7 @@ class SelfHostProfile:
             ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
             trusted_principal_source=self._settings.trusted_principal_source,
             browser_origins=_browser_origins(self._settings.browser_origins),
+            ingest_scope_routes=ingest_scope_routes,
             readiness=_FreshDeploymentReadiness(store=self._forget_manifest_store()),
         )
 
