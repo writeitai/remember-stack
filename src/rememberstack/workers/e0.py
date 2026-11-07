@@ -348,7 +348,7 @@ class UploadIngestor:
         forget). A repeated registration of the same key changes nothing.
         Callers never delete registered objects; hard forget removes them.
 
-        A refusal (declared size, content type, managed metering, a forgotten
+        A refusal (declared size, content type, a forgotten
         identity, invalid metadata) raises :class:`StoredObjectRefusedError`
         carrying the original refusal. The engine deletes the refused object
         unless a content keeps ``key`` as its raw object (a refused
