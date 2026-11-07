@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.18.1](https://github.com/writeitai/remember-stack/releases/tag/v0.18.1)
-([on PyPI](https://pypi.org/project/remember/0.18.1/)).
+[v0.18.2](https://github.com/writeitai/remember-stack/releases/tag/v0.18.2)
+([on PyPI](https://pypi.org/project/remember/0.18.2/)).
 
 ## 3. Point the client at your endpoint
 
@@ -6762,8 +6762,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.18.1` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.1` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.18.2` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.2` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -6945,7 +6945,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.18.1
+git checkout v0.18.2
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -6957,7 +6957,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.18.1`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.18.2`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -9669,7 +9669,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.18.1/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.18.2/openapi.json).
 
 ## Base URL
 
@@ -17838,7 +17838,7 @@ Source: https://remember.dev/docs/reference/cli
 
 # CLI
 
-This page describes the `remember` CLI (v0.18.1), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.18.2), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -19940,6 +19940,41 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## 0.18.2 (November 2026)
+
+A stock self-hosted deployment needs no action. Its database migrations, its
+Compose file and its default conversion are unchanged.
+
+**Processing.**
+
+- **Behaviour change.** A file over its family's reading limit (100 MB for
+  office documents and PDFs, 200 MB for spreadsheets) is no longer refused or
+  carded when its route's converter fetches the file by a signed URL from S3
+  storage. The engine reads nothing, so only the converter's own input limit
+  applies. With the stock in-process converters the limits stay as before:
+  an oversized PDF is refused and other oversized files become a card. See
+  [File types](https://remember.dev/docs/guides/file-types).
+- An oversized file is carded without reading it into the worker's memory.
+  The card itself is unchanged.
+
+**Embedding the engine.**
+
+- Conversion by reference. A converter can declare that it accepts a URL
+  (`UrlConverter`). The worker then signs a short-lived GET URL for the raw
+  object (`PresignedReadPort`, implemented by the S3 store) and never reads the
+  bytes itself.
+- `UploadIngestor.ingest_stored` registers a raw object that a client
+  uploaded directly under `uploads/<id>`. The engine streams it once to hash
+  and classify it, and keeps it at that key. If the same content is already
+  stored under another key, the earlier version answers and the engine
+  deletes the new copy. `ingest` now does the same, so each content keeps
+  one raw object, the one a hard forget purges. On a deployment with managed
+  text metering a stored object is measured exactly as an upload is.
+- `ingest_scope_routes` lets an ingest-scoped credential call named host
+  routes.
+- Route scopes and the health check now work for an API mounted under a path
+  prefix. Before, narrow credentials there got `403`.
 
 ## 0.18.1 (November 2026)
 
