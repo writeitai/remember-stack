@@ -51,8 +51,8 @@ from rememberstack.model import ResolverConfig
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model.client import ProcessingLayer
-from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
-from rememberstack.model.metering import ManagedIngestMeasurementV2
+from rememberstack.model.metering import ManagedDocumentVersionOutcome
+from rememberstack.model.metering import ManagedIngestMeasurement
 from rememberstack.model.metering import ManagedMeterScope
 from rememberstack.model.metering import MeterAdmissionResult
 from rememberstack.ports.metering import MeterReceiptPort
@@ -284,6 +284,7 @@ class _LayerRig:
         raw_store = LocalFSObjectStore(root=root / "raw")
         self.raw_store = raw_store
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
+        self.artifact_store = artifact_store
         self.extraction_calls: list[tuple[str, str]] = []
         """Every Selection/Claimify call as (response type, target span)."""
         self.fact_sentence: str | None = None
@@ -1089,17 +1090,26 @@ def test_layer_states_and_profile_ids(rig: _LayerRig) -> None:
     """Configuration drives the derived states and the measured profile."""
     configuration = rig.layers.configuration(deployment_id=_DEPLOYMENT_ID)
     assert not configuration.configured
-    assert configuration.processing_profile_id == "doc-text-standard-v1"
+    assert configuration.processing_profile_id(cost_class="doc-text") == (
+        "doc-text-standard-v1"
+    )
+    assert configuration.processing_profile_id(cost_class="doc-scan") == (
+        "doc-scan-standard-v1"
+    )
     rig.configure(claims=True, facts=False)
     configuration = rig.layers.configuration(deployment_id=_DEPLOYMENT_ID)
     assert configuration.configured
-    assert configuration.processing_profile_id == "doc-text-claims-v1"
+    assert configuration.processing_profile_id(cost_class="doc-text") == (
+        "doc-text-claims-v1"
+    )
     assert configuration.served == frozenset(
         {ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS}
     )
     rig.configure(claims=False, facts=False)
     assert (
-        rig.layers.configuration(deployment_id=_DEPLOYMENT_ID).processing_profile_id
+        rig.layers.configuration(deployment_id=_DEPLOYMENT_ID).processing_profile_id(
+            cost_class="doc-text"
+        )
         == "doc-text-sources-v1"
     )
     with pytest.raises(ValueError, match="FACTS_LAYER=true requires"):
@@ -1495,11 +1505,11 @@ class _ApprovingReceipts(MeterReceiptPort):
 
     def __init__(self) -> None:
         """Start with no receipts."""
-        self.measurements: list[ManagedIngestMeasurementV2] = []
-        self.outcomes: list[ManagedDocumentVersionOutcomeV2] = []
+        self.measurements: list[ManagedIngestMeasurement] = []
+        self.outcomes: list[ManagedDocumentVersionOutcome] = []
 
     def admit_measurement(
-        self, *, measurement: ManagedIngestMeasurementV2
+        self, *, measurement: ManagedIngestMeasurement
     ) -> MeterAdmissionResult:
         """Approve with two holds."""
         self.measurements.append(measurement)
@@ -1509,37 +1519,62 @@ class _ApprovingReceipts(MeterReceiptPort):
             storage_growth_hold_id=uuid4(),
         )
 
-    def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcomeV2) -> None:
+    def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcome) -> None:
         """Capture the terminal receipt."""
         self.outcomes.append(outcome)
 
 
 class _Metered:
-    """Managed text ingestion over the rig: measure, approve, then receipt."""
+    """Managed text ingestion over the rig: read, measure, approve, receipt."""
 
     def __init__(self, *, rig: _LayerRig) -> None:
-        """Bind a metered ingestor and the meter to the rig's spine and raw store."""
+        """Bind a metered ingestor, convert worker and meter to the rig's spine."""
         self.rig = rig
         self.receipts = _ApprovingReceipts()
         self.meter = ManagedMeterCatalog(
             engine=rig.engine,
             receipts=self.receipts,
             readiness=_readiness(engine=rig.engine),
-            raw_store=rig.raw_store,
+        )
+        scope = ManagedMeterScope(
+            org_id=UUID("a1430000-0000-0000-0000-000000000001"),
+            project_id=UUID("b1430000-0000-0000-0000-000000000001"),
+            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
         )
         self.ingestor = UploadIngestor(
             catalog=DocumentCatalog(engine=rig.engine),
             raw_store=rig.raw_store,
             admission=ForgetCatalog(engine=rig.engine),
             routable_mimes=frozenset({"text/markdown"}),
-            meter_scope=ManagedMeterScope(
-                org_id=UUID("a1430000-0000-0000-0000-000000000001"),
-                project_id=UUID("b1430000-0000-0000-0000-000000000001"),
-                identity_key=SecretStr(
-                    "umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"
+            meter_scope=scope,
+        )
+        registry = HandlerRegistry()
+        registry.register(
+            stage=PipelineStage.CONVERT,
+            handler=ConvertHandler(
+                catalog=DocumentCatalog(engine=rig.engine),
+                raw_store=rig.raw_store,
+                artifact_store=rig.artifact_store,
+                router=ConversionRouter(
+                    routes={"text/markdown": MarkdownPassthroughConverter()}
                 ),
+                meter_scope=scope,
             ),
         )
+        self._convert = Worker(
+            ledger=WorkLedger(engine=rig.engine, settings=WorkLedgerSettings()),
+            registry=registry,
+        )
+
+    def approve(self) -> None:
+        """Measure the waiting version in convert and let the meter approve it."""
+        outcome = self._convert.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.CONVERT,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        assert outcome is RunResultOutcome.ADMISSION_PARKED
+        assert self.meter.drain_once().measurements_accepted == 1
 
     def ingest_approved(self, *, name: str) -> IngestedVersion:
         """Ingest one managed text and let the control plane approve it."""
@@ -1551,7 +1586,7 @@ class _Metered:
                 content=_document(edited=False, paragraphs=3).encode("utf-8"),
             ),
         )
-        assert self.meter.drain_once().measurements_accepted == 1
+        self.approve()
         return version
 
     def outcome(self, *, version_id: UUID) -> dict[str, object]:
@@ -2106,7 +2141,7 @@ def _observed_metered(
         source_version_ref=None,
         sync_cycle_id=None,
     )
-    assert metered.meter.drain_once().measurements_accepted == 1
+    metered.approve()
     return version
 
 

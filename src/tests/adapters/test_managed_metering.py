@@ -10,9 +10,8 @@ from pydantic import ValidationError
 import pytest
 
 from rememberstack.adapters.selfhost.managed_metering import ControlPlaneMeterReceipts
-from rememberstack.model import DocTextQuantity
-from rememberstack.model import ManagedDocumentVersionOutcomeV2
-from rememberstack.model import ManagedIngestMeasurementV2
+from rememberstack.model import ManagedDocumentVersionOutcome
+from rememberstack.model import ManagedIngestMeasurement
 from rememberstack.model import MeterAdmissionResult
 from rememberstack.model import MeterReceiptConflict
 from rememberstack.model import MeterReceiptUnauthorized
@@ -24,9 +23,9 @@ _DEPLOYMENT = UUID("30000000-0000-0000-0000-000000000001")
 _MEASUREMENT = UUID("40000000-0000-0000-0000-000000000001")
 
 
-def _measurement() -> ManagedIngestMeasurementV2:
-    """Build one canonical text receipt without any source metadata."""
-    return ManagedIngestMeasurementV2(
+def _measurement() -> ManagedIngestMeasurement:
+    """Build one canonical page receipt without any source metadata."""
+    return ManagedIngestMeasurement(
         measurement_id=_MEASUREMENT,
         ingest_attempt_id="ing_1",
         org_id=_ORG,
@@ -34,12 +33,14 @@ def _measurement() -> ManagedIngestMeasurementV2:
         deployment_id=_DEPLOYMENT,
         opaque_lineage_id="lineage-1",
         opaque_source_version_id="source-version-1",
-        quantity=DocTextQuantity(normalized_character_count=1234),
+        format_family="pdf",
+        cost_class="doc-scan",
+        native_quantity=12,
+        unit="page",
         canonical_source_bytes=1400,
-        document_version_disposition="new_version",
-        classifier_version="doc-text-classifier-v1",
-        measurement_algorithm_version="unicode-whitespace-scalars-v1",
-        processing_profile_id="doc-text-standard-v1",
+        classifier_version="route-cost-class-v1",
+        measurement_algorithm_version="pdf-page-tree-v1",
+        processing_profile_id="doc-scan-standard-v1",
         measured_at=datetime(2026, 9, 1, tzinfo=UTC),
     )
 
@@ -69,7 +70,7 @@ def test_adapter_sends_only_content_free_receipt_and_reads_both_holds() -> None:
     assert decision.decision == "approved"
     assert seen["authorization"] == "Bearer umc_mi_secret"
     body = str(seen["body"])
-    assert "normalized_character_count" in body
+    assert '"cost_class":"doc-scan"' in body and '"native_quantity":12' in body
     for forbidden in ("filename", "content_hash", "source_uri", "hello"):
         assert forbidden not in body
 
@@ -85,7 +86,7 @@ def test_adapter_replays_terminal_outcome_until_explicit_ack() -> None:
     )
     with pytest.raises(MeterReceiptUnavailable):
         adapter.acknowledge_outcome(
-            outcome=ManagedDocumentVersionOutcomeV2(
+            outcome=ManagedDocumentVersionOutcome(
                 measurement_id=_MEASUREMENT,
                 outcome="failed",
                 completed_at=datetime(2026, 9, 1, tzinfo=UTC),
@@ -135,10 +136,22 @@ def test_generic_bad_request_remains_retryable_transport_failure() -> None:
 
 
 def test_non_approved_decisions_cannot_smuggle_hold_ids() -> None:
-    """A malformed no-op/parked response cannot crash the SQL acceptance write."""
+    """A malformed parked response cannot crash the SQL acceptance write."""
     with pytest.raises(ValidationError):
         MeterAdmissionResult(
-            decision="no_op",
+            decision="parked",
             processing_hold_id=UUID("50000000-0000-0000-0000-000000000001"),
             storage_growth_hold_id=UUID("60000000-0000-0000-0000-000000000001"),
+        )
+
+
+def test_a_receipt_unit_must_be_its_cost_class_unit() -> None:
+    """Page evidence cannot be labelled as cheaper characters, or vice versa."""
+    with pytest.raises(ValidationError, match="unit does not match"):
+        _measurement().model_copy(
+            update={"unit": "normalized_character"}
+        ).model_validate(_measurement().model_dump() | {"unit": "normalized_character"})
+    with pytest.raises(ValidationError, match="must be positive"):
+        ManagedIngestMeasurement.model_validate(
+            _measurement().model_dump() | {"native_quantity": 0}
         )

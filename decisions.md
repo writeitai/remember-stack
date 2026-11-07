@@ -6387,8 +6387,8 @@ declaration contradicting a recognizable byte class raises a typed client
 error. For formats indistinguishable within a class, the filename and
 declaration select the D133/D138 registry family and posture, while
 legacy OLE needs a declared office subtype. Store the resulting MIME, and use
-it consistently for the conversion route, original storage class, and managed
-text metering. Every object-store write must provide a class: raw media hot,
+it consistently for the conversion route, original storage class, and (through
+the route) the managed meter's cost class (D150). Every object-store write must provide a class: raw media hot,
 other raw originals cold; query-facing derived objects and P3 snapshots hot;
 retry checkpoints and private K transcripts cold. Make the port argument
 required so future omissions fail before storage.
@@ -6877,8 +6877,8 @@ therefore scales with every accepted page. The engine records only the
 registry's `scan_page` cost class with that quantity; provider-reported
 `pages_processed` is diagnostic evidence, not the billable quantity. The
 separate managed cloud copies the same quantity to a `doc-scan` receipt and
-does not also charge `doc-text` for that PDF. This receipt mapping is a
-required cloud follow-up, not a claim about current cloud behavior.
+does not also charge `doc-text` for that PDF. The engine reports that
+quantity to a metered deployment's control plane before any OCR call (D150).
 Conversion, source mapping and coverage stay in the engine under D60/D61.
 The PDF route needs a configured OCR provider and parks under D117 when it is
 unavailable. Converter and route changes require versioned re-conversion;
@@ -7300,8 +7300,8 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
   derived from open gaps. Rule 4 holds: no re-chunking, no chunk re-embedding, unchanged reuse
   identities, each later snapshot version pays only for its edit.
 - **Readiness** expects the enabled layers' stages (all on: unchanged; facts off: `reconcile` at
-  either version). `processing_profile_id` is `doc-text-standard-v1`, `doc-text-claims-v1` or
-  `doc-text-sources-v1`; `profile_complete` certifies every stage the measured profile requires
+  either version). `processing_profile_id` is `<cost class>-standard-v1`, `-claims-v1` or
+  `-sources-v1` (D150; for example `doc-text-claims-v1`); `profile_complete` certifies every stage the measured profile requires
   (standard: today's predicate), otherwise `failed` / `processing_profile_changed`. Frontiers order
   lineages; they are not readiness.
 - **Retrieval** reads the served (enabled) layers. A `layers` selection on
@@ -7475,10 +7475,8 @@ deployment's values into another's work.
      unless a content keeps the key and returns whether it did. The caller serializes
      registration and discard per key. The declared size must
      match, and the uploader chooses the storage class (D51 routing is not applied). A
-     deployment with managed text metering measures the object exactly as `ingest` does;
-     that profile accepts only native text up to 10 MB, so a larger object is refused
-     before it is read into memory, and an accepted one is measured from the spooled copy
-     and released to the raw store on approval, where it already is.
+     metered deployment measures the version in the convert stage, as for every ingest
+     path (D150); registration itself measures nothing.
    - *No deployment state on local disk.* `SelfHostSettings.forget_manifest_bucket_name`
      keeps D74 hard-forget manifests as immutable objects in that dedicated bucket
      (`ObjectStoreForgetManifestStore`, same contract as the local root) instead of
@@ -7655,3 +7653,70 @@ No ingestion or paid-product reuse identity changes.
 See [analysis](plan/analysis/retrieval_work_amplification_20261106.md),
 [D91 §4.2](plan/designs/request_path_metering_and_cost_export_design.md#42-request-scope-exact-interface)
 and [D142 §8.2](plan/designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract).
+
+
+## D150. A metered deployment measures each new version in the convert stage
+
+**Status:** accepted. **Date:** 2026-11-07. **Amends:** the managed text metering of
+D139, D143 §4.5 and D147 (in-entry notes).
+
+**Context.** A managed deployment (one with a meter scope) reports how much work each new
+source version needs to a commercial control plane, which places holds on the customer's
+balance before any work that costs money. Until now the engine measured at ingest, and
+only plain UTF-8 text and Markdown up to 10 MB could be measured: every PDF, office
+document, HTML page or larger text was refused at the door (`409`/`413`/`422`), and the
+accepted bytes were staged in the measurement row until approval. The control plane's
+D94 asks instead for one generic receipt per source version — a cost class, an integer
+quantity and its unit — with every PDF page billed as one `doc-scan` unit and any other
+text a provider-free route reads billed as `doc-text` characters.
+
+**Decision.** Measurement moves from ingest into the convert stage, where the route that
+will read the file is known.
+
+- *Which class.* The conversion route decides (`core/metering.py`). The `pdf` route —
+  every page through OCR (D139) — is `doc-scan`: the page count from the page tree,
+  taken **before** the OCR call, through the route's `count_pages` (bytes) or
+  `count_pages_from_url` (a by-URL route, D147). A local reading route (text, Markdown,
+  code, HTML, EPUB, office documents, email, notebooks, spreadsheets, delimited files,
+  datasets) is `doc-text`: the whitespace-normalized character count of the
+  `document.md` it produced. These routes call no model provider, so counting their
+  output still comes before every paid stage (structure models, embeddings,
+  extraction). `card` reads nothing and is free: no measurement. Any other route has no
+  managed cost class, and a metered deployment fails the version
+  (`rate_class_unavailable`) rather than run provider work it cannot bill.
+- *Parking.* After recording the measurement the convert work parks with the defer
+  reason `admission`, which no claim takes. The meter drain's approval releases it in the
+  same transaction that records the approval (`release_admission_on`); the park reads the
+  approval under the lock the approval takes, so a race leaves the work queued, never
+  stranded. On release, a PDF is OCR'd; a reading route re-chains its stored reading
+  (replay before regenerate), so nothing is converted twice.
+- *Ingest refuses nothing for metering.* Every entry point writes the original to the raw
+  store at once and enqueues convert, metered or not. Unchanged bytes create no version
+  and are never measured, so there are no `no_op` receipts.
+- *Receipt.* `rememberstack.ingest_measurement.v3`: role `primary`, the Project triple,
+  stable opaque lineage and source-version IDs, `format_family`, `cost_class`,
+  `native_quantity`, `unit` (exactly one per class: `normalized_character`, `page`,
+  `image`, `millisecond`), canonical source bytes, classifier and algorithm versions,
+  the processing profile and `measured_at`. The terminal receipt
+  (`rememberstack.document_version_outcome.v3`) is `succeeded` or `failed`. The
+  processing profile is `<cost class>-<layers>-v1`, the layers being D143's
+  `standard`, `claims` or `sources`.
+
+**Alternatives.** Measuring office and HTML text at ingest would run every converter twice,
+inside the request, and the shared API of a hosted deployment does not convert at all.
+Billing a PDF by its text layer or splitting text and scanned pages contradicts D139.
+Staging bytes in the outbox cannot hold large files (PostgreSQL's `bytea` stops at 1 GB)
+and is moot for objects a client already uploaded directly. Refusing formats at ingest
+turned a pricing gap into a capability gap.
+
+**Consequences.** A metered deployment accepts every format its routes read, of any size
+the routes handle. One reuse boundary is declared (CLAUDE.md Rule 4): the ingest-time text
+classifier stored every metered text as `text/plain` or `text/markdown`; without it a metered
+deployment keeps the registry MIME, so CSV, code, configuration and logs take their own D138
+routes (`table`, `text` with their postures) like an unmetered one. A lineage whose previous
+version was ingested under the old classifier re-converts, re-chunks and re-extracts once at its
+next version, accepted because the hosted service relaunches without customer data. The meter outbox drops `staged_content` and the `no_op` disposition
+and gains `cost_class`, `unit` and `format_family` (`p9_46_0067`, which refuses to run
+while staged originals remain undrained). Unmetered deployments are unaffected. The
+control plane must accept the v3 receipt before a deployment runs this release.
+

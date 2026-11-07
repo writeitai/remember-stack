@@ -1083,11 +1083,16 @@ def test_restore_support_plants_a_canary_the_pack_rechecks(rig: _LifecycleRig) -
     assert flag_rates[E2_EXTRACTOR_VERSION]["flags_raised"] == 1.0
 
 
+@pytest.mark.parametrize("reason", ["no_route", "admission"])
 @pytest.mark.parametrize("deletion", ["version", "lineage"])
 def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
-    rig: _LifecycleRig, deletion: str
+    rig: _LifecycleRig, deletion: str, reason: str
 ) -> None:
-    """Missing conversion is incomplete testimony, while deleted input is excluded."""
+    """Parked conversion is incomplete testimony, while deleted input is excluded.
+
+    ``admission`` is conversion parked for a metered deployment's approval
+    (D150); it holds and releases the barrier exactly like ``no_route``.
+    """
     first_cycle = rig.sync.open_cycle(
         deployment_id=_DEPLOYMENT_ID, source_kind="watched_directory"
     )
@@ -1117,6 +1122,15 @@ def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
         source_version_ref=None,
         sync_cycle_id=cycle,
     )
+    if reason == "admission":
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE processing_state SET defer_reason = 'admission'"
+                    " WHERE target_id = :v AND stage = 'convert'"
+                ),
+                {"v": parked.version_id},
+            )
     rig.sync.complete_cycle(cycle_id=cycle, observed=2, failed=0)
     rig.drain()
     assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == ()

@@ -4,7 +4,7 @@
 /* eslint-disable */
 export type PipelineStageReadiness = {
     component_version: string;
-    defer_reason?: 'scheduled' | 'retry_backoff' | 'budget' | 'no_route' | null;
+    defer_reason?: 'scheduled' | 'retry_backoff' | 'budget' | 'no_route' | 'admission' | null;
     finished_at?: string | null;
     stage: string;
     status: 'missing' | 'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter' | 'skipped';

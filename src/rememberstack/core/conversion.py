@@ -189,6 +189,33 @@ class UrlConverter(Protocol):
         ...
 
 
+@runtime_checkable
+class PageCountingConverter(Protocol):
+    """A paged route that counts its source's pages without converting it.
+
+    A metered deployment records a PDF's page count before any OCR call, so
+    the control plane can hold the charge first (D139). Counting reads only
+    the page tree, never a text layer.
+    """
+
+    def count_pages(self, *, content: bytes) -> int:
+        """The source's structural page count; raise ``ConversionError`` if unreadable."""
+        ...
+
+
+@runtime_checkable
+class UrlPageCountingConverter(Protocol):
+    """A paged URL route (D147) that counts its source's pages from the URL.
+
+    The by-URL counterpart of :class:`PageCountingConverter`: the convert
+    worker never reads the object, so the route fetches it to count.
+    """
+
+    def count_pages_from_url(self, *, url: str, size: int) -> int:
+        """The structural page count of the object behind ``url``."""
+        ...
+
+
 class ConversionRouter:
     """Route an input MIME type to its configured converter (D38 routing table)."""
 

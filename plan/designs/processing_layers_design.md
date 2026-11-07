@@ -263,14 +263,15 @@ whose gap was discharged (§5.3) reports that layer's stages as `skipped`. The c
 (`p1`, `live_graph`, `p3`) are unchanged. A version with an open gap in an enabled layer is not
 ready until it is processed.
 
-**Metering.** Every model call is metered per stage in `cost_ledger` as today. The managed text
-meter stamps the `processing_profile_id` from the layers enabled at measurement time:
+**Metering.** Every model call is metered per stage in `cost_ledger` as today. The managed
+meter (D150) stamps the `processing_profile_id` from the measured cost class and the layers
+enabled at measurement time, `<cost class>-<layers>-v1` (for example `doc-scan-claims-v1`):
 
-| Enabled layers | `processing_profile_id` | Stages its receipt requires |
+| Enabled layers | `processing_profile_id` suffix | Stages its receipt requires |
 | --- | --- | --- |
-| sources, claims, facts | `doc-text-standard-v1` (unchanged) | today's twelve |
-| sources, claims | `doc-text-claims-v1` | the eight above (`reconcile` at either version) |
-| sources | `doc-text-sources-v1` | the four above |
+| sources, claims, facts | `-standard-v1` | today's twelve |
+| sources, claims | `-claims-v1` | the eight above (`reconcile` at either version) |
+| sources | `-sources-v1` | the four above |
 
 The outcome receipt certifies **the measured profile**, not the current configuration and not a
 frontier: `profile_complete` is true only when every stage the measured profile requires succeeded,

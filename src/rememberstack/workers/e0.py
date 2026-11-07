@@ -50,6 +50,7 @@ from rememberstack.core import LaneUsageRecorder
 from rememberstack.core import LONG_TITLE
 from rememberstack.core import MAX_FALLBACK_DEPTH
 from rememberstack.core import MIN_CHECK_SECTIONS
+from rememberstack.core import PageCountingConverter
 from rememberstack.core import parse_heading_skeleton
 from rememberstack.core import resolve_fallback_skeleton
 from rememberstack.core import SECTION_ROLES
@@ -59,6 +60,7 @@ from rememberstack.core import SKELETON_STATS_VERSION
 from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
 from rememberstack.core import UrlConverter
+from rememberstack.core import UrlPageCountingConverter
 from rememberstack.core import with_content_hashes
 from rememberstack.core.content_detection import detect_content_mime
 from rememberstack.core.extraction_eligibility import block_eligibility
@@ -69,11 +71,14 @@ from rememberstack.core.file_card import CardConverter
 from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.format_registry import family_for_mime
+from rememberstack.core.metering import cost_class_for_route
+from rememberstack.core.metering import DOC_SCAN_ALGORITHM_VERSION
+from rememberstack.core.metering import DOC_TEXT_ALGORITHM_VERSION
+from rememberstack.core.metering import FREE_ROUTES
+from rememberstack.core.metering import METERING_CLASSIFIER_VERSION
+from rememberstack.core.metering import normalized_character_count
+from rememberstack.core.metering import UnmeteredRouteError
 from rememberstack.core.storage_routing import storage_class_for_derived
-from rememberstack.core.text_metering import classify_doc_text
-from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
-from rememberstack.core.text_metering import DOC_TEXT_MAX_SOURCE_BYTES
-from rememberstack.core.text_metering import DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
@@ -112,9 +117,9 @@ from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import UnroutableMimeError
 from rememberstack.model import UploadRecord
+from rememberstack.model.metering import CostClass
+from rememberstack.model.metering import ManagedMeasurementDraft
 from rememberstack.model.metering import ManagedMeterScope
-from rememberstack.model.metering import ManagedTextClassificationError
-from rememberstack.model.metering import ManagedTextMeasurementDraft
 from rememberstack.model.occurrence_provenance import (
     parse_persisted_conversion_manifest,
 )
@@ -125,6 +130,7 @@ from rememberstack.ports.object_store import PresignedReadPort
 from rememberstack.ports.object_store import StreamingReadPort
 from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine.document_catalog import DocumentCatalog
+from rememberstack.workers.base import AdmissionPendingError
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.base import NoRouteHandlerError
 from rememberstack.workers.e0_summary import SectionSummarizer
@@ -189,7 +195,7 @@ disjoint from the engine's own keys (``<doc_id>/…``, ``forgotten/…``)."""
 
 
 _STORED_REFUSALS: Final = (ValueError, ForgottenSourceError)
-"""What refuses a stored object for good (size, content type, metering,
+"""What refuses a stored object for good (size, content type,
 metadata, a forgotten identity); anything else may succeed on retry."""
 
 
@@ -270,25 +276,21 @@ class UploadIngestor:
             content_hash=content_hash,
         )
         upload = self._detect_upload(upload=upload)
-        upload, metering = self._prepare_managed_text(
-            deployment_id=deployment_id, upload=upload
-        )
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
         )
         suffix = PurePosixPath(upload.filename).suffix
         raw_uri = f"{doc_id}/{content_hash}/original{suffix}"
-        if metering is None:
-            try:
-                self._raw_store.write_bytes(
-                    key=ObjectKey(raw_uri),
-                    content=upload.content,
-                    # D51: media a harness reads stays hot; text originals
-                    # kept only for audit go cold — routed at the write
-                    storage_class=storage_class_for(mime=upload.mime),
-                )
-            except ObjectAlreadyExistsError:
-                pass  # identical bytes already landed — ingest retries are no-ops
+        try:
+            self._raw_store.write_bytes(
+                key=ObjectKey(raw_uri),
+                content=upload.content,
+                # D51: media a harness reads stays hot; text originals
+                # kept only for audit go cold — routed at the write
+                storage_class=storage_class_for(mime=upload.mime),
+            )
+        except ObjectAlreadyExistsError:
+            pass  # identical bytes already landed — ingest retries are no-ops
         ingested = self._catalog.record_upload(
             record=UploadRecord(
                 deployment_id=deployment_id,
@@ -308,15 +310,14 @@ class UploadIngestor:
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
-            metering=metering,
+            metered=self._meter_scope is not None,
             routable_mimes=self._routable_for(upload=upload),
         )
-        if metering is None:
-            self._release_unretained(
-                deployment_id=deployment_id,
-                content_hash=content_hash,
-                key=ObjectKey(raw_uri),
-            )
+        self._release_unretained(
+            deployment_id=deployment_id,
+            content_hash=content_hash,
+            key=ObjectKey(raw_uri),
+        )
         return ingested
 
     def ingest_stored(
@@ -347,7 +348,7 @@ class UploadIngestor:
         forget). A repeated registration of the same key changes nothing.
         Callers never delete registered objects; hard forget removes them.
 
-        A refusal (declared size, content type, managed metering, a forgotten
+        A refusal (declared size, content type, a forgotten
         identity, invalid metadata) raises :class:`StoredObjectRefusedError`
         carrying the original refusal. The engine deletes the refused object
         unless a content keeps ``key`` as its raw object (a refused
@@ -366,12 +367,8 @@ class UploadIngestor:
         manifests. ``size`` must match the stored object. The uploader
         chooses the storage class (D51 routing is not applied).
 
-        A deployment with managed text metering measures the object exactly
-        as :meth:`ingest` does. That profile accepts only native text of at
-        most ``DOC_TEXT_MAX_SOURCE_BYTES`` (10 MB), so a larger object is
-        refused before anything is read into memory, and an accepted one is
-        measured from the spooled copy; its staged bytes are released to the
-        raw store on approval, where the object already is.
+        A metered deployment measures the version in the convert stage, as
+        for every other entry point; registration itself sends nothing.
         """
         if _STORED_KEY.fullmatch(key.root) is None:
             raise ValueError(
@@ -418,24 +415,6 @@ class UploadIngestor:
                         detected = self._detected_mime(
                             content=mapped, filename=filename, mime=mime
                         )
-                metering: ManagedTextMeasurementDraft | None = None
-                if self._meter_scope is not None:
-                    if received > DOC_TEXT_MAX_SOURCE_BYTES:
-                        raise ManagedTextClassificationError(
-                            code="source_bytes_limit_exceeded"
-                        )
-                    spool.seek(0)
-                    measured, metering = self._prepare_managed_text(
-                        deployment_id=deployment_id,
-                        upload=DocumentUpload(
-                            filename=filename,
-                            mime=detected,
-                            content=spool.read(),
-                            title=title,
-                            source_path=source_path,
-                        ),
-                    )
-                    detected = measured.mime
             except _STORED_REFUSALS as refusal:
                 raise self._refused(
                     deployment_id=deployment_id, key=key, refusal=refusal
@@ -466,7 +445,7 @@ class UploadIngestor:
                 ),
                 convert_component_version=E0_CONVERT_VERSION,
                 lane=lane,
-                metering=metering,
+                metered=self._meter_scope is not None,
                 routable_mimes=routable,
             )
         except _STORED_REFUSALS as refusal:
@@ -544,9 +523,6 @@ class UploadIngestor:
             content_hash=content_hash,
         )
         upload = self._detect_upload(upload=upload)
-        upload, metering = self._prepare_managed_text(
-            deployment_id=deployment_id, upload=upload
-        )
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
         )
@@ -575,30 +551,28 @@ class UploadIngestor:
             effective_from=upload.effective_from,
             effective_until=upload.effective_until,
         )
-        if metering is None:
-            try:
-                self._raw_store.write_bytes(
-                    key=ObjectKey(raw_uri),
-                    content=upload.content,
-                    # D51: media a harness reads stays hot; text originals
-                    # kept only for audit go cold — routed at the write
-                    storage_class=storage_class_for(mime=upload.mime),
-                )
-            except ObjectAlreadyExistsError:
-                pass
+        try:
+            self._raw_store.write_bytes(
+                key=ObjectKey(raw_uri),
+                content=upload.content,
+                # D51: media a harness reads stays hot; text originals
+                # kept only for audit go cold — routed at the write
+                storage_class=storage_class_for(mime=upload.mime),
+            )
+        except ObjectAlreadyExistsError:
+            pass
         ingested = self._catalog.record_upload(
             record=record,
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
-            metering=metering,
+            metered=self._meter_scope is not None,
             routable_mimes=self._routable_for(upload=upload),
         )
-        if metering is None:
-            self._release_unretained(
-                deployment_id=deployment_id,
-                content_hash=content_hash,
-                key=ObjectKey(raw_uri),
-            )
+        self._release_unretained(
+            deployment_id=deployment_id,
+            content_hash=content_hash,
+            key=ObjectKey(raw_uri),
+        )
         return ingested
 
     def _release_unretained(
@@ -621,38 +595,6 @@ class UploadIngestor:
             and isinstance(self._raw_store, ObjectPurgePort)
         ):
             self._raw_store.purge_objects(keys=(key,), prefixes=())
-
-    def _prepare_managed_text(
-        self, *, deployment_id: UUID, upload: DocumentUpload
-    ) -> tuple[DocumentUpload, ManagedTextMeasurementDraft | None]:
-        """Measure managed text after the common byte-class admission check.
-
-        The processing profile follows the layers enabled now (D143 §4.5).
-        """
-        scope = self._meter_scope
-        if scope is None:
-            return upload, None
-        classified = classify_doc_text(
-            content=upload.content, declared_mime=upload.mime
-        )
-        measurement_id = uuid4()
-        prepared = upload.model_copy(update={"mime": classified.canonical_mime})
-        return prepared, ManagedTextMeasurementDraft(
-            measurement_id=measurement_id,
-            ingest_attempt_id=f"ing_{uuid4().hex}",
-            org_id=scope.org_id,
-            project_id=scope.project_id,
-            normalized_character_count=classified.normalized_character_count,
-            canonical_source_bytes=classified.canonical_source_bytes,
-            classifier_version=DOC_TEXT_CLASSIFIER_VERSION,
-            measurement_algorithm_version=(DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION),
-            processing_profile_id=self._catalog.processing_profile_id(
-                deployment_id=deployment_id
-            ),
-            measured_at=datetime.now(timezone.utc),
-            identity_key=scope.identity_key,
-            staged_content=upload.content,
-        )
 
     def _detect_upload(self, *, upload: DocumentUpload) -> DocumentUpload:
         """Use byte classes first and registry hints within compatible families."""
@@ -742,12 +684,19 @@ class ConvertHandler:
         raw_store: ObjectStorePort,
         artifact_store: ObjectStorePort,
         router: ConversionRouter,
+        meter_scope: ManagedMeterScope | None = None,
     ) -> None:
-        """Bind the handler to its catalog, both stores, and the route table."""
+        """Bind the handler to its catalog, both stores, and the route table.
+
+        ``meter_scope`` makes this a metered deployment: each new version is
+        measured here and waits for the control plane's approval before any
+        work that calls a model provider.
+        """
         self._catalog = catalog
         self._raw_store = raw_store
         self._artifact_store = artifact_store
         self._router = router
+        self._meter_scope = meter_scope
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
         """Convert one document version and record its representation.
@@ -755,6 +704,12 @@ class ConvertHandler:
         Replay before regenerate (D65/D7): a representation this toolchain
         already produced for the version is re-chained as-is — the converter
         is never re-called on a retried or replayed attempt.
+
+        Metered (D139, cloud D94): a PDF is measured in pages before OCR and a
+        locally read file in characters of its ``document.md``; either way
+        the version's work parks until the measurement is approved, and only
+        then is OCR called or structure chained. A card reads nothing and is
+        not measured; any other route is refused.
         """
         source = self._catalog.convert_source(
             version_id=_payload_uuid(work=work, field="version_id")
@@ -789,6 +744,7 @@ class ConvertHandler:
             error = f"PDF exceeds the pre-OCR provider limit of {provider_limit} bytes"
             self._catalog.mark_version_failed(version_id=source.version_id, error=error)
             raise NonRetryableHandlerError(error)
+        cost_class = self._admission(work=work, source=source, converter=converter)
         existing = self._catalog.existing_representation(
             version_id=source.version_id,
             route=converter.name,
@@ -796,6 +752,14 @@ class ConvertHandler:
             blockizer_version=BLOCKIZER_VERSION,
         )
         if existing is not None:
+            if cost_class == "doc-text":
+                # A reading made before its measurement was recorded.
+                markdown = self._artifact_store.read_bytes(
+                    key=ObjectKey(
+                        f"{source.doc_id}/{source.content_hash}/{existing}/document.md"
+                    )
+                ).decode("utf-8")
+                self._measure_text(work=work, source=source, markdown=markdown)
             return self._structure_follow_up(
                 work=work, version_id=source.version_id, representation_id=existing
             )
@@ -1015,8 +979,126 @@ class ConvertHandler:
             ),
             metadata=result.metadata,
         )
+        if cost_class == "doc-text":
+            self._measure_text(work=work, source=source, markdown=result.document_md)
         return self._structure_follow_up(
             work=work, version_id=source.version_id, representation_id=representation_id
+        )
+
+    def _admission(
+        self, *, work: ClaimedWork, source: ConvertSource, converter: Converter
+    ) -> CostClass | None:
+        """Gate a metered conversion; return ``doc-text`` when it must be measured.
+
+        Returns None when nothing is metered here: no meter, a free card, or
+        an approved measurement. A recorded but unapproved measurement parks
+        the work again. A PDF is measured now, before its OCR call, and
+        parks. A reading route converts first and is measured after.
+        """
+        if self._meter_scope is None or converter.name in FREE_ROUTES:
+            return None
+        try:
+            cost_class = cost_class_for_route(route=converter.name)
+        except UnmeteredRouteError as err:
+            self._catalog.mark_version_failed(
+                version_id=source.version_id, error=str(err)
+            )
+            raise NonRetryableHandlerError(str(err)) from err
+        state = self._catalog.measurement_state(version_id=source.version_id)
+        if state == "accepted":
+            return None
+        if state is not None:
+            raise AdmissionPendingError(f"measurement {state}")
+        if cost_class == "doc-text":
+            return cost_class
+        by_url = (
+            isinstance(converter, UrlConverter)
+            and isinstance(self._raw_store, PresignedReadPort)
+            and source.byte_size is not None
+        )
+        try:
+            if by_url and isinstance(converter, UrlPageCountingConverter):
+                assert isinstance(converter, UrlConverter)
+                assert isinstance(self._raw_store, PresignedReadPort)
+                assert source.byte_size is not None
+                pages = converter.count_pages_from_url(
+                    url=self._raw_store.presign_get(
+                        key=ObjectKey(source.raw_uri), ttl_s=converter.url_ttl_s
+                    ),
+                    size=source.byte_size,
+                )
+            elif not by_url and isinstance(converter, PageCountingConverter):
+                pages = converter.count_pages(
+                    content=self._raw_store.read_bytes(key=ObjectKey(source.raw_uri))
+                )
+            else:
+                error = f"route {converter.name!r} cannot count pages before OCR"
+                self._catalog.mark_version_failed(
+                    version_id=source.version_id, error=error
+                )
+                raise NonRetryableHandlerError(error)
+        except ConversionError as err:
+            self._catalog.mark_version_failed(
+                version_id=source.version_id, error=str(err)
+            )
+            raise NonRetryableHandlerError(str(err)) from err
+        self._record_measurement(
+            work=work,
+            source=source,
+            cost_class=cost_class,
+            native_quantity=pages,
+            algorithm_version=DOC_SCAN_ALGORITHM_VERSION,
+        )
+        raise AdmissionPendingError("measured pages before OCR")
+
+    def _measure_text(
+        self, *, work: ClaimedWork, source: ConvertSource, markdown: str
+    ) -> NoReturn:
+        """Record a reading's character count and park until it is approved."""
+        self._record_measurement(
+            work=work,
+            source=source,
+            cost_class="doc-text",
+            native_quantity=normalized_character_count(text=markdown),
+            algorithm_version=DOC_TEXT_ALGORITHM_VERSION,
+        )
+        raise AdmissionPendingError("measured characters before paid stages")
+
+    def _record_measurement(
+        self,
+        *,
+        work: ClaimedWork,
+        source: ConvertSource,
+        cost_class: CostClass,
+        native_quantity: int,
+        algorithm_version: str,
+    ) -> None:
+        """Record the version's one content-free measurement."""
+        scope = self._meter_scope
+        assert scope is not None
+        self._catalog.record_measurement(
+            draft=ManagedMeasurementDraft(
+                measurement_id=uuid4(),
+                ingest_attempt_id=f"convert:{work.processing_id}:{work.attempt}",
+                org_id=scope.org_id,
+                project_id=scope.project_id,
+                format_family=family_for_mime(mime=source.mime).name,
+                cost_class=cost_class,
+                native_quantity=native_quantity,
+                canonical_source_bytes=source.byte_size or 0,
+                classifier_version=METERING_CLASSIFIER_VERSION,
+                measurement_algorithm_version=algorithm_version,
+                processing_profile_id=self._catalog.processing_profile_id(
+                    deployment_id=source.deployment_id, cost_class=cost_class
+                ),
+                measured_at=datetime.now(timezone.utc),
+                identity_key=scope.identity_key,
+            ),
+            deployment_id=source.deployment_id,
+            doc_id=source.doc_id,
+            version_id=source.version_id,
+            convert_component_version=work.component_version,
+            lane=(work.lane or ProcessingLane.STEADY).value,
         )
 
     def _converter_for(self, *, source: ConvertSource) -> Converter:

@@ -24,7 +24,7 @@ class PipelineRouteStatus(BaseModel):
     stage: PipelineStage
     lane: ProcessingLane | None
     status: ProcessingStatus
-    # Why waiting rows wait, so parked work (`no_route`, `budget`) is not
+    # Why waiting rows wait, so parked work (`no_route`, `admission`, `budget`) is not
     # counted as ordinary `pending`.
     defer_reason: DeferReason | None
     count: int = Field(ge=0)

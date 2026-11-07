@@ -17,62 +17,82 @@ from pydantic import Field
 from pydantic import model_validator
 from pydantic import SecretStr
 
+CostClass = Literal["doc-text", "doc-scan", "image", "audio", "video"]
+"""A processed-input cost class: what kind of work one source version needs."""
 
-class DocTextQuantity(BaseModel):
-    """Whitespace-normalized Unicode scalar count for one text source."""
+EvidenceUnit = Literal["normalized_character", "page", "image", "millisecond"]
+"""The integer unit a cost class is measured in."""
+
+EVIDENCE_UNIT: dict[str, EvidenceUnit] = {
+    "doc-text": "normalized_character",
+    "doc-scan": "page",
+    "image": "image",
+    "audio": "millisecond",
+    "video": "millisecond",
+}
+"""Each cost class has exactly one evidence unit."""
+
+
+class ManagedIngestMeasurement(BaseModel):
+    """The generic v3 receipt for one source version, sent before costly work.
+
+    It names what was measured (``cost_class``, an integer ``native_quantity``
+    in ``unit``) and nothing about the content: no bytes, text, name, hash or
+    locator. Only primary sources exist: the engine extracts no automatic
+    children, so there is no parent link.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: Literal["doc_text"] = "doc_text"
-    normalized_character_count: int = Field(ge=0)
-
-
-class ManagedIngestMeasurementV2(BaseModel):
-    """The v2 primary-source receipt sent before expensive pipeline work."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    contract_version: Literal["rememberstack.ingest_measurement.v2"] = (
-        "rememberstack.ingest_measurement.v2"
+    contract_version: Literal["rememberstack.ingest_measurement.v3"] = (
+        "rememberstack.ingest_measurement.v3"
     )
+    role: Literal["primary"] = "primary"
     measurement_id: UUID
     ingest_attempt_id: str = Field(min_length=1, max_length=128)
     org_id: UUID
     project_id: UUID
     deployment_id: UUID
-    parent_measurement_id: UUID | None = None
     opaque_lineage_id: str = Field(min_length=1, max_length=128)
     opaque_source_version_id: str = Field(min_length=1, max_length=128)
-    rate_class: Literal["doc-text"] = "doc-text"
-    quantity: DocTextQuantity
+    format_family: str = Field(min_length=1, max_length=64)
+    cost_class: CostClass
+    native_quantity: int = Field(ge=0)
+    unit: EvidenceUnit
     canonical_source_bytes: int = Field(ge=0)
-    document_version_disposition: Literal["new_version", "no_op"]
     classifier_version: str = Field(min_length=1, max_length=128)
     measurement_algorithm_version: str = Field(min_length=1, max_length=128)
     processing_profile_id: str = Field(min_length=1, max_length=128)
     measured_at: datetime
 
+    @model_validator(mode="after")
+    def unit_matches_cost_class(self) -> ManagedIngestMeasurement:
+        """Require the class's own unit and real evidence for non-text classes."""
+        if EVIDENCE_UNIT[self.cost_class] != self.unit:
+            raise ValueError("unit does not match cost_class")
+        if self.cost_class != "doc-text" and self.native_quantity < 1:
+            raise ValueError("native_quantity must be positive for this cost_class")
+        return self
 
-class ManagedDocumentVersionOutcomeV2(BaseModel):
-    """The v2 terminal receipt replayed until the control plane acknowledges it."""
+
+class ManagedDocumentVersionOutcome(BaseModel):
+    """The v3 terminal receipt replayed until the control plane acknowledges it."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    contract_version: Literal["rememberstack.document_version_outcome.v2"] = (
-        "rememberstack.document_version_outcome.v2"
+    contract_version: Literal["rememberstack.document_version_outcome.v3"] = (
+        "rememberstack.document_version_outcome.v3"
     )
     measurement_id: UUID
     document_version_id: str | None = Field(default=None, max_length=128)
-    outcome: Literal["succeeded", "failed", "no_op"]
+    outcome: Literal["succeeded", "failed"]
     completed_at: datetime
     reason_code: str | None = Field(default=None, max_length=64)
     profile_complete: bool
     version_commit_sequence: int | None = Field(default=None, ge=0)
-    derived_normalized_character_count: int | None = Field(default=None, ge=0)
-    provider_cost_evidence_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
-    def successful_append_is_complete(self) -> ManagedDocumentVersionOutcomeV2:
+    def successful_append_is_complete(self) -> ManagedDocumentVersionOutcome:
         """Require the immutable version evidence that makes success billable."""
         if self.outcome == "succeeded" and (
             not self.document_version_id
@@ -85,8 +105,8 @@ class ManagedDocumentVersionOutcomeV2(BaseModel):
         return self
 
 
-class ManagedTextMeasurementDraft(BaseModel):
-    """Local pre-version evidence passed into the transactional spine write."""
+class ManagedMeasurementDraft(BaseModel):
+    """One source version's measurement before the spine assigns opaque IDs."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -94,14 +114,15 @@ class ManagedTextMeasurementDraft(BaseModel):
     ingest_attempt_id: str = Field(min_length=1, max_length=128)
     org_id: UUID
     project_id: UUID
-    normalized_character_count: int = Field(ge=0)
+    format_family: str = Field(min_length=1, max_length=64)
+    cost_class: CostClass
+    native_quantity: int = Field(ge=0)
     canonical_source_bytes: int = Field(ge=0)
     classifier_version: str = Field(min_length=1, max_length=128)
     measurement_algorithm_version: str = Field(min_length=1, max_length=128)
     processing_profile_id: str = Field(min_length=1, max_length=128)
     measured_at: datetime
     identity_key: SecretStr = Field(exclude=True)
-    staged_content: bytes = Field(exclude=True, min_length=1)
 
 
 class ManagedMeterScope(BaseModel):
@@ -119,7 +140,7 @@ class MeterAdmissionResult(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    decision: Literal["approved", "no_op", "parked"]
+    decision: Literal["approved", "parked"]
     reason_code: str | None = Field(default=None, max_length=64)
     processing_hold_id: UUID | None = None
     storage_growth_hold_id: UUID | None = None
@@ -153,12 +174,3 @@ class MeterReceiptUnauthorized(MeterReceiptUnavailable):
 
 class MeterReceiptConflict(MeterReceiptError):
     """The control plane rejected a changed or contradictory stable identity."""
-
-
-class ManagedTextClassificationError(ValueError):
-    """A source cannot enter the bounded managed doc-text profile."""
-
-    def __init__(self, *, code: str) -> None:
-        """Capture the safe rejection code exposed at the ingest boundary."""
-        super().__init__(code)
-        self.code = code

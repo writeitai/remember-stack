@@ -43,13 +43,14 @@ from rememberstack.model import UploadRecord
 from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.documents import IngestPrincipal
 from rememberstack.model.documents import IngestPrincipalKind
-from rememberstack.model.metering import ManagedTextMeasurementDraft
+from rememberstack.model.metering import ManagedMeasurementDraft
 from rememberstack.spine.document_metadata import merge_converter_metadata_on
 from rememberstack.spine.document_metadata import observe_names_on
 from rememberstack.spine.document_metadata import record_ingest_metadata_on
 from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.effective_time import declare_at_ingest_on
 from rememberstack.spine.effective_time import resolve_version_key_on
+from rememberstack.spine.managed_metering import measurement_state_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
 from rememberstack.spine.period_adjudication import request_window_review_on
 from rememberstack.spine.references import activate_extracted_on
@@ -61,18 +62,45 @@ from rememberstack.spine.work_ledger import enqueue_on
 class DocumentCatalog:
     """E0 row writes and stage loads over an explicitly composed engine."""
 
-    def processing_profile_id(self, *, deployment_id: UUID) -> str:
+    def processing_profile_id(self, *, deployment_id: UUID, cost_class: str) -> str:
         """The managed-meter processing profile of the layers enabled now (D143)."""
         from rememberstack.spine.processing_layers import layer_configuration_on
 
         with self._engine.connect() as connection:
             return layer_configuration_on(
                 connection=connection, deployment_id=deployment_id
-            ).processing_profile_id
+            ).processing_profile_id(cost_class=cost_class)
 
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
+
+    def measurement_state(self, *, version_id: UUID) -> str | None:
+        """The version's managed-meter delivery state; None before measurement."""
+        with self._engine.connect() as connection:
+            return measurement_state_on(connection=connection, version_id=version_id)
+
+    def record_measurement(
+        self,
+        *,
+        draft: ManagedMeasurementDraft,
+        deployment_id: UUID,
+        doc_id: UUID,
+        version_id: UUID,
+        convert_component_version: str,
+        lane: str,
+    ) -> None:
+        """Record the version's one managed-meter measurement (idempotent)."""
+        with self._engine.begin() as connection:
+            record_managed_measurement_on(
+                connection=connection,
+                draft=draft,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                version_id=version_id,
+                convert_component_version=convert_component_version,
+                lane=lane,
+            )
 
     def record_upload(
         self,
@@ -80,7 +108,7 @@ class DocumentCatalog:
         record: UploadRecord,
         convert_component_version: str,
         lane: ProcessingLane = ProcessingLane.STEADY,
-        metering: ManagedTextMeasurementDraft | None = None,
+        metered: bool = False,
         routable_mimes: Collection[str] | None = None,
     ) -> IngestedVersion:
         """Land one upload's rows and enqueue its convert work in one transaction.
@@ -223,7 +251,7 @@ class DocumentCatalog:
                         "source_version_ref": record.source_version_ref,
                         "sync_cycle_id": record.sync_cycle_id,
                         "ingested_by_principal_id": principal_id,
-                        "status": "ingesting" if metering is not None else "converting",
+                        "status": "converting",
                         "version_key": record.version_key,
                     },
                 )
@@ -284,41 +312,28 @@ class DocumentCatalog:
                         doc_id=doc_id,
                         reason="ingest_period_declared",
                     )
-            parked = False
-            if metering is None:
-                convert = enqueue_on(
-                    connection=connection,
-                    work=EnqueueWork(
-                        deployment_id=record.deployment_id,
-                        # the idempotency key names the VERSION (D12/D55): a
-                        # lineage's second version must never collide with the
-                        # first version's completed work row
-                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                        target_id=version_id,
-                        stage=PipelineStage.CONVERT,
-                        component_version=convert_component_version,
-                        content_hash=record.content_hash,
-                        lane=lane,
-                        payload={"version_id": str(version_id)},
-                        defer_reason=convert_defer_reason,
-                    ),
-                )
-                # Read the work row, not today's route table: an identical
-                # re-ingest must report what its existing convert row does.
-                parked = connection.execute(
-                    _CONVERT_PARKED_NO_ROUTE, {"processing_id": convert.processing_id}
-                ).scalar_one()
-            else:
-                record_managed_measurement_on(
-                    connection=connection,
-                    draft=metering,
+            convert = enqueue_on(
+                connection=connection,
+                work=EnqueueWork(
                     deployment_id=record.deployment_id,
-                    doc_id=doc_id,
-                    version_id=version_id,
-                    created=created,
-                    convert_component_version=convert_component_version,
-                    lane=lane.value,
-                )
+                    # the idempotency key names the VERSION (D12/D55): a
+                    # lineage's second version must never collide with the
+                    # first version's completed work row
+                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                    target_id=version_id,
+                    stage=PipelineStage.CONVERT,
+                    component_version=convert_component_version,
+                    content_hash=record.content_hash,
+                    lane=lane,
+                    payload={"version_id": str(version_id)},
+                    defer_reason=convert_defer_reason,
+                ),
+            )
+            # Read the work row, not today's route table: an identical
+            # re-ingest must report what its existing convert row does.
+            parked = connection.execute(
+                _CONVERT_PARKED_NO_ROUTE, {"processing_id": convert.processing_id}
+            ).scalar_one()
             return IngestedVersion(
                 deployment_id=record.deployment_id,
                 doc_id=doc_id,
@@ -329,9 +344,7 @@ class DocumentCatalog:
                 title=lineage["title"],
                 versioning_mode=lineage["versioning_mode"],
                 parked="no_route" if parked else None,
-                processing_admission=(
-                    "pending" if metering is not None else "not_required"
-                ),
+                processing_admission="pending" if metered else "not_required",
                 version_key=(
                     record.version_key
                     if created or latest is None

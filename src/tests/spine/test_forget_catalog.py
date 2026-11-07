@@ -587,18 +587,19 @@ def _seed_documents(*, connection: Connection) -> None:
             INSERT INTO managed_ingest_measurements (
               measurement_id, deployment_id, doc_id, version_id,
               ingest_attempt_id, org_id, project_id, opaque_lineage_id,
-              opaque_source_version_id, normalized_character_count,
-              canonical_source_bytes, document_version_disposition,
+              opaque_source_version_id, format_family, cost_class,
+              native_quantity, unit, canonical_source_bytes,
               classifier_version, measurement_algorithm_version,
               processing_profile_id, measured_at, convert_component_version,
-              lane, staged_content, delivery_state, decision_reason
+              lane, delivery_state, decision_reason
             ) VALUES (
               :measurement_id, :deployment_id, :doc_id, :version_id,
               'ing_forget_proof', :org_id, :project_id, 'opaque-lineage',
-              'opaque-version', 24, :source_bytes, 'new_version',
-              'doc-text-classifier-v1', 'unicode-whitespace-scalars-v1',
+              'opaque-version', 'text', 'doc-text', 24, 'normalized_character',
+              :source_bytes, 'route-cost-class-v1',
+              'document-md-unicode-whitespace-scalars-v1',
               'doc-text-standard-v1', :measured_at, 'e0-test', 'steady',
-              :staged_content, 'parked', 'control_plane_unavailable'
+              'parked', 'control_plane_unavailable'
             )
             """
         ),
@@ -611,7 +612,6 @@ def _seed_documents(*, connection: Connection) -> None:
             "project_id": UUID("75000000-0000-0000-0000-000000000032"),
             "source_bytes": len(_TOKEN.encode("utf-8")),
             "measured_at": _NOW,
-            "staged_content": _TOKEN.encode("utf-8"),
         },
     )
     connection.execute(
@@ -1320,13 +1320,13 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert target.deleted_at is not None
         meter = connection.execute(
             text(
-                "SELECT staged_content, delivery_state, decision_reason "
+                "SELECT delivery_state, decision_reason "
                 "FROM managed_ingest_measurements "
                 "WHERE measurement_id = :measurement_id"
             ),
             {"measurement_id": _TARGET_MEASUREMENT_ID},
         ).one()
-        assert meter == (None, "cancelled", "source_forgotten")
+        assert meter == ("cancelled", "source_forgotten")
         assert _count(connection, "chunks", "doc_id", _TARGET_DOC_ID) == 0
         assert _count(connection, "chunk_search", "chunk_id", _TARGET_CHUNK_ID) == 0
         assert _count(connection, "chunk_search", "chunk_id", _CONTROL_CHUNK_ID) == 1

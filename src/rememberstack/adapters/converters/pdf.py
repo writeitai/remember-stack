@@ -77,6 +77,10 @@ class PdfConverter:
         """The configured OCR input ceiling for pre-converter admission."""
         return self._provider_limit_bytes
 
+    def count_pages(self, *, content: bytes) -> int:
+        """Count the PDF's pages from its page tree, before any OCR call."""
+        return pdf_page_count(content=content)
+
     def convert_path(self, *, path: Path, mime: str) -> ConversionResult:
         """:meth:`convert` for a PDF on local disk, never holding it whole (D147).
 

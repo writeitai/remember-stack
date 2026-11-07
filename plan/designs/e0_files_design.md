@@ -94,14 +94,15 @@ for a family D132 does not cover (for example, an archive); the converter
 validates that format. Remaining unrecognized binary is stored as a D138
 binary card. The stored
 `content_objects.mime` is the decided MIME and drives the D38 route, D51
-original class, and managed text metering. Text flavours cannot be settled by
+original class, and, through that route, a metered deployment's cost class
+(D150). Text flavours cannot be settled by
 bytes: once bytes establish text, D133/D138 registry hints select Markdown,
 CSV, code, configuration, or plain text and their distinct processing postures.
 Textual email, notebooks, RTF, and delimited data keep their registry families;
 their converters validate full structure. Recognizable HTML markup retains
 `text/html` for its separate converter, and an empty upload
-is valid text in the self-host profile (the managed text profile rejects an
-empty measured source).
+is valid text in every deployment; a metered one bills it at the per-source
+minimum (D150).
 
 For legacy OLE office containers, bytes establish the office class and the
 declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE

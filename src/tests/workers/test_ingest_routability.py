@@ -23,7 +23,6 @@ from rememberstack.adapters.converters import build_conversion_routes
 from rememberstack.model import DeferReason
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
-from rememberstack.model import ManagedTextClassificationError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ProcessingLane
 from rememberstack.model import StoredObjectRefusedError
@@ -52,6 +51,7 @@ class _RecordingCatalog:
         self.calls = 0
         self.defer_reason: DeferReason | None = None
         self.recorded_mime: str | None = None
+        self.metered: bool | None = None
 
     def raw_object_key(self, *, deployment_id: object, content_hash: str) -> None:
         """No content is kept here, so no written copy is ever released."""
@@ -63,12 +63,13 @@ class _RecordingCatalog:
         record: UploadRecord,
         convert_component_version: str,
         lane: ProcessingLane = ProcessingLane.STEADY,
-        metering: object | None = None,
+        metered: bool = False,
         routable_mimes: Collection[str] | None = None,
     ) -> IngestedVersion:
         """Record the scheduling decision and return a fixed receipt."""
-        _ = convert_component_version, lane, metering
+        _ = convert_component_version, lane
         self.calls += 1
+        self.metered = metered
         self.recorded_mime = record.mime
         self.defer_reason = (
             None
@@ -341,8 +342,8 @@ def test_ingest_and_the_router_read_the_same_key_set() -> None:
     assert frozenset(build_conversion_routes(route_names=_ROUTES)) == frozenset(_ROUTES)
 
 
-def test_managed_binary_still_requires_a_supported_metered_rate_class() -> None:
-    """No-route storage must not bypass managed admission or binary classification."""
+def test_a_metered_binary_is_stored_and_measured_later_in_convert() -> None:
+    """Metered ingest refuses no type: convert measures it or cards it for free."""
     catalog, store = _RecordingCatalog(), _CountingStore()
     ingestor = UploadIngestor(
         catalog=cast(DocumentCatalog, catalog),
@@ -355,15 +356,14 @@ def test_managed_binary_still_requires_a_supported_metered_rate_class() -> None:
             identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
         ),
     )
-    with pytest.raises(ManagedTextClassificationError):
-        ingestor.ingest(
-            deployment_id=_DEPLOYMENT_ID,
-            upload=DocumentUpload(
-                filename="scan.png", mime="image/png", content=b"\x89PNG\r\n\x1a\nimage"
-            ),
-        )
-    assert store.writes == 0
-    assert catalog.calls == 0
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="scan.png", mime="image/png", content=b"\x89PNG\r\n\x1a\nimage"
+        ),
+    )
+    assert store.writes == 1
+    assert catalog.calls == 1 and catalog.metered is True
 
 
 def test_ingest_stores_the_detected_family_mime() -> None:

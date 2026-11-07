@@ -31,7 +31,9 @@ docker compose logs --since 1h
   store (with the bundled SeaweedFS or any other S3 store). Summed per
   `stage`, they show which stages move the most data to and from storage. The outcome is one of
   `succeeded`, `retry_scheduled`, `dead_lettered`, `budget_parked`,
-  `no_route_parked`, `lease_lost` or `no_work`. `lease_lost` means the
+  `no_route_parked`, `admission_parked` (a metered deployment's conversion
+  waiting for its control plane's approval), `lease_lost` or `no_work`.
+  `lease_lost` means the
   worker took longer than its hold on the item without renewing it, the
   item was handed back to the queue, and this run's result was discarded. A failure adds an `exception` object with
   the error type, message and full traceback.

@@ -5,6 +5,8 @@ The layer toggles add one route (``GET /processing-layers``), an optional
 those reference. Removing exactly those from today's export must give back the
 pre-D143 document, byte for byte after canonical serialisation; its hash is
 pinned here because the old document itself is a build product of history.
+D150 adds one more enum value, ``admission``, to a readiness stage's
+``defer_reason``; it is stripped the same way.
 """
 
 from __future__ import annotations
@@ -55,6 +57,8 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
     schemas = stripped.get("components", {}).get("schemas", {})
     for name in _ADDED_SCHEMAS:
         schemas.pop(name, None)
+    reasons = schemas["PipelineStageReadiness"]["properties"]["defer_reason"]["anyOf"]
+    reasons[0]["enum"] = [value for value in reasons[0]["enum"] if value != "admission"]
     return stripped
 
 

@@ -57,6 +57,10 @@ class NoRouteHandlerError(Exception):
         self.mime = mime
 
 
+class AdmissionPendingError(Exception):
+    """Convert measured a metered version and must wait for the meter's approval."""
+
+
 class ExtractChunkBarrier(BaseModel):
     """D84: after a chunk extract succeeds, complete+barrier in one ledger txn."""
 
@@ -398,6 +402,28 @@ class Worker:
         try:
             with _LeaseRenewal(ledger=self._ledger, work=claimed):
                 outcome = handler.handle(work=claimed, meter=meter)
+        except AdmissionPendingError:
+            try:
+                self._ledger.park_for_admission(
+                    processing_id=claimed.processing_id, attempt=claimed.attempt
+                )
+            except WorkNotRunningError:
+                return self._lease_lost(claimed=claimed, started_ns=started_ns)
+            self._export_event(
+                event=_worker_event(
+                    deployment_id=claimed.deployment_id,
+                    processing_id=claimed.processing_id,
+                    stage=claimed.stage,
+                    lane=claimed.lane,
+                    attempt=None,
+                    outcome=RunResultOutcome.ADMISSION_PARKED,
+                    started_ns=started_ns,
+                )
+            )
+            return RunResult(
+                processing_id=claimed.processing_id,
+                outcome=RunResultOutcome.ADMISSION_PARKED,
+            )
         except NoRouteHandlerError as no_route:
             try:
                 self._ledger.park_no_route(

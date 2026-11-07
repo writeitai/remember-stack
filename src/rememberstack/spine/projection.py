@@ -327,8 +327,7 @@ _SELECT_CORPUS_DOCUMENTS = text(
            stored.ingested_at AS stored_ingested_at,
            work.defer_reason::text AS stored_defer_reason
     FROM documents d
-    -- Raw availability is independent of processed currency (D117). Managed
-    -- metadata can predate the raw write, so only accepted originals qualify.
+    -- Raw availability is independent of processed currency (D117).
     JOIN LATERAL (
         SELECT dv.version_id, dv.content_hash, dv.status,
                dv.source_modified_at, dv.ingested_at, co.raw_uri, co.mime
@@ -338,13 +337,6 @@ _SELECT_CORPUS_DOCUMENTS = text(
          AND co.content_hash = dv.content_hash AND co.purged_at IS NULL
         WHERE dv.deployment_id = d.deployment_id AND dv.doc_id = d.doc_id
           AND dv.deleted_at IS NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM managed_ingest_measurements m
-              WHERE m.deployment_id = dv.deployment_id
-                AND m.version_id = dv.version_id
-                AND m.document_version_disposition = 'new_version'
-                AND m.accepted_at IS NULL
-          )
         ORDER BY dv.version_no DESC
         LIMIT 1
     ) stored ON TRUE
