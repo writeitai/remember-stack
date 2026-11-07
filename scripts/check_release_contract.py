@@ -140,15 +140,23 @@ def _validate_postgres_release(*, root: Path, version: str) -> None:
     workflow = (root / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )
+    start, end = "\n  build-postgres:\n", "\n  github-release:\n"
+    if start not in workflow or end not in workflow:
+        raise ValueError("release workflow must keep the build-postgres job")
+    jobs = workflow.split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
+    # Each architecture builds natively: the image build runs the
+    # pg_textsearch regression suite, which fails under QEMU emulation.
     for required in (
         "file: Dockerfile.postgres",
-        "platforms: linux/amd64,linux/arm64",
+        "runner: ubuntu-latest",
+        "runner: ubuntu-24.04-arm",
+        "push-by-digest=true",
+        "docker buildx imagetools create",
         f"type=raw,value={base}-${{{{ needs.prepare.outputs.version }}}}",
         "postgres-image-digests.json",
-        "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf",
         "docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2",
     ):
-        if required not in workflow:
+        if required not in jobs:
             raise ValueError(
                 f"release workflow is missing PostgreSQL image contract {required!r}"
             )

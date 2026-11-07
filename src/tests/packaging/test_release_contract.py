@@ -414,6 +414,16 @@ def test_compose_pulls_the_published_postgres_image(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="published PostgreSQL image"):
         _validate_postgres_release(root=tmp_path, version="0.0.0")
 
+    workflow = tmp_path / ".github/workflows/release.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "runner: ubuntu-24.04-arm", "runner: ubuntu-latest"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="PostgreSQL image contract"):
+        _validate_postgres_release(root=tmp_path, version=version)
+
 
 def _project_version(*, root: Path) -> str:
     """Read the package version independently from the release checker process."""
