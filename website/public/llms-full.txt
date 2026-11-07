@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.18.3](https://github.com/writeitai/remember-stack/releases/tag/v0.18.3)
-([on PyPI](https://pypi.org/project/remember/0.18.3/)).
+[v0.18.4](https://github.com/writeitai/remember-stack/releases/tag/v0.18.4)
+([on PyPI](https://pypi.org/project/remember/0.18.4/)).
 
 ## 3. Point the client at your endpoint
 
@@ -6763,8 +6763,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.18.3` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.3` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.18.4` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.4` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -6946,7 +6946,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.18.3
+git checkout v0.18.4
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -6958,7 +6958,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.18.3`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.18.4`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -9672,7 +9672,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.18.3/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.18.4/openapi.json).
 
 ## Base URL
 
@@ -17841,7 +17841,7 @@ Source: https://remember.dev/docs/reference/cli
 
 # CLI
 
-This page describes the `remember` CLI (v0.18.3), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.18.4), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
