@@ -8,6 +8,7 @@ dimensions) captured against `mistral-ocr-latest` on 2026-08-28.
 import base64
 from decimal import Decimal
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -549,3 +550,138 @@ def _ok_transport_lenient() -> httpx.MockTransport:
         return httpx.Response(200, json=_RAW_RESPONSE)
 
     return httpx.MockTransport(handle)
+
+
+def _page_echo_transport(calls: list[int]) -> httpx.MockTransport:
+    """OCR each request's PDF by reading its pages' text layer (test only)."""
+    import pypdfium2
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        encoded = body["document"]["document_url"].split(",", 1)[1]
+        document = pypdfium2.PdfDocument(base64.b64decode(encoded))
+        try:
+            texts = [
+                document[index].get_textpage().get_text_range().strip()
+                for index in range(len(document))
+            ]
+        finally:
+            document.close()
+        calls.append(len(texts))
+        return httpx.Response(
+            200,
+            json={
+                "model": "mistral-ocr-latest",
+                "pages": [
+                    {"index": index, "markdown": f"# {text}\n", "dimensions": {}}
+                    for index, text in enumerate(texts)
+                ],
+                "usage_info": {"pages_processed": len(texts)},
+            },
+        )
+
+    return httpx.MockTransport(handle)
+
+
+_TEN_PAGES: list[str | None] = [f"Section {number}" for number in range(1, 11)]
+
+
+def test_a_pdf_over_the_page_ceiling_is_ocred_in_batches_in_page_order() -> None:
+    """D147: batches renumber their pages and stitch into one reading."""
+    calls: list[int] = []
+    content = _pdf(pages=_TEN_PAGES)
+    batched = _converter(_page_echo_transport(calls), max_document_pages=4).convert(
+        content=content, mime="application/pdf"
+    )
+    assert calls == [4, 4, 2]
+    whole_calls: list[int] = []
+    whole = _converter(_page_echo_transport(whole_calls)).convert(
+        content=content, mime="application/pdf"
+    )
+    assert whole_calls == [10]
+    # Page-wise identical provider output gives the identical reading.
+    assert batched.document_md == whole.document_md
+    assert batched.source_map == whole.source_map
+    assert batched.manifest.derivation_ranges == whole.manifest.derivation_ranges
+    assert batched.usage_events[0].usage.cost_usd == Decimal("0.010")
+
+
+def test_a_pdf_over_the_byte_ceiling_is_split_and_every_page_is_ocred() -> None:
+    calls: list[int] = []
+    content = _pdf(pages=_TEN_PAGES)
+    result = _converter(
+        _page_echo_transport(calls), max_document_bytes=len(content) // 2
+    ).convert(content=content, mime="application/pdf")
+    assert sum(calls) == 10 and len(calls) > 1
+    assert [
+        line for line in result.document_md.splitlines() if line.startswith("#")
+    ] == [f"# {text}" for text in _TEN_PAGES]
+
+
+def test_a_single_page_over_the_byte_ceiling_cannot_be_sent() -> None:
+    content = _pdf(pages=["Only page"])
+    with pytest.raises(ConversionError, match="alone"):
+        _converter(_page_echo_transport([]), max_document_bytes=50).convert(
+            content=content, mime="application/pdf"
+        )
+
+
+def test_a_failed_batch_after_billed_batches_carries_their_usage() -> None:
+    echo = _page_echo_transport([])
+    seen: list[int] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(1)
+        if len(seen) == 2:
+            return httpx.Response(503, text="busy")
+        return echo.handle_request(request)
+
+    with pytest.raises(ConverterLaneError) as failure:
+        _converter(httpx.MockTransport(handle), max_document_pages=4).convert(
+            content=_pdf(pages=_TEN_PAGES), mime="application/pdf"
+        )
+    assert failure.value.retryable
+    assert failure.value.usage_events[0].usage.cost_usd == Decimal("0.004")
+
+
+def test_a_pdf_on_disk_converts_in_batches_without_reading_it_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D147: ``convert_path`` reads batches lazily; the file is never read whole."""
+    from rememberstack.adapters.converters.pdf import PdfConverter
+
+    calls: list[int] = []
+    path = tmp_path / "large.pdf"
+    path.write_bytes(_pdf(pages=_TEN_PAGES))
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda self: pytest.fail("the PDF was read whole")
+    )
+    result = PdfConverter(
+        ocr=_converter(_page_echo_transport(calls), max_document_pages=3)
+    ).convert_path(path=path, mime="application/pdf")
+    assert calls == [3, 3, 3, 1]
+    assert result.source_map is not None
+    pages = {
+        entry.locators[0].page  # pyright: ignore[reportAttributeAccessIssue]
+        for entry in result.source_map
+        if entry.locators[0].kind == "page"
+    }
+    assert pages == set(range(1, 11))
+
+
+def test_below_both_ceilings_the_request_is_the_single_whole_document() -> None:
+    """Unchanged behaviour: one request carrying exactly the original bytes."""
+    bodies: list[str] = []
+    echo = _page_echo_transport([])
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content)["document"]["document_url"])
+        return echo.handle_request(request)
+
+    content = _pdf(pages=_TEN_PAGES)
+    _converter(httpx.MockTransport(handle)).convert(
+        content=content, mime="application/pdf"
+    )
+    assert bodies == [
+        "data:application/pdf;base64," + base64.b64encode(content).decode("ascii")
+    ]

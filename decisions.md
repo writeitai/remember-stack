@@ -7423,6 +7423,18 @@ deployment's values into another's work.
      2026-11-07): a file over its limit whose route fetches it by URL from a presigning
      store goes to that route instead of being refused (PDF) or carded. A route's own
      declared `provider_limit_bytes` still applies.
+   - *PDF OCR in page batches (2026-11-07, owner: no caps).* The OCR provider takes about
+     50 MB and 1,000 pages per request (`MistralOcrSettings.max_document_bytes`,
+     `max_document_pages`). A PDF over either is split with pdfium into page-range PDFs
+     that each fit, sized from the average page and shrunk until saved under the byte
+     ceiling; each batch is OCR'd, its pages are renumbered from the batch's first page,
+     and the folded response is metered (every source page, one `ocr` usage event) and
+     normalized exactly like one call, so every page is still OCR'd. Below both ceilings
+     the request and the result are unchanged, so no version changes. Only a single page
+     over the byte ceiling fails. `PdfConverter.convert_path(path, mime)` and
+     `MistralOcrConverter.convert_path` do the same from a file on disk, reading one
+     batch at a time, for a host (such as a conversion service fed by URL) that must not
+     hold a large PDF in memory; the PDF route no longer declares a pre-OCR byte limit.
    - *Register a stored object (2026-11-07).* `UploadIngestor.ingest_stored(deployment_id,
      key, size, mime, filename, title=None, source_path=None, ingested_by=None)` ingests a
      file a client wrote to the raw store itself (direct multipart upload by pre-signed

@@ -17,6 +17,7 @@ convert worker meters into the cost ledger (D67).
 import base64
 from decimal import Decimal
 import json
+from pathlib import Path
 import re
 import time
 from typing import Any
@@ -30,7 +31,12 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.converters.pdf import pdf_page_batches
 from rememberstack.adapters.converters.pdf import pdf_page_count
+from rememberstack.adapters.converters.pdf import pdf_source_has_body
+from rememberstack.adapters.converters.pdf import pdf_source_page_count
+from rememberstack.adapters.converters.pdf import pdf_source_size
+from rememberstack.adapters.converters.pdf import PdfSource
 from rememberstack.core.content_detection import has_pdf_body
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
@@ -72,7 +78,11 @@ class MistralOcrSettings(BaseSettings):
     model: str = "mistral-ocr-latest"
     timeout_s: float = Field(default=300.0, gt=0)
     max_document_bytes: int = Field(default=50_000_000, gt=0)
-    """Provider request ceiling; larger inputs fail deterministically."""
+    """Provider request ceiling. A larger PDF is sent in page batches that
+    each fit it (D147); any other larger input fails deterministically."""
+    max_document_pages: int = Field(default=1_000, gt=0)
+    """Provider page ceiling per request; a longer PDF is sent in batches.
+    Neither ceiling changes the output, so neither joins the version."""
     include_images: bool = True
     table_format: Literal["markdown", "html"] = "markdown"
     extract_headers_and_footers: bool = True
@@ -140,18 +150,45 @@ class MistralOcrConverter:
         option change creates new representations instead of replaying old ones."""
         return f"{MISTRAL_OCR_CONVERTER_VERSION}:{self._settings.version_fingerprint()}"
 
-    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
-        """OCR one document via `/v1/ocr` and normalize the full response."""
-        if len(content) > self._settings.max_document_bytes:
+    def convert_path(self, *, path: Path, mime: str) -> ConversionResult:
+        """:meth:`convert` for a document on local disk (D147).
+
+        A PDF over the provider's ceilings is sent in page batches read
+        lazily from the file, so only one batch is in memory; anything that
+        fits is read and sent whole, exactly as :meth:`convert` sends it.
+        """
+        if mime == "application/pdf" and pdf_source_has_body(source=path):
+            pages = pdf_source_page_count(source=path)
+            if self._over_ceiling(size=pdf_source_size(source=path), pages=pages):
+                return self._batched_pdf(source=path, source_pages=pages)
+        if pdf_source_size(source=path) > self._settings.max_document_bytes:
             raise ConversionError(
-                f"document of {len(content)} bytes exceeds the configured "
-                f"mistral_ocr ceiling of {self._settings.max_document_bytes}"
+                f"document of {pdf_source_size(source=path)} bytes exceeds the "
+                f"configured mistral_ocr ceiling of {self._settings.max_document_bytes}"
             )
+        return self.convert(content=path.read_bytes(), mime=mime)
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """OCR one document via `/v1/ocr` and normalize the full response.
+
+        A PDF over the provider's byte or page ceiling is OCR'd in page
+        batches and stitched in page order (D147); below both ceilings the
+        request and the result are exactly the single-call ones.
+        """
         source_pages = (
             pdf_page_count(content=content)
             if mime == "application/pdf" and has_pdf_body(content=content)
             else None
         )
+        if source_pages is not None and self._over_ceiling(
+            size=len(content), pages=source_pages
+        ):
+            return self._batched_pdf(source=content, source_pages=source_pages)
+        if len(content) > self._settings.max_document_bytes:
+            raise ConversionError(
+                f"document of {len(content)} bytes exceeds the configured "
+                f"mistral_ocr ceiling of {self._settings.max_document_bytes}"
+            )
         started_ns = time.monotonic_ns()
         raw = self._process(
             content=content, mime=mime, allow_empty_pages=source_pages is not None
@@ -192,6 +229,109 @@ class MistralOcrConverter:
             # attempt's spend reaches the ledger even when normalization breaks
             raise ProviderCallError(
                 f"mistral ocr normalization failed after a billed call: {err}",
+                usage=usage,
+            ) from err
+        return result.model_copy(
+            update={"usage_events": (ConverterUsageEvent(call_key="ocr", usage=usage),)}
+        )
+
+    def _over_ceiling(self, *, size: int, pages: int) -> bool:
+        """Whether one request could not carry this PDF."""
+        return (
+            size > self._settings.max_document_bytes
+            or pages > self._settings.max_document_pages
+        )
+
+    def _batched_pdf(self, *, source: PdfSource, source_pages: int) -> ConversionResult:
+        """OCR a PDF over the provider's ceilings in page batches.
+
+        Each batch is its own call; the pages come back numbered from zero,
+        are renumbered from the batch's first page, and are folded into one
+        response that is metered and normalized exactly like a single call.
+        A failure after billed batches carries their usage.
+        """
+        settings = self._settings
+        started_ns = time.monotonic_ns()
+        merged: dict[str, Any] | None = None
+        pages: list[dict[str, Any]] = []
+        billed = 0
+        processed = 0
+
+        def billed_usage() -> tuple[ConverterUsageEvent, ...]:
+            usage = _usage(
+                raw=merged or {},
+                settings=settings,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                source_pages=billed,
+            )
+            return (ConverterUsageEvent(call_key="ocr", usage=usage),)
+
+        for first, count, batch in pdf_page_batches(
+            source=source,
+            max_bytes=settings.max_document_bytes,
+            max_pages=settings.max_document_pages,
+        ):
+            try:
+                raw = self._process(
+                    content=batch, mime="application/pdf", allow_empty_pages=True
+                )
+            except (ConversionError, MistralOcrProviderError) as err:
+                if not billed:
+                    raise
+                raise ConverterLaneError(
+                    f"PDF OCR batch at page {first + 1} failed: {err}",
+                    usage_events=billed_usage(),
+                    failed_call_keys=("ocr",),
+                    retryable=isinstance(err, MistralOcrProviderError),
+                ) from err
+            billed += count
+            batch_pages = raw.get("pages")
+            indexes = (
+                [page.get("index") for page in batch_pages]
+                if isinstance(batch_pages, list)
+                and all(isinstance(page, dict) for page in batch_pages)
+                else []
+            )
+            if merged is None:
+                merged = raw
+            if not all(type(index) is int for index in indexes) or sorted(
+                indexes
+            ) != list(range(count)):
+                raise ConverterLaneError(
+                    f"PDF OCR incomplete: expected {count} pages from the batch at "
+                    f"page {first + 1}, received page indexes {indexes}",
+                    usage_events=billed_usage(),
+                    failed_call_keys=("ocr",),
+                    retryable=False,
+                )
+            assert isinstance(batch_pages, list)
+            pages.extend(
+                {**page, "index": page["index"] + first} for page in batch_pages
+            )
+            info = raw.get("usage_info")
+            if isinstance(info, dict) and isinstance(info.get("pages_processed"), int):
+                processed += info["pages_processed"]
+        assert merged is not None
+        if billed != source_pages:
+            raise ConverterLaneError(
+                f"PDF OCR incomplete: expected {source_pages} source pages, "
+                f"the batches covered {billed}",
+                usage_events=billed_usage(),
+                failed_call_keys=("ocr",),
+                retryable=False,
+            )
+        merged = {**merged, "pages": pages}
+        if isinstance(merged.get("usage_info"), dict):
+            merged["usage_info"] = {
+                **merged["usage_info"],
+                "pages_processed": processed,
+            }
+        usage = billed_usage()[0].usage
+        try:
+            result = _normalize(raw=merged, settings=settings, source_is_image=False)
+        except Exception as err:
+            raise ProviderCallError(
+                f"mistral ocr normalization failed after billed calls: {err}",
                 usage=usage,
             ) from err
         return result.model_copy(

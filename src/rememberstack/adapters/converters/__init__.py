@@ -66,7 +66,9 @@ def build_conversion_routes(*, route_names: Mapping[str, str]) -> dict[str, Conv
     if pdf_requested:
         ocr = built.get("mistral_ocr") or _mistral_ocr()
         assert settings is not None
-        built["pdf"] = _pdf(ocr=ocr, provider_limit_bytes=settings.max_document_bytes)
+        # No pre-OCR byte ceiling: the OCR route sends a larger PDF in page
+        # batches that each fit the provider (D147).
+        built["pdf"] = _pdf(ocr=ocr)
     return {
         mime: built["pdf"] if mime == "application/pdf" else built[name]
         for mime, name in route_names.items()
