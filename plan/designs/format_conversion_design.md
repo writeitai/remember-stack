@@ -73,7 +73,7 @@ setting one route never removes the others. Every file is stored. Outcomes:
 |---|---|
 | Bytes a declaration contradicts (D132) | Refused with a typed error |
 | Bytes not recognized as any family | Stored; a `binary` card (D138 §6) |
-| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2), except PDF: its effective pre-OCR limit is the lower of the family limit and provider input ceiling, and exceeding it fails the version with a typed reason, no card and no `document.md` reading |
+| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2), except PDF: its effective pre-OCR limit is the lower of the family limit and provider input ceiling, and exceeding it fails the version with a typed reason, no card and no `document.md` reading. The reading limit guards the engine process, which would read the file: when the file's route fetches it by URL from a presigning store (D147), the file goes to that route instead, and only the route's own provider ceiling applies |
 | Family recognized but its converter not built | Stored; conversion parks with `no_route` (D117) until it is |
 | Family on, converter needs an unconfigured provider | Stored; conversion parks with `no_route` (D117); `resume-no-route` releases it after configuration |
 | Family on and ready | Stored and converted |

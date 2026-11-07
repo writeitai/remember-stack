@@ -42,6 +42,11 @@ from its sheet list and dimensions only. A text file over 1 MB is described
 by its size, line count, first 50 and last 20 lines instead of read in
 full.
 
+The 100 MB and 200 MB limits protect the engine process, which reads the
+file itself. A deployment whose converter fetches files by a signed URL
+from S3 storage reads nothing in the engine, so it sends these files to
+that converter instead; only the converter's own input limit applies.
+
 ## Formats and converters
 
 A new self-hosted deployment reads the formats above locally, with no API
