@@ -9,6 +9,7 @@ import base64
 from decimal import Decimal
 import json
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -735,3 +736,75 @@ def test_batching_leaves_pdfium_unlocked() -> None:
         content=_pdf(pages=_TEN_PAGES), mime="application/pdf"
     )
     assert not pdf_module._PDFIUM_LOCK.locked()  # noqa: SLF001
+
+
+def test_byte_split_trials_grow_from_one_page_at_most_doubling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No candidate batch runs far past what is known to fit (D147)."""
+    from rememberstack.adapters.converters import pdf as pdf_module
+
+    trials: list[tuple[int, int]] = []
+    real = pdf_module._save_pages  # noqa: SLF001
+
+    def record(**kwargs: object) -> int:
+        saved = real(**kwargs)  # type: ignore[arg-type]
+        trials.append((cast(int, kwargs["count"]), saved))
+        return saved
+
+    monkeypatch.setattr(pdf_module, "_save_pages", record)
+    content = _pdf(pages=_TEN_PAGES)
+    limit = len(content) // 2
+    calls: list[int] = []
+    _converter(_page_echo_transport(calls), max_document_bytes=limit).convert(
+        content=content, mime="application/pdf"
+    )
+    assert sum(calls) == 10
+    assert trials[0][0] == 1
+    largest_fit = 1
+    for count, saved in trials:
+        assert count <= 2 * largest_fit
+        if saved <= limit:
+            largest_fit = max(largest_fit, count)
+
+
+def test_a_spool_failure_after_billed_batches_carries_their_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disk error while splitting keeps billed usage and is retryable."""
+    from rememberstack.adapters.converters import mistral_ocr
+
+    real = mistral_ocr.pdf_page_batches
+
+    def one_then_fail(**kwargs: object):  # noqa: ANN202
+        batches = real(**kwargs)  # type: ignore[arg-type]
+        yield next(batches)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(mistral_ocr, "pdf_page_batches", one_then_fail)
+    with pytest.raises(ConverterLaneError) as failure:
+        _converter(_page_echo_transport([]), max_document_pages=4).convert(
+            content=_pdf(pages=_TEN_PAGES), mime="application/pdf"
+        )
+    assert failure.value.retryable
+    assert failure.value.usage_events[0].usage.cost_usd == Decimal("0.004")
+
+
+def test_every_batch_response_is_kept_in_the_interchange_asset() -> None:
+    result = _converter(_page_echo_transport([]), max_document_pages=4).convert(
+        content=_pdf(pages=_TEN_PAGES), mime="application/pdf"
+    )
+    (asset,) = [
+        asset for asset in result.derived_assets if asset.kind == "provider_response"
+    ]
+    decoded = json.loads(asset.content)
+    assert [page["index"] for page in decoded["pages"]] == list(range(10))
+    assert [
+        (batch["first_page"], batch["page_count"], batch["usage_info"])
+        for batch in decoded["batches"]
+    ] == [
+        (1, 4, {"pages_processed": 4}),
+        (5, 4, {"pages_processed": 4}),
+        (9, 2, {"pages_processed": 2}),
+    ]
+    assert decoded["usage_info"] == {"pages_processed": 10}

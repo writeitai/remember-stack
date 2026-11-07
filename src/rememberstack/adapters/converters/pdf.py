@@ -270,41 +270,67 @@ def pdf_page_batches(
     Yields ``(first page index, page count, batch PDF bytes)`` in page order,
     covering every page exactly once. Each candidate batch is built in one
     locked pdfium operation that opens the source, copies the pages, saves
-    them to a temporary file on disk and closes everything, so memory never
-    grows with the source or with an oversized candidate; only a batch that
-    fits ``max_bytes`` is read into memory. A batch is sized from the
-    source's average page size and shrunk until it fits; a single page
-    larger than ``max_bytes`` fails the conversion, because no split can
-    send it.
+    them to a temporary file on disk and closes everything, so nothing
+    native outlives the lock; only a batch that fits ``max_bytes`` is read
+    into memory. Candidates start from the previous batch's size (one page
+    at first), grow towards the limit at most doubling, and then binary
+    search, so no candidate runs far past what fits. A single page larger
+    than ``max_bytes`` fails the conversion, because no split can send it.
     """
     page_count = pdf_source_page_count(source=source)
-    total = pdf_source_size(source=source)
     start = 0
+    previous = 1
     while start < page_count:
-        remaining = page_count - start
-        size = max(1, min(remaining, int(page_count * max_bytes * 0.9 / total)))
+        cap = page_count - start
         if max_pages is not None:
-            size = min(size, max_pages)
+            cap = min(cap, max_pages)
+        fitting, batch = 0, b""  # the largest page count known to fit
+        overflowing: int | None = None  # the smallest known not to
+        count = min(cap, previous)
         while True:
-            with tempfile.TemporaryFile() as spool:
-                saved = _with_pdfium(
-                    work=partial(
-                        _save_pages, source=source, first=start, count=size, out=spool
-                    ),
-                    what="PDF page batch",
-                )
-                if saved <= max_bytes:
-                    spool.seek(0)
-                    batch = spool.read()
-                    break
-            if size == 1:
+            saved, data = _trial(
+                source=source, first=start, count=count, limit=max_bytes
+            )
+            if data is not None:
+                fitting, batch = count, data
+            else:
+                overflowing = count
+            if overflowing == 1:
                 raise ConversionError(
                     f"PDF page {start + 1} alone is {saved} bytes, over "
                     f"the OCR provider limit of {max_bytes} bytes"
                 )
-            size = max(1, min(size - 1, int(size * max_bytes * 0.9 / saved)))
-        yield start, size, batch
-        start += size
+            if fitting == cap or (
+                overflowing is not None and overflowing == fitting + 1
+            ):
+                break
+            if overflowing is None:
+                # Grow towards the limit from the pages seen, at most doubling,
+                # so a trial never runs far past what fits.
+                estimate = int(count * max_bytes * 0.9 / max(saved, 1))
+                count = min(cap, max(count + 1, min(2 * count, estimate)))
+            else:
+                count = (fitting + overflowing) // 2
+        yield start, fitting, batch
+        start += fitting
+        previous = fitting
+
+
+def _trial(
+    *, source: PdfSource, first: int, count: int, limit: int
+) -> tuple[int, bytes | None]:
+    """Save a candidate batch to disk; return its size, and its bytes if it fits."""
+    with tempfile.TemporaryFile() as spool:
+        saved = _with_pdfium(
+            work=partial(
+                _save_pages, source=source, first=first, count=count, out=spool
+            ),
+            what="PDF page batch",
+        )
+        if saved > limit:
+            return saved, None
+        spool.seek(0)
+        return saved, spool.read()
 
 
 def _pdfium_input(*, source: PdfSource) -> bytes | str:

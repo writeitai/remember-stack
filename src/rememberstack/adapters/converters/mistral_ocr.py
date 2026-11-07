@@ -256,6 +256,7 @@ class MistralOcrConverter:
         pages: list[dict[str, Any]] = []
         billed = 0
         totals: list[object] = []
+        described: list[dict[str, Any]] = []
 
         def billed_usage() -> tuple[ConverterUsageEvent, ...]:
             usage = _usage(
@@ -302,16 +303,23 @@ class MistralOcrConverter:
                     for page in sorted(batch_pages, key=lambda page: page["index"])
                 )
                 totals.append(raw.get("usage_info"))
-        except (ConversionError, MistralOcrProviderError) as err:
-            # Splitting or a later call failed after earlier batches were
-            # billed: their usage must still reach the ledger.
+                described.append(
+                    {
+                        "first_page": first + 1,
+                        "page_count": count,
+                        **{key: value for key, value in raw.items() if key != "pages"},
+                    }
+                )
+        except (ConversionError, MistralOcrProviderError, OSError) as err:
+            # Splitting, its disk spool or a later call failed after earlier
+            # batches were billed: their usage must still reach the ledger.
             if not billed:
                 raise
             raise ConverterLaneError(
                 f"PDF OCR stopped after {billed} of {source_pages} pages: {err}",
                 usage_events=billed_usage(),
                 failed_call_keys=("ocr",),
-                retryable=isinstance(err, MistralOcrProviderError),
+                retryable=not isinstance(err, ConversionError),
             ) from err
         finally:
             batches.close()
@@ -324,7 +332,8 @@ class MistralOcrConverter:
                 failed_call_keys=("ocr",),
                 retryable=False,
             )
-        merged = {**merged, "pages": pages}
+        # Every batch's own response metadata stays in the interchange asset.
+        merged = {**merged, "pages": pages, "batches": described}
         if isinstance(merged.get("usage_info"), dict):
             # Diagnostic totals across every batch's response.
             merged["usage_info"] = {

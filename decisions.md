@@ -7426,15 +7426,18 @@ deployment's values into another's work.
    - *PDF OCR in page batches (2026-11-07, owner: no caps).* The OCR provider takes about
      50 MB and 1,000 pages per request (`MistralOcrSettings.max_document_bytes`,
      `max_document_pages`). A PDF over either is split with pdfium into page-range PDFs
-     that each fit, sized from the average page and shrunk until saved under the byte
-     ceiling; each batch is OCR'd, its pages are renumbered from the batch's first page,
-     and the folded response is metered (every source page, one `ocr` usage event) and
-     normalized exactly like one call, so every page is still OCR'd. Below both ceilings
-     the request and the result are unchanged, so no version changes. Only a single page
-     over the byte ceiling fails. Each candidate batch is built in one locked pdfium
-     operation (open, copy pages, save to a temporary file, close), so memory never
-     grows with the source or an oversized candidate; only a batch that fits is read.
-     A failure after billed batches carries their usage. `PdfConverter.convert_path(path,
+     that each fit. A batch starts from the previous batch's page count (one page at
+     first), grows towards the byte ceiling at most doubling, then binary-searches, so no
+     candidate runs far past what fits; each batch is OCR'd, its pages are renumbered from
+     the batch's first page, and the folded response is metered (every source page, one
+     `ocr` usage event) and normalized exactly like one call, so every page is still
+     OCR'd. Each batch's own response metadata is kept under `batches` in the interchange
+     asset. Below both ceilings the request and the result are unchanged, so no version
+     changes. Only a single page over the byte ceiling fails. Each candidate batch is
+     built in one locked pdfium operation (open, copy pages, save to a temporary file,
+     close), so nothing native outlives the lock; only a batch that fits is read. A
+     failure after billed batches (including a disk error while splitting) carries their
+     usage. `PdfConverter.convert_path(path,
      mime)` and `MistralOcrConverter.convert_path` do the same from a file on disk, for a
      host (such as a conversion service fed by URL) that must not hold a large PDF in
      memory; the PDF route no longer declares a pre-OCR byte limit.
