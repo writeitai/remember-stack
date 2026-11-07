@@ -1446,6 +1446,50 @@ def test_d122_refuses_a_populated_store() -> None:
     assert _head_revision(database_url=database_url) == "p9_46_0067"
 
 
+def test_d150_refuses_to_drop_staged_originals() -> None:
+    """p9_46_0067 never drops the only copy of a staged managed original."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_45_0066")
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            # Only the staged row matters here, so its parent rows are skipped.
+            connection.execute(text("SET LOCAL session_replication_role = replica"))
+            connection.execute(
+                text(
+                    """INSERT INTO managed_ingest_measurements (
+                    measurement_id, deployment_id, doc_id, version_id,
+                    ingest_attempt_id, org_id, project_id, opaque_lineage_id,
+                    opaque_source_version_id, normalized_character_count,
+                    canonical_source_bytes, document_version_disposition,
+                    classifier_version, measurement_algorithm_version,
+                    processing_profile_id, measured_at, convert_component_version,
+                    lane, staged_content
+                    ) VALUES (:m, :d, :doc, :v, 'ing', :org, :project, 'l', 's', 5,
+                    5, 'new_version', 'c', 'a', 'doc-text-standard-v1', now(),
+                    'e0', 'steady', 'bytes')"""
+                ),
+                {
+                    "m": uuid4(),
+                    "d": uuid4(),
+                    "doc": uuid4(),
+                    "v": uuid4(),
+                    "org": uuid4(),
+                    "project": uuid4(),
+                },
+            )
+        with pytest.raises(Exception, match="holds staged originals"):
+            command.upgrade(config=config, revision="p9_46_0067")
+        assert _head_revision(database_url=database_url) == "p9_45_0066"
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_46_0067"
+
+
 _BACKFILL_MIMES = (
     "text/markdown",
     "text/x-markdown",

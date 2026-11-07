@@ -7700,7 +7700,12 @@ and is moot for objects a client already uploaded directly. Refusing formats at 
 turned a pricing gap into a capability gap.
 
 **Consequences.** A metered deployment accepts every format its routes read, of any size
-the routes handle. The meter outbox drops `staged_content` and the `no_op` disposition
+the routes handle. One reuse boundary is declared (CLAUDE.md Rule 4): the ingest-time text
+classifier stored every metered text as `text/plain` or `text/markdown`; without it a metered
+deployment keeps the registry MIME, so CSV, code, configuration and logs take their own D138
+routes (`table`, `text` with their postures) like an unmetered one. A lineage whose previous
+version was ingested under the old classifier re-converts, re-chunks and re-extracts once at its
+next version, accepted because the hosted service relaunches without customer data. The meter outbox drops `staged_content` and the `no_op` disposition
 and gains `cost_class`, `unit` and `format_family` (`p9_46_0067`, which refuses to run
 while staged originals remain undrained). Unmetered deployments are unaffected. The
 control plane must accept the v3 receipt before a deployment runs this release.

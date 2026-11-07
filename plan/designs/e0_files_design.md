@@ -101,8 +101,8 @@ CSV, code, configuration, or plain text and their distinct processing postures.
 Textual email, notebooks, RTF, and delimited data keep their registry families;
 their converters validate full structure. Recognizable HTML markup retains
 `text/html` for its separate converter, and an empty upload
-is valid text in the self-host profile (the managed text profile rejects an
-empty measured source).
+is valid text in every deployment; a metered one bills it at the per-source
+minimum (D150).
 
 For legacy OLE office containers, bytes establish the office class and the
 declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE

@@ -31,6 +31,10 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _UP = """
+-- Writers of the previous release must not stage new bytes between the check
+-- and the drop: hold the table until this transaction commits.
+LOCK TABLE managed_ingest_measurements IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
   IF EXISTS (
