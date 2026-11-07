@@ -54,6 +54,7 @@ from rememberstack.core import SKELETON_PARSER_VERSION
 from rememberstack.core import SKELETON_STATS_VERSION
 from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
+from rememberstack.core import UrlConverter
 from rememberstack.core import with_content_hashes
 from rememberstack.core.content_detection import detect_content_mime
 from rememberstack.core.extraction_eligibility import block_eligibility
@@ -112,6 +113,7 @@ from rememberstack.model.occurrence_provenance import (
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
+from rememberstack.ports.object_store import PresignedReadPort
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.base import NoRouteHandlerError
@@ -535,23 +537,43 @@ class ConvertHandler:
             return self._structure_follow_up(
                 work=work, version_id=source.version_id, representation_id=existing
             )
-        content = self._raw_store.read_bytes(key=ObjectKey(source.raw_uri))
         lane_meter = _ConvertLaneMeter(meter=meter, converter_name=converter.name)
-        uses_lane_checkpoints = isinstance(converter, LaneCheckpointConverter)
+        hints = FileHints(file_name=source.file_name, source_path=source.source_path)
+        by_url = (
+            isinstance(converter, UrlConverter)
+            and isinstance(self._raw_store, PresignedReadPort)
+            and source.byte_size is not None
+        )
+        uses_lane_checkpoints = not by_url and isinstance(
+            converter, LaneCheckpointConverter
+        )
         try:
-            result = _convert_with_lane_checkpoints(
-                converter=converter,
-                content=content,
-                mime=source.mime,
-                hints=FileHints(
-                    file_name=source.file_name, source_path=source.source_path
-                ),
-                checkpoint_store=self._artifact_store,
-                checkpoint_prefix=(
-                    f"{source.doc_id}/{source.content_hash}/conversion-checkpoints"
-                ),
-                record_usage=lane_meter,
-            )
+            if by_url:
+                # D147: the route reads the object itself; the bytes never
+                # pass through this worker.
+                assert isinstance(converter, UrlConverter)
+                assert isinstance(self._raw_store, PresignedReadPort)
+                assert source.byte_size is not None
+                result = converter.convert_from_url(
+                    url=self._raw_store.presign_get(
+                        key=ObjectKey(source.raw_uri), ttl_s=converter.url_ttl_s
+                    ),
+                    size=source.byte_size,
+                    mime=source.mime,
+                    hints=hints,
+                )
+            else:
+                result = _convert_with_lane_checkpoints(
+                    converter=converter,
+                    content=self._raw_store.read_bytes(key=ObjectKey(source.raw_uri)),
+                    mime=source.mime,
+                    hints=hints,
+                    checkpoint_store=self._artifact_store,
+                    checkpoint_prefix=(
+                        f"{source.doc_id}/{source.content_hash}/conversion-checkpoints"
+                    ),
+                    record_usage=lane_meter,
+                )
             if not uses_lane_checkpoints:
                 for event in result.usage_events:
                     # billed before coherence: the spend is real even if the

@@ -114,6 +114,12 @@ class _S3Client(Protocol):
         """List one page beneath a key prefix."""
         ...
 
+    def generate_presigned_url(
+        self, ClientMethod: str, Params: dict[str, str], ExpiresIn: int
+    ) -> str:
+        """Sign one request locally; nothing is sent."""
+        ...
+
 
 class MinIOObjectStore:
     """Immutable objects in one explicitly selected S3 bucket."""
@@ -232,6 +238,16 @@ class MinIOObjectStore:
             raise RuntimeError(
                 f"object purge verification found: {sorted(remaining)!r}"
             )
+
+    def presign_get(self, *, key: ObjectKey, ttl_s: int) -> str:
+        """A SigV4 query-signed ``GET`` URL for one object, valid ``ttl_s`` seconds."""
+        if ttl_s <= 0:
+            raise ValueError("a pre-signed URL needs a positive lifetime")
+        return self._client.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={"Bucket": self._bucket, "Key": _validated_key(key=key)},
+            ExpiresIn=ttl_s,
+        )
 
     def keys_under(self, *, prefix: ObjectKey) -> tuple[str, ...]:
         """Every key at or below ``prefix`` (prefix-boundary safe)."""

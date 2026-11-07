@@ -94,6 +94,12 @@ class _MemoryS3:
         self.objects.pop((Bucket, Key), None)
         return {}
 
+    def generate_presigned_url(
+        self, ClientMethod: str, Params: dict[str, str], ExpiresIn: int
+    ) -> str:
+        """Sign nothing; name what would be signed."""
+        return f"memory://{Params['Bucket']}/{Params['Key']}?{ClientMethod}&{ExpiresIn}"
+
     def list_objects_v2(
         self, *, Bucket: str, Prefix: str, ContinuationToken: str = ""
     ) -> _ListObjectsOutput:
@@ -197,3 +203,34 @@ def _client_error(*, code: str, operation: str) -> ClientError:
         error_response={"Error": {"Code": code, "Message": code}},
         operation_name=operation,
     )
+
+
+def test_presigned_get_is_signed_locally_for_one_object() -> None:
+    """D147: a real S3 client signs a GET URL for the key without any request."""
+    from urllib.parse import parse_qs
+    from urllib.parse import urlparse
+
+    from pydantic import SecretStr
+
+    from rememberstack.adapters.selfhost import MinIOSettings
+    from rememberstack.ports import PresignedReadPort
+
+    store = MinIOObjectStore(
+        bucket="fs-raw",
+        settings=MinIOSettings(
+            endpoint_url="https://s3.example.invalid",
+            access_key=SecretStr("AKIDEXAMPLE"),
+            secret_key=SecretStr("secret"),
+        ),
+    )
+    assert isinstance(store, PresignedReadPort)
+    url = urlparse(store.presign_get(key=ObjectKey("doc/hash/original.pdf"), ttl_s=900))
+    query = parse_qs(url.query)
+    assert (url.netloc, url.path) == (
+        "s3.example.invalid",
+        "/fs-raw/doc/hash/original.pdf",
+    )
+    assert query["X-Amz-Expires"] == ["900"]
+    assert query["X-Amz-Signature"]
+    with pytest.raises(ValueError, match="positive"):
+        store.presign_get(key=ObjectKey("doc/hash/original.pdf"), ttl_s=0)

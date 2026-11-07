@@ -10,6 +10,8 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 from uuid import UUID
 from uuid import uuid4
 
@@ -30,6 +32,8 @@ from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.model import ConversionResult
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import FileHints
+from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import QueueRoute
 from rememberstack.model import RunResultOutcome
@@ -63,12 +67,40 @@ class _RecordingQueue:
         self.announced.append((processing_id, route_snapshot))
 
 
+class _PresigningStore(LocalFSObjectStore):
+    """A raw store that lends objects by URL and counts direct reads."""
+
+    def __init__(self, *, root: Path) -> None:
+        super().__init__(root=root)
+        self.reads = 0
+
+    def read_bytes(self, *, key: ObjectKey) -> bytes:
+        self.reads += 1
+        return super().read_bytes(key=key)
+
+    def presign_get(self, *, key: ObjectKey, ttl_s: int) -> str:
+        return f"{self._path_for(key=key).as_uri()}#ttl={ttl_s}"  # noqa: SLF001
+
+
 class _DelegatingConverter:
-    """Stands in for a host's remote conversion call (D147)."""
+    """Stands in for a host's remote conversion call by URL (D147)."""
+
+    accepts_url = True
+    url_ttl_s = 600
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.url_calls: list[tuple[int, str, str | None]] = []
         self._inner = MarkdownPassthroughConverter()
+
+    def convert_from_url(
+        self, *, url: str, size: int, mime: str, hints: FileHints
+    ) -> ConversionResult:
+        assert url.endswith("#ttl=600")
+        content = Path(url2pathname(urlparse(url).path)).read_bytes()
+        assert len(content) == size
+        self.url_calls.append((size, mime, hints.file_name))
+        return self._inner.convert(content=content, mime=mime)
 
     @property
     def name(self) -> str:
@@ -162,11 +194,18 @@ def converter() -> _DelegatingConverter:
 
 
 @pytest.fixture
+def raw_stores() -> dict[UUID, _PresigningStore]:
+    """The presigning raw stores the profiles use, by deployment."""
+    return {}
+
+
+@pytest.fixture
 def profiles(
     engines: dict[UUID, Engine],
     tmp_path: Path,
     queues: dict[UUID, _RecordingQueue],
     converter: _DelegatingConverter,
+    raw_stores: dict[UUID, _PresigningStore],
 ) -> Iterator[dict[UUID, SelfHostProfile]]:
     """One context per deployment, each with its own database and stores."""
     built: dict[UUID, SelfHostProfile] = {}
@@ -183,7 +222,13 @@ def profiles(
                 projection_work_root=root / "projection",
             ),
             engine=engine,
-            raw_store=LocalFSObjectStore(root=root / "raw"),  # type: ignore[arg-type]
+            raw_store=(  # type: ignore[arg-type]
+                raw_stores.setdefault(
+                    deployment_id, _PresigningStore(root=root / "raw")
+                )
+                if deployment_id == _DEPLOYMENT_B
+                else LocalFSObjectStore(root=root / "raw")
+            ),
             artifact_store=LocalFSObjectStore(root=root / "artifacts"),  # type: ignore[arg-type]
             corpusfs_store=LocalFSObjectStore(root=root / "corpusfs"),  # type: ignore[arg-type]
             model_provider=_NoModels(),  # type: ignore[arg-type]
@@ -208,6 +253,7 @@ def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
     profiles: dict[UUID, SelfHostProfile],
     queues: dict[UUID, _RecordingQueue],
     converter: _DelegatingConverter,
+    raw_stores: dict[UUID, _PresigningStore],
 ) -> None:
     """Requests and tasks for A and B, interleaved, never touch the other's rows."""
     contexts: dict[str, ApiDeployment] = {
@@ -308,8 +354,13 @@ def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
         result = run_task(profiles[deployment_id], task)
         assert result.processing_id == task
         assert result.outcome is RunResultOutcome.SUCCEEDED
-    # B converted through its replaced route; A through the in-process one.
-    assert converter.calls == ["text/markdown"]
+    # B converted through its replaced route, by URL: the worker never read
+    # B's raw bytes. A converted through the in-process bytes route.
+    assert converter.url_calls == [
+        (len(b"# Bravo\n\nOnly B holds this.\n"), "text/markdown", "note.md")
+    ]
+    assert converter.calls == []
+    assert raw_stores[_DEPLOYMENT_B].reads == 0
     # Each task's successor was announced through its own deployment's queue.
     for deployment_id, engine in engines.items():
         structure = _rows(

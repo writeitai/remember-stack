@@ -30,6 +30,7 @@ from rememberstack.core.conversion import LaneUsageRecorder
 from rememberstack.core.conversion import MarkdownPassthroughConverter
 from rememberstack.core.conversion import PASSTHROUGH_CONVERTER_VERSION
 from rememberstack.core.conversion import STOCK_CONVERSION_ROUTE_NAMES
+from rememberstack.core.conversion import UrlConverter
 from rememberstack.core.core_manifest import CORE_MANIFEST
 from rememberstack.core.core_manifest import CoreManifest
 from rememberstack.core.core_manifest import EntityTypeDefinition
@@ -122,6 +123,7 @@ __all__ = (
     "CONSUMPTION_SKILL_VERSION",
     "Converter",
     "LaneCheckpointConverter",
+    "UrlConverter",
     "LaneCheckpointStore",
     "LaneUsageRecorder",
     "CoreManifest",

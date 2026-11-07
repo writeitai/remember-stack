@@ -7403,8 +7403,18 @@ deployment's values into another's work.
    - *Replaceable conversion.* `conversion_routes` (MIME type to `Converter`) on the
      profile and `from_settings` replace the routes `SelfHostSettings.conversion_routes`
      names, in both the `convert` stage and the upload admission check. Example: a host
-     whose converter forwards the bytes to an isolated conversion service, while claim,
-     lease, artifacts and completion stay with the trusted worker.
+     whose converter calls an isolated conversion service, while claim, lease, artifacts
+     and completion stay with the trusted worker.
+   - *Conversion by reference (2026-11-07, owner: no transport-driven upload caps).* A
+     route that implements `UrlConverter` (`accepts_url`, `url_ttl_s`,
+     `convert_from_url(url, size, mime, hints)`) is handed a pre-signed `GET` URL for the
+     raw object, its size and MIME type instead of the bytes, whenever the raw store
+     implements `PresignedReadPort.presign_get(key, ttl_s)` (the S3 adapter does) and the
+     version's size is known; the worker never reads the object. Every other route or store
+     keeps the in-process bytes path, the self-host default. The same capability lets an
+     OCR or vision route have its provider fetch the input by URL instead of receiving
+     uploaded bytes. Usage the route incurs is returned in `usage_events` and metered as
+     for any route; the size and pre-OCR limits are checked before the URL is signed.
    - *No deployment state on local disk.* `SelfHostSettings.forget_manifest_bucket_name`
      keeps D74 hard-forget manifests as immutable objects in that dedicated bucket
      (`ObjectStoreForgetManifestStore`, same contract as the local root) instead of

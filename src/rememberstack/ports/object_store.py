@@ -25,3 +25,17 @@ class ObjectStorePort(Protocol):
         that do not record it, so the routing is observable either way.
         """
         ...
+
+
+@runtime_checkable
+class PresignedReadPort(Protocol):
+    """An object store that can lend one object by a short-lived URL (D147).
+
+    Lets a caller hand a reader (a conversion service, an OCR provider) a
+    reference instead of the bytes, so an object's size is never bounded by
+    a request body on the way.
+    """
+
+    def presign_get(self, *, key: ObjectKey, ttl_s: int) -> str:
+        """A URL that reads ``key`` with a plain ``GET`` for ``ttl_s`` seconds."""
+        ...
