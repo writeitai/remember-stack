@@ -6,6 +6,7 @@ import codecs
 import io
 import mmap
 import re
+from typing import Any
 from typing import cast
 from typing import IO
 import zipfile
@@ -57,6 +58,8 @@ place, so a large mapped file is never copied into memory as a whole.
 _TEXT_CHUNK_BYTES = 1 << 20
 #: Characters after leading whitespace enough to recognise an HTML opener.
 _HTML_LOOKAHEAD = 64
+_WHITESPACE_RUN = re.compile(r"\s+")
+_HTML_OPENER = re.compile(r"(?:<!doctype\s+html\b|<html(?:\s|>))", re.IGNORECASE)
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -225,15 +228,25 @@ def _bmff_mime(*, content: Content) -> str | None:
     size = int.from_bytes(content[:4], "big")
     if not 16 <= size <= len(content):
         return None
-    brands = {content[8:12]}
-    brands.update(content[offset : offset + 4] for offset in range(16, size, 4))
-    if brands & {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1"}:
-        return "image/heic"
-    if brands & {b"avif", b"avis"}:
-        return "image/avif"
-    if brands & {b"M4A ", b"M4B ", b"M4P "}:
-        return "audio/mp4"
+    # The major brand, then each compatible brand, read one at a time.
+    seen: set[str] = set()
+    for offset in (8, *range(16, size, 4)):
+        kind = _BMFF_BRANDS.get(content[offset : offset + 4])
+        if kind is not None:
+            seen.add(kind)
+    for kind in ("image/heic", "image/avif", "audio/mp4"):
+        if kind in seen:
+            return kind
     return "video/mp4"
+
+
+_BMFF_BRANDS: dict[bytes, str] = {
+    **dict.fromkeys(
+        (b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1"), "image/heic"
+    ),
+    **dict.fromkeys((b"avif", b"avis"), "image/avif"),
+    **dict.fromkeys((b"M4A ", b"M4B ", b"M4P "), "audio/mp4"),
+}
 
 
 def has_pdf_body(*, content: Content) -> bool:
@@ -285,11 +298,58 @@ def _search_from(
     return at_start.match(content, position) or anywhere.search(content, position)
 
 
+_ZIP_READ_LIMIT_BYTES = 8 << 20
+"""Largest single read the ZIP check makes (its central directory). Starting
+point; a package whose directory is larger is not recognised as office."""
+
+
+class _BoundedReader(io.RawIOBase):
+    """A seekable, read-only view of the content for ``zipfile`` (D147).
+
+    Reads come straight from the bytes or the map, and one read larger than
+    :data:`_ZIP_READ_LIMIT_BYTES` fails, so a crafted central directory can
+    never pull a large object into memory. The same view serves bytes and
+    mapped files, so both give the same verdict.
+    """
+
+    def __init__(self, content: Content) -> None:
+        self._content = content
+        self._position = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        base = {io.SEEK_SET: 0, io.SEEK_CUR: self._position}.get(
+            whence, len(self._content)
+        )
+        self._position = max(0, base + offset)
+        return self._position
+
+    def read(self, size: int | None = -1) -> bytes:
+        end = len(self._content) if size is None or size < 0 else self._position + size
+        if end - self._position > _ZIP_READ_LIMIT_BYTES:
+            raise OSError("ZIP read over the detection limit")
+        chunk = self._content[self._position : end]
+        self._position += len(chunk)
+        return chunk
+
+    def readinto(self, buffer: Any) -> int:
+        chunk = self.read(len(buffer))
+        buffer[: len(chunk)] = chunk
+        return len(chunk)
+
+
 def _office_zip_mime(*, content: Content) -> str | None:
     """Recognize document package members without decompressing untrusted payloads."""
     try:
-        source = io.BytesIO(content) if isinstance(content, bytes) else content
-        with zipfile.ZipFile(cast("IO[bytes]", source)) as archive:
+        with zipfile.ZipFile(cast("IO[bytes]", _BoundedReader(content))) as archive:
             names = set(archive.namelist())
             if "[Content_Types].xml" in names:
                 for body, mime in (
@@ -375,8 +435,13 @@ def _detected_mime(*, content: Content) -> str:
     if _starts(content, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
         return "application/x-ole-office"
     # Strict UTF-8 without control characters, decoded a window at a time.
+    # For the HTML opener only the first characters after the leading
+    # whitespace matter; collapsing each whitespace run to one space keeps
+    # every match of the pattern (its only repetition is ``\s+``) while the
+    # retained head stays small however long the whitespace is.
     decoder = codecs.getincrementaldecoder("utf-8-sig")()
-    leading = ""
+    started = False
+    head = ""
     for start in range(0, max(len(content), 1), _TEXT_CHUNK_BYTES):
         window = content[start : start + _TEXT_CHUNK_BYTES]
         try:
@@ -385,10 +450,12 @@ def _detected_mime(*, content: Content) -> str:
             return "application/octet-stream"
         if _CONTROL_CHARACTERS.search(text):
             return "application/octet-stream"
-        if len(leading.lstrip("\ufeff \t\r\n")) < _HTML_LOOKAHEAD:
-            leading += text
-    stripped_text = leading.lstrip("\ufeff \t\r\n")
-    if re.match(r"(?:<!doctype\s+html\b|<html(?:\s|>))", stripped_text, re.IGNORECASE):
+        if not started:
+            text = text.lstrip("\ufeff \t\r\n")
+            started = bool(text)
+        if started and len(head) < _HTML_LOOKAHEAD:
+            head = _WHITESPACE_RUN.sub(" ", head + text)[:_HTML_LOOKAHEAD]
+    if _HTML_OPENER.match(head):
         return "text/html"
     return "text/plain"
 

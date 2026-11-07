@@ -104,7 +104,7 @@ def test_a_stored_object_is_registered_and_converted_where_it_lies(
     raw = LocalFSObjectStore(root=tmp_path / "raw")
     artifacts = LocalFSObjectStore(root=tmp_path / "artifacts")
     ingestor = _ingestor(engine=database_engine, raw=raw)
-    key = _put(raw, "uploads/7f3a/notes.md", _BODY)
+    key = _put(raw, "uploads/7f3a0c2b9d4e6f81a2b3c4d5", _BODY)
 
     version = ingestor.ingest_stored(
         deployment_id=_DEPLOYMENT_ID,
@@ -118,7 +118,7 @@ def test_a_stored_object_is_registered_and_converted_where_it_lies(
     with database_engine.connect() as connection:
         assert connection.execute(
             text("SELECT raw_uri, byte_size FROM content_objects")
-        ).one() == ("uploads/7f3a/notes.md", len(_BODY))
+        ).one() == ("uploads/7f3a0c2b9d4e6f81a2b3c4d5", len(_BODY))
 
     # The same bytes through the ordinary path are the same version (D55).
     again = ingestor.ingest(
@@ -176,7 +176,7 @@ def test_a_stored_object_meets_the_same_checks_as_an_upload(
 ) -> None:
     raw = LocalFSObjectStore(root=tmp_path / "raw")
     ingestor = _ingestor(engine=database_engine, raw=raw)
-    key = _put(raw, "uploads/1/notes.md", _BODY)
+    key = _put(raw, "uploads/0123456789abcdef", _BODY)
 
     with pytest.raises(ValueError, match="declared"):
         ingestor.ingest_stored(
@@ -195,18 +195,25 @@ def test_a_stored_object_meets_the_same_checks_as_an_upload(
             mime="application/pdf",
             filename="notes.pdf",
         )
-    with pytest.raises(ValueError, match="reserved"):
-        ingestor.ingest_stored(
-            deployment_id=_DEPLOYMENT_ID,
-            key=_put(raw, "forgotten/abc", _BODY),
-            size=len(_BODY),
-            mime="text/markdown",
-            filename="notes.md",
-        )
+    # Only opaque keys in the uploads namespace: hard forget purges a raw
+    # key in every store, and file names must not reach forget manifests.
+    for bad_key in (
+        "forgotten/0123456789abcdef",
+        "uploads/notes.md",
+        "a/b/original.md",
+    ):
+        with pytest.raises(ValueError, match="uploads/"):
+            ingestor.ingest_stored(
+                deployment_id=_DEPLOYMENT_ID,
+                key=ObjectKey(bad_key),
+                size=len(_BODY),
+                mime="text/markdown",
+                filename="notes.md",
+            )
     with pytest.raises(FileNotFoundError):
         ingestor.ingest_stored(
             deployment_id=_DEPLOYMENT_ID,
-            key=ObjectKey("uploads/missing.md"),
+            key=ObjectKey("uploads/missingmissing0000"),
             size=1,
             mime="text/markdown",
             filename="missing.md",

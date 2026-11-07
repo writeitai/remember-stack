@@ -25,6 +25,15 @@ def _docx_bytes() -> bytes:
     return output.getvalue()
 
 
+def _odt_bytes() -> bytes:
+    """An OpenDocument package: its MIME is read from the ``mimetype`` member."""
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w") as archive:
+        archive.writestr("mimetype", "application/vnd.oasis.opendocument.text")
+        archive.writestr("META-INF/manifest.xml", "<manifest/>")
+    return output.getvalue()
+
+
 def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
     """Build a file-type box with major and optional compatible brands."""
     size = 20 if compatible is not None else 16
@@ -285,6 +294,11 @@ _MAPPED_SAMPLES: tuple[tuple[bytes, str], ...] = (
     (b"a" * ((1 << 20) - 1) + "é".encode() + b"tail", "text/plain"),
     (b"a" * ((1 << 20) - 1) + b"\xc3", "text/plain"),
     (b" " * (1 << 20) + b"<html>", "text/plain"),
+    (b"<!doctype" + b" " * (1 << 20) + b"html>", "text/plain"),
+    (b"\xc2\xa0<html>", "text/plain"),
+    (_odt_bytes(), "application/vnd.oasis.opendocument.text"),
+    (_bmff_bytes(brand=b"isom", compatible=b"M4A "), "audio/mp4"),
+    (_bmff_bytes(brand=b"avif", compatible=b"heic"), "image/heic"),
 )
 
 

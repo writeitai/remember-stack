@@ -21,6 +21,7 @@ import json
 import logging
 import mmap
 from pathlib import PurePosixPath
+import re
 import tempfile
 from typing import Final
 from typing import Protocol
@@ -176,8 +177,9 @@ UPLOAD_SOURCE_KIND: Final = "upload"
 _STORED_CHUNK_BYTES: Final = 1 << 20
 """Read size while a stored object is streamed for registration (D147)."""
 
-_FORGOTTEN_PREFIX: Final = "forgotten/"
-"""Raw keys hard forget assigns to purged objects; never a client's key."""
+_STORED_KEY: Final = re.compile(r"uploads/[A-Za-z0-9_-]{16,128}")
+"""The namespace for objects clients upload directly (D147): opaque names,
+disjoint from the engine's own keys (``<doc_id>/…``, ``forgotten/…``)."""
 
 
 class IngestAdmission(Protocol):
@@ -322,20 +324,27 @@ class UploadIngestor:
         bytes. **The raw object stays at ``key``**: the engine neither copies
         nor moves it, and records ``key`` as the version's raw object. If the
         deployment already holds identical bytes, that version answers and
-        its existing raw object is kept; the object at ``key`` is then
-        unused and the caller may delete it. The object must not change
-        after registration (raw objects are immutable).
+        keeps its own raw object, which may be this very ``key`` (a repeated
+        registration). Registered objects are immutable and must not be
+        deleted by the caller; hard forget removes them.
 
-        ``size`` must match the stored object. Managed text metering needs
-        the whole bytes, so a deployment that meters ingest refuses this
-        path; use :meth:`ingest`.
+        ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
+        characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
+        key in every store, so a key outside this namespace could name
+        another object, and file names would enter the immutable forget
+        manifests. ``size`` must match the stored object. The uploader
+        chooses the storage class (D51 routing is not applied). Managed text
+        metering needs the whole bytes, so a deployment that meters ingest
+        refuses this path; use :meth:`ingest`.
         """
         if self._meter_scope is not None:
             raise ValueError(
                 "managed ingest metering needs the bytes; register through ingest"
             )
-        if key.root.startswith(_FORGOTTEN_PREFIX):
-            raise ValueError(f"raw keys under {_FORGOTTEN_PREFIX!r} are reserved")
+        if _STORED_KEY.fullmatch(key.root) is None:
+            raise ValueError(
+                "a stored object's key must be uploads/<16-128 of [A-Za-z0-9_-]>"
+            )
         if not isinstance(self._raw_store, StreamingReadPort):
             raise TypeError("this raw store cannot stream objects")
         digest = hashlib.sha256()
