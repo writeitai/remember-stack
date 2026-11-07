@@ -389,3 +389,45 @@ def test_an_inflating_mimetype_member_is_read_in_bounded_memory() -> None:
         tracemalloc.stop()
     assert peak < len(content) + (8 << 20)
     assert verdict == "application/vnd.oasis.opendocument.text"
+
+
+@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+def test_a_mapped_package_never_inflates_an_unboundable_mimetype(
+    method: int, tmp_path: Path
+) -> None:
+    """BZIP2 and LZMA output cannot be bounded; a mapped file does not read them."""
+    import mmap
+    import tracemalloc
+    import zlib
+
+    mime = b"application/vnd.oasis.opendocument.text"
+    bomb = mime + b"\x00" * (32 << 20)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w") as archive:
+        archive.writestr("META-INF/manifest.xml", "<manifest/>")
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = method
+        archive.writestr(info, bomb)
+    # Declare the member as the small MIME with its CRC, as a crafted file would.
+    content = (
+        output.getvalue()
+        .replace(
+            zlib.crc32(bomb).to_bytes(4, "little"),
+            zlib.crc32(mime).to_bytes(4, "little"),
+        )
+        .replace(len(bomb).to_bytes(4, "little"), len(mime).to_bytes(4, "little"))
+    )
+    path = tmp_path / "package"
+    path.write_bytes(content)
+    with (
+        path.open("rb") as handle,
+        mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+    ):
+        tracemalloc.start()
+        try:
+            verdict = _verdict(mapped, "application/zip")
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    assert verdict == "application/octet-stream"
+    assert peak < 8 << 20

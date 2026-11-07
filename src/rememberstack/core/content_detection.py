@@ -381,11 +381,18 @@ def _office_zip_mime(*, content: Content) -> str | None:
                         return mime
             if "mimetype" in names and "META-INF/manifest.xml" in names:
                 member = archive.getinfo("mimetype")
-                if member.file_size <= 128:
+                bounded = isinstance(content, bytes) or member.compress_type in {
+                    zipfile.ZIP_STORED,
+                    zipfile.ZIP_DEFLATED,
+                }
+                if member.file_size <= 128 and bounded:
                     # Bounded: a declared size is untrusted, and read() would
                     # inflate the whole stream before truncating it. Reading
                     # past the declared size still ends the member and checks
-                    # its CRC, so the verdict is unchanged.
+                    # its CRC, so the verdict is unchanged. Only stored and
+                    # DEFLATE output can be bounded this way, so on a mapped
+                    # file (D147) another method is not read; ODF requires a
+                    # stored ``mimetype`` anyway.
                     with archive.open(member) as stream:
                         raw = stream.read(_MIMETYPE_READ_BYTES)
                     mime = raw.decode("ascii", errors="ignore")
