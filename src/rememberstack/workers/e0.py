@@ -118,6 +118,7 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.object_store import PresignedReadPort
 from rememberstack.ports.object_store import StreamingReadPort
+from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.base import NoRouteHandlerError
@@ -278,7 +279,7 @@ class UploadIngestor:
                 )
             except ObjectAlreadyExistsError:
                 pass  # identical bytes already landed — ingest retries are no-ops
-        return self._catalog.record_upload(
+        ingested = self._catalog.record_upload(
             record=UploadRecord(
                 deployment_id=deployment_id,
                 doc_id=doc_id,
@@ -300,6 +301,13 @@ class UploadIngestor:
             metering=metering,
             routable_mimes=self._routable_for(upload=upload),
         )
+        if metering is None:
+            self._release_unretained(
+                deployment_id=deployment_id,
+                content_hash=content_hash,
+                key=ObjectKey(raw_uri),
+            )
+        return ingested
 
     def ingest_stored(
         self,
@@ -323,10 +331,11 @@ class UploadIngestor:
         deduplication are exactly those of :meth:`ingest` for the same
         bytes. **The raw object stays at ``key``**: the engine neither copies
         nor moves it, and records ``key`` as the version's raw object. If the
-        deployment already holds identical bytes, that version answers and
-        keeps its own raw object, which may be this very ``key`` (a repeated
-        registration). Registered objects are immutable and must not be
-        deleted by the caller; hard forget removes them.
+        deployment already holds identical bytes under another key, that
+        version answers, keeps its own raw object, and the engine deletes the
+        object at ``key`` (only the kept object is ever purged by hard
+        forget). A repeated registration of the same key changes nothing.
+        Callers never delete registered objects; hard forget removes them.
 
         ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
         characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
@@ -383,7 +392,7 @@ class UploadIngestor:
         routable = self._routable
         if exceeds_reading_limit(mime=detected, byte_size=received):
             routable = routable | {detected}
-        return self._catalog.record_upload(
+        ingested = self._catalog.record_upload(
             record=UploadRecord(
                 deployment_id=deployment_id,
                 doc_id=doc_id,
@@ -405,6 +414,10 @@ class UploadIngestor:
             metering=None,
             routable_mimes=routable,
         )
+        self._release_unretained(
+            deployment_id=deployment_id, content_hash=content_hash, key=key
+        )
+        return ingested
 
     def ingest_observed(
         self,
@@ -479,13 +492,41 @@ class UploadIngestor:
                 )
             except ObjectAlreadyExistsError:
                 pass
-        return self._catalog.record_upload(
+        ingested = self._catalog.record_upload(
             record=record,
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
             routable_mimes=self._routable_for(upload=upload),
         )
+        if metering is None:
+            self._release_unretained(
+                deployment_id=deployment_id,
+                content_hash=content_hash,
+                key=ObjectKey(raw_uri),
+            )
+        return ingested
+
+    def _release_unretained(
+        self, *, deployment_id: UUID, content_hash: str, key: ObjectKey
+    ) -> None:
+        """Remove a raw object this ingest wrote or was given but does not keep.
+
+        Each content keeps one raw object, the first one recorded, and only
+        that one is purged by hard forget. A copy written under another key
+        (an earlier version of these bytes arrived through another entry
+        point, file name or upload key) would outlive a forget, so it is
+        removed as soon as the record shows it is not the kept one.
+        """
+        kept = self._catalog.raw_object_key(
+            deployment_id=deployment_id, content_hash=content_hash
+        )
+        if (
+            kept is not None
+            and kept != key.root
+            and isinstance(self._raw_store, ObjectPurgePort)
+        ):
+            self._raw_store.purge_objects(keys=(key,), prefixes=())
 
     def _prepare_managed_text(
         self, *, deployment_id: UUID, upload: DocumentUpload

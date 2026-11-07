@@ -7428,9 +7428,11 @@ deployment's values into another's work.
      object stays at `key`, which becomes the version's raw object; the engine neither
      copies nor moves it. `key` must be `uploads/<id>` with an opaque id of 16–128
      characters from `[A-Za-z0-9_-]`, because hard forget purges a version's raw key in
-     every store and its manifests are immutable. When the deployment already holds
-     identical bytes, that version answers with its own raw object (possibly this very
-     key); registered objects are never deleted by the caller. The declared size must
+     every store and its manifests are immutable. Each content keeps one raw object, the
+     first one recorded, and only that one is purged by hard forget; so when identical
+     bytes are already stored under another key, that version answers and every ingest
+     path (`ingest`, `ingest_observed`, `ingest_stored`) deletes the copy it wrote or was
+     given. Callers never delete registered objects. The declared size must
      match, the uploader chooses the storage class (D51 routing is not applied), and a
      deployment with managed ingest metering (which needs the bytes) refuses this path.
    - *No deployment state on local disk.* `SelfHostSettings.forget_manifest_bucket_name`

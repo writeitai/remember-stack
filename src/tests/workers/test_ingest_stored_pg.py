@@ -222,3 +222,46 @@ def test_a_stored_object_meets_the_same_checks_as_an_upload(
         assert connection.execute(
             text("SELECT count(*) FROM content_objects")
         ).one() == (0,)
+
+
+def test_each_content_keeps_exactly_one_raw_object(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """Only the kept raw object is purged by hard forget, so no copy may linger."""
+    raw = LocalFSObjectStore(root=tmp_path / "raw")
+    ingestor = _ingestor(engine=database_engine, raw=raw)
+    first = _put(raw, "uploads/aaaaaaaaaaaaaaaa", _BODY)
+    second = _put(raw, "uploads/bbbbbbbbbbbbbbbb", _BODY)
+
+    def register(key: ObjectKey) -> None:
+        ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=key,
+            size=len(_BODY),
+            mime="text/markdown",
+            filename="notes.md",
+        )
+
+    def stored_keys() -> set[str]:
+        root = tmp_path / "raw"
+        return {
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file() and not path.name.endswith(".storage-class")
+        }
+
+    register(first)
+    register(first)  # a repeated registration keeps its own key
+    assert stored_keys() == {first.root}
+    register(second)  # identical bytes under another key: that copy goes
+    assert stored_keys() == {first.root}
+    # The ordinary entry point writes its own copy first, then removes it.
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(filename="notes.md", mime="text/markdown", content=_BODY),
+    )
+    assert stored_keys() == {first.root}
+    with database_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT raw_uri FROM content_objects")
+        ).one() == (first.root,)

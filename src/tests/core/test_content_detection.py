@@ -345,3 +345,15 @@ def test_a_mapped_file_is_classified_in_bounded_memory(tmp_path: Path) -> None:
             finally:
                 tracemalloc.stop()
         assert peak < 8 << 20, (name, peak)
+
+
+def test_the_zip_view_seeks_like_bytesio() -> None:
+    """Malformed packages must fail the same way through the bounded view."""
+    from rememberstack.core.content_detection import _BoundedReader
+
+    reference, view = io.BytesIO(b"abcdef"), _BoundedReader(b"abcdef")
+    for offset, whence in ((2, 0), (-5, 1), (-2, 2), (10, 0), (-10, 2)):
+        assert view.seek(offset, whence) == reference.seek(offset, whence)
+        assert view.read(3) == reference.read(3)
+    with pytest.raises(ValueError, match="negative seek value"):
+        view.seek(-1, 0)

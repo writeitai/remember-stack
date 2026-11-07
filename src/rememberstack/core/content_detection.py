@@ -331,6 +331,9 @@ class _BoundedReader(io.RawIOBase):
         return self._position
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        """Seek exactly as ``io.BytesIO`` does, so malformed input fails alike."""
+        if whence == io.SEEK_SET and offset < 0:
+            raise ValueError(f"negative seek value {offset}")
         base = {io.SEEK_SET: 0, io.SEEK_CUR: self._position}.get(
             whence, len(self._content)
         )
