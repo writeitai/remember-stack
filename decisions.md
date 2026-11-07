@@ -7414,10 +7414,10 @@ deployment's values into another's work.
      keeps the in-process bytes path, the self-host default. The same capability lets an
      OCR or vision route have its provider fetch the input by URL instead of receiving
      uploaded bytes. Usage the route incurs is returned in `usage_events` and metered as
-     for any route; the size and pre-OCR limits are checked before the URL is signed. A non-PDF
-     file over its family's reading limit is carded from its size and MIME alone
-     (`CardConverter.convert_unread`), so the convert stage never reads an oversized
-     object, whichever route or store the deployment has. The reading limits
+     for any route; the route's provider limit is checked before the URL is signed. On the
+     bytes path, a non-PDF file over its family's reading limit is carded from its size
+     and MIME alone (`CardConverter.convert_unread`), so the convert stage never reads an
+     oversized object. The reading limits
      (100 MB for office and PDF, 200 MB for spreadsheets; D138, D139) guard this process,
      which would read the file, so they apply only on the bytes path (owner,
      2026-11-07): a file over its limit whose route fetches it by URL from a presigning
