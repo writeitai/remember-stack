@@ -299,6 +299,9 @@ def _search_from(
     return at_start.match(content, position) or anywhere.search(content, position)
 
 
+_MIMETYPE_READ_BYTES = 129
+"""One byte past the largest ``mimetype`` member the check accepts (128)."""
+
 _MAPPED_ZIP_READ_LIMIT_BYTES = 64 << 20
 """Largest single read the ZIP check makes on a memory-mapped file (its
 central directory), about 700,000 entries. Starting point. Bytes already in
@@ -379,7 +382,13 @@ def _office_zip_mime(*, content: Content) -> str | None:
             if "mimetype" in names and "META-INF/manifest.xml" in names:
                 member = archive.getinfo("mimetype")
                 if member.file_size <= 128:
-                    mime = archive.read(member).decode("ascii", errors="ignore")
+                    # Bounded: a declared size is untrusted, and read() would
+                    # inflate the whole stream before truncating it. Reading
+                    # past the declared size still ends the member and checks
+                    # its CRC, so the verdict is unchanged.
+                    with archive.open(member) as stream:
+                        raw = stream.read(_MIMETYPE_READ_BYTES)
+                    mime = raw.decode("ascii", errors="ignore")
                     if mime in _OFFICE_MIMES:
                         return mime
     except (OSError, ValueError, zipfile.BadZipFile, RuntimeError):

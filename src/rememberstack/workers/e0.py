@@ -354,8 +354,12 @@ class UploadIngestor:
             raise ValueError(
                 "a stored object's key must be uploads/<16-128 of [A-Za-z0-9_-]>"
             )
-        if not isinstance(self._raw_store, StreamingReadPort):
-            raise TypeError("this raw store cannot stream objects")
+        if not isinstance(self._raw_store, StreamingReadPort) or not isinstance(
+            self._raw_store, ObjectPurgePort
+        ):
+            # Streaming reads the object; purging removes it again when the
+            # content already keeps another raw object.
+            raise TypeError("registration needs a raw store that streams and purges")
         digest = hashlib.sha256()
         with tempfile.TemporaryFile() as spool:
             received = 0

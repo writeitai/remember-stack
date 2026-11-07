@@ -231,7 +231,6 @@ def test_each_content_keeps_exactly_one_raw_object(
     raw = LocalFSObjectStore(root=tmp_path / "raw")
     ingestor = _ingestor(engine=database_engine, raw=raw)
     first = _put(raw, "uploads/aaaaaaaaaaaaaaaa", _BODY)
-    second = _put(raw, "uploads/bbbbbbbbbbbbbbbb", _BODY)
 
     def register(key: ObjectKey) -> None:
         ingestor.ingest_stored(
@@ -253,6 +252,7 @@ def test_each_content_keeps_exactly_one_raw_object(
     register(first)
     register(first)  # a repeated registration keeps its own key
     assert stored_keys() == {first.root}
+    second = _put(raw, "uploads/bbbbbbbbbbbbbbbb", _BODY)
     register(second)  # identical bytes under another key: that copy goes
     assert stored_keys() == {first.root}
     # The ordinary entry point writes its own copy first, then removes it.

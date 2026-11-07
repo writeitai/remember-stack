@@ -357,3 +357,35 @@ def test_the_zip_view_seeks_like_bytesio() -> None:
         assert view.read(3) == reference.read(3)
     with pytest.raises(ValueError, match="negative seek value"):
         view.seek(-1, 0)
+
+
+def test_an_inflating_mimetype_member_is_read_in_bounded_memory() -> None:
+    """A declared-small ``mimetype`` that inflates hugely is never inflated whole."""
+    import tracemalloc
+    import zlib
+
+    mime = b"application/vnd.oasis.opendocument.text"
+    bomb = mime + b"\x00" * (64 << 20)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("META-INF/manifest.xml", "<manifest/>")
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(info, bomb)
+    content = output.getvalue()
+    # Declare the member as the 39-byte MIME with the CRC of those bytes, as a
+    # crafted package would; both headers carry the size and the CRC.
+    crc = zlib.crc32(mime).to_bytes(4, "little")
+    true_size = len(bomb).to_bytes(4, "little")
+    small = len(mime).to_bytes(4, "little")
+    content = content.replace(zlib.crc32(bomb).to_bytes(4, "little"), crc).replace(
+        true_size, small
+    )
+    tracemalloc.start()
+    try:
+        verdict = _verdict(content, "application/vnd.oasis.opendocument.text")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < len(content) + (8 << 20)
+    assert verdict == "application/vnd.oasis.opendocument.text"
