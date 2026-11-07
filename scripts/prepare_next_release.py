@@ -31,14 +31,37 @@ def main() -> None:
         before=f'version = "{current}"',
         after=f'version = "{target}"',
     )
+    coordinate = _coordinate(version=current)
     for relative in _COORDINATE_FILES:
         path = root / relative
         document = path.read_text(encoding="utf-8")
-        updated = document.replace(current, target)
+        updated = coordinate.sub(lambda match: match.group(1) + target, document)
         if updated == document:
             raise ValueError(f"{relative} has no {current} release coordinate")
         path.write_text(updated, encoding="utf-8")
     print(target)
+
+
+def _coordinate(*, version: str) -> re.Pattern[str]:
+    """Match the version only where it is a release coordinate.
+
+    Image tags, release and PyPI URLs, the checkout command and the CLI page
+    heading move with each release; prose that names a past version (for
+    example "0.18.1 is the first release on 19rc1") keeps it.
+    """
+    prefixes = "|".join(
+        (
+            r"remember-stack:",
+            r"remember-stack-postgres:[0-9a-z]+-",
+            r"\[v",
+            r"releases/tag/v",
+            r"releases/download/v",
+            r"pypi\.org/project/remember/",
+            r"git checkout v",
+            r"CLI \(v",
+        )
+    )
+    return re.compile(f"({prefixes}){re.escape(version)}(?![0-9])")
 
 
 def _parser() -> argparse.ArgumentParser:
