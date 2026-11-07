@@ -28,6 +28,7 @@ from rememberstack.core.text_metering import DOC_TEXT_MAX_SOURCE_BYTES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import ObjectKey
+from rememberstack.model import StoredObjectRefusedError
 from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
 from rememberstack.model.metering import ManagedIngestMeasurementV2
 from rememberstack.model.metering import ManagedMeterScope
@@ -650,7 +651,7 @@ def test_a_stored_object_is_metered_like_an_upload(
     too_large = ObjectKey("uploads/meteredmetered0002")
     big = b"x" * (DOC_TEXT_MAX_SOURCE_BYTES + 1)
     raw_store.write_bytes(key=too_large, content=big, storage_class="cold")
-    with pytest.raises(ManagedTextClassificationError) as refused:
+    with pytest.raises(StoredObjectRefusedError) as refused:
         ingestor.ingest_stored(
             deployment_id=_DEPLOYMENT_ID,
             key=too_large,
@@ -658,4 +659,10 @@ def test_a_stored_object_is_metered_like_an_upload(
             mime="text/plain",
             filename="big.txt",
         )
-    assert refused.value.code == "source_bytes_limit_exceeded"
+    refusal = refused.value.refusal
+    assert isinstance(refusal, ManagedTextClassificationError)
+    assert refusal.code == "source_bytes_limit_exceeded"
+    # Refused and never registered: the engine deleted the object.
+    assert refused.value.raw_object_deleted is True
+    with pytest.raises(FileNotFoundError):
+        raw_store.read_bytes(key=too_large)

@@ -86,6 +86,7 @@ from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import FileHints
+from rememberstack.model import ForgottenSourceError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import ModelRequest
@@ -106,6 +107,7 @@ from rememberstack.model import SkeletonCheckRecord
 from rememberstack.model import SkeletonCheckResponse
 from rememberstack.model import SnappedSection
 from rememberstack.model import SourceLocator
+from rememberstack.model import StoredObjectRefusedError
 from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import UnroutableMimeError
@@ -184,6 +186,11 @@ _STORED_CHUNK_BYTES: Final = 1 << 20
 _STORED_KEY: Final = re.compile(r"uploads/[A-Za-z0-9_-]{16,128}")
 """The namespace for objects clients upload directly (D147): opaque names,
 disjoint from the engine's own keys (``<doc_id>/…``, ``forgotten/…``)."""
+
+
+_STORED_REFUSALS: Final = (ValueError, ForgottenSourceError)
+"""What refuses a stored object for good (size, content type, metering,
+metadata, a forgotten identity); anything else may succeed on retry."""
 
 
 class IngestAdmission(Protocol):
@@ -340,6 +347,18 @@ class UploadIngestor:
         forget). A repeated registration of the same key changes nothing.
         Callers never delete registered objects; hard forget removes them.
 
+        A refusal (declared size, content type, managed metering, a forgotten
+        identity, invalid metadata) raises :class:`StoredObjectRefusedError`
+        carrying the original refusal. The engine deletes the refused object
+        unless a content keeps ``key`` as its raw object (a refused
+        re-registration of a registered key keeps it), and the error's
+        ``raw_object_deleted`` says which. Other failures (storage or
+        database errors, admission paused for a forget in progress) raise
+        unchanged and delete nothing, so a retry can succeed;
+        :meth:`discard_unregistered` removes an object abandoned after such
+        a failure. The caller must not register or discard the same key
+        concurrently.
+
         ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
         characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
         key in every store, so a key outside this namespace could name
@@ -367,83 +386,132 @@ class UploadIngestor:
         digest = hashlib.sha256()
         with tempfile.TemporaryFile() as spool:
             received = 0
+            # Storage failures while streaming are not refusals: they raise
+            # unchanged and delete nothing, so a retry can succeed.
             for chunk in self._raw_store.iter_bytes(
                 key=key, chunk_size=_STORED_CHUNK_BYTES
             ):
                 digest.update(chunk)
                 spool.write(chunk)
                 received += len(chunk)
-            if received != size:
-                raise ValueError(
-                    f"stored object is {received} bytes, not the declared {size}"
-                )
             content_hash = digest.hexdigest()
-            self._guard_ingest(
-                deployment_id=deployment_id,
-                source_kind=UPLOAD_SOURCE_KIND,
-                source_ref=content_hash,
-                content_hash=content_hash,
-            )
-            spool.flush()
-            if received == 0:
-                detected = self._detected_mime(
-                    content=b"", filename=filename, mime=mime
-                )
-            else:
-                with mmap.mmap(spool.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
-                    detected = self._detected_mime(
-                        content=mapped, filename=filename, mime=mime
+            try:
+                if received != size:
+                    raise ValueError(
+                        f"stored object is {received} bytes, not the declared {size}"
                     )
-            metering: ManagedTextMeasurementDraft | None = None
-            if self._meter_scope is not None:
-                if received > DOC_TEXT_MAX_SOURCE_BYTES:
-                    raise ManagedTextClassificationError(
-                        code="source_bytes_limit_exceeded"
-                    )
-                spool.seek(0)
-                measured, metering = self._prepare_managed_text(
+                self._guard_ingest(
                     deployment_id=deployment_id,
-                    upload=DocumentUpload(
-                        filename=filename,
-                        mime=detected,
-                        content=spool.read(),
-                        title=title,
-                        source_path=source_path,
-                    ),
+                    source_kind=UPLOAD_SOURCE_KIND,
+                    source_ref=content_hash,
+                    content_hash=content_hash,
                 )
-                detected = measured.mime
+                spool.flush()
+                if received == 0:
+                    detected = self._detected_mime(
+                        content=b"", filename=filename, mime=mime
+                    )
+                else:
+                    with mmap.mmap(
+                        spool.fileno(), 0, access=mmap.ACCESS_READ
+                    ) as mapped:
+                        detected = self._detected_mime(
+                            content=mapped, filename=filename, mime=mime
+                        )
+                metering: ManagedTextMeasurementDraft | None = None
+                if self._meter_scope is not None:
+                    if received > DOC_TEXT_MAX_SOURCE_BYTES:
+                        raise ManagedTextClassificationError(
+                            code="source_bytes_limit_exceeded"
+                        )
+                    spool.seek(0)
+                    measured, metering = self._prepare_managed_text(
+                        deployment_id=deployment_id,
+                        upload=DocumentUpload(
+                            filename=filename,
+                            mime=detected,
+                            content=spool.read(),
+                            title=title,
+                            source_path=source_path,
+                        ),
+                    )
+                    detected = measured.mime
+            except _STORED_REFUSALS as refusal:
+                raise self._refused(
+                    deployment_id=deployment_id, key=key, refusal=refusal
+                ) from refusal
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
         )
         routable = self._routable
         if exceeds_reading_limit(mime=detected, byte_size=received):
             routable = routable | {detected}
-        ingested = self._catalog.record_upload(
-            record=UploadRecord(
-                deployment_id=deployment_id,
-                doc_id=doc_id,
-                source_kind=UPLOAD_SOURCE_KIND,
-                source_ref=content_hash,
-                source_uri=None,
-                title=title or PurePosixPath(filename).stem,
-                content_hash=content_hash,
-                mime=detected,
-                byte_size=received,
-                raw_uri=key.root,
-                ingested_by=ingested_by,
-                file_name=filename,
-                declared_title=title,
-                source_path=source_path,
-            ),
-            convert_component_version=E0_CONVERT_VERSION,
-            lane=lane,
-            metering=metering,
-            routable_mimes=routable,
-        )
+        try:
+            ingested = self._catalog.record_upload(
+                record=UploadRecord(
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    source_kind=UPLOAD_SOURCE_KIND,
+                    source_ref=content_hash,
+                    source_uri=None,
+                    title=title or PurePosixPath(filename).stem,
+                    content_hash=content_hash,
+                    mime=detected,
+                    byte_size=received,
+                    raw_uri=key.root,
+                    ingested_by=ingested_by,
+                    file_name=filename,
+                    declared_title=title,
+                    source_path=source_path,
+                ),
+                convert_component_version=E0_CONVERT_VERSION,
+                lane=lane,
+                metering=metering,
+                routable_mimes=routable,
+            )
+        except _STORED_REFUSALS as refusal:
+            raise self._refused(
+                deployment_id=deployment_id, key=key, refusal=refusal
+            ) from refusal
         self._release_unretained(
             deployment_id=deployment_id, content_hash=content_hash, key=key
         )
         return ingested
+
+    def _refused(
+        self, *, deployment_id: UUID, key: ObjectKey, refusal: Exception
+    ) -> StoredObjectRefusedError:
+        """Delete a refused stored object unless a content keeps its key."""
+        deleted = self.discard_unregistered(deployment_id=deployment_id, key=key)
+        return StoredObjectRefusedError(refusal=refusal, raw_object_deleted=deleted)
+
+    def discard_unregistered(self, *, deployment_id: UUID, key: ObjectKey) -> bool:
+        """Delete a directly uploaded object that no content keeps (D147).
+
+        For objects that never became a version: an upload whose registration
+        was never completed or retried, swept after it is abandoned, since
+        unregistered bytes would escape hard forget. Returns ``False`` and
+        keeps the object when a content keeps ``key`` as its raw object;
+        otherwise deletes it (absence succeeds) and returns ``True``.
+        :meth:`ingest_stored` uses the same rule for an object it refuses.
+        ``key`` must be in the ``uploads/`` namespace.
+
+        The check and the delete are not one transaction: the caller must not
+        run this while an :meth:`ingest_stored` of the same key is in flight
+        (serialize per key).
+        """
+        if _STORED_KEY.fullmatch(key.root) is None:
+            raise ValueError(
+                "a stored object's key must be uploads/<16-128 of [A-Za-z0-9_-]>"
+            )
+        if not isinstance(self._raw_store, ObjectPurgePort):
+            raise TypeError("discarding needs a raw store that purges")
+        if self._catalog.raw_object_registered(
+            deployment_id=deployment_id, key=key.root
+        ):
+            return False
+        self._raw_store.purge_objects(keys=(key,), prefixes=())
+        return True
 
     def ingest_observed(
         self,

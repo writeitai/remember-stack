@@ -135,6 +135,7 @@ from rememberstack.model.documents import ReferenceBodyError
 from rememberstack.model.documents import RepresentationNotFoundError
 from rememberstack.model.documents import RepresentationRecord
 from rememberstack.model.documents import SourceItem
+from rememberstack.model.documents import StoredObjectRefusedError
 from rememberstack.model.documents import StructureSource
 from rememberstack.model.documents import SyncCycleSummary
 from rememberstack.model.documents import SyntheticRootRecord
@@ -766,6 +767,7 @@ __all__ = (
     "UnroutableMimeError",
     "VideoRegionLocator",
     "UploadRecord",
+    "StoredObjectRefusedError",
     "VersionKeyConflictError",
     "Validity",
     "VersionPipelineReadiness",
