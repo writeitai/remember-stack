@@ -188,6 +188,11 @@ _STORED_KEY: Final = re.compile(r"uploads/[A-Za-z0-9_-]{16,128}")
 disjoint from the engine's own keys (``<doc_id>/…``, ``forgotten/…``)."""
 
 
+_STORED_REFUSALS: Final = (ValueError, ForgottenSourceError)
+"""What refuses a stored object for good (size, content type, metering,
+metadata, a forgotten identity); anything else may succeed on retry."""
+
+
 class IngestAdmission(Protocol):
     """The one D74 check required before an ingest writes any bytes."""
 
@@ -376,21 +381,23 @@ class UploadIngestor:
             # Streaming reads the object; purging removes it again when the
             # content already keeps another raw object.
             raise TypeError("registration needs a raw store that streams and purges")
-        try:
-            digest = hashlib.sha256()
-            with tempfile.TemporaryFile() as spool:
-                received = 0
-                for chunk in self._raw_store.iter_bytes(
-                    key=key, chunk_size=_STORED_CHUNK_BYTES
-                ):
-                    digest.update(chunk)
-                    spool.write(chunk)
-                    received += len(chunk)
+        digest = hashlib.sha256()
+        with tempfile.TemporaryFile() as spool:
+            received = 0
+            # Storage failures while streaming are not refusals: they raise
+            # unchanged and delete nothing, so a retry can succeed.
+            for chunk in self._raw_store.iter_bytes(
+                key=key, chunk_size=_STORED_CHUNK_BYTES
+            ):
+                digest.update(chunk)
+                spool.write(chunk)
+                received += len(chunk)
+            content_hash = digest.hexdigest()
+            try:
                 if received != size:
                     raise ValueError(
                         f"stored object is {received} bytes, not the declared {size}"
                     )
-                content_hash = digest.hexdigest()
                 self._guard_ingest(
                     deployment_id=deployment_id,
                     source_kind=UPLOAD_SOURCE_KIND,
@@ -427,12 +434,17 @@ class UploadIngestor:
                         ),
                     )
                     detected = measured.mime
-            doc_id = uuid5(
-                NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
-            )
-            routable = self._routable
-            if exceeds_reading_limit(mime=detected, byte_size=received):
-                routable = routable | {detected}
+            except _STORED_REFUSALS as refusal:
+                raise self._refused(
+                    deployment_id=deployment_id, key=key, refusal=refusal
+                ) from refusal
+        doc_id = uuid5(
+            NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
+        )
+        routable = self._routable
+        if exceeds_reading_limit(mime=detected, byte_size=received):
+            routable = routable | {detected}
+        try:
             ingested = self._catalog.record_upload(
                 record=UploadRecord(
                     deployment_id=deployment_id,
@@ -455,19 +467,26 @@ class UploadIngestor:
                 metering=metering,
                 routable_mimes=routable,
             )
-            self._release_unretained(
-                deployment_id=deployment_id, content_hash=content_hash, key=key
-            )
-            return ingested
-        except (ValueError, ForgottenSourceError) as refusal:
-            deleted = not self._catalog.raw_object_registered(
-                deployment_id=deployment_id, key=key.root
-            )
-            if deleted:
-                self._raw_store.purge_objects(keys=(key,), prefixes=())
-            raise StoredObjectRefusedError(
-                refusal=refusal, raw_object_deleted=deleted
+        except _STORED_REFUSALS as refusal:
+            raise self._refused(
+                deployment_id=deployment_id, key=key, refusal=refusal
             ) from refusal
+        self._release_unretained(
+            deployment_id=deployment_id, content_hash=content_hash, key=key
+        )
+        return ingested
+
+    def _refused(
+        self, *, deployment_id: UUID, key: ObjectKey, refusal: Exception
+    ) -> StoredObjectRefusedError:
+        """Delete a refused stored object unless a content keeps its key."""
+        deleted = not self._catalog.raw_object_registered(
+            deployment_id=deployment_id, key=key.root
+        )
+        if deleted:
+            assert isinstance(self._raw_store, ObjectPurgePort)
+            self._raw_store.purge_objects(keys=(key,), prefixes=())
+        return StoredObjectRefusedError(refusal=refusal, raw_object_deleted=deleted)
 
     def ingest_observed(
         self,
