@@ -24,7 +24,12 @@ runs today, and what that means for you, is on
 
 </Cloud>
 
-## 0.18.0 (November 2026)
+## 0.18.1 (November 2026)
+
+Version 0.18.0 was never released. Its PostgreSQL image failed to build, so it
+has no PyPI package and no GitHub release. Its engine image
+`ghcr.io/writeitai/remember-stack:0.18.0` is on GHCR; do not use it. 0.18.1 has
+the same changes.
 
 **Self-hosted upgrades need action.** Read
 [Upgrades and migrations](/docs/self-hosting/upgrades) before moving an
@@ -34,10 +39,10 @@ existing deployment. A 0.17 deployment upgrades in place: its data is kept and
 **PostgreSQL 19 release candidate 1.**
 
 - **Action needed.** The database image is now
-  `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.0`. Releases up to
+  `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.1`. Releases up to
   0.17.2 ran PostgreSQL 19 Beta 3, and a Beta 3 data directory does not open
   under RC 1. Move in two steps:
-  1. Upgrade the engine to 0.18.0 while it still runs on the Beta 3 image.
+  1. Upgrade the engine to 0.18.1 while it still runs on the Beta 3 image.
      `setup` drops the Beta 3 property graphs.
   2. Dump the database and restore it into a new RC 1 volume.
 

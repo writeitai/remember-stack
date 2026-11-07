@@ -67,7 +67,7 @@ jobs:
   unit:
     name: Unit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -488,9 +488,10 @@ jobs:
         if: always()
         run: docker compose --env-file .env down --volumes
 
-  # The release publishes the engine image for linux/amd64 and linux/arm64.
-  # Build the arm64 half natively here, so a dependency without an arm64 build
-  # fails on its pull request rather than in the release.
+  # The release publishes the engine and PostgreSQL images for linux/amd64 and
+  # linux/arm64. Build the arm64 halves natively here, so a dependency without
+  # an arm64 build, or a pg_textsearch regression failure on arm64, fails on
+  # its pull request rather than in the release.
   engine-image-arm64:
     name: Engine image (linux/arm64)
     needs: changes
@@ -499,7 +500,7 @@ jobs:
       || needs.changes.outputs.compose == 'true'
       || needs.changes.outputs.ci_control == 'true'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -514,6 +515,9 @@ jobs:
           docker run --rm --entrypoint python remember-stack:arm64-check -c \
             'import onnxruntime, pglast, PIL, psycopg, pyarrow; import rememberstack.profiles.selfhost; print("ok")'
           docker run --rm --entrypoint remember remember-stack:arm64-check --version
+
+      - name: Build the PostgreSQL image (runs the pg_textsearch regression suite)
+        run: docker build --file Dockerfile.postgres --tag remember-stack-postgres:arm64-check .
 
   # Single always-present required check. Integration path jobs are soft.
   pr-gate:

@@ -68,7 +68,14 @@ The tag workflow mechanically publishes the two-platform manifest and attaches
 digests, to the GitHub release. The release-contract checker fails if that job,
 either required platform, or the digest evidence artifact disappears.
 
-### 0.18.0 (PostgreSQL 19 RC 1), 2026-11-06
+### 0.18.1 (PostgreSQL 19 RC 1), 2026-11-07
+
+0.18.0 was not released. Its release run built arm64 under QEMU emulation on an amd64 runner.
+There, the pg_textsearch `parallel_build` regression test failed twice: the expected
+"launched 2 of 2 requested workers" notice was missing. Since 0.18.1, the release builds each
+architecture on a native runner (`ubuntu-24.04-arm` for arm64), and CI builds this
+Dockerfile natively on arm64 for pull requests. `Dockerfile.postgres` itself is unchanged
+from the record below.
 
 These pins were re-verified for this release, and none changed:
 - **Base image.** The pinned index `sha256:f6bab621…` lists the same children as the
