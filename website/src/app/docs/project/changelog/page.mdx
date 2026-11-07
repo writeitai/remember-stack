@@ -24,6 +24,56 @@ runs today, and what that means for you, is on
 
 </Cloud>
 
+## 0.19.0 (November 2026)
+
+A stock self-hosted deployment needs no action. Its new migration,
+`p9_46_0067`, changes only the managed-metering tables, and those are empty
+unless the deployment is metered. The Compose file changes only its release
+image tags. The changes below matter to metered deployments (a control plane
+that approves usage before work runs) and to code that reads readiness or
+worker outcomes.
+
+**Managed metering moves to the convert stage (D150).**
+
+- **Action needed (metered deployments).** Migration `p9_46_0067` refuses to
+  run while `managed_ingest_measurements` still holds staged originals,
+  because those bytes exist nowhere else. On 0.18.x, drain the meter outbox
+  until no measurement holds staged bytes, then upgrade. A measurement
+  releases its bytes when its control plane accepts it or when its document
+  is hard-forgotten; a parked or refused one keeps them.
+- **Action needed (control planes).** The meter's wire contract is now v3:
+  - `rememberstack.ingest_measurement.v3` carries `cost_class`,
+    `native_quantity`, `unit` and `format_family`. The classes are:
+    - `doc-scan`, counted in pages, for every PDF page;
+    - `doc-text`, counted in normalized characters, for other readable files.
+  - `rememberstack.document_version_outcome.v3` is `succeeded` or `failed`.
+  - Processing profiles are named `<cost class>-<standard|claims|sources>-v1`.
+
+  A control plane must accept v3 before any deployment runs 0.19.0.
+- **Behaviour change.** A metered deployment no longer refuses files at
+  ingest. It stores every file, measures it in the convert stage, before any
+  paid model call, and waits for approval:
+  - a PDF is counted by its pages, before OCR;
+  - a file read locally is counted by the characters of its reading;
+  - a card is free;
+  - a file whose route can't be measured fails with
+    `rate_class_unavailable`.
+
+  The ingest-time `409 rate_class_unavailable`, `422 rate_class_ambiguous`
+  and `413 source_bytes_limit_exceeded` refusals, and the 10 MB text cap, are
+  gone. A metered deployment now keeps each file's own type, so CSV, code and
+  logs take their own routes. A document first ingested under the old text-only
+  classifier is processed again once, at its next version.
+- **Unmetered deployments are unchanged.**
+
+**Readiness and worker outcomes.**
+
+- `defer_reason` on a pipeline stage has a new value, `admission`. The
+  metered deployment has measured the file and is waiting for its control
+  plane's approval. See [Wait for readiness](/docs/guides/wait-for-readiness).
+- A worker run can end with the new outcome `admission_parked`.
+- Code that matches these values exhaustively must handle the new ones.
+
 ## 0.18.3 (November 2026)
 
 A stock self-hosted deployment needs no action: its database migrations are
