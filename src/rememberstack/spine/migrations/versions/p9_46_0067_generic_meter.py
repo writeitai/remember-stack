@@ -17,7 +17,8 @@ the convert stage, so:
 
 Refuses to run while any measurement still holds staged bytes: those
 originals exist nowhere else. Drain the outbox with the previous release
-first.
+first. The downgrade restores the text-only shape while the outbox holds
+only delivered text receipts and no work is parked for admission.
 """
 
 from collections.abc import Sequence
@@ -118,6 +119,71 @@ def upgrade() -> None:
     op.execute(_UP)
 
 
+_DOWN = """
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM managed_ingest_measurements WHERE cost_class <> 'doc-text'
+  ) OR EXISTS (
+    SELECT 1 FROM managed_ingest_measurements WHERE delivery_state <> 'accepted'
+  ) OR EXISTS (
+    SELECT 1 FROM processing_state WHERE defer_reason::text = 'admission'
+  ) THEN
+    RAISE EXCEPTION
+      'p9_46_0067 downgrade refused: non-text or undelivered measurements or '
+      'admission-parked work exist';
+  END IF;
+END $$;
+
+ALTER TABLE processing_state
+  DROP CONSTRAINT processing_state_defer_reason_check;
+ALTER TABLE processing_state ADD CONSTRAINT processing_state_defer_reason_check
+CHECK (
+  (status = 'failed' AND defer_reason = 'retry_backoff') OR
+  (status = 'pending' AND (
+    defer_reason IS NULL
+    OR defer_reason::text IN ('scheduled', 'budget', 'no_route')
+  )) OR
+  (status NOT IN ('pending', 'failed') AND defer_reason IS NULL)
+);
+
+ALTER TABLE managed_ingest_outcomes DROP CONSTRAINT managed_ingest_outcomes_outcome;
+ALTER TABLE managed_ingest_outcomes
+  ADD CONSTRAINT managed_ingest_outcomes_outcome
+  CHECK (outcome IN ('succeeded', 'failed', 'no_op')),
+  ADD COLUMN derived_normalized_character_count bigint
+    CHECK (derived_normalized_character_count IS NULL
+           OR derived_normalized_character_count >= 0),
+  ADD COLUMN provider_cost_evidence_id text;
+
+DROP INDEX ix_managed_ingest_measurements_terminal;
+ALTER TABLE managed_ingest_measurements
+  DROP CONSTRAINT managed_ingest_measurements_one_per_version,
+  DROP CONSTRAINT managed_ingest_measurements_class_unit,
+  DROP COLUMN cost_class,
+  DROP COLUMN unit,
+  DROP COLUMN format_family;
+ALTER TABLE managed_ingest_measurements
+  RENAME COLUMN native_quantity TO normalized_character_count;
+ALTER TABLE managed_ingest_measurements
+  ADD COLUMN document_version_disposition text NOT NULL DEFAULT 'new_version'
+    CHECK (document_version_disposition IN ('new_version', 'no_op')),
+  ADD COLUMN staged_content bytea;
+ALTER TABLE managed_ingest_measurements
+  ALTER COLUMN document_version_disposition DROP DEFAULT;
+CREATE INDEX ix_managed_ingest_measurements_terminal
+  ON managed_ingest_measurements (deployment_id, accepted_at)
+  WHERE delivery_state = 'accepted' AND document_version_disposition = 'new_version';
+CREATE INDEX ix_managed_ingest_unaccepted_version
+  ON managed_ingest_measurements (deployment_id, version_id)
+  WHERE document_version_disposition = 'new_version' AND accepted_at IS NULL;
+"""
+
+
 def downgrade() -> None:
-    """Refuse: the text-only outbox cannot hold doc-scan measurements."""
-    raise RuntimeError("p9_46_0067 is forward-only")
+    """Restore the text-only outbox while it holds only delivered text receipts.
+
+    The ``admission`` enum value stays (PostgreSQL cannot drop one); nothing
+    uses it once the constraint excludes it.
+    """
+    op.execute(_DOWN)
