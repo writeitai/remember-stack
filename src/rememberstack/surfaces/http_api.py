@@ -114,7 +114,6 @@ from rememberstack.model import ForgottenSourceError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
-from rememberstack.model import ManagedTextClassificationError
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
@@ -2164,14 +2163,6 @@ def _parse_ingest_principal(
         ) from error
 
 
-def _managed_text_http_error(*, error: ManagedTextClassificationError) -> HTTPException:
-    """Map bounded pre-version classifier refusals to stable HTTP failures."""
-    status = 413 if error.code == "source_bytes_limit_exceeded" else 422
-    if error.code == "rate_class_unavailable":
-        status = 409
-    return HTTPException(status_code=status, detail=error.code)
-
-
 def _forgotten_source_http_error() -> HTTPException:
     """A hard forget covers these bytes or this source identity; it is permanent."""
     return HTTPException(status_code=409, detail="source_forgotten")
@@ -2367,8 +2358,6 @@ def _mount_ingest(
                 return ingest.ingest(
                     deployment_id=deployment_id, upload=upload, **attribution
                 )
-            except ManagedTextClassificationError as error:
-                raise _managed_text_http_error(error=error) from error
             except ContentDetectionError as error:
                 raise HTTPException(status_code=422, detail=error.code) from error
             except ForgottenSourceError as error:
@@ -2385,8 +2374,6 @@ def _mount_ingest(
                 sync_cycle_id=None,
                 **attribution,
             )
-        except ManagedTextClassificationError as error:
-            raise _managed_text_http_error(error=error) from error
         except ContentDetectionError as error:
             raise HTTPException(status_code=422, detail=error.code) from error
         except ForgottenSourceError as error:

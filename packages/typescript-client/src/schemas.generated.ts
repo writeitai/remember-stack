@@ -4447,7 +4447,8 @@ export default {
                 "scheduled",
                 "retry_backoff",
                 "budget",
-                "no_route"
+                "no_route",
+                "admission"
               ],
               "type": "string"
             },

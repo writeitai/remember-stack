@@ -612,8 +612,8 @@ def test_new_raw_version_does_not_replace_processed_evidence(
         assert doc_id not in {row["doc_id"] for row in export.documents()}
 
 
-def test_purged_and_unaccepted_originals_are_not_advertised(corpus: _Corpus) -> None:
-    """Catalog metadata for purged or unadmitted bytes cannot create raw links."""
+def test_purged_originals_are_not_advertised(corpus: _Corpus) -> None:
+    """Catalog metadata for purged bytes cannot create raw links."""
     doc_id = corpus.docs["Annual Report"]
     version_id = _store_unprocessed_version(corpus=corpus, doc_id=doc_id)
     catalog = ProjectionCatalog(engine=corpus.engine)
@@ -633,36 +633,6 @@ def test_purged_and_unaccepted_originals_are_not_advertised(corpus: _Corpus) -> 
                 "UPDATE content_objects SET purged_at = NULL WHERE deployment_id = :d AND content_hash = :h"
             ),
             {"d": _DEPLOYMENT_ID, "h": str(version_id)},
-        )
-        connection.execute(
-            text("""INSERT INTO managed_ingest_measurements (
-              measurement_id, deployment_id, doc_id, version_id, ingest_attempt_id,
-              org_id, project_id, opaque_lineage_id, opaque_source_version_id,
-              normalized_character_count, canonical_source_bytes,
-              document_version_disposition, classifier_version,
-              measurement_algorithm_version, processing_profile_id, measured_at,
-              convert_component_version, lane, staged_content
-            ) VALUES (:m, :d, :doc, :v, 'test', :org, :project, 'lineage', 'version',
-              9, 9, 'new_version', 'test', 'test', 'test', now(), 'test', 'steady', :bytes)"""),
-            {
-                "m": uuid4(),
-                "d": _DEPLOYMENT_ID,
-                "doc": doc_id,
-                "v": version_id,
-                "org": uuid4(),
-                "project": uuid4(),
-                "bytes": b"staged",
-            },
-        )
-    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
-        row = next(row for row in export.documents() if row["doc_id"] == doc_id)
-        assert row["stored_version_id"] != version_id
-    with corpus.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE managed_ingest_measurements SET delivery_state = 'accepted', accepted_at = now(), staged_content = NULL WHERE version_id = :v"
-            ),
-            {"v": version_id},
         )
     with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
         row = next(row for row in export.documents() if row["doc_id"] == doc_id)

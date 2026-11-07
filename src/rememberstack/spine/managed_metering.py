@@ -1,4 +1,11 @@
-"""Durable managed-ingest receipt outbox and admission-controlled dispatch."""
+"""Durable managed-meter receipt outbox and admission-controlled processing.
+
+The convert stage measures each new source version of a metered deployment
+(:mod:`rememberstack.core.metering`), records the measurement here and parks
+its convert work. The drain delivers the measurement; the control plane's
+approval releases the parked work, and a terminal outcome is replayed until
+acknowledged.
+"""
 
 from __future__ import annotations
 
@@ -17,27 +24,20 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
-from rememberstack.core import storage_class_for
-from rememberstack.model import EnqueueWork
-from rememberstack.model import ObjectAlreadyExistsError
-from rememberstack.model import ObjectKey
-from rememberstack.model import PipelineStage
-from rememberstack.model import ProcessingTarget
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model.client import ProcessingLayer
-from rememberstack.model.metering import DocTextQuantity
-from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
-from rememberstack.model.metering import ManagedIngestMeasurementV2
-from rememberstack.model.metering import ManagedTextMeasurementDraft
+from rememberstack.model.metering import EVIDENCE_UNIT
+from rememberstack.model.metering import ManagedDocumentVersionOutcome
+from rememberstack.model.metering import ManagedIngestMeasurement
+from rememberstack.model.metering import ManagedMeasurementDraft
 from rememberstack.model.metering import MeterReceiptConflict
 from rememberstack.model.metering import MeterReceiptUnauthorized
 from rememberstack.model.metering import MeterReceiptUnavailable
 from rememberstack.model.processing_layers import profile_layers
 from rememberstack.ports.metering import MeterReceiptPort
-from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.processing_layers import layer_configuration_on
 from rememberstack.spine.readiness import PipelineReadinessCatalog
-from rememberstack.spine.work_ledger import enqueue_on
+from rememberstack.spine.work_ledger import release_admission_on
 
 _logger = logging.getLogger(__name__)
 
@@ -55,42 +55,15 @@ class MeterDrainResult:
 def record_managed_measurement_on(
     *,
     connection: Connection,
-    draft: ManagedTextMeasurementDraft,
+    draft: ManagedMeasurementDraft,
     deployment_id: UUID,
     doc_id: UUID,
     version_id: UUID,
-    created: bool,
     convert_component_version: str,
     lane: str,
 ) -> None:
-    """Persist one immutable receipt in the same transaction as version choice."""
-    if not created:
-        requeued = connection.execute(
-            _REQUEUE_QUARANTINED_VERSION,
-            {"deployment_id": deployment_id, "version_id": version_id},
-        )
-        if int(requeued.rowcount or 0) > 0:
-            return
-        prior_no_op = connection.execute(
-            _EXISTING_NOOP_VERSION,
-            {"deployment_id": deployment_id, "version_id": version_id},
-        ).scalar_one_or_none()
-        if prior_no_op is not None:
-            return
+    """Persist a version's one immutable measurement; a repeat changes nothing."""
     identity_key = draft.identity_key.get_secret_value().encode("utf-8")
-    opaque_lineage_id = _opaque_identity(
-        identity_key=identity_key,
-        domain="lineage",
-        deployment_id=deployment_id,
-        local_id=doc_id,
-    )
-    opaque_source_version_id = _opaque_identity(
-        identity_key=identity_key,
-        domain=("source-version" if created else "no-op-observation"),
-        deployment_id=deployment_id,
-        local_id=version_id,
-    )
-    disposition = "new_version" if created else "no_op"
     connection.execute(
         _INSERT_MEASUREMENT,
         {
@@ -101,40 +74,42 @@ def record_managed_measurement_on(
             "ingest_attempt_id": draft.ingest_attempt_id,
             "org_id": draft.org_id,
             "project_id": draft.project_id,
-            "opaque_lineage_id": opaque_lineage_id,
-            "opaque_source_version_id": opaque_source_version_id,
-            "normalized_character_count": draft.normalized_character_count,
+            "opaque_lineage_id": _opaque_identity(
+                identity_key=identity_key,
+                domain="lineage",
+                deployment_id=deployment_id,
+                local_id=doc_id,
+            ),
+            "opaque_source_version_id": _opaque_identity(
+                identity_key=identity_key,
+                domain="source-version",
+                deployment_id=deployment_id,
+                local_id=version_id,
+            ),
+            "format_family": draft.format_family,
+            "cost_class": draft.cost_class,
+            "native_quantity": draft.native_quantity,
+            "unit": EVIDENCE_UNIT[draft.cost_class],
             "canonical_source_bytes": draft.canonical_source_bytes,
-            "document_version_disposition": disposition,
             "classifier_version": draft.classifier_version,
             "measurement_algorithm_version": draft.measurement_algorithm_version,
             "processing_profile_id": draft.processing_profile_id,
             "measured_at": draft.measured_at,
             "convert_component_version": convert_component_version,
             "lane": lane,
-            "staged_content": (draft.staged_content if created else None),
         },
     )
-    if not created:
-        connection.execute(
-            _INSERT_OUTCOME,
-            {
-                "measurement_id": draft.measurement_id,
-                "document_version_id": None,
-                "outcome": "no_op",
-                "completed_at": draft.measured_at,
-                "reason_code": "source_unchanged",
-                "profile_complete": False,
-                "version_commit_sequence": None,
-                "derived_normalized_character_count": (
-                    draft.normalized_character_count
-                ),
-            },
-        )
+
+
+def measurement_state_on(*, connection: Connection, version_id: UUID) -> str | None:
+    """A version's measurement delivery state, or None before it is measured."""
+    return connection.execute(
+        _MEASUREMENT_STATE, {"version_id": version_id}
+    ).scalar_one_or_none()
 
 
 class ManagedMeterCatalog:
-    """Replay local v2 receipts and open pipeline work only after two-hold ACK."""
+    """Replay local v3 receipts and release parked work only after two-hold ACK."""
 
     def __init__(
         self,
@@ -142,13 +117,11 @@ class ManagedMeterCatalog:
         engine: Engine,
         receipts: MeterReceiptPort,
         readiness: PipelineReadinessCatalog,
-        raw_store: ObjectStorePort,
     ) -> None:
         """Bind the spine, control-plane adapter, and exact profile readiness."""
         self._engine = engine
         self._receipts = receipts
         self._readiness = readiness
-        self._raw_store = raw_store
 
     def drain_once(self, *, limit: int = 100) -> MeterDrainResult:
         """Run one bounded measurement, terminalization, and outcome replay pass."""
@@ -165,7 +138,7 @@ class ManagedMeterCatalog:
         )
 
     def _deliver_measurements(self, *, limit: int) -> tuple[int, int]:
-        """Replay due measurements and enqueue convert only after full approval."""
+        """Replay due measurements and release parked convert only after approval."""
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(_DUE_MEASUREMENTS, {"limit": limit}).mappings().all()
@@ -209,19 +182,6 @@ class ManagedMeterCatalog:
                 )
                 parked += 1
                 continue
-            if (
-                receipt.document_version_disposition == "new_version"
-                and decision.decision != "approved"
-            ) or (
-                receipt.document_version_disposition == "no_op"
-                and decision.decision != "no_op"
-            ):
-                self._record_measurement_retry(
-                    measurement_id=receipt.measurement_id,
-                    reason_code="decision_shape_mismatch",
-                )
-                parked += 1
-                continue
             with self._engine.begin() as connection:
                 current = (
                     connection.execute(
@@ -234,67 +194,37 @@ class ManagedMeterCatalog:
                     continue
                 if current["delivery_state"] == "accepted":
                     continue
-                if receipt.document_version_disposition == "new_version":
-                    if (
-                        current["delivery_state"] == "cancelled"
-                        or current["version_status"] == "deleted"
-                    ):
-                        connection.execute(
-                            _ACCEPT_MEASUREMENT,
-                            {
-                                "measurement_id": receipt.measurement_id,
-                                "processing_hold_id": decision.processing_hold_id,
-                                "storage_growth_hold_id": (
-                                    decision.storage_growth_hold_id
-                                ),
-                            },
-                        )
-                        connection.execute(
-                            _INSERT_OUTCOME,
-                            {
-                                "measurement_id": receipt.measurement_id,
-                                "document_version_id": str(current["version_id"]),
-                                "outcome": "failed",
-                                "completed_at": datetime.now(timezone.utc),
-                                "reason_code": "source_forgotten",
-                                "profile_complete": False,
-                                "version_commit_sequence": None,
-                                "derived_normalized_character_count": current[
-                                    "normalized_character_count"
-                                ],
-                            },
-                        )
-                        accepted += 1
-                        continue
-                    staged_content = current["staged_content"]
-                    if not isinstance(staged_content, bytes) or not staged_content:
-                        raise RuntimeError(
-                            "managed staged content missing before approval"
-                        )
-                    try:
-                        self._raw_store.write_bytes(
-                            key=ObjectKey(str(current["raw_uri"])),
-                            content=staged_content,
-                            storage_class=storage_class_for(mime=str(current["mime"])),
-                        )
-                    except ObjectAlreadyExistsError:
-                        pass
+                if (
+                    current["delivery_state"] == "cancelled"
+                    or current["version_status"] == "deleted"
+                ):
                     connection.execute(
-                        _OPEN_VERSION_FOR_CONVERT, {"version_id": current["version_id"]}
+                        _ACCEPT_MEASUREMENT,
+                        {
+                            "measurement_id": receipt.measurement_id,
+                            "processing_hold_id": decision.processing_hold_id,
+                            "storage_growth_hold_id": decision.storage_growth_hold_id,
+                        },
                     )
-                    enqueue_on(
-                        connection=connection,
-                        work=EnqueueWork(
-                            deployment_id=current["deployment_id"],
-                            target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                            target_id=current["version_id"],
-                            stage=PipelineStage.CONVERT,
-                            component_version=current["convert_component_version"],
-                            content_hash=current["content_hash"],
-                            lane=current["lane"],
-                            payload={"version_id": str(current["version_id"])},
-                        ),
+                    connection.execute(
+                        _INSERT_OUTCOME,
+                        {
+                            "measurement_id": receipt.measurement_id,
+                            "document_version_id": str(current["version_id"]),
+                            "outcome": "failed",
+                            "completed_at": datetime.now(timezone.utc),
+                            "reason_code": "source_forgotten",
+                            "profile_complete": False,
+                            "version_commit_sequence": None,
+                        },
                     )
+                    accepted += 1
+                    continue
+                release_admission_on(
+                    connection=connection,
+                    deployment_id=current["deployment_id"],
+                    version_id=current["version_id"],
+                )
                 connection.execute(
                     _ACCEPT_MEASUREMENT,
                     {
@@ -429,9 +359,6 @@ class ManagedMeterCatalog:
                         "reason_code": reason_code,
                         "profile_complete": profile_complete,
                         "version_commit_sequence": sequence,
-                        "derived_normalized_character_count": row[
-                            "normalized_character_count"
-                        ],
                     },
                 )
                 if int(result.rowcount or 0) > 0:
@@ -539,9 +466,9 @@ def _opaque_identity(
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def _measurement_from_row(*, row: dict[str, Any]) -> ManagedIngestMeasurementV2:
+def _measurement_from_row(*, row: dict[str, Any]) -> ManagedIngestMeasurement:
     """Reconstruct the exact immutable wire receipt from local columns."""
-    return ManagedIngestMeasurementV2.model_validate(
+    return ManagedIngestMeasurement.model_validate(
         {
             "measurement_id": row["measurement_id"],
             "ingest_attempt_id": row["ingest_attempt_id"],
@@ -550,11 +477,11 @@ def _measurement_from_row(*, row: dict[str, Any]) -> ManagedIngestMeasurementV2:
             "deployment_id": row["deployment_id"],
             "opaque_lineage_id": row["opaque_lineage_id"],
             "opaque_source_version_id": row["opaque_source_version_id"],
-            "quantity": DocTextQuantity(
-                normalized_character_count=int(row["normalized_character_count"])
-            ).model_dump(),
+            "format_family": row["format_family"],
+            "cost_class": row["cost_class"],
+            "native_quantity": row["native_quantity"],
+            "unit": row["unit"],
             "canonical_source_bytes": row["canonical_source_bytes"],
-            "document_version_disposition": row["document_version_disposition"],
             "classifier_version": row["classifier_version"],
             "measurement_algorithm_version": row["measurement_algorithm_version"],
             "processing_profile_id": row["processing_profile_id"],
@@ -563,9 +490,9 @@ def _measurement_from_row(*, row: dict[str, Any]) -> ManagedIngestMeasurementV2:
     )
 
 
-def _outcome_from_row(*, row: dict[str, Any]) -> ManagedDocumentVersionOutcomeV2:
+def _outcome_from_row(*, row: dict[str, Any]) -> ManagedDocumentVersionOutcome:
     """Reconstruct the exact immutable terminal wire receipt from local columns."""
-    return ManagedDocumentVersionOutcomeV2.model_validate(
+    return ManagedDocumentVersionOutcome.model_validate(
         {
             "measurement_id": row["measurement_id"],
             "document_version_id": row["document_version_id"],
@@ -574,10 +501,6 @@ def _outcome_from_row(*, row: dict[str, Any]) -> ManagedDocumentVersionOutcomeV2
             "reason_code": row["reason_code"],
             "profile_complete": row["profile_complete"],
             "version_commit_sequence": row["version_commit_sequence"],
-            "derived_normalized_character_count": row[
-                "derived_normalized_character_count"
-            ],
-            "provider_cost_evidence_id": row["provider_cost_evidence_id"],
         }
     )
 
@@ -587,53 +510,34 @@ _INSERT_MEASUREMENT = text(
     INSERT INTO managed_ingest_measurements (
       measurement_id, deployment_id, doc_id, version_id, ingest_attempt_id,
       org_id, project_id, opaque_lineage_id, opaque_source_version_id,
-      normalized_character_count, canonical_source_bytes,
-      document_version_disposition, classifier_version,
-      measurement_algorithm_version, processing_profile_id, measured_at,
-      convert_component_version, lane, staged_content
+      format_family, cost_class, native_quantity, unit, canonical_source_bytes,
+      classifier_version, measurement_algorithm_version, processing_profile_id,
+      measured_at, convert_component_version, lane
     ) VALUES (
       :measurement_id, :deployment_id, :doc_id, :version_id, :ingest_attempt_id,
       :org_id, :project_id, :opaque_lineage_id, :opaque_source_version_id,
-      :normalized_character_count, :canonical_source_bytes,
-      :document_version_disposition, :classifier_version,
+      :format_family, :cost_class, :native_quantity, :unit,
+      :canonical_source_bytes, :classifier_version,
       :measurement_algorithm_version, :processing_profile_id, :measured_at,
-      :convert_component_version, CAST(:lane AS processing_lane), :staged_content
+      :convert_component_version, CAST(:lane AS processing_lane)
     )
+    ON CONFLICT (deployment_id, version_id) DO NOTHING
     """
 )
 
-_REQUEUE_QUARANTINED_VERSION = text(
-    """
-    UPDATE managed_ingest_measurements
-    SET delivery_state = 'pending', decision_reason = NULL, next_attempt_at = NULL
-    WHERE deployment_id = :deployment_id
-      AND version_id = :version_id
-      AND document_version_disposition = 'new_version'
-      AND delivery_state = 'quarantined'
-    """
-)
-
-_EXISTING_NOOP_VERSION = text(
-    """
-    SELECT measurement_id
-    FROM managed_ingest_measurements
-    WHERE deployment_id = :deployment_id
-      AND version_id = :version_id
-      AND document_version_disposition = 'no_op'
-    LIMIT 1
-    """
+_MEASUREMENT_STATE = text(
+    "SELECT delivery_state FROM managed_ingest_measurements "
+    "WHERE version_id = :version_id"
 )
 
 _INSERT_OUTCOME = text(
     """
     INSERT INTO managed_ingest_outcomes (
       measurement_id, document_version_id, outcome, completed_at, reason_code,
-      profile_complete, version_commit_sequence,
-      derived_normalized_character_count, provider_cost_evidence_id
+      profile_complete, version_commit_sequence
     ) VALUES (
       :measurement_id, :document_version_id, :outcome, :completed_at, :reason_code,
-      :profile_complete, :version_commit_sequence,
-      :derived_normalized_character_count, NULL
+      :profile_complete, :version_commit_sequence
     )
     ON CONFLICT (measurement_id) DO NOTHING
     """
@@ -642,10 +546,10 @@ _INSERT_OUTCOME = text(
 _DUE_MEASUREMENTS = text(
     """
     SELECT measurement_id, ingest_attempt_id, org_id, project_id, deployment_id,
-           opaque_lineage_id, opaque_source_version_id,
-           normalized_character_count, canonical_source_bytes,
-           document_version_disposition, classifier_version,
-           measurement_algorithm_version, processing_profile_id, measured_at
+           opaque_lineage_id, opaque_source_version_id, format_family,
+           cost_class, native_quantity, unit, canonical_source_bytes,
+           classifier_version, measurement_algorithm_version,
+           processing_profile_id, measured_at
     FROM managed_ingest_measurements
     WHERE delivery_state IN ('pending', 'parked')
       AND (next_attempt_at IS NULL OR next_attempt_at <= statement_timestamp())
@@ -656,21 +560,11 @@ _DUE_MEASUREMENTS = text(
 
 _LOCK_MEASUREMENT = text(
     """
-    SELECT m.*, v.content_hash, v.status::text AS version_status, c.raw_uri, c.mime
+    SELECT m.*, v.status::text AS version_status
     FROM managed_ingest_measurements m
     JOIN document_versions v ON v.version_id = m.version_id
-    JOIN content_objects c
-      ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
     WHERE m.measurement_id = :measurement_id
     FOR UPDATE OF m, v
-    """
-)
-
-_OPEN_VERSION_FOR_CONVERT = text(
-    """
-    UPDATE document_versions
-    SET status = 'converting'
-    WHERE version_id = :version_id AND status = 'ingesting'
     """
 )
 
@@ -682,7 +576,7 @@ _ACCEPT_MEASUREMENT = text(
         storage_growth_hold_id = :storage_growth_hold_id,
         delivery_attempts = delivery_attempts + 1,
         last_attempt_at = statement_timestamp(), next_attempt_at = NULL,
-        accepted_at = statement_timestamp(), staged_content = NULL
+        accepted_at = statement_timestamp()
     WHERE measurement_id = :measurement_id AND delivery_state <> 'accepted'
     """
 )
@@ -716,13 +610,12 @@ _QUARANTINE_MEASUREMENT = text(
 _AWAITING_OUTCOMES = text(
     """
     SELECT m.measurement_id, m.deployment_id, m.version_id,
-           m.normalized_character_count, m.processing_profile_id,
+           m.processing_profile_id,
            v.status::text AS version_status
     FROM managed_ingest_measurements m
     JOIN document_versions v ON v.version_id = m.version_id
     LEFT JOIN managed_ingest_outcomes o ON o.measurement_id = m.measurement_id
     WHERE m.delivery_state = 'accepted'
-      AND m.document_version_disposition = 'new_version'
       AND o.measurement_id IS NULL
       AND (m.outcome_next_attempt_at IS NULL
            OR m.outcome_next_attempt_at <= statement_timestamp()

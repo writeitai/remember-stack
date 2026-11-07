@@ -15,14 +15,15 @@ from pydantic import ConfigDict
 
 from remember.models import ProcessingLayer
 
-STANDARD_PROCESSING_PROFILE_ID: Final = "doc-text-standard-v1"
-"""Measured profile of a version processed by all three layers (unchanged)."""
+_STANDARD_PROFILE: Final = "standard"
+"""A version processed by all three layers."""
 
-CLAIMS_PROCESSING_PROFILE_ID: Final = "doc-text-claims-v1"
-"""Measured profile of a version processed by sources and claims only."""
+_CLAIMS_PROFILE: Final = "claims"
+"""A version processed by sources and claims only."""
 
-SOURCES_PROCESSING_PROFILE_ID: Final = "doc-text-sources-v1"
-"""Measured profile of a version processed by sources only."""
+_SOURCES_PROFILE: Final = "sources"
+"""A version processed by sources only."""
+
 
 SwitchableLayer = Literal[ProcessingLayer.CLAIMS, ProcessingLayer.FACTS]
 
@@ -56,14 +57,19 @@ class LayerConfiguration(BaseModel):
             layer for layer in ProcessingLayer if self.enabled(layer=layer)
         )
 
-    @property
-    def processing_profile_id(self) -> str:
-        """The managed-meter profile a version measured now is processed under."""
+    def processing_profile_id(self, *, cost_class: str) -> str:
+        """The managed-meter profile a version measured now is processed under.
+
+        ``<cost class>-<layers>-v1``: the cost class says what kind of input
+        it is, the layers what processing it receives (D143 §4.5).
+        """
         if self.facts_enabled:
-            return STANDARD_PROCESSING_PROFILE_ID
-        if self.claims_enabled:
-            return CLAIMS_PROCESSING_PROFILE_ID
-        return SOURCES_PROCESSING_PROFILE_ID
+            layers = _STANDARD_PROFILE
+        elif self.claims_enabled:
+            layers = _CLAIMS_PROFILE
+        else:
+            layers = _SOURCES_PROFILE
+        return f"{cost_class}-{layers}-v1"
 
 
 UNCONFIGURED: Final = LayerConfiguration(
@@ -74,9 +80,9 @@ UNCONFIGURED: Final = LayerConfiguration(
 
 def profile_layers(*, processing_profile_id: str) -> frozenset[ProcessingLayer]:
     """The layers a measured processing profile requires (D143 §4.5)."""
-    if processing_profile_id == SOURCES_PROCESSING_PROFILE_ID:
+    if processing_profile_id.endswith(f"-{_SOURCES_PROFILE}-v1"):
         return frozenset({ProcessingLayer.SOURCES})
-    if processing_profile_id == CLAIMS_PROCESSING_PROFILE_ID:
+    if processing_profile_id.endswith(f"-{_CLAIMS_PROFILE}-v1"):
         return frozenset({ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS})
     return frozenset(ProcessingLayer)
 

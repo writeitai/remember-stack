@@ -4508,7 +4508,8 @@ stage has `succeeded` or been `skipped` and has a `finished_at`. A
 move until an operator adds a conversion route, so waiting does not help.
 With `budget`, a spend budget has reached its ceiling: the work resumes by
 itself when the budget window ends, or sooner if an operator raises the
-ceiling.
+ceiling. With `admission`, a metered deployment has measured the file and
+waits for its control plane's approval; the work resumes once it is approved.
 
 Capability reasons when not ready:
 
@@ -8452,7 +8453,7 @@ The report has five parts:
 
 | Field | Contents |
 |---|---|
-| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`), split by `defer_reason`: `no_route` or `budget` for parked work, `scheduled` for work due later, `retry_backoff` for a failure waiting to retry, `null` otherwise. A large `pending` count with no reason on one stage shows where the pipeline is behind. |
+| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`), split by `defer_reason`: `no_route`, `admission` or `budget` for parked work, `scheduled` for work due later, `retry_backoff` for a failure waiting to retry, `null` otherwise. A large `pending` count with no reason on one stage shows where the pipeline is behind. |
 | `dead_letters` | Items that ran out of attempts: a total, groups by stage and error class, and individual items with their `processing_id`, attempts and `last_error`. |
 | `poison_targets` | Items that dead-lettered under two or more component versions: an upgrade did not fix them. |
 | `latest_projections` | The latest filesystem snapshot, if any. |
@@ -9053,7 +9054,9 @@ docker compose logs --since 1h
   store (with the bundled SeaweedFS or any other S3 store). Summed per
   `stage`, they show which stages move the most data to and from storage. The outcome is one of
   `succeeded`, `retry_scheduled`, `dead_lettered`, `budget_parked`,
-  `no_route_parked`, `lease_lost` or `no_work`. `lease_lost` means the
+  `no_route_parked`, `admission_parked` (a metered deployment's conversion
+  waiting for its control plane's approval), `lease_lost` or `no_work`.
+  `lease_lost` means the
   worker took longer than its hold on the item without renewing it, the
   item was handed back to the queue, and this run's result was discarded. A failure adds an `exception` object with
   the error type, message and full traceback.
@@ -14209,7 +14212,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `component_version` | string | The version of that stage's component the deployment expects. |
 | `status` | string | `missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`. |
 | `finished_at` | date-time, nullable | |
-| `defer_reason` | string, nullable | Why a `pending` or `failed` stage waits: `no_route` (no converter for the file's type), `budget` (a spend budget is used up), `scheduled` (due later), `retry_backoff` (a `failed` stage waiting for its next attempt). `null` for any other status, and for pending work that is simply queued. |
+| `defer_reason` | string, nullable | Why a `pending` or `failed` stage waits: `no_route` (no converter for the file's type), `admission` (a metered deployment waiting for its control plane's approval), `budget` (a spend budget is used up), `scheduled` (due later), `retry_backoff` (a `failed` stage waiting for its next attempt). `null` for any other status, and for pending work that is simply queued. |
 
 `missing` means no work for that stage and component version exists yet.
 `failed` may be retried by the pipeline; `dead_letter` will not be.
@@ -17448,7 +17451,7 @@ models below are Pydantic models (frozen) unless noted.
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
-| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
+| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `admission`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
 | `ProcessingLayer` | String enum: `sources`, `claims`, `facts`. |
 | `ProcessingLayerStates` | The result of `processing_layers`: `claims` and `facts`, each `enabled`, `backfilling` or `disabled`. |
 | `CapabilityReadiness` | `required`, `ready`, `checked_at`, `reason`, `version`, `built_at`, `published_at`. |

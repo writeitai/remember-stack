@@ -54,6 +54,13 @@ class DeferReason(StrEnum):
     the dead-letter queue: nothing is broken, the format is simply not
     supported yet. Registering the converter and resuming releases the
     backlog."""
+    ADMISSION = "admission"
+    """Convert work of a metered deployment waiting for the control plane's holds.
+
+    The convert stage measured the version (a PDF's pages before OCR, or a
+    read document's characters before any paid stage) and parks until the
+    meter drain records the approval, which releases it. No attempt is spent
+    while it waits."""
 
 
 class EnqueueWork(BaseModel):
@@ -192,6 +199,7 @@ class RunResultOutcome(StrEnum):
     NO_WORK = "no_work"
     BUDGET_PARKED = "budget_parked"
     NO_ROUTE_PARKED = "no_route_parked"
+    ADMISSION_PARKED = "admission_parked"
     SUCCEEDED = "succeeded"
     RETRY_SCHEDULED = "retry_scheduled"
     DEAD_LETTERED = "dead_lettered"

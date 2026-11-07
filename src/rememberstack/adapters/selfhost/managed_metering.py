@@ -5,8 +5,8 @@ from __future__ import annotations
 import httpx
 from pydantic import SecretStr
 
-from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
-from rememberstack.model.metering import ManagedIngestMeasurementV2
+from rememberstack.model.metering import ManagedDocumentVersionOutcome
+from rememberstack.model.metering import ManagedIngestMeasurement
 from rememberstack.model.metering import MeterAdmissionResult
 from rememberstack.model.metering import MeterReceiptConflict
 from rememberstack.model.metering import MeterReceiptUnauthorized
@@ -14,7 +14,7 @@ from rememberstack.model.metering import MeterReceiptUnavailable
 
 
 class ControlPlaneMeterReceipts:
-    """Deliver v2 receipts with a deployment-scoped ``umc_mi_`` bearer."""
+    """Deliver v3 receipts with a deployment-scoped ``umc_mi_`` bearer."""
 
     def __init__(
         self,
@@ -30,7 +30,7 @@ class ControlPlaneMeterReceipts:
         self._client = httpx.Client(timeout=timeout_s, transport=transport)
 
     def admit_measurement(
-        self, *, measurement: ManagedIngestMeasurementV2
+        self, *, measurement: ManagedIngestMeasurement
     ) -> MeterAdmissionResult:
         """Post one canonical measurement and validate its stable decision."""
         body = self._post(
@@ -44,7 +44,7 @@ class ControlPlaneMeterReceipts:
                 "meter admission returned an invalid decision"
             ) from error
 
-    def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcomeV2) -> None:
+    def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcome) -> None:
         """Post one terminal receipt and require an explicit acknowledgement."""
         body = self._post(
             path="/processed-input/outcomes", payload=outcome.model_dump(mode="json")

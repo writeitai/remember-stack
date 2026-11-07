@@ -945,6 +945,32 @@ class WorkLedger:
             if parked[0] is None:
                 connection.execute(_WAKE, {"processing_id": str(processing_id)})
 
+    def park_for_admission(self, *, processing_id: UUID, attempt: int) -> None:
+        """Return a measured convert claim to wait for the meter's approval.
+
+        The handler recorded the version's measurement before raising, so
+        only the matching running convert attempt transitions; its claim is
+        refunded. The approval may already have been recorded meanwhile: the
+        park locks the measurement row (the lock the approval takes) and
+        parks only while it is unaccepted; otherwise the claim returns to the
+        queue unparked and is announced.
+        """
+        with self._engine.begin() as connection:
+            parked = (
+                connection.execute(
+                    _PARK_ADMISSION,
+                    {"processing_id": processing_id, "attempt": attempt},
+                )
+                .mappings()
+                .all()
+            )
+            if len(parked) != 1:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not the running convert attempt"
+                )
+            if parked[0]["defer_reason"] is None:
+                _announce_released_on(connection=connection, row=parked[0])
+
     def resume_no_route(
         self, *, deployment_id: UUID, routable_mimes: Collection[str]
     ) -> tuple[UUID, ...]:
@@ -1902,6 +1928,43 @@ def enqueue_on(*, connection: Connection, work: EnqueueWork) -> EnqueueOutcome:
     )
 
 
+def release_admission_on(
+    *, connection: Connection, deployment_id: UUID, version_id: UUID
+) -> int:
+    """Release a version's convert work parked for the meter's approval.
+
+    Runs in the caller's transaction, which records the approval; the wake and
+    the announcement take effect when it commits. Returns the rows released.
+    """
+    released = (
+        connection.execute(
+            _RELEASE_ADMISSION,
+            {"deployment_id": deployment_id, "version_id": version_id},
+        )
+        .mappings()
+        .all()
+    )
+    for row in released:
+        _announce_released_on(connection=connection, row=row)
+    return len(released)
+
+
+def _announce_released_on(*, connection: Connection, row: RowMapping) -> None:
+    """Wake listeners and record one released convert row for push delivery."""
+    connection.execute(_WAKE, {"processing_id": str(row["processing_id"])})
+    record_new_work(
+        work=NewWork(
+            processing_id=row["processing_id"],
+            route=QueueRoute(
+                deployment_id=row["deployment_id"],
+                stage=PipelineStage.CONVERT,
+                lane=(None if row["lane"] is None else ProcessingLane(row["lane"])),
+            ),
+            not_before=None,
+        )
+    )
+
+
 def _claimed_work(*, row: RowMapping) -> ClaimedWork:
     """Build the typed claimed-work record from a returned ledger row."""
     return ClaimedWork(
@@ -1985,6 +2048,43 @@ _PARK_NO_ROUTE = text(
     """
 )
 
+_PARK_ADMISSION = text(
+    """
+    WITH measured AS (
+        SELECT m.accepted_at
+        FROM processing_state p
+        JOIN managed_ingest_measurements m
+          ON m.deployment_id = p.deployment_id AND m.version_id = p.target_id
+        WHERE p.processing_id = :processing_id
+        FOR SHARE OF m
+    )
+    UPDATE processing_state
+    SET status = 'pending',
+        defer_reason = CASE
+            WHEN EXISTS (SELECT 1 FROM measured WHERE accepted_at IS NOT NULL)
+            THEN NULL
+            ELSE 'admission'::processing_defer_reason
+        END,
+        attempts = attempts - 1, started_at = NULL, not_before = now()
+    WHERE processing_id = :processing_id AND status = 'running'
+      AND stage = 'convert' AND attempts = :attempt AND attempts > 0
+    RETURNING processing_id, deployment_id, lane::text AS lane,
+              defer_reason::text AS defer_reason
+    """
+)
+
+_RELEASE_ADMISSION = text(
+    """
+    UPDATE processing_state
+    SET defer_reason = NULL, not_before = now()
+    WHERE deployment_id = :deployment_id
+      AND target_kind = 'document_version' AND target_id = :version_id
+      AND stage = 'convert' AND status = 'pending'
+      AND defer_reason::text = 'admission'
+    RETURNING processing_id, deployment_id, lane::text AS lane
+    """
+)
+
 _RESUME_NO_ROUTE = text(
     """
     UPDATE processing_state p
@@ -2013,7 +2113,10 @@ _CLAIMABLE = """
       -- There is no instant at which it becomes ready, so it is excluded by
       -- its reason rather than by a sentinel timestamp; registering the
       -- converter and resuming is what releases it.
-      AND (defer_reason IS NULL OR defer_reason::text <> 'no_route')
+      -- A metered conversion waiting for the control plane's holds is
+      -- likewise parked on a fact, the approval, which releases it.
+      AND (defer_reason IS NULL
+           OR defer_reason::text NOT IN ('no_route', 'admission'))
 """
 
 _CLAIM_DUE_ON_ROUTE = f"""

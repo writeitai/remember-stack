@@ -96,7 +96,8 @@ stage has `succeeded` or been `skipped` and has a `finished_at`. A
 move until an operator adds a conversion route, so waiting does not help.
 With `budget`, a spend budget has reached its ceiling: the work resumes by
 itself when the budget window ends, or sooner if an operator raises the
-ceiling.
+ceiling. With `admission`, a metered deployment has measured the file and
+waits for its control plane's approval; the work resumes once it is approved.
 
 Capability reasons when not ready:
 

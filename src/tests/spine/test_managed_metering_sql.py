@@ -1,4 +1,4 @@
-"""PostgreSQL acceptance for managed text admission and receipt replay."""
+"""PostgreSQL acceptance for the managed meter: measure in convert, park, release."""
 
 from __future__ import annotations
 
@@ -23,26 +23,35 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.selfhost import LocalFSObjectStore
-from rememberstack.core.text_metering import classify_doc_text
-from rememberstack.core.text_metering import DOC_TEXT_MAX_SOURCE_BYTES
+from rememberstack.core import ConversionRouter
+from rememberstack.core import Converter
+from rememberstack.core import MarkdownPassthroughConverter
+from rememberstack.core.metering import normalized_character_count
+from rememberstack.model import ConversionResult
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import ObjectKey
-from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
-from rememberstack.model.metering import ManagedIngestMeasurementV2
+from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingLane
+from rememberstack.model import RunResultOutcome
+from rememberstack.model.metering import ManagedDocumentVersionOutcome
+from rememberstack.model.metering import ManagedIngestMeasurement
 from rememberstack.model.metering import ManagedMeterScope
-from rememberstack.model.metering import ManagedTextClassificationError
 from rememberstack.model.metering import MeterAdmissionResult
 from rememberstack.model.metering import MeterReceiptConflict
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
-from rememberstack.spine import managed_metering as managed_metering_module
+from rememberstack.spine import WorkLedger
+from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.managed_metering import ManagedMeterCatalog
 from rememberstack.spine.managed_metering import MeterDrainResult
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import ConvertHandler
+from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import UploadIngestor
+from rememberstack.workers import Worker
 from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -124,20 +133,18 @@ class ControlledReceipts(MeterReceiptPort):
         """Start approved, with an opt-in one-shot parking decision."""
         self.park_next = False
         self.conflict_next = False
-        self.measurements: list[ManagedIngestMeasurementV2] = []
-        self.outcomes: list[ManagedDocumentVersionOutcomeV2] = []
+        self.measurements: list[ManagedIngestMeasurement] = []
+        self.outcomes: list[ManagedDocumentVersionOutcome] = []
         self.holds: dict[UUID, tuple[UUID, UUID]] = {}
 
     def admit_measurement(
-        self, *, measurement: ManagedIngestMeasurementV2
+        self, *, measurement: ManagedIngestMeasurement
     ) -> MeterAdmissionResult:
-        """Return no-op, one-shot parked, or an idempotent two-hold approval."""
+        """Return one-shot parked or an idempotent two-hold approval."""
         self.measurements.append(measurement)
         if self.conflict_next:
             self.conflict_next = False
             raise MeterReceiptConflict("synthetic changed receipt")
-        if measurement.document_version_disposition == "no_op":
-            return MeterAdmissionResult(decision="no_op")
         if self.park_next:
             self.park_next = False
             return MeterAdmissionResult(
@@ -152,7 +159,7 @@ class ControlledReceipts(MeterReceiptPort):
             storage_growth_hold_id=storage,
         )
 
-    def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcomeV2) -> None:
+    def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcome) -> None:
         """Capture the terminal receipt as the durable remote acknowledgement."""
         self.outcomes.append(outcome)
 
@@ -207,6 +214,201 @@ def _work_count(*, engine: Engine, version_id: UUID) -> int:
         )
 
 
+def _convert_row(*, engine: Engine, version_id: UUID) -> dict[str, object]:
+    """The version's convert work row: its status and defer reason."""
+    with engine.connect() as connection:
+        return dict(
+            connection.execute(
+                text(
+                    "SELECT status::text AS status, defer_reason::text AS defer_reason,"
+                    " attempts FROM processing_state"
+                    " WHERE target_id = :version_id AND stage::text = 'convert'"
+                ),
+                {"version_id": version_id},
+            )
+            .mappings()
+            .one()
+        )
+
+
+def _measurement(*, engine: Engine, version_id: UUID) -> dict[str, object] | None:
+    """The version's measurement row, or None."""
+    with engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT cost_class, native_quantity, unit, format_family,"
+                    " canonical_source_bytes, processing_profile_id, delivery_state"
+                    " FROM managed_ingest_measurements WHERE version_id = :version_id"
+                ),
+                {"version_id": version_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+    return None if row is None else dict(row)
+
+
+def _structure_count(*, engine: Engine, version_id: UUID) -> int:
+    """Count structure work chained for one version."""
+    with engine.connect() as connection:
+        return int(
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM processing_state "
+                    "WHERE target_id = :version_id AND stage::text = 'structure'"
+                ),
+                {"version_id": version_id},
+            ).scalar_one()
+        )
+
+
+def _due(*, engine: Engine) -> None:
+    """Make every backed-off measurement and outcome check due now."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE managed_ingest_measurements SET next_attempt_at = NULL,"
+                " outcome_next_attempt_at = NULL"
+            )
+        )
+
+
+_SCOPE = ManagedMeterScope(
+    org_id=_ORG_ID,
+    project_id=_PROJECT_ID,
+    identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+)
+
+
+class FakePdf:
+    """A ``pdf`` route that counts pages and records when it is asked to OCR."""
+
+    def __init__(self, *, pages: int = 3) -> None:
+        """Start with no OCR calls."""
+        self.pages = pages
+        self.ocr_calls = 0
+
+    @property
+    def name(self) -> str:
+        """The PDF route name."""
+        return "pdf"
+
+    @property
+    def version(self) -> str:
+        """A fixed test version."""
+        return "fake-pdf-v1"
+
+    def count_pages(self, *, content: bytes) -> int:
+        """The page count, without OCR."""
+        del content
+        return self.pages
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """The 'OCR' reading; counted so a test can prove it waited."""
+        del content, mime
+        self.ocr_calls += 1
+        return MarkdownPassthroughConverter().convert(
+            content=b"# Scanned\n\nocr text", mime="text/markdown"
+        )
+
+
+class NamedConverter:
+    """A passthrough reading under another route name."""
+
+    def __init__(self, *, name: str) -> None:
+        """Bind the route name."""
+        self._name = name
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        """The route name under test."""
+        return self._name
+
+    @property
+    def version(self) -> str:
+        """A fixed test version."""
+        return "named-v1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """Read the bytes as Markdown."""
+        del mime
+        self.calls += 1
+        return MarkdownPassthroughConverter().convert(
+            content=content, mime="text/markdown"
+        )
+
+
+@dataclass
+class Rig:
+    """A metered deployment: ingest, the convert worker and the meter drain."""
+
+    engine: Engine
+    receipts: ControlledReceipts
+    readiness: ControlledReadiness
+    raw_store: LocalFSObjectStore
+    ingestor: UploadIngestor
+    meter: ManagedMeterCatalog
+    worker: Worker
+    ledger: WorkLedger
+
+    def convert(self) -> RunResultOutcome:
+        """Run one convert attempt."""
+        return self.worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.CONVERT,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+
+    def upload(self, *, name: str, mime: str, content: bytes) -> UUID:
+        """Ingest one file and return its version."""
+        return self.ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(filename=name, mime=mime, content=content),
+        ).version_id
+
+
+def _rig(*, engine: Engine, tmp_path: Path, routes: dict[str, Converter]) -> Rig:
+    """Compose a metered deployment over the real SQL spine."""
+    receipts = ControlledReceipts()
+    readiness = ControlledReadiness()
+    raw_store = LocalFSObjectStore(root=tmp_path / "raw")
+    catalog = DocumentCatalog(engine=engine)
+    ledger = WorkLedger(engine=engine, settings=WorkLedgerSettings())
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.CONVERT,
+        handler=ConvertHandler(
+            catalog=catalog,
+            raw_store=raw_store,
+            artifact_store=LocalFSObjectStore(root=tmp_path / "artifacts"),
+            router=ConversionRouter(routes=routes),
+            meter_scope=_SCOPE,
+        ),
+    )
+    return Rig(
+        engine=engine,
+        receipts=receipts,
+        readiness=readiness,
+        raw_store=raw_store,
+        ingestor=UploadIngestor(
+            catalog=catalog,
+            raw_store=raw_store,
+            admission=AllowIngest(),
+            routable_mimes=frozenset(routes),
+            meter_scope=_SCOPE,
+        ),
+        meter=ManagedMeterCatalog(
+            engine=engine,
+            receipts=receipts,
+            readiness=cast(PipelineReadinessCatalog, readiness),
+        ),
+        worker=Worker(ledger=ledger, registry=registry),
+        ledger=ledger,
+    )
+
+
 def _version_status(*, engine: Engine, version_id: UUID) -> str:
     """Read the durable pre-dispatch version state."""
     with engine.connect() as connection:
@@ -218,407 +420,275 @@ def _version_status(*, engine: Engine, version_id: UUID) -> str:
         )
 
 
-def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
+def test_text_is_read_measured_and_parked_until_both_holds_exist(
     database_engine: Engine, tmp_path: Path
 ) -> None:
-    """Park, approve, no-op, succeed, and fail through the real SQL spine."""
-    receipts = ControlledReceipts()
-    readiness = ControlledReadiness()
-    raw_store = LocalFSObjectStore(root=tmp_path / "raw")
-    meter = ManagedMeterCatalog(
+    """Read locally, count document.md, park; approval chains structure once."""
+    rig = _rig(
         engine=database_engine,
-        receipts=receipts,
-        readiness=cast(PipelineReadinessCatalog, readiness),
-        raw_store=raw_store,
+        tmp_path=tmp_path,
+        routes={"text/plain": MarkdownPassthroughConverter()},
     )
-    ingestor = UploadIngestor(
-        catalog=DocumentCatalog(engine=database_engine),
-        raw_store=raw_store,
-        admission=AllowIngest(),
-        routable_mimes=frozenset({"text/markdown", "text/plain"}),
-        meter_scope=ManagedMeterScope(
-            org_id=_ORG_ID,
-            project_id=_PROJECT_ID,
-            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
-        ),
-    )
-
-    receipts.park_next = True
-    first = ingestor.ingest(
+    content = b"hello  world\n\nagain"
+    version = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="first.txt", mime="text/plain", content=b"hello  world"
-        ),
+        upload=DocumentUpload(filename="first.txt", mime="text/plain", content=content),
     )
-    assert first.created is True and first.processing_admission == "pending"
-    assert _version_status(engine=database_engine, version_id=first.version_id) == (
-        "ingesting"
-    )
-    assert _work_count(engine=database_engine, version_id=first.version_id) == 0
-    with database_engine.connect() as connection:
-        raw_uri = str(
-            connection.execute(
-                text(
-                    "SELECT c.raw_uri FROM content_objects c "
-                    "JOIN document_versions v USING (deployment_id, content_hash) "
-                    "WHERE v.version_id = :version_id"
-                ),
-                {"version_id": first.version_id},
-            ).scalar_one()
-        )
-    with pytest.raises(FileNotFoundError):
-        raw_store.read_bytes(key=ObjectKey(raw_uri))
-    parked = meter.drain_once()
-    assert parked.measurements_parked == 1
-    assert _work_count(engine=database_engine, version_id=first.version_id) == 0
-
-    with database_engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE managed_ingest_measurements SET next_attempt_at = NULL "
-                "WHERE version_id = :version_id"
-            ),
-            {"version_id": first.version_id},
-        )
-    approved = meter.drain_once()
-    assert approved.measurements_accepted == 1
-    assert _version_status(engine=database_engine, version_id=first.version_id) == (
+    assert version.created is True and version.processing_admission == "pending"
+    assert _version_status(engine=database_engine, version_id=version.version_id) == (
         "converting"
     )
-    assert _work_count(engine=database_engine, version_id=first.version_id) == 1
-    assert raw_store.read_bytes(key=ObjectKey(raw_uri)) == b"hello  world"
+    source = DocumentCatalog(engine=database_engine).convert_source(
+        version_id=version.version_id
+    )
+    assert rig.raw_store.read_bytes(key=ObjectKey(source.raw_uri)) == content
 
-    readiness.ready.add(first.version_id)
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    row = _convert_row(engine=database_engine, version_id=version.version_id)
+    assert row == {"status": "pending", "defer_reason": "admission", "attempts": 0}
+    measured = _measurement(engine=database_engine, version_id=version.version_id)
+    assert measured is not None
+    assert measured["cost_class"] == "doc-text"
+    assert measured["unit"] == "normalized_character"
+    assert measured["native_quantity"] == normalized_character_count(
+        text=MarkdownPassthroughConverter()
+        .convert(content=content, mime="text/plain")
+        .document_md
+    )
+    assert measured["canonical_source_bytes"] == len(content)
+    assert measured["processing_profile_id"] == "doc-text-standard-v1"
+    assert _structure_count(engine=database_engine, version_id=version.version_id) == 0
+    assert rig.convert() is RunResultOutcome.NO_WORK
+
+    rig.receipts.park_next = True
+    assert rig.meter.drain_once().measurements_parked == 1
+    assert _convert_row(engine=database_engine, version_id=version.version_id)[
+        "defer_reason"
+    ] == ("admission")
+    _due(engine=database_engine)
+    assert rig.meter.drain_once().measurements_accepted == 1
+    assert (
+        _convert_row(engine=database_engine, version_id=version.version_id)[
+            "defer_reason"
+        ]
+        is None
+    )
+    sent = rig.receipts.measurements[-1]
+    assert (sent.cost_class, sent.unit, sent.format_family) == (
+        "doc-text",
+        "normalized_character",
+        "text",
+    )
+
+    assert rig.convert() is RunResultOutcome.SUCCEEDED
+    assert _structure_count(engine=database_engine, version_id=version.version_id) == 1
+
+    rig.readiness.ready.add(version.version_id)
+    _due(engine=database_engine)
+    succeeded = rig.meter.drain_once()
+    assert succeeded.outcomes_created == 1 and succeeded.outcomes_accepted == 1
+    assert rig.receipts.outcomes[-1].outcome == "succeeded"
+    assert rig.receipts.outcomes[-1].version_commit_sequence == 1
+
+    again = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(filename="again.txt", mime="text/plain", content=content),
+    )
+    assert again.created is False
+    assert rig.meter.drain_once() == MeterDrainResult()
+    assert len(rig.receipts.measurements) == 2
+
+
+def test_a_pdf_is_counted_before_ocr_and_ocr_waits_for_approval(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """Every PDF page is one doc-scan unit, counted from the page tree first."""
+    pdf = FakePdf(pages=3)
+    rig = _rig(
+        engine=database_engine, tmp_path=tmp_path, routes={"application/pdf": pdf}
+    )
+    content = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"
+    version_id = rig.upload(name="scan.pdf", mime="application/pdf", content=content)
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    assert pdf.ocr_calls == 0
+    measured = _measurement(engine=database_engine, version_id=version_id)
+    assert measured is not None
+    assert (measured["cost_class"], measured["native_quantity"], measured["unit"]) == (
+        "doc-scan",
+        3,
+        "page",
+    )
+    assert measured["processing_profile_id"] == "doc-scan-standard-v1"
+    assert measured["format_family"] == "pdf"
+    assert rig.meter.drain_once().measurements_accepted == 1
+    assert rig.convert() is RunResultOutcome.SUCCEEDED
+    assert pdf.ocr_calls == 1
+    assert _structure_count(engine=database_engine, version_id=version_id) == 1
+
+
+def test_a_card_is_free_and_an_unmetered_route_is_refused(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """A card sends no measurement; a provider route without a class never runs."""
+    vision = NamedConverter(name="image_ocr_description")
+    rig = _rig(
+        engine=database_engine,
+        tmp_path=tmp_path,
+        routes={"text/plain": NamedConverter(name="card"), "image/png": vision},
+    )
+    card = rig.upload(name="notes.txt", mime="text/plain", content=b"carded")
+    assert rig.convert() is RunResultOutcome.SUCCEEDED
+    assert _measurement(engine=database_engine, version_id=card) is None
+    assert _structure_count(engine=database_engine, version_id=card) == 1
+
+    image = rig.upload(
+        name="photo.png", mime="image/png", content=b"\x89PNG\r\n\x1a\nimage"
+    )
+    assert rig.convert() is RunResultOutcome.DEAD_LETTERED
+    assert vision.calls == 0
+    assert _measurement(engine=database_engine, version_id=image) is None
+    assert _version_status(engine=database_engine, version_id=image) == "failed"
+
+
+def test_an_approval_that_wins_the_race_with_the_park_releases_the_claim(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """The park reads the approval under the lock it takes, so work never strands."""
+    from rememberstack.model import ClaimedWork
+    from rememberstack.model.metering import ManagedMeasurementDraft
+
+    rig = _rig(
+        engine=database_engine,
+        tmp_path=tmp_path,
+        routes={"text/plain": MarkdownPassthroughConverter()},
+    )
+    version_id = rig.upload(name="race.txt", mime="text/plain", content=b"race")
+    claimed = rig.ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.CONVERT,
+        lane=ProcessingLane.STEADY,
+    )
+    assert isinstance(claimed, ClaimedWork)
+    catalog = DocumentCatalog(engine=database_engine)
+    source = catalog.convert_source(version_id=version_id)
+    catalog.record_measurement(
+        draft=ManagedMeasurementDraft(
+            measurement_id=uuid4(),
+            ingest_attempt_id="race",
+            org_id=_ORG_ID,
+            project_id=_PROJECT_ID,
+            format_family="text",
+            cost_class="doc-text",
+            native_quantity=4,
+            canonical_source_bytes=4,
+            classifier_version="test",
+            measurement_algorithm_version="test",
+            processing_profile_id="doc-text-standard-v1",
+            measured_at=datetime.now(timezone.utc),
+            identity_key=_SCOPE.identity_key,
+        ),
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=source.doc_id,
+        version_id=version_id,
+        convert_component_version=claimed.component_version,
+        lane="steady",
+    )
+    assert rig.meter.drain_once().measurements_accepted == 1
+    rig.ledger.park_for_admission(
+        processing_id=claimed.processing_id, attempt=claimed.attempt
+    )
+    assert _convert_row(engine=database_engine, version_id=version_id) == {
+        "status": "pending",
+        "defer_reason": None,
+        "attempts": 0,
+    }
+
+
+def test_failed_forgotten_and_conflicting_measurements(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """Terminal failure and forgetting report failed; a conflict quarantines."""
+    rig = _rig(
+        engine=database_engine,
+        tmp_path=tmp_path,
+        routes={"text/plain": MarkdownPassthroughConverter()},
+    )
+    retried = rig.upload(name="retried.txt", mime="text/plain", content=b"retry")
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    assert rig.meter.drain_once().measurements_accepted == 1
+    assert rig.convert() is RunResultOutcome.SUCCEEDED
+    rig.readiness.stage_status[retried] = "failed"
+    assert rig.meter.drain_once().outcomes_created == 0
+    rig.readiness.stage_status[retried] = "dead_letter"
+    _due(engine=database_engine)
+    terminal = rig.meter.drain_once()
+    assert terminal.outcomes_created == 1 and terminal.outcomes_accepted == 1
+    assert rig.receipts.outcomes[-1].outcome == "failed"
+    assert rig.receipts.outcomes[-1].reason_code == "pipeline_terminal_failure"
+
+    forgotten = rig.upload(name="forgotten.txt", mime="text/plain", content=b"forget")
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE managed_ingest_measurements "
-                "SET outcome_next_attempt_at = NULL WHERE version_id = :version_id"
+                "UPDATE document_versions SET status = 'deleted' WHERE version_id = :v"
             ),
-            {"version_id": first.version_id},
+            {"v": forgotten},
         )
-    succeeded = meter.drain_once()
-    assert succeeded.outcomes_created == 1
-    assert succeeded.outcomes_accepted == 1
-    assert receipts.outcomes[-1].outcome == "succeeded"
-    assert receipts.outcomes[-1].document_version_id == str(first.version_id)
-    assert receipts.outcomes[-1].version_commit_sequence == 1
-
-    noop = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="first-again.txt", mime="text/plain", content=b"hello  world"
-        ),
-    )
-    assert noop.created is False
-    no_op_result = meter.drain_once()
-    assert no_op_result.measurements_accepted == 1
-    assert no_op_result.outcomes_accepted == 1
-    assert receipts.outcomes[-1].outcome == "no_op"
-    assert _work_count(engine=database_engine, version_id=noop.version_id) == 1
-    repeated_noop = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="first-third.txt", mime="text/plain", content=b"hello  world"
-        ),
-    )
-    assert repeated_noop.created is False
-    assert meter.drain_once() == MeterDrainResult()
-
-    failed = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="failed.txt", mime="text/plain", content=b"different text"
-        ),
-    )
-    assert meter.drain_once().measurements_accepted == 1
-
-    retried = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="retried.txt", mime="text/plain", content=b"retry this work"
-        ),
-    )
-    assert meter.drain_once().measurements_accepted == 1
-    readiness.stage_status[retried.version_id] = "failed"
-    transient = meter.drain_once()
-    assert transient.outcomes_created == 0
-    assert all(
-        outcome.document_version_id != str(retried.version_id)
-        for outcome in receipts.outcomes
-    )
-    readiness.stage_status[retried.version_id] = "dead_letter"
-    with database_engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE managed_ingest_measurements "
-                "SET outcome_next_attempt_at = NULL WHERE version_id = :version_id"
-            ),
-            {"version_id": retried.version_id},
-        )
-    terminal = meter.drain_once()
-    assert terminal.outcomes_created == 1
-    assert terminal.outcomes_accepted == 1
-    assert receipts.outcomes[-1].document_version_id == str(retried.version_id)
-    assert receipts.outcomes[-1].outcome == "failed"
-    with database_engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE document_versions SET status = 'failed' "
-                "WHERE version_id = :version_id"
-            ),
-            {"version_id": failed.version_id},
-        )
-    failure = meter.drain_once()
-    assert failure.outcomes_created == 1
-    assert failure.outcomes_accepted == 1
-    assert receipts.outcomes[-1].outcome == "failed"
-    assert receipts.outcomes[-1].reason_code == "pipeline_terminal_failure"
-
-    forgotten = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="forgotten.txt", mime="text/plain", content=b"forget this"
-        ),
-    )
-    assert meter.drain_once().measurements_accepted == 1
-    with database_engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE document_versions SET status = 'deleted' "
-                "WHERE version_id = :version_id"
-            ),
-            {"version_id": forgotten.version_id},
-        )
-    forgotten_result = meter.drain_once()
-    assert forgotten_result.outcomes_created == 1
-    assert forgotten_result.outcomes_accepted == 1
-    assert receipts.outcomes[-1].outcome == "failed"
-    assert receipts.outcomes[-1].reason_code == "source_forgotten"
+    result = rig.meter.drain_once()
+    assert result.measurements_accepted == 1 and result.outcomes_accepted == 1
+    assert rig.receipts.outcomes[-1].reason_code == "source_forgotten"
 
     with database_engine.connect() as connection:
         identities = (
             connection.execute(
                 text(
                     "SELECT opaque_lineage_id, opaque_source_version_id, doc_id "
-                    "FROM managed_ingest_measurements "
-                    "WHERE version_id = :version_id "
-                    "AND document_version_disposition = 'new_version'"
+                    "FROM managed_ingest_measurements WHERE version_id = :v"
                 ),
-                {"version_id": first.version_id},
+                {"v": retried},
             )
             .mappings()
             .one()
         )
-    public_lineage_guess = str(
+    assert identities["opaque_lineage_id"] != str(
         uuid5(
             NAMESPACE_URL,
             f"rememberstack:meter-lineage:{_DEPLOYMENT_ID}:{identities['doc_id']}",
         )
     )
-    public_version_guess = str(
+    assert identities["opaque_source_version_id"] != str(
         uuid5(
             NAMESPACE_URL,
-            f"rememberstack:meter-source-version:{_DEPLOYMENT_ID}:{first.version_id}",
+            f"rememberstack:meter-source-version:{_DEPLOYMENT_ID}:{retried}",
         )
     )
-    assert identities["opaque_lineage_id"] != public_lineage_guess
-    assert identities["opaque_source_version_id"] != public_version_guess
 
-    receipts.conflict_next = True
-    quarantined = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="conflict.txt", mime="text/plain", content=b"conflicting receipt"
-        ),
-    )
-    assert meter.drain_once().measurements_parked == 1
-    with database_engine.connect() as connection:
-        state = connection.execute(
-            text(
-                "SELECT delivery_state FROM managed_ingest_measurements "
-                "WHERE version_id = :version_id"
-            ),
-            {"version_id": quarantined.version_id},
-        ).scalar_one()
-    assert state == "quarantined"
-    assert meter.drain_once().measurements_parked == 0
-    healed = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="conflict-retry.txt",
-            mime="text/plain",
-            content=b"conflicting receipt",
-        ),
-    )
-    assert healed.created is False and healed.version_id == quarantined.version_id
-    assert meter.drain_once().measurements_accepted == 1
-
-    cancelled = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="cancelled.txt", mime="text/plain", content=b"cancel before retry"
-        ),
-    )
-    with database_engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE managed_ingest_measurements "
-                "SET staged_content = NULL, delivery_state = 'cancelled', "
-                "decision_reason = 'source_forgotten' "
-                "WHERE version_id = :version_id"
-            ),
-            {"version_id": cancelled.version_id},
-        )
-        cancelled_measurement_id = UUID(
-            str(
-                connection.execute(
-                    text(
-                        "SELECT measurement_id FROM managed_ingest_measurements "
-                        "WHERE version_id = :version_id"
-                    ),
-                    {"version_id": cancelled.version_id},
-                ).scalar_one()
-            )
-        )
-    meter._record_measurement_retry(
-        measurement_id=cancelled_measurement_id, reason_code="control_plane_unavailable"
-    )
-    with database_engine.connect() as connection:
-        cancelled_state = connection.execute(
-            text(
-                "SELECT delivery_state, decision_reason "
-                "FROM managed_ingest_measurements WHERE version_id = :version_id"
-            ),
-            {"version_id": cancelled.version_id},
-        ).one()
-    assert tuple(cancelled_state) == ("cancelled", "source_forgotten")
-
-
-def test_due_measurement_scan_never_loads_staged_source_bytes() -> None:
-    """The bounded replay scan carries only the content-free receipt envelope."""
-    statement = str(managed_metering_module._DUE_MEASUREMENTS)
-    assert "SELECT *" not in statement
-    assert "staged_content" not in statement
-
-
-def test_missing_managed_text_route_parks_only_after_meter_approval(
-    database_engine: Engine, tmp_path: Path
-) -> None:
-    """Managed storage stays behind holds; a missing route never creates failure."""
-    from rememberstack.core import ConversionRouter
-    from rememberstack.model import PipelineStage
-    from rememberstack.model import ProcessingLane
-    from rememberstack.model import RunResultOutcome
-    from rememberstack.spine import WorkLedger
-    from rememberstack.spine import WorkLedgerSettings
-    from rememberstack.workers import ConvertHandler
-    from rememberstack.workers import HandlerRegistry
-    from rememberstack.workers import Worker
-
-    receipts = ControlledReceipts()
-    raw_store = LocalFSObjectStore(root=tmp_path / "raw")
-    catalog = DocumentCatalog(engine=database_engine)
-    meter = ManagedMeterCatalog(
-        engine=database_engine,
-        receipts=receipts,
-        readiness=cast(PipelineReadinessCatalog, ControlledReadiness()),
-        raw_store=raw_store,
-    )
-    ingestor = UploadIngestor(
-        catalog=catalog,
-        raw_store=raw_store,
-        admission=AllowIngest(),
-        routable_mimes=frozenset(),
-        meter_scope=ManagedMeterScope(
-            org_id=_ORG_ID,
-            project_id=_PROJECT_ID,
-            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
-        ),
-    )
-    version = ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="stored.txt", mime="text/plain", content=b"stored text"
-        ),
-    )
-    assert version.processing_admission == "pending"
-    assert _work_count(engine=database_engine, version_id=version.version_id) == 0
-    assert meter.drain_once().measurements_accepted == 1
-    assert receipts.holds
-    source = catalog.convert_source(version_id=version.version_id)
-    assert raw_store.read_bytes(key=ObjectKey(source.raw_uri)) == b"stored text"
-    registry = HandlerRegistry()
-    registry.register(
-        stage=PipelineStage.CONVERT,
-        handler=ConvertHandler(
-            catalog=catalog,
-            raw_store=raw_store,
-            artifact_store=LocalFSObjectStore(root=tmp_path / "artifacts"),
-            router=ConversionRouter(routes={}),
-        ),
-    )
-    worker = Worker(
-        ledger=WorkLedger(engine=database_engine, settings=WorkLedgerSettings()),
-        registry=registry,
-    )
-    assert (
-        worker.run_one(
-            deployment_id=_DEPLOYMENT_ID,
-            stage=PipelineStage.CONVERT,
-            lane=ProcessingLane.STEADY,
-        ).outcome
-        is RunResultOutcome.NO_ROUTE_PARKED
-    )
-    with database_engine.connect() as connection:
-        parked = (
-            connection.execute(
-                text(
-                    "SELECT defer_reason::text, attempts, last_error FROM processing_state WHERE target_id=:id"
-                ),
-                {"id": version.version_id},
-            )
-            .mappings()
-            .one()
-        )
-    assert parked["defer_reason"] == "no_route"
-    assert parked["attempts"] == 0 and parked["last_error"] is None
-    assert (
-        _version_status(engine=database_engine, version_id=version.version_id)
-        == "converting"
-    )
-    assert receipts.outcomes == []
+    conflict = rig.upload(name="conflict.txt", mime="text/plain", content=b"conflict")
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    rig.receipts.conflict_next = True
+    assert rig.meter.drain_once().measurements_parked == 1
+    measured = _measurement(engine=database_engine, version_id=conflict)
+    assert measured is not None and measured["delivery_state"] == "quarantined"
+    assert rig.meter.drain_once().measurements_parked == 0
+    assert _convert_row(engine=database_engine, version_id=conflict)[
+        "defer_reason"
+    ] == ("admission")
 
 
 def test_a_stored_object_is_metered_like_an_upload(
     database_engine: Engine, tmp_path: Path
 ) -> None:
-    """D147: a directly uploaded text is measured, held and released as ingest is."""
-    receipts = ControlledReceipts()
-    readiness = ControlledReadiness()
-    raw_store = LocalFSObjectStore(root=tmp_path / "raw")
-    meter = ManagedMeterCatalog(
+    """D147: a directly uploaded object is read, measured and parked like ingest."""
+    rig = _rig(
         engine=database_engine,
-        receipts=receipts,
-        readiness=cast(PipelineReadinessCatalog, readiness),
-        raw_store=raw_store,
-    )
-    ingestor = UploadIngestor(
-        catalog=DocumentCatalog(engine=database_engine),
-        raw_store=raw_store,
-        admission=AllowIngest(),
-        routable_mimes=frozenset({"text/markdown", "text/plain"}),
-        meter_scope=ManagedMeterScope(
-            org_id=_ORG_ID,
-            project_id=_PROJECT_ID,
-            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
-        ),
+        tmp_path=tmp_path,
+        routes={"text/plain": MarkdownPassthroughConverter()},
     )
     content = b"stored  hello\n\nworld"
     key = ObjectKey("uploads/meteredmetered0001")
-    raw_store.write_bytes(key=key, content=content, storage_class="cold")
-
-    version = ingestor.ingest_stored(
+    rig.raw_store.write_bytes(key=key, content=content, storage_class="cold")
+    version = rig.ingestor.ingest_stored(
         deployment_id=_DEPLOYMENT_ID,
         key=key,
         size=len(content),
@@ -626,36 +696,78 @@ def test_a_stored_object_is_metered_like_an_upload(
         filename="stored.txt",
     )
     assert version.created is True and version.processing_admission == "pending"
-    assert _work_count(engine=database_engine, version_id=version.version_id) == 0
-    with database_engine.connect() as connection:
-        measured = connection.execute(
-            text(
-                "SELECT normalized_character_count, canonical_source_bytes"
-                " FROM managed_ingest_measurements WHERE version_id = :version_id"
-            ),
-            {"version_id": version.version_id},
-        ).one()
-    assert tuple(measured) == (
-        classify_doc_text(
-            content=content, declared_mime="text/plain"
-        ).normalized_character_count,
-        len(content),
-    )
-    approved = meter.drain_once()
-    assert approved.measurements_accepted == 1
-    # Released to convert, with the raw object still where the client put it.
-    assert _work_count(engine=database_engine, version_id=version.version_id) == 1
-    assert raw_store.read_bytes(key=key) == content
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    measured = _measurement(engine=database_engine, version_id=version.version_id)
+    assert measured is not None
+    assert measured["canonical_source_bytes"] == len(content)
+    assert rig.raw_store.read_bytes(key=key) == content
 
-    too_large = ObjectKey("uploads/meteredmetered0002")
-    big = b"x" * (DOC_TEXT_MAX_SOURCE_BYTES + 1)
-    raw_store.write_bytes(key=too_large, content=big, storage_class="cold")
-    with pytest.raises(ManagedTextClassificationError) as refused:
-        ingestor.ingest_stored(
-            deployment_id=_DEPLOYMENT_ID,
-            key=too_large,
-            size=len(big),
-            mime="text/plain",
-            filename="big.txt",
-        )
-    assert refused.value.code == "source_bytes_limit_exceeded"
+
+class _PresigningStore(LocalFSObjectStore):
+    """A local store that lends objects by a fake URL (D147)."""
+
+    def presign_get(self, *, key: ObjectKey, ttl_s: int) -> str:
+        """A URL naming the key."""
+        return f"https://raw.invalid/{key.root}?ttl={ttl_s}"
+
+
+class FakeUrlPdf(FakePdf):
+    """A by-URL ``pdf`` route: it counts and converts from the URL only."""
+
+    accepts_url = True
+    url_ttl_s = 60
+
+    def __init__(self, *, pages: int = 5) -> None:
+        """Record the URLs it was handed."""
+        super().__init__(pages=pages)
+        self.counted_urls: list[str] = []
+
+    def count_pages(self, *, content: bytes) -> int:
+        """Never used: the worker must not read a by-URL object."""
+        raise AssertionError("a by-URL route was asked to count bytes")
+
+    def count_pages_from_url(self, *, url: str, size: int) -> int:
+        """Count from the URL."""
+        del size
+        self.counted_urls.append(url)
+        return self.pages
+
+    def convert_from_url(
+        self, *, url: str, size: int, mime: str, hints: object
+    ) -> ConversionResult:
+        """The 'OCR' reading by URL."""
+        del url, size, hints
+        return self.convert(content=b"", mime=mime)
+
+
+def test_a_by_url_pdf_is_counted_from_its_url(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """With a presigning store the worker never reads the PDF to count it."""
+    pdf = FakeUrlPdf(pages=5)
+    rig = _rig(
+        engine=database_engine, tmp_path=tmp_path, routes={"application/pdf": pdf}
+    )
+    store = _PresigningStore(root=tmp_path / "raw")
+    handler = ConvertHandler(
+        catalog=DocumentCatalog(engine=database_engine),
+        raw_store=store,
+        artifact_store=LocalFSObjectStore(root=tmp_path / "artifacts"),
+        router=ConversionRouter(routes={"application/pdf": pdf}),
+        meter_scope=_SCOPE,
+    )
+    registry = HandlerRegistry()
+    registry.register(stage=PipelineStage.CONVERT, handler=handler)
+    rig.worker = Worker(ledger=rig.ledger, registry=registry)
+    version_id = rig.upload(
+        name="big.pdf",
+        mime="application/pdf",
+        content=b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF",
+    )
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    assert len(pdf.counted_urls) == 1 and pdf.ocr_calls == 0
+    measured = _measurement(engine=database_engine, version_id=version_id)
+    assert measured is not None and measured["native_quantity"] == 5
+    assert rig.meter.drain_once().measurements_accepted == 1
+    assert rig.convert() is RunResultOutcome.SUCCEEDED
+    assert pdf.ocr_calls == 1

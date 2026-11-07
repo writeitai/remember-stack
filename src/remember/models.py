@@ -105,11 +105,13 @@ class PipelineStageReadiness(BaseModel):
     ]
     finished_at: datetime | None = None
     # Why waiting work waits: `no_route` (no converter for the file's type),
-    # `budget` (the spend budget is exhausted), `scheduled` (due later), or
-    # `retry_backoff` (a `failed` stage waiting for its next attempt).
-    defer_reason: Literal["scheduled", "retry_backoff", "budget", "no_route"] | None = (
-        None
-    )
+    # `admission` (a metered deployment's conversion waiting for its control
+    # plane's approval), `budget` (the spend budget is exhausted), `scheduled`
+    # (due later), or `retry_backoff` (a `failed` stage waiting for its next
+    # attempt).
+    defer_reason: (
+        Literal["scheduled", "retry_backoff", "budget", "no_route", "admission"] | None
+    ) = None
 
 
 class VersionPipelineReadiness(BaseModel):

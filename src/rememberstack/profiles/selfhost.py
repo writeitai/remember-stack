@@ -1504,7 +1504,6 @@ class SelfHostProfile:
                 model_bindings=self._model_bindings(),
                 build_revision=_build_revision(),
             ),
-            raw_store=self._raw_store,
         )
 
     def run_meter_receipts(self, *, once: bool = False, limit: int = 100) -> None:
@@ -1759,6 +1758,7 @@ class SelfHostProfile:
                 raw_store=self._raw_store,
                 artifact_store=self._artifact_store,
                 router=ConversionRouter(routes=dict(self._conversion_route_table())),
+                meter_scope=self._managed_meter_scope(),
             )
         if stage is PipelineStage.STRUCTURE:
             return StructureHandler(
