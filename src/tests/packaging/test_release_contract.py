@@ -83,8 +83,8 @@ def test_release_workflow_is_main_only_and_derives_one_immutable_coordinate() ->
     assert "event_type=release-completed" in workflow
 
 
-def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
-    """Bot pushes trigger normal checks and merge only after those checks pass."""
+def test_release_preparation_uses_app_identity_and_only_opens_the_pr() -> None:
+    """Bot pushes trigger normal checks; a human finishes and merges the release."""
     root = Path(__file__).resolve().parents[3]
     workflow = (root / ".github/workflows/release-prepare.yml").read_text(
         encoding="utf-8"
@@ -95,8 +95,8 @@ def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
     assert "if: github.ref == 'refs/heads/main'" in workflow
     assert "ref: main" in workflow
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
-    assert 'gh pr checks "$existing" --watch --fail-fast' in workflow
-    assert 'gh pr merge "$existing" --squash' in workflow
+    assert "gh pr merge" not in workflow
+    assert "add the changelog entry" in workflow
     assert "types: [release-completed]" in workflow
     assert "uv lock --check" in workflow
     assert "git add pyproject.toml uv.lock" in workflow
