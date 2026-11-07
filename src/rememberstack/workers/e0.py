@@ -707,16 +707,30 @@ class ConvertHandler:
             )
         lane_meter = _ConvertLaneMeter(meter=meter, converter_name=converter.name)
         hints = FileHints(file_name=source.file_name, source_path=source.source_path)
+        # D138/D147: an oversized file's card is metadata only, so its bytes
+        # are never read, whatever the store.
+        unread = (
+            isinstance(converter, CardConverter)
+            and source.byte_size is not None
+            and exceeds_reading_limit(mime=source.mime, byte_size=source.byte_size)
+        )
         by_url = (
-            isinstance(converter, UrlConverter)
+            not unread
+            and isinstance(converter, UrlConverter)
             and isinstance(self._raw_store, PresignedReadPort)
             and source.byte_size is not None
         )
-        uses_lane_checkpoints = not by_url and isinstance(
-            converter, LaneCheckpointConverter
+        uses_lane_checkpoints = (
+            not by_url and not unread and isinstance(converter, LaneCheckpointConverter)
         )
         try:
-            if by_url:
+            if unread:
+                assert isinstance(converter, CardConverter)
+                assert source.byte_size is not None
+                result = converter.convert_unread(
+                    size=source.byte_size, mime=source.mime, hints=hints
+                )
+            elif by_url:
                 # D147: the route reads the object itself; the bytes never
                 # pass through this worker.
                 assert isinstance(converter, UrlConverter)

@@ -265,3 +265,66 @@ def test_each_content_keeps_exactly_one_raw_object(
         assert connection.execute(
             text("SELECT raw_uri FROM content_objects")
         ).one() == (first.root,)
+
+
+def test_an_oversized_file_is_carded_without_reading_it(
+    database_engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D147: the convert stage never reads an object it only cards."""
+    import dataclasses
+
+    from rememberstack.core import file_card
+    from rememberstack.core import format_registry
+
+    original = format_registry.family_for_mime
+
+    def small(*, mime: str):  # noqa: ANN202
+        return dataclasses.replace(original(mime=mime), reading_limit_bytes=10)
+
+    monkeypatch.setattr(format_registry, "family_for_mime", small)
+    monkeypatch.setattr(file_card, "family_for_mime", small)
+
+    class _CountingStore(LocalFSObjectStore):
+        reads = 0
+
+        def read_bytes(self, *, key: ObjectKey) -> bytes:
+            type(self).reads += 1
+            return super().read_bytes(key=key)
+
+    raw = _CountingStore(root=tmp_path / "raw")
+    artifacts = LocalFSObjectStore(root=tmp_path / "artifacts")
+    ingestor = _ingestor(engine=database_engine, raw=raw)
+    ingestor.ingest_stored(
+        deployment_id=_DEPLOYMENT_ID,
+        key=_put(raw, "uploads/cccccccccccccccc", _BODY),
+        size=len(_BODY),
+        mime="text/markdown",
+        filename="notes.md",
+    )
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.CONVERT,
+        handler=ConvertHandler(
+            catalog=DocumentCatalog(engine=database_engine),
+            raw_store=raw,
+            artifact_store=artifacts,
+            router=ConversionRouter(
+                routes={"text/markdown": MarkdownPassthroughConverter()}
+            ),
+        ),
+    )
+    worker = Worker(
+        ledger=WorkLedger(engine=database_engine, settings=WorkLedgerSettings()),
+        registry=registry,
+    )
+    result = worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.CONVERT,
+        lane=ProcessingLane.STEADY,
+    )
+    assert result.outcome is RunResultOutcome.SUCCEEDED
+    assert _CountingStore.reads == 0
+    (card,) = (tmp_path / "artifacts").rglob("document.md")
+    assert "- Not read: the file is larger than the 10-byte reading limit" in (
+        card.read_text(encoding="utf-8")
+    )
