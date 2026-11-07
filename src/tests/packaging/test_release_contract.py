@@ -279,6 +279,12 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     current = _project_version(root=root)
     major, minor, patch = (int(part) for part in current.split("."))
     target = f"{major}.{minor}.{patch + 1}"
+    # Prose naming a past release is history, not a coordinate.
+    requirements = tmp_path / "website/src/app/docs/self-hosting/requirements/page.mdx"
+    history = f"Version {current} is the first release on this image."
+    requirements.write_text(
+        requirements.read_text(encoding="utf-8") + f"\n{history}\n", encoding="utf-8"
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -294,7 +300,10 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     assert _project_version(root=tmp_path) == target
     assert terminal.read_text(encoding="utf-8") == terminal_document
     for relative in _COORDINATE_FILES:
-        assert current not in (tmp_path / relative).read_text(encoding="utf-8")
+        document = (tmp_path / relative).read_text(encoding="utf-8")
+        assert current not in document.replace(history, "")
+    assert history in requirements.read_text(encoding="utf-8")
+    _validate_release_docs(root=tmp_path, version=target)
 
 
 def test_release_lock_regeneration_works_with_an_empty_cache(
@@ -313,7 +322,9 @@ def test_release_lock_regeneration_works_with_an_empty_cache(
     for relative in _COORDINATE_FILES:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text("Release 1.2.3\n", encoding="utf-8")
+        destination.write_text(
+            "ghcr.io/writeitai/remember-stack:1.2.3\n", encoding="utf-8"
+        )
     subprocess.run(["uv", "lock", "--offline"], cwd=tmp_path, check=True)
     subprocess.run(
         [

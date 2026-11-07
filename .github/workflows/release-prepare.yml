@@ -31,6 +31,11 @@ jobs:
         with:
           version: "0.12.6"
           enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: packages/typescript-client/package-lock.json
       - id: app-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
@@ -58,6 +63,9 @@ jobs:
           uv lock --check
           uv run python scripts/export_openapi.py -o openapi.json
           python scripts/generate_docs_llms.py
+          # The TypeScript client pins the OpenAPI hash and package version.
+          uv run python scripts/export_typescript_contracts.py
+          (cd packages/typescript-client && node scripts/npm.mjs ci && node scripts/generate.mjs)
           python scripts/check_release_contract.py --tag "v${next}"
           echo "version=${next}" >> "$GITHUB_OUTPUT"
           echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -75,7 +83,8 @@ jobs:
           gh auth setup-git
           git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}" || true
           git checkout -B "$branch"
-          git add pyproject.toml uv.lock compose.yaml README.md openapi.json website/
+          git add pyproject.toml uv.lock compose.yaml README.md openapi.json website/ \
+            packages/typescript-client/contracts packages/typescript-client/src
           git commit -m "chore(release): prepare v${VERSION}"
           git push --force-with-lease origin "HEAD:${branch}"
           existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
