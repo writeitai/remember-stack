@@ -7427,7 +7427,7 @@ deployment's values into another's work.
      50 MB and 1,000 pages per request (`MistralOcrSettings.max_document_bytes`,
      `max_document_pages`). A PDF over either is split with pdfium into page-range PDFs
      that each fit. Each page is first measured alone (a one-page PDF saved to a
-     counter), and a batch takes pages while those sizes add up to at most the byte
+     counter from a freshly opened source), and a batch takes pages while those sizes add up to at most the byte
      ceiling, so no candidate runs past what fits whatever the page sizes (it is shrunk
      in the rare case its own save is still over); each batch is OCR'd, its pages are
      renumbered from the batch's first page, and the folded response is metered (every source page, one

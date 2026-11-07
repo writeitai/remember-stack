@@ -269,7 +269,8 @@ def pdf_page_batches(
 
     Yields ``(first page index, page count, batch PDF bytes)`` in page order,
     covering every page exactly once. Each page is first measured alone (a
-    one-page PDF saved to a counter, nothing kept), and a batch takes pages
+    one-page PDF saved to a counter from a freshly opened source, nothing
+    kept), and a batch takes pages
     while their one-page sizes add up to at most ``max_bytes``; shared
     resources are counted once per page there, so the batch itself is
     normally smaller and no candidate's native memory runs past the limit
@@ -400,18 +401,20 @@ def _open_source(*, source: PdfSource) -> pypdfium2.PdfDocument:
 def _measure_pages(*, source: PdfSource, first: int, count: int) -> list[int]:
     """Each page's size saved alone as a PDF, for ``count`` pages from ``first``.
 
-    Opens and closes every native document inside the one locked operation.
+    The source is opened and closed for each page, so pdfium never holds
+    more than one page's data, and every native document is closed inside
+    the one locked operation.
     """
-    document = _open_source(source=source)
-    try:
-        sizes = []
-        for page in range(first, first + count):
+    sizes = []
+    for page in range(first, first + count):
+        document = _open_source(source=source)
+        try:
             sink = _Sink(out=None)
             _save_copy(document=document, pages=[page], sink=sink)
             sizes.append(sink.size)
-        return sizes
-    finally:
-        document.close()
+        finally:
+            document.close()
+    return sizes
 
 
 def _save_pages(*, source: PdfSource, first: int, count: int, out: BinaryIO) -> int:

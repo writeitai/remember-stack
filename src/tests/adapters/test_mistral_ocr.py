@@ -777,6 +777,39 @@ def test_no_candidate_batch_runs_past_the_byte_ceiling_on_uneven_pages(
     assert headings == [" ".join(f"# {text}".split()[:3]) for text in texts if text]
 
 
+def test_each_page_is_measured_from_a_freshly_opened_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Measuring never holds more than one page's data in pdfium (D147)."""
+    from rememberstack.adapters.converters import pdf as pdf_module
+
+    open_documents: list[object] = []
+    most_open = 0
+    real_open = pdf_module._open_source  # noqa: SLF001
+
+    def tracked(**kwargs: Any) -> Any:  # noqa: ANN401
+        nonlocal most_open
+        document = real_open(**kwargs)
+        open_documents.append(document)
+        most_open = max(most_open, len(open_documents))
+        real_close = document.close
+
+        def close() -> None:
+            open_documents.remove(document)
+            real_close()
+
+        setattr(document, "close", close)  # noqa: B010
+        return document
+
+    monkeypatch.setattr(pdf_module, "_open_source", tracked)
+    sizes = pdf_module._measure_pages(  # noqa: SLF001
+        source=_pdf(pages=_TEN_PAGES), first=0, count=10
+    )
+    assert len(sizes) == 10 and all(size > 0 for size in sizes)
+    assert most_open == 1
+    assert open_documents == []
+
+
 def test_a_failed_spool_write_raises_instead_of_saving_an_empty_batch() -> None:
     """pdfium drops write-callback exceptions; the split re-raises them."""
     from rememberstack.adapters.converters import pdf as pdf_module
