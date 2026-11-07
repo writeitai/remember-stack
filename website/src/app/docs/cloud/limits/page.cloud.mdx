@@ -19,7 +19,7 @@ remember.dev accepts text only. Every document you send to
 
 | Check | Limit | Refusal |
 |---|---|---|
-| Request body | 100,000,000 bytes | `413`, `body_too_large` |
+| Request body | 31,457,280 bytes (30 MiB) on the hosted service, from the launch of its shared API | `413`, `body_too_large` |
 | Document text | 10,000,000 bytes | `413`, `source_bytes_limit_exceeded` |
 | Empty or whitespace-only document | not accepted | `422`, `empty_text` |
 | Binary file (PDF, PNG, JPEG, GIF, ZIP-based formats such as DOCX, gzip, audio or video containers) | not accepted | `409`, `rate_class_unavailable` |

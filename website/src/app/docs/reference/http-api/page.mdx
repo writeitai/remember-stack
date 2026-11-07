@@ -380,8 +380,8 @@ request without `Content-Length` gets `411` `length_required`.
 
 <Cloud>
 
-remember.dev caps bodies at 100,000,000 bytes and always requires
-`Content-Length`. There an over-cap body can instead be answered `503`
+From the launch of its shared API, remember.dev's hosted service caps bodies
+at 31,457,280 bytes (30 MiB) and always requires `Content-Length`. There an over-cap body can instead be answered `503`
 `spend_lease_unavailable`, because the spend hold is checked first; see
 [Ingest](/docs/reference/http-api/ingest#errors).
 

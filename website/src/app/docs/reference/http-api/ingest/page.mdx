@@ -243,11 +243,12 @@ Text metering on remember.dev adds these:
 
 <Cloud>
 
-remember.dev caps bodies at 100,000,000 bytes and requires `Content-Length`.
-On remember.dev the spend hold is placed before the body cap is checked, and
-the control plane refuses an over-cap hold itself. The engine then answers an
-over-cap body with `503` `spend_lease_unavailable` rather than `413`. Treat
-both as "too large" when the body is over 100,000,000 bytes.
+From the launch of its shared API, remember.dev's hosted service caps bodies
+at 31,457,280 bytes (30 MiB) and requires `Content-Length`. On remember.dev
+the spend hold is placed before the body cap is checked, and the control plane
+can refuse an over-cap hold itself. The engine then answers an over-cap body
+with `503` `spend_lease_unavailable` rather than `413`. Treat both as "too
+large" when the body is over the cap.
 
 Text metering applies on deployments that measure processed text for billing,
 which is remember.dev. There, today, `POST /ingest` accepts plain text and
