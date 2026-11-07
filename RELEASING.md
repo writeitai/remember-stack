@@ -48,7 +48,11 @@ short-lived OpenID Connect credential and grants `id-token: write` only to the P
 ## Cutting a release
 
 Prepare a normal pull request that updates both `project.version` in `pyproject.toml` and the
-GHCR tag in `compose.yaml`. Update release-facing documentation in the same pull request. The
+GHCR tag in `compose.yaml`. After each release, the `Prepare next release` workflow opens a "Prepare vX.Y.Z" pull request
+for the next patch once main has new commits. It runs `scripts/prepare_next_release.py` and
+regenerates the lockfile, `openapi.json`, the llms files and the TypeScript client exports. It
+never merges: start your release branch from it, add the changelog and the steps below, and
+close it. Update release-facing documentation in the same pull request. The
 contract check rejects drift:
 
 ```bash

@@ -83,8 +83,8 @@ def test_release_workflow_is_main_only_and_derives_one_immutable_coordinate() ->
     assert "event_type=release-completed" in workflow
 
 
-def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
-    """Bot pushes trigger normal checks and merge only after those checks pass."""
+def test_release_preparation_uses_app_identity_and_only_opens_the_pr() -> None:
+    """Bot pushes trigger normal checks; a human finishes and merges the release."""
     root = Path(__file__).resolve().parents[3]
     workflow = (root / ".github/workflows/release-prepare.yml").read_text(
         encoding="utf-8"
@@ -95,8 +95,8 @@ def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
     assert "if: github.ref == 'refs/heads/main'" in workflow
     assert "ref: main" in workflow
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
-    assert 'gh pr checks "$existing" --watch --fail-fast' in workflow
-    assert 'gh pr merge "$existing" --squash' in workflow
+    assert "gh pr merge" not in workflow
+    assert "add the changelog entry" in workflow
     assert "types: [release-completed]" in workflow
     assert "uv lock --check" in workflow
     assert "git add pyproject.toml uv.lock" in workflow
@@ -279,6 +279,12 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     current = _project_version(root=root)
     major, minor, patch = (int(part) for part in current.split("."))
     target = f"{major}.{minor}.{patch + 1}"
+    # Prose naming a past release is history, not a coordinate.
+    requirements = tmp_path / "website/src/app/docs/self-hosting/requirements/page.mdx"
+    history = f"Version {current} is the first release on this image."
+    requirements.write_text(
+        requirements.read_text(encoding="utf-8") + f"\n{history}\n", encoding="utf-8"
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -294,7 +300,10 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     assert _project_version(root=tmp_path) == target
     assert terminal.read_text(encoding="utf-8") == terminal_document
     for relative in _COORDINATE_FILES:
-        assert current not in (tmp_path / relative).read_text(encoding="utf-8")
+        document = (tmp_path / relative).read_text(encoding="utf-8")
+        assert current not in document.replace(history, "")
+    assert history in requirements.read_text(encoding="utf-8")
+    _validate_release_docs(root=tmp_path, version=target)
 
 
 def test_release_lock_regeneration_works_with_an_empty_cache(
@@ -313,7 +322,9 @@ def test_release_lock_regeneration_works_with_an_empty_cache(
     for relative in _COORDINATE_FILES:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text("Release 1.2.3\n", encoding="utf-8")
+        destination.write_text(
+            "ghcr.io/writeitai/remember-stack:1.2.3\n", encoding="utf-8"
+        )
     subprocess.run(["uv", "lock", "--offline"], cwd=tmp_path, check=True)
     subprocess.run(
         [

@@ -6853,7 +6853,9 @@ typed reason and no partial reading.
 The PDF has one effective pre-OCR size limit: the lower of the family reading
 limit and the configured provider's input ceiling. Exceeding it leaves the
 original stored but fails the version with a typed limit reason, without a
-card or `document.md` reading.
+card or `document.md` reading. *(Superseded 2026-11-07 by D147 item 4: the
+provider ceiling no longer limits a PDF, which is OCR'd in page batches; the
+family reading limit applies only on the bytes path.)*
 
 **Context and alternatives.** The owner restated the explicit requirement on
 2026-09-27: “EVERY PDF and every page goes through OCR. No question asked.”
@@ -7423,6 +7425,25 @@ deployment's values into another's work.
      2026-11-07): a file over its limit whose route fetches it by URL from a presigning
      store goes to that route instead of being refused (PDF) or carded. A route's own
      declared `provider_limit_bytes` still applies.
+   - *PDF OCR in page batches (2026-11-07, owner: no caps).* The OCR provider takes about
+     50 MB and 1,000 pages per request (`MistralOcrSettings.max_document_bytes`,
+     `max_document_pages`). A PDF over either is split with pdfium into page-range PDFs
+     that each fit. Each page is first measured alone (a one-page PDF saved to a
+     counter from a freshly opened source), and a batch takes pages while those sizes add up to at most the byte
+     ceiling, so no candidate runs past what fits whatever the page sizes (it is shrunk
+     in the rare case its own save is still over); each batch is OCR'd, its pages are
+     renumbered from the batch's first page, and the folded response is metered (every source page, one
+     `ocr` usage event) and normalized exactly like one call, so every page is still
+     OCR'd. Each batch's own response metadata is kept under `batches` in the interchange
+     asset. Below both ceilings the request and the result are unchanged, so no version
+     changes. Only a single page over the byte ceiling fails. Each candidate batch is
+     built in one locked pdfium operation (open, copy pages, save to a temporary file,
+     close), so nothing native outlives the lock; only a batch that fits is read. A
+     failure after billed batches (including a disk error while splitting, which pdfium's
+     save would otherwise swallow) carries their usage. `PdfConverter.convert_path(path,
+     mime)` and `MistralOcrConverter.convert_path` do the same from a file on disk, for a
+     host (such as a conversion service fed by URL) that must not hold a large PDF in
+     memory; the PDF route no longer declares a pre-OCR byte limit.
    - *Register a stored object (2026-11-07).* `UploadIngestor.ingest_stored(deployment_id,
      key, size, mime, filename, title=None, source_path=None, ingested_by=None)` ingests a
      file a client wrote to the raw store itself (direct multipart upload by pre-signed

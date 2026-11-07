@@ -3351,7 +3351,7 @@ On a self-hosted deployment:
 | Web addresses (URLs) | No | No: download the page and send the HTML |
 
 A Word or PowerPoint file over 100 MB, or a spreadsheet over 200 MB,
-gets a file card instead of a reading. A PDF over the lower of its 100 MB family limit and the OCR provider limit fails conversion without a card; a spreadsheet over 50 MB is profiled
+gets a file card instead of a reading. A PDF over its 100 MB family limit fails conversion without a card (a PDF larger than the OCR provider accepts in one request, about 50 MB or 1,000 pages, is OCR'd in page batches); a spreadsheet over 50 MB is profiled
 from its sheet list and dimensions only. A text file over 1 MB is described
 by its size, line count, first 50 and last 20 lines instead of read in
 full.
@@ -19943,6 +19943,18 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## Unreleased
+
+**Processing.**
+
+- A PDF over the OCR provider's per-request limits (about 50 MB or 1,000
+  pages) is no longer refused. It is split into page-range batches that each
+  fit, every batch is OCR'd, and the pages are stitched back in order, so
+  every page is still OCR'd and metered once. Below both limits the request
+  and the result are unchanged. Only a single page over the byte limit is
+  refused. `PdfConverter.convert_path` and `MistralOcrConverter.convert_path`
+  convert a PDF from a file on disk without reading it whole.
 
 ## 0.18.2 (November 2026)
 
