@@ -6853,7 +6853,9 @@ typed reason and no partial reading.
 The PDF has one effective pre-OCR size limit: the lower of the family reading
 limit and the configured provider's input ceiling. Exceeding it leaves the
 original stored but fails the version with a typed limit reason, without a
-card or `document.md` reading.
+card or `document.md` reading. *(Superseded 2026-11-07 by D147 item 4: the
+provider ceiling no longer limits a PDF, which is OCR'd in page batches; the
+family reading limit applies only on the bytes path.)*
 
 **Context and alternatives.** The owner restated the explicit requirement on
 2026-09-27: “EVERY PDF and every page goes through OCR. No question asked.”
