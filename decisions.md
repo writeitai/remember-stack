@@ -7469,7 +7469,11 @@ deployment's values into another's work.
      object unless a content keeps the key as its raw object (only the engine knows; a
      refused re-registration of a registered key keeps it), so refused uploads do not stay
      in storage unbilled. Storage and database failures delete nothing, so a retry can
-     succeed. The caller does not register the same key concurrently. The declared size must
+     succeed. `UploadIngestor.discard_unregistered(deployment_id, key) -> bool` applies the
+     same rule on its own, for a host sweeping uploads that were abandoned before
+     registration (unregistered bytes would escape hard forget): it deletes the object
+     unless a content keeps the key and returns whether it did. The caller serializes
+     registration and discard per key. The declared size must
      match, and the uploader chooses the storage class (D51 routing is not applied). A
      deployment with managed text metering measures the object exactly as `ingest` does;
      that profile accepts only native text up to 10 MB, so a larger object is refused

@@ -35,6 +35,18 @@ runs today, and what that means for you, is on
   and the result are unchanged. Only a single page over the byte limit is
   refused. `PdfConverter.convert_path` and `MistralOcrConverter.convert_path`
   convert a PDF from a file on disk without reading it whole.
+**Integration.**
+
+- **Action needed.** `UploadIngestor.ingest_stored` deletes an object it
+  refuses (size, content type, metering, a forgotten source), unless a
+  content already keeps that key, and raises `StoredObjectRefusedError`. Its
+  `refusal` holds the original error and `raw_object_deleted` says whether
+  the object was deleted. Code that caught `ContentDetectionError`,
+  `ManagedTextClassificationError` or `ForgottenSourceError` from
+  `ingest_stored` catches `StoredObjectRefusedError` and inspects `refusal`.
+- `UploadIngestor.discard_unregistered` deletes a directly uploaded object
+  that never became a version, unless a content keeps its key, for sweeping
+  abandoned uploads. Serialize it with `ingest_stored` of the same key.
 
 ## 0.18.2 (November 2026)
 

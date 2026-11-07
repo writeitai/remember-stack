@@ -481,3 +481,24 @@ def test_a_refused_object_is_deleted_unless_a_content_keeps_it(
         assert connection.execute(
             text("SELECT raw_uri FROM content_objects")
         ).one() == (kept.root,)
+
+    # The sweeper's entry point applies the same rule to abandoned uploads.
+    abandoned = _put(raw, "uploads/aaaaaaaaaaaaaaaa", b"never registered\n")
+    assert (
+        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=abandoned)
+        is True
+    )
+    with pytest.raises(FileNotFoundError):
+        raw.read_bytes(key=abandoned)
+    assert (
+        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=abandoned)
+        is True
+    )
+    assert (
+        ingestor.discard_unregistered(deployment_id=_DEPLOYMENT_ID, key=kept) is False
+    )
+    assert raw.read_bytes(key=kept) == _BODY
+    with pytest.raises(ValueError, match="uploads/"):
+        ingestor.discard_unregistered(
+            deployment_id=_DEPLOYMENT_ID, key=ObjectKey("a/b/original.md")
+        )

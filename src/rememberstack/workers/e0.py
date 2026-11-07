@@ -354,8 +354,10 @@ class UploadIngestor:
         re-registration of a registered key keeps it), and the error's
         ``raw_object_deleted`` says which. Other failures (storage or
         database errors, admission paused for a forget in progress) raise
-        unchanged and delete nothing, so a retry can succeed. The caller
-        must not register the same key concurrently.
+        unchanged and delete nothing, so a retry can succeed;
+        :meth:`discard_unregistered` removes an object abandoned after such
+        a failure. The caller must not register or discard the same key
+        concurrently.
 
         ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
         characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
@@ -480,13 +482,36 @@ class UploadIngestor:
         self, *, deployment_id: UUID, key: ObjectKey, refusal: Exception
     ) -> StoredObjectRefusedError:
         """Delete a refused stored object unless a content keeps its key."""
-        deleted = not self._catalog.raw_object_registered(
-            deployment_id=deployment_id, key=key.root
-        )
-        if deleted:
-            assert isinstance(self._raw_store, ObjectPurgePort)
-            self._raw_store.purge_objects(keys=(key,), prefixes=())
+        deleted = self.discard_unregistered(deployment_id=deployment_id, key=key)
         return StoredObjectRefusedError(refusal=refusal, raw_object_deleted=deleted)
+
+    def discard_unregistered(self, *, deployment_id: UUID, key: ObjectKey) -> bool:
+        """Delete a directly uploaded object that no content keeps (D147).
+
+        For objects that never became a version: an upload whose registration
+        was never completed or retried, swept after it is abandoned, since
+        unregistered bytes would escape hard forget. Returns ``False`` and
+        keeps the object when a content keeps ``key`` as its raw object;
+        otherwise deletes it (absence succeeds) and returns ``True``.
+        :meth:`ingest_stored` uses the same rule for an object it refuses.
+        ``key`` must be in the ``uploads/`` namespace.
+
+        The check and the delete are not one transaction: the caller must not
+        run this while an :meth:`ingest_stored` of the same key is in flight
+        (serialize per key).
+        """
+        if _STORED_KEY.fullmatch(key.root) is None:
+            raise ValueError(
+                "a stored object's key must be uploads/<16-128 of [A-Za-z0-9_-]>"
+            )
+        if not isinstance(self._raw_store, ObjectPurgePort):
+            raise TypeError("discarding needs a raw store that purges")
+        if self._catalog.raw_object_registered(
+            deployment_id=deployment_id, key=key.root
+        ):
+            return False
+        self._raw_store.purge_objects(keys=(key,), prefixes=())
+        return True
 
     def ingest_observed(
         self,
