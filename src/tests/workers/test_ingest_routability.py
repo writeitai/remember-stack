@@ -11,6 +11,7 @@ resuming really releases it — are proved against PostgreSQL in
 """
 
 from collections.abc import Collection
+from collections.abc import Iterator
 from typing import cast
 from uuid import UUID
 from uuid import uuid4
@@ -24,6 +25,7 @@ from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
 from rememberstack.model import ObjectKey
 from rememberstack.model import ProcessingLane
+from rememberstack.model import StoredObjectRefusedError
 from rememberstack.model import UploadRecord
 from rememberstack.model.metering import ManagedMeterScope
 from rememberstack.spine.document_catalog import DocumentCatalog
@@ -412,3 +414,61 @@ def test_an_oversized_file_is_never_parked(monkeypatch: pytest.MonkeyPatch) -> N
     assert catalog.defer_reason is None
     parked, _ = _ingest("application/msword", observed=False, filename="old.doc")
     assert parked.defer_reason is DeferReason.NO_ROUTE
+
+
+class _BrokenStreamStore:
+    """A raw store whose stream fails mid-read, as a bad response would."""
+
+    def __init__(self) -> None:
+        """Start with nothing purged."""
+        self.purged: list[ObjectKey] = []
+
+    def read_bytes(self, *, key: ObjectKey) -> bytes:
+        """Reject whole reads."""
+        raise AssertionError(f"unexpected read of {key.root}")
+
+    def write_bytes(
+        self, *, key: ObjectKey, content: bytes, storage_class: str
+    ) -> None:
+        """Reject writes."""
+        raise AssertionError(f"unexpected write of {key.root}")
+
+    def iter_bytes(self, *, key: ObjectKey, chunk_size: int) -> Iterator[bytes]:
+        """Yield one chunk, then fail the way a malformed response does."""
+        _ = key, chunk_size
+        yield b"partial"
+        raise ValueError("invalid Content-Length")
+
+    def purge_objects(
+        self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
+    ) -> None:
+        """Record what would be deleted."""
+        _ = prefixes
+        self.purged.extend(keys)
+
+    def verify_objects_purged(
+        self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
+    ) -> None:
+        """Nothing to verify here."""
+        _ = keys, prefixes
+
+
+def test_a_storage_failure_while_streaming_deletes_nothing() -> None:
+    """D147: only a refusal deletes a stored object; a read failure may be retried."""
+    store = _BrokenStreamStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, _RecordingCatalog()),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    with pytest.raises(ValueError, match="Content-Length") as failure:
+        ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=ObjectKey("uploads/0123456789abcdef"),
+            size=7,
+            mime="text/plain",
+            filename="notes.txt",
+        )
+    assert not isinstance(failure.value, StoredObjectRefusedError)
+    assert store.purged == []

@@ -393,6 +393,19 @@ class DocumentCatalog:
                 {"deployment_id": deployment_id, "content_hash": content_hash},
             ).scalar_one_or_none()
 
+    def raw_object_registered(self, *, deployment_id: UUID, key: str) -> bool:
+        """Whether any content keeps ``key`` as its raw object."""
+        with self._engine.connect() as connection:
+            return bool(
+                connection.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM content_objects"
+                        " WHERE deployment_id = :deployment_id AND raw_uri = :key)"
+                    ),
+                    {"deployment_id": deployment_id, "key": key},
+                ).scalar_one()
+            )
+
     def convert_source(self, *, version_id: UUID) -> ConvertSource:
         """Load what the convert stage needs about one document version."""
         with self._engine.connect() as connection:

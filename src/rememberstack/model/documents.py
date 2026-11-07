@@ -242,6 +242,23 @@ class VersionKeyConflictError(Exception):
         self.detail = str(self)
 
 
+class StoredObjectRefusedError(ValueError):
+    """``ingest_stored`` refused an object and says whether it deleted it (D147).
+
+    ``refusal`` is the original refusal (a size mismatch, a content-type or
+    metering refusal, a forgotten identity). ``raw_object_deleted`` is
+    ``True`` when the engine deleted the object because no content keeps
+    it, and ``False`` when the key is some content's raw object, which is
+    never deleted.
+    """
+
+    def __init__(self, *, refusal: Exception, raw_object_deleted: bool) -> None:
+        """Record the refusal and what happened to the object."""
+        super().__init__(str(refusal))
+        self.refusal = refusal
+        self.raw_object_deleted = raw_object_deleted
+
+
 class EffectivePeriodConflictError(Exception):
     """A declared start equals a live declaration of another version (D140)."""
 
