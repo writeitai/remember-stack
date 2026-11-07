@@ -27,8 +27,8 @@ runs today, and what that means for you, is on
 ## 0.19.0 (November 2026)
 
 A stock self-hosted deployment needs no action. Its new migration,
-`p9_46_0067`, changes only the managed-metering tables, and those are empty
-unless the deployment is metered. The Compose file changes only its release
+`p9_46_0067`, reshapes the managed-metering tables, which are empty unless the
+deployment is metered, and adds the `admission` defer reason. The Compose file changes only its release
 image tags. The changes below matter to metered deployments (a control plane
 that approves usage before work runs) and to code that reads readiness or
 worker outcomes.
@@ -43,7 +43,8 @@ worker outcomes.
   is hard-forgotten; a parked or refused one keeps them.
 - **Action needed (control planes).** The meter's wire contract is now v3:
   - `rememberstack.ingest_measurement.v3` carries `cost_class`,
-    `native_quantity`, `unit` and `format_family`. The classes are:
+    `native_quantity`, `unit` and `format_family`. This release emits these
+    classes:
     - `doc-scan`, counted in pages, for every PDF page;
     - `doc-text`, counted in normalized characters, for other readable files.
   - `rememberstack.document_version_outcome.v3` is `succeeded` or `failed`.
