@@ -245,6 +245,15 @@ def test_an_object_streams_in_bounded_chunks() -> None:
     store.ensure_bucket()
     store.write_bytes(key=ObjectKey("a/b"), content=b"0123456789", storage_class="hot")
     assert isinstance(store, StreamingReadPort)
+    from rememberstack.core.object_transfer import object_transfer_scope
+
+    with object_transfer_scope() as transfer:
+        assert list(store.iter_bytes(key=ObjectKey("a/b"), chunk_size=4)) == [
+            b"0123",
+            b"4567",
+            b"89",
+        ]
+    assert transfer.bytes_read == 10
     assert list(store.iter_bytes(key=ObjectKey("a/b"), chunk_size=4)) == [
         b"0123",
         b"4567",

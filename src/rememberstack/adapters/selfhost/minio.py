@@ -255,6 +255,7 @@ class MinIOObjectStore:
         body = response["Body"]
         try:
             while chunk := body.read(chunk_size):
+                record_object_transfer(bytes_read=len(chunk))
                 yield chunk
         finally:
             body.close()
