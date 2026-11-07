@@ -7421,8 +7421,9 @@ deployment's values into another's work.
      URL). The engine streams the object once (`StreamingReadPort.iter_bytes`) to hash it
      into a temporary file and classifies it on a memory map of that file, so the object
      is never held in memory whole; content detection gives the same answer for a mapped
-     file as for its bytes, reads in bounded windows, and does not recognise an office
-     package whose ZIP directory exceeds 8 MiB (a starting point). D74 admission, MIME
+     file as for its bytes, reads it in bounded windows, and for a mapped file does not
+     recognise an office package whose ZIP directory exceeds 64 MiB (about 700,000
+     entries; a starting point), so a crafted directory cannot exhaust memory. D74 admission, MIME
      validation, versioning and D55 deduplication are exactly those of `ingest`. The raw
      object stays at `key`, which becomes the version's raw object; the engine neither
      copies nor moves it. `key` must be `uploads/<id>` with an opaque id of 16–128

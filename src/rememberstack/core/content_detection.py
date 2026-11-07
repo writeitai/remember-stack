@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 import io
+import itertools
 import mmap
 import re
 from typing import Any
@@ -230,7 +231,7 @@ def _bmff_mime(*, content: Content) -> str | None:
         return None
     # The major brand, then each compatible brand, read one at a time.
     seen: set[str] = set()
-    for offset in (8, *range(16, size, 4)):
+    for offset in itertools.chain((8,), range(16, size, 4)):
         kind = _BMFF_BRANDS.get(content[offset : offset + 4])
         if kind is not None:
             seen.add(kind)
@@ -298,23 +299,27 @@ def _search_from(
     return at_start.match(content, position) or anywhere.search(content, position)
 
 
-_ZIP_READ_LIMIT_BYTES = 8 << 20
-"""Largest single read the ZIP check makes (its central directory). Starting
-point; a package whose directory is larger is not recognised as office."""
+_MAPPED_ZIP_READ_LIMIT_BYTES = 64 << 20
+"""Largest single read the ZIP check makes on a memory-mapped file (its
+central directory), about 700,000 entries. Starting point. Bytes already in
+memory are read without a limit, exactly as before."""
 
 
 class _BoundedReader(io.RawIOBase):
     """A seekable, read-only view of the content for ``zipfile`` (D147).
 
-    Reads come straight from the bytes or the map, and one read larger than
-    :data:`_ZIP_READ_LIMIT_BYTES` fails, so a crafted central directory can
-    never pull a large object into memory. The same view serves bytes and
-    mapped files, so both give the same verdict.
+    Reads come straight from the bytes or the map. On a mapped file one read
+    larger than :data:`_MAPPED_ZIP_READ_LIMIT_BYTES` fails, so a crafted
+    central directory cannot pull a large stored object into memory; such a
+    file is then not recognised as an office package.
     """
 
     def __init__(self, content: Content) -> None:
         self._content = content
         self._position = 0
+        self._limit = (
+            None if isinstance(content, bytes) else _MAPPED_ZIP_READ_LIMIT_BYTES
+        )
 
     def readable(self) -> bool:
         return True
@@ -334,7 +339,7 @@ class _BoundedReader(io.RawIOBase):
 
     def read(self, size: int | None = -1) -> bytes:
         end = len(self._content) if size is None or size < 0 else self._position + size
-        if end - self._position > _ZIP_READ_LIMIT_BYTES:
+        if self._limit is not None and end - self._position > self._limit:
             raise OSError("ZIP read over the detection limit")
         chunk = self._content[self._position : end]
         self._position += len(chunk)

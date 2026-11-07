@@ -319,3 +319,29 @@ def test_a_memory_mapped_file_is_classified_like_its_bytes(
         mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
     ):
         assert _verdict(mapped, declared) == _verdict(content, declared)
+
+
+def test_a_mapped_file_is_classified_in_bounded_memory(tmp_path: Path) -> None:
+    """D147: a large stored object is classified without copying it whole."""
+    import mmap
+    import tracemalloc
+
+    size = 32 << 20
+    samples = {
+        "whitespace": b" " * size + b"<html>",
+        "bmff": (size).to_bytes(4, "big") + b"ftypisom" + b"\x00" * (size - 12),
+    }
+    for name, content in samples.items():
+        path = tmp_path / name
+        path.write_bytes(content)
+        with (
+            path.open("rb") as handle,
+            mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+        ):
+            tracemalloc.start()
+            try:
+                detect_content_mime(content=mapped, declared_mime="")  # type: ignore[arg-type]
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+        assert peak < 8 << 20, (name, peak)
