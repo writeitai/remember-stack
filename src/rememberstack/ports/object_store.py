@@ -1,5 +1,6 @@
 """D61 byte/object-key seam for immutable raw inputs, artifacts, and snapshots."""
 
+from collections.abc import Iterator
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -38,4 +39,17 @@ class PresignedReadPort(Protocol):
 
     def presign_get(self, *, key: ObjectKey, ttl_s: int) -> str:
         """A URL that reads ``key`` with a plain ``GET`` for ``ttl_s`` seconds."""
+        ...
+
+
+@runtime_checkable
+class StreamingReadPort(Protocol):
+    """An object store that can read one object as a stream of chunks (D147).
+
+    Lets the engine hash and classify an object a client uploaded directly,
+    without holding the whole object in memory.
+    """
+
+    def iter_bytes(self, *, key: ObjectKey, chunk_size: int) -> Iterator[bytes]:
+        """Yield the object's bytes in order, at most ``chunk_size`` at a time."""
         ...

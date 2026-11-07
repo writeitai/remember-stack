@@ -25,6 +25,15 @@ def _docx_bytes() -> bytes:
     return output.getvalue()
 
 
+def _odt_bytes() -> bytes:
+    """An OpenDocument package: its MIME is read from the ``mimetype`` member."""
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w") as archive:
+        archive.writestr("mimetype", "application/vnd.oasis.opendocument.text")
+        archive.writestr("META-INF/manifest.xml", "<manifest/>")
+    return output.getvalue()
+
+
 def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
     """Build a file-type box with major and optional compatible brands."""
     size = 20 if compatible is not None else 16
@@ -253,3 +262,172 @@ def test_every_production_object_write_declares_a_class() -> None:
     ):
         if "store.write_bytes(key=" in line:
             assert "storage_class=" in line, f"{workflow}:{line_number}"
+
+
+def _verdict(content: object, declared: str) -> str:
+    try:
+        return detect_content_mime(content=content, declared_mime=declared)  # type: ignore[arg-type]
+    except ContentDetectionError as error:
+        return f"refused:{error.code}"
+
+
+_MAPPED_SAMPLES: tuple[tuple[bytes, str], ...] = (
+    (b"", "text/markdown"),
+    (b"hello\r\nworld", "text/csv"),
+    (b"  \n\t <!DOCTYPE html><p>x</p>", "text/plain"),
+    (b"\xef\xbb\xbf<html>\n", "text/html"),
+    (b"bad \xff utf8", "text/plain"),
+    (b"bell \x07 char", "text/plain"),
+    (b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF", "application/pdf"),
+    (b"%PDF-1.4 1 0 obj\n<<>>\nendobj\n%%EOF\n", "application/pdf"),
+    (b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n", "application/pdf"),
+    (b"Quoting %PDF-1.7 in prose\n1 0 obj\nendobj\n%%EOF", "text/plain"),
+    (_docx_bytes(), "application/zip"),
+    (b"PK\x03\x04not really a zip", "application/zip"),
+    (b"\x89PNG\r\n\x1a\n" + b"bytes", "image/png"),
+    (b"GIF89a\x01\x00\x01\x00\x80\x00\x00;", "image/gif"),
+    (
+        b"PAR1" + b"\x00" * 8 + (4).to_bytes(4, "little") + b"PAR1",
+        "application/x-unknown",
+    ),
+    # a multibyte character split across the 1 MiB decoding windows
+    (b"a" * ((1 << 20) - 1) + "é".encode() + b"tail", "text/plain"),
+    (b"a" * ((1 << 20) - 1) + b"\xc3", "text/plain"),
+    (b" " * (1 << 20) + b"<html>", "text/plain"),
+    (b"<!doctype" + b" " * (1 << 20) + b"html>", "text/plain"),
+    (b"\xc2\xa0<html>", "text/plain"),
+    (_odt_bytes(), "application/vnd.oasis.opendocument.text"),
+    (_bmff_bytes(brand=b"isom", compatible=b"M4A "), "audio/mp4"),
+    (_bmff_bytes(brand=b"avif", compatible=b"heic"), "image/heic"),
+)
+
+
+@pytest.mark.parametrize(("content", "declared"), _MAPPED_SAMPLES)
+def test_a_memory_mapped_file_is_classified_like_its_bytes(
+    content: bytes, declared: str, tmp_path: Path
+) -> None:
+    """D147: registering a stored object maps it; the verdict must not change."""
+    import mmap
+
+    path = tmp_path / "object"
+    path.write_bytes(content)
+    if not content:
+        # mmap cannot map an empty file; registration passes b"" instead
+        return
+    with (
+        path.open("rb") as handle,
+        mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+    ):
+        assert _verdict(mapped, declared) == _verdict(content, declared)
+
+
+def test_a_mapped_file_is_classified_in_bounded_memory(tmp_path: Path) -> None:
+    """D147: a large stored object is classified without copying it whole."""
+    import mmap
+    import tracemalloc
+
+    size = 32 << 20
+    samples = {
+        "whitespace": b" " * size + b"<html>",
+        "bmff": (size).to_bytes(4, "big") + b"ftypisom" + b"\x00" * (size - 12),
+    }
+    for name, content in samples.items():
+        path = tmp_path / name
+        path.write_bytes(content)
+        with (
+            path.open("rb") as handle,
+            mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+        ):
+            tracemalloc.start()
+            try:
+                detect_content_mime(content=mapped, declared_mime="")  # type: ignore[arg-type]
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+        assert peak < 8 << 20, (name, peak)
+
+
+def test_the_zip_view_seeks_like_bytesio() -> None:
+    """Malformed packages must fail the same way through the bounded view."""
+    from rememberstack.core.content_detection import _BoundedReader
+
+    reference, view = io.BytesIO(b"abcdef"), _BoundedReader(b"abcdef")
+    for offset, whence in ((2, 0), (-5, 1), (-2, 2), (10, 0), (-10, 2)):
+        assert view.seek(offset, whence) == reference.seek(offset, whence)
+        assert view.read(3) == reference.read(3)
+    with pytest.raises(ValueError, match="negative seek value"):
+        view.seek(-1, 0)
+
+
+def test_an_inflating_mimetype_member_is_read_in_bounded_memory() -> None:
+    """A declared-small ``mimetype`` that inflates hugely is never inflated whole."""
+    import tracemalloc
+    import zlib
+
+    mime = b"application/vnd.oasis.opendocument.text"
+    bomb = mime + b"\x00" * (64 << 20)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("META-INF/manifest.xml", "<manifest/>")
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(info, bomb)
+    content = output.getvalue()
+    # Declare the member as the 39-byte MIME with the CRC of those bytes, as a
+    # crafted package would; both headers carry the size and the CRC.
+    crc = zlib.crc32(mime).to_bytes(4, "little")
+    true_size = len(bomb).to_bytes(4, "little")
+    small = len(mime).to_bytes(4, "little")
+    content = content.replace(zlib.crc32(bomb).to_bytes(4, "little"), crc).replace(
+        true_size, small
+    )
+    tracemalloc.start()
+    try:
+        verdict = _verdict(content, "application/vnd.oasis.opendocument.text")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < len(content) + (8 << 20)
+    assert verdict == "application/vnd.oasis.opendocument.text"
+
+
+@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+def test_a_mapped_package_never_inflates_an_unboundable_mimetype(
+    method: int, tmp_path: Path
+) -> None:
+    """BZIP2 and LZMA output cannot be bounded; a mapped file does not read them."""
+    import mmap
+    import tracemalloc
+    import zlib
+
+    mime = b"application/vnd.oasis.opendocument.text"
+    bomb = mime + b"\x00" * (32 << 20)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w") as archive:
+        archive.writestr("META-INF/manifest.xml", "<manifest/>")
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = method
+        archive.writestr(info, bomb)
+    # Declare the member as the small MIME with its CRC, as a crafted file would.
+    content = (
+        output.getvalue()
+        .replace(
+            zlib.crc32(bomb).to_bytes(4, "little"),
+            zlib.crc32(mime).to_bytes(4, "little"),
+        )
+        .replace(len(bomb).to_bytes(4, "little"), len(mime).to_bytes(4, "little"))
+    )
+    path = tmp_path / "package"
+    path.write_bytes(content)
+    with (
+        path.open("rb") as handle,
+        mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+    ):
+        tracemalloc.start()
+        try:
+            verdict = _verdict(mapped, "application/zip")
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    assert verdict == "application/octet-stream"
+    assert peak < 8 << 20

@@ -364,6 +364,22 @@ class DocumentCatalog:
             kind=IngestPrincipalKind(row["kind"]), external_ref=row["external_ref"]
         )
 
+    def raw_object_key(self, *, deployment_id: UUID, content_hash: str) -> str | None:
+        """The raw object one content hash keeps, or None before it is recorded.
+
+        Each content is stored once per deployment; this is the key hard
+        forget purges for it.
+        """
+        with self._engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT raw_uri FROM content_objects"
+                    " WHERE deployment_id = :deployment_id"
+                    " AND content_hash = :content_hash"
+                ),
+                {"deployment_id": deployment_id, "content_hash": content_hash},
+            ).scalar_one_or_none()
+
     def convert_source(self, *, version_id: UUID) -> ConvertSource:
         """Load what the convert stage needs about one document version."""
         with self._engine.connect() as connection:

@@ -19,7 +19,10 @@ from datetime import timezone
 import hashlib
 import json
 import logging
+import mmap
 from pathlib import PurePosixPath
+import re
+import tempfile
 from typing import Final
 from typing import Protocol
 from uuid import NAMESPACE_URL
@@ -114,6 +117,8 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.object_store import PresignedReadPort
+from rememberstack.ports.object_store import StreamingReadPort
+from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.base import NoRouteHandlerError
@@ -169,6 +174,13 @@ representation without model calls (D138 §1)."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """The one-shot upload connector's source kind (D55 lineage identity)."""
+
+_STORED_CHUNK_BYTES: Final = 1 << 20
+"""Read size while a stored object is streamed for registration (D147)."""
+
+_STORED_KEY: Final = re.compile(r"uploads/[A-Za-z0-9_-]{16,128}")
+"""The namespace for objects clients upload directly (D147): opaque names,
+disjoint from the engine's own keys (``<doc_id>/…``, ``forgotten/…``)."""
 
 
 class IngestAdmission(Protocol):
@@ -267,7 +279,7 @@ class UploadIngestor:
                 )
             except ObjectAlreadyExistsError:
                 pass  # identical bytes already landed — ingest retries are no-ops
-        return self._catalog.record_upload(
+        ingested = self._catalog.record_upload(
             record=UploadRecord(
                 deployment_id=deployment_id,
                 doc_id=doc_id,
@@ -289,6 +301,127 @@ class UploadIngestor:
             metering=metering,
             routable_mimes=self._routable_for(upload=upload),
         )
+        if metering is None:
+            self._release_unretained(
+                deployment_id=deployment_id,
+                content_hash=content_hash,
+                key=ObjectKey(raw_uri),
+            )
+        return ingested
+
+    def ingest_stored(
+        self,
+        *,
+        deployment_id: UUID,
+        key: ObjectKey,
+        size: int,
+        mime: str,
+        filename: str,
+        title: str | None = None,
+        source_path: str | None = None,
+        ingested_by: IngestPrincipal | None = None,
+        lane: ProcessingLane = ProcessingLane.STEADY,
+    ) -> IngestedVersion:
+        """Ingest one file a client already wrote to the raw store (D147).
+
+        For direct, multipart uploads by pre-signed URL: the engine streams
+        the object once from ``key`` to hash it, then classifies the type on
+        a memory map of a temporary file, so the object is never held in
+        memory whole. Admission, MIME validation, versioning and
+        deduplication are exactly those of :meth:`ingest` for the same
+        bytes. **The raw object stays at ``key``**: the engine neither copies
+        nor moves it, and records ``key`` as the version's raw object. If the
+        deployment already holds identical bytes under another key, that
+        version answers, keeps its own raw object, and the engine deletes the
+        object at ``key`` (only the kept object is ever purged by hard
+        forget). A repeated registration of the same key changes nothing.
+        Callers never delete registered objects; hard forget removes them.
+
+        ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
+        characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
+        key in every store, so a key outside this namespace could name
+        another object, and file names would enter the immutable forget
+        manifests. ``size`` must match the stored object. The uploader
+        chooses the storage class (D51 routing is not applied). Managed text
+        metering needs the whole bytes, so a deployment that meters ingest
+        refuses this path; use :meth:`ingest`.
+        """
+        if self._meter_scope is not None:
+            raise ValueError(
+                "managed ingest metering needs the bytes; register through ingest"
+            )
+        if _STORED_KEY.fullmatch(key.root) is None:
+            raise ValueError(
+                "a stored object's key must be uploads/<16-128 of [A-Za-z0-9_-]>"
+            )
+        if not isinstance(self._raw_store, StreamingReadPort) or not isinstance(
+            self._raw_store, ObjectPurgePort
+        ):
+            # Streaming reads the object; purging removes it again when the
+            # content already keeps another raw object.
+            raise TypeError("registration needs a raw store that streams and purges")
+        digest = hashlib.sha256()
+        with tempfile.TemporaryFile() as spool:
+            received = 0
+            for chunk in self._raw_store.iter_bytes(
+                key=key, chunk_size=_STORED_CHUNK_BYTES
+            ):
+                digest.update(chunk)
+                spool.write(chunk)
+                received += len(chunk)
+            if received != size:
+                raise ValueError(
+                    f"stored object is {received} bytes, not the declared {size}"
+                )
+            content_hash = digest.hexdigest()
+            self._guard_ingest(
+                deployment_id=deployment_id,
+                source_kind=UPLOAD_SOURCE_KIND,
+                source_ref=content_hash,
+                content_hash=content_hash,
+            )
+            spool.flush()
+            if received == 0:
+                detected = self._detected_mime(
+                    content=b"", filename=filename, mime=mime
+                )
+            else:
+                with mmap.mmap(spool.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+                    detected = self._detected_mime(
+                        content=mapped, filename=filename, mime=mime
+                    )
+        doc_id = uuid5(
+            NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
+        )
+        routable = self._routable
+        if exceeds_reading_limit(mime=detected, byte_size=received):
+            routable = routable | {detected}
+        ingested = self._catalog.record_upload(
+            record=UploadRecord(
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                source_kind=UPLOAD_SOURCE_KIND,
+                source_ref=content_hash,
+                source_uri=None,
+                title=title or PurePosixPath(filename).stem,
+                content_hash=content_hash,
+                mime=detected,
+                byte_size=received,
+                raw_uri=key.root,
+                ingested_by=ingested_by,
+                file_name=filename,
+                declared_title=title,
+                source_path=source_path,
+            ),
+            convert_component_version=E0_CONVERT_VERSION,
+            lane=lane,
+            metering=None,
+            routable_mimes=routable,
+        )
+        self._release_unretained(
+            deployment_id=deployment_id, content_hash=content_hash, key=key
+        )
+        return ingested
 
     def ingest_observed(
         self,
@@ -363,13 +496,41 @@ class UploadIngestor:
                 )
             except ObjectAlreadyExistsError:
                 pass
-        return self._catalog.record_upload(
+        ingested = self._catalog.record_upload(
             record=record,
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
             routable_mimes=self._routable_for(upload=upload),
         )
+        if metering is None:
+            self._release_unretained(
+                deployment_id=deployment_id,
+                content_hash=content_hash,
+                key=ObjectKey(raw_uri),
+            )
+        return ingested
+
+    def _release_unretained(
+        self, *, deployment_id: UUID, content_hash: str, key: ObjectKey
+    ) -> None:
+        """Remove a raw object this ingest wrote or was given but does not keep.
+
+        Each content keeps one raw object, the first one recorded, and only
+        that one is purged by hard forget. A copy written under another key
+        (an earlier version of these bytes arrived through another entry
+        point, file name or upload key) would outlive a forget, so it is
+        removed as soon as the record shows it is not the kept one.
+        """
+        kept = self._catalog.raw_object_key(
+            deployment_id=deployment_id, content_hash=content_hash
+        )
+        if (
+            kept is not None
+            and kept != key.root
+            and isinstance(self._raw_store, ObjectPurgePort)
+        ):
+            self._raw_store.purge_objects(keys=(key,), prefixes=())
 
     def _prepare_managed_text(
         self, *, deployment_id: UUID, upload: DocumentUpload
@@ -405,14 +566,21 @@ class UploadIngestor:
 
     def _detect_upload(self, *, upload: DocumentUpload) -> DocumentUpload:
         """Use byte classes first and registry hints within compatible families."""
-        detected = detect_content_mime(
-            content=upload.content, declared_mime=upload.mime
+        detected = self._detected_mime(
+            content=upload.content, filename=upload.filename, mime=upload.mime
         )
+        return upload.model_copy(update={"mime": detected})
+
+    def _detected_mime(
+        self, *, content: bytes | mmap.mmap, filename: str, mime: str
+    ) -> str:
+        """The MIME E0 stores: byte classes first, registry hints within families."""
+        detected = detect_content_mime(content=content, declared_mime=mime)
         if detected in {"text/plain", "text/markdown", "application/octet-stream"}:
             routed = detect_mime(
-                file_name=upload.filename,
-                declared_mime=upload.mime,
-                content=upload.content,
+                file_name=filename,
+                declared_mime=mime,
+                content=content,
                 routed_mimes=self._routable,
             )
             family = family_for_mime(mime=routed).name
@@ -440,7 +608,7 @@ class UploadIngestor:
                 "binary",
             }:
                 detected = routed
-        return upload.model_copy(update={"mime": detected})
+        return detected
 
     def _routable_for(self, *, upload: DocumentUpload) -> frozenset[str]:
         """The deployment's routable MIMEs; an oversized file is always routable.

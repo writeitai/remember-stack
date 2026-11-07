@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import codecs
 import io
+import itertools
+import mmap
 import re
+from typing import Any
+from typing import cast
+from typing import IO
 import zipfile
 
 from rememberstack.core.format_registry import family_for_mime
@@ -43,10 +49,34 @@ _IMAGE_MIME_ALIASES = {
 }
 _AUDIO_MIME_ALIASES = {"audio/x-m4a": "audio/mp4"}
 
+Content = bytes | mmap.mmap
+"""A file's whole content: bytes, or a memory map of a file on disk (D147).
 
-def _looks_like_bmp(*, content: bytes) -> bool:
+Every check reads it by indexing, slicing a bounded window or searching in
+place, so a large mapped file is never copied into memory as a whole.
+"""
+
+_TEXT_CHUNK_BYTES = 1 << 20
+#: Characters after leading whitespace enough to recognise an HTML opener.
+_HTML_LOOKAHEAD = 64
+_WHITESPACE_RUN = re.compile(r"\s+")
+_HTML_OPENER = re.compile(r"(?:<!doctype\s+html\b|<html(?:\s|>))", re.IGNORECASE)
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _starts(content: Content, prefix: bytes) -> bool:
+    return content[: len(prefix)] == prefix
+
+
+def _ends(content: Content, suffix: bytes) -> bool:
+    return (
+        len(content) >= len(suffix) and content[len(content) - len(suffix) :] == suffix
+    )
+
+
+def _looks_like_bmp(*, content: Content) -> bool:
     """Require BMP file and DIB header fields, not the printable `BM` alone."""
-    if len(content) < 26 or not content.startswith(b"BM"):
+    if len(content) < 26 or not _starts(content, b"BM"):
         return False
     size = int.from_bytes(content[2:6], "little")
     pixel_offset = int.from_bytes(content[10:14], "little")
@@ -59,9 +89,9 @@ def _looks_like_bmp(*, content: bytes) -> bool:
     )
 
 
-def _looks_like_id3(*, content: bytes) -> bool:
+def _looks_like_id3(*, content: Content) -> bool:
     """Require a bounded ID3v2 header and synchsafe tag length."""
-    if len(content) < 10 or not content.startswith(b"ID3"):
+    if len(content) < 10 or not _starts(content, b"ID3"):
         return False
     if content[3] not in {2, 3, 4} or content[4] == 0xFF:
         return False
@@ -73,7 +103,7 @@ def _looks_like_id3(*, content: bytes) -> bool:
     return tag_size <= len(content) - 10
 
 
-def _looks_like_gif(*, content: bytes) -> bool:
+def _looks_like_gif(*, content: Content) -> bool:
     """Require a logical screen descriptor after the printable GIF marker."""
     return (
         len(content) >= 13
@@ -85,13 +115,13 @@ def _looks_like_gif(*, content: bytes) -> bool:
             or (
                 len(content) >= 15
                 and content[13] in {0x21, 0x2C}
-                and content.endswith(b"\x3b")
+                and _ends(content, b"\x3b")
             )
         )
     )
 
 
-def _looks_like_psd(*, content: bytes) -> bool:
+def _looks_like_psd(*, content: Content) -> bool:
     """Require Photoshop header fields beyond the printable signature."""
     if (
         len(content) < 26
@@ -113,26 +143,26 @@ def _looks_like_psd(*, content: bytes) -> bool:
     )
 
 
-def _looks_like_flac(*, content: bytes) -> bool:
+def _looks_like_flac(*, content: Content) -> bool:
     """Require the mandatory 34-byte STREAMINFO block after the marker."""
     return (
         len(content) >= 42
-        and content.startswith(b"fLaC")
+        and _starts(content, b"fLaC")
         and content[4] & 0x7F == 0
         and int.from_bytes(content[5:8], "big") == 34
     )
 
 
-def _looks_like_ogg(*, content: bytes) -> bool:
+def _looks_like_ogg(*, content: Content) -> bool:
     """Require an Ogg page header and its segment table."""
     return (
         len(content) >= 27
-        and content.startswith(b"OggS\x00")
+        and _starts(content, b"OggS\x00")
         and len(content) >= 27 + content[26]
     )
 
 
-def _looks_like_mpeg_frame(*, content: bytes) -> bool:
+def _looks_like_mpeg_frame(*, content: Content) -> bool:
     """Accept a complete MPEG audio frame with non-reserved header fields."""
     if len(content) < 24 or content[0] != 0xFF or content[1] & 0xE0 != 0xE0:
         return False
@@ -182,7 +212,7 @@ def _looks_like_mpeg_frame(*, content: bytes) -> bool:
     return frame_size <= len(content)
 
 
-def _looks_like_adts(*, content: bytes) -> bool:
+def _looks_like_adts(*, content: Content) -> bool:
     """Require a complete AAC ADTS frame rather than a two-byte sync guess."""
     if len(content) < 7 or content[0] != 0xFF or content[1] & 0xF6 != 0xF0:
         return False
@@ -192,25 +222,35 @@ def _looks_like_adts(*, content: bytes) -> bool:
     return 7 <= frame_size <= len(content)
 
 
-def _bmff_mime(*, content: bytes) -> str | None:
+def _bmff_mime(*, content: Content) -> str | None:
     """Classify ISO BMFF by validated major and compatible file-type brands."""
     if len(content) < 16 or content[4:8] != b"ftyp":
         return None
     size = int.from_bytes(content[:4], "big")
     if not 16 <= size <= len(content):
         return None
-    brands = {content[8:12]}
-    brands.update(content[offset : offset + 4] for offset in range(16, size, 4))
-    if brands & {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1"}:
-        return "image/heic"
-    if brands & {b"avif", b"avis"}:
-        return "image/avif"
-    if brands & {b"M4A ", b"M4B ", b"M4P "}:
-        return "audio/mp4"
+    # The major brand, then each compatible brand, read one at a time.
+    seen: set[str] = set()
+    for offset in itertools.chain((8,), range(16, size, 4)):
+        kind = _BMFF_BRANDS.get(content[offset : offset + 4])
+        if kind is not None:
+            seen.add(kind)
+    for kind in ("image/heic", "image/avif", "audio/mp4"):
+        if kind in seen:
+            return kind
     return "video/mp4"
 
 
-def has_pdf_body(*, content: bytes) -> bool:
+_BMFF_BRANDS: dict[bytes, str] = {
+    **dict.fromkeys(
+        (b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1"), "image/heic"
+    ),
+    **dict.fromkeys((b"avif", b"avis"), "image/avif"),
+    **dict.fromkeys((b"M4A ", b"M4B ", b"M4P "), "audio/mp4"),
+}
+
+
+def has_pdf_body(*, content: Content) -> bool:
     """Find a bounded PDF header, complete object, and trailing end marker."""
     header = re.search(rb"%PDF-[12]\.\d", content[:8200])
     if header is None or header.start() > 8192:
@@ -223,26 +263,104 @@ def has_pdf_body(*, content: bytes) -> bool:
     if len(preamble_text.split()) >= 2:
         # A prose sentence quoting a PDF header is not a PDF preamble.
         return False
-    body = content[header.end() :]
-    object_match = re.search(
-        rb"(?:^|[\r\n])[ \t]*\d+[ \t]+\d+[ \t]+obj[ \t]*(?:\r\n|[\r\n])"
-        rb".*?(?:^|[\r\n])[ \t]*endobj[ \t]*(?:\r\n|[\r\n])",
-        body,
-        re.DOTALL,
+    # Searched in place from the header's end rather than on a copied body;
+    # each pattern's "start of the body" alternative is tried as an anchored
+    # match at that position first, which is what ``^`` meant on the copy.
+    object_match = _search_from(
+        content, header.end(), at_start=_PDF_OBJECT_AT, anywhere=_PDF_OBJECT
     )
     return bool(
         object_match is not None
-        and re.search(
-            rb"(?:^|[\r\n])[ \t]*%%EOF(?:[ \t]*[\r\n]|[ \t]*$)",
-            body[object_match.end() :],
+        and _search_from(
+            content, object_match.end(), at_start=_PDF_EOF_AT, anywhere=_PDF_EOF
         )
     )
 
 
-def _office_zip_mime(*, content: bytes) -> str | None:
+_PDF_OBJECT_BODY = (
+    rb"[ \t]*\d+[ \t]+\d+[ \t]+obj[ \t]*(?:\r\n|[\r\n])"
+    rb".*?(?:^|[\r\n])[ \t]*endobj[ \t]*(?:\r\n|[\r\n])"
+)
+_PDF_OBJECT_AT = re.compile(_PDF_OBJECT_BODY, re.DOTALL)
+_PDF_OBJECT = re.compile(rb"[\r\n]" + _PDF_OBJECT_BODY, re.DOTALL)
+_PDF_EOF_BODY = rb"[ \t]*%%EOF(?:[ \t]*[\r\n]|[ \t]*$)"
+_PDF_EOF_AT = re.compile(_PDF_EOF_BODY)
+_PDF_EOF = re.compile(rb"[\r\n]" + _PDF_EOF_BODY)
+
+
+def _search_from(
+    content: Content,
+    position: int,
+    *,
+    at_start: re.Pattern[bytes],
+    anywhere: re.Pattern[bytes],
+) -> re.Match[bytes] | None:
+    """``re.search(pattern, content[position:])`` without copying the tail."""
+    return at_start.match(content, position) or anywhere.search(content, position)
+
+
+_MIMETYPE_READ_BYTES = 129
+"""One byte past the largest ``mimetype`` member the check accepts (128)."""
+
+_MAPPED_ZIP_READ_LIMIT_BYTES = 64 << 20
+"""Largest single read the ZIP check makes on a memory-mapped file (its
+central directory), about 700,000 entries. Starting point. Bytes already in
+memory are read without a limit, exactly as before."""
+
+
+class _BoundedReader(io.RawIOBase):
+    """A seekable, read-only view of the content for ``zipfile`` (D147).
+
+    Reads come straight from the bytes or the map. On a mapped file one read
+    larger than :data:`_MAPPED_ZIP_READ_LIMIT_BYTES` fails, so a crafted
+    central directory cannot pull a large stored object into memory; such a
+    file is then not recognised as an office package.
+    """
+
+    def __init__(self, content: Content) -> None:
+        self._content = content
+        self._position = 0
+        self._limit = (
+            None if isinstance(content, bytes) else _MAPPED_ZIP_READ_LIMIT_BYTES
+        )
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        """Seek exactly as ``io.BytesIO`` does, so malformed input fails alike."""
+        if whence == io.SEEK_SET and offset < 0:
+            raise ValueError(f"negative seek value {offset}")
+        base = {io.SEEK_SET: 0, io.SEEK_CUR: self._position}.get(
+            whence, len(self._content)
+        )
+        self._position = max(0, base + offset)
+        return self._position
+
+    def read(self, size: int | None = -1) -> bytes:
+        end = len(self._content) if size is None or size < 0 else self._position + size
+        if self._limit is not None and end - self._position > self._limit:
+            raise OSError("ZIP read over the detection limit")
+        chunk = self._content[self._position : end]
+        self._position += len(chunk)
+        return chunk
+
+    def readinto(self, buffer: Any) -> int:
+        chunk = self.read(len(buffer))
+        buffer[: len(chunk)] = chunk
+        return len(chunk)
+
+
+def _office_zip_mime(*, content: Content) -> str | None:
     """Recognize document package members without decompressing untrusted payloads."""
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        with zipfile.ZipFile(cast("IO[bytes]", _BoundedReader(content))) as archive:
             names = set(archive.namelist())
             if "[Content_Types].xml" in names:
                 for body, mime in (
@@ -263,8 +381,21 @@ def _office_zip_mime(*, content: bytes) -> str | None:
                         return mime
             if "mimetype" in names and "META-INF/manifest.xml" in names:
                 member = archive.getinfo("mimetype")
-                if member.file_size <= 128:
-                    mime = archive.read(member).decode("ascii", errors="ignore")
+                bounded = isinstance(content, bytes) or member.compress_type in {
+                    zipfile.ZIP_STORED,
+                    zipfile.ZIP_DEFLATED,
+                }
+                if member.file_size <= 128 and bounded:
+                    # Bounded: a declared size is untrusted, and read() would
+                    # inflate the whole stream before truncating it. Reading
+                    # past the declared size still ends the member and checks
+                    # its CRC, so the verdict is unchanged. Only stored and
+                    # DEFLATE output can be bounded this way, so on a mapped
+                    # file (D147) another method is not read; ODF requires a
+                    # stored ``mimetype`` anyway.
+                    with archive.open(member) as stream:
+                        raw = stream.read(_MIMETYPE_READ_BYTES)
+                    mime = raw.decode("ascii", errors="ignore")
                     if mime in _OFFICE_MIMES:
                         return mime
     except (OSError, ValueError, zipfile.BadZipFile, RuntimeError):
@@ -272,14 +403,14 @@ def _office_zip_mime(*, content: bytes) -> str | None:
     return None
 
 
-def _detected_mime(*, content: bytes) -> str:
+def _detected_mime(*, content: Content) -> str:
     """Choose a class from signatures, package structure, or strict UTF-8."""
     if has_pdf_body(content=content):
         return "application/pdf"
     if (
         len(content) >= 13
-        and content.startswith(b"PAR1")
-        and content.endswith(b"PAR1")
+        and _starts(content, b"PAR1")
+        and _ends(content, b"PAR1")
         and 0 < int.from_bytes(content[-8:-4], "little") <= len(content) - 12
     ):
         return "application/vnd.apache.parquet"
@@ -290,7 +421,7 @@ def _detected_mime(*, content: bytes) -> str:
         (b"MM\x00*", "image/tiff"),
         (b"\x1a\x45\xdf\xa3", "video/webm"),
     ):
-        if content.startswith(signature):
+        if _starts(content, signature):
             return mime
     if _looks_like_bmp(content=content):
         return "image/bmp"
@@ -304,7 +435,7 @@ def _detected_mime(*, content: bytes) -> str:
         return "audio/ogg"
     if _looks_like_id3(content=content):
         return "audio/mpeg"
-    if content.startswith(b"RIFF") and len(content) >= 12:
+    if _starts(content, b"RIFF") and len(content) >= 12:
         riff_size = int.from_bytes(content[4:8], "little") + 8
         if 12 <= riff_size <= len(content):
             if content[8:12] == b"WAVE":
@@ -320,29 +451,40 @@ def _detected_mime(*, content: bytes) -> str:
         return "audio/aac"
     if _looks_like_mpeg_frame(content=content):
         return "audio/mpeg"
-    if content.startswith(b"PK\x03\x04"):
+    if _starts(content, b"PK\x03\x04"):
         office = _office_zip_mime(content=content)
         if office is not None:
             return office
         return "application/octet-stream"
-    if content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+    if _starts(content, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
         return "application/x-ole-office"
-    try:
-        decoded = content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return "application/octet-stream"
-    if any(
-        (ord(char) < 32 and char not in "\t\r\n") or ord(char) == 127
-        for char in decoded
-    ):
-        return "application/octet-stream"
-    stripped_text = decoded.lstrip("\ufeff \t\r\n")
-    if re.match(r"(?:<!doctype\s+html\b|<html(?:\s|>))", stripped_text, re.IGNORECASE):
+    # Strict UTF-8 without control characters, decoded a window at a time.
+    # For the HTML opener only the first characters after the leading
+    # whitespace matter; collapsing each whitespace run to one space keeps
+    # every match of the pattern (its only repetition is ``\s+``) while the
+    # retained head stays small however long the whitespace is.
+    decoder = codecs.getincrementaldecoder("utf-8-sig")()
+    started = False
+    head = ""
+    for start in range(0, max(len(content), 1), _TEXT_CHUNK_BYTES):
+        window = content[start : start + _TEXT_CHUNK_BYTES]
+        try:
+            text = decoder.decode(window, final=start + len(window) >= len(content))
+        except UnicodeDecodeError:
+            return "application/octet-stream"
+        if _CONTROL_CHARACTERS.search(text):
+            return "application/octet-stream"
+        if not started:
+            text = text.lstrip("\ufeff \t\r\n")
+            started = bool(text)
+        if started and len(head) < _HTML_LOOKAHEAD:
+            head = _WHITESPACE_RUN.sub(" ", head + text)[:_HTML_LOOKAHEAD]
+    if _HTML_OPENER.match(head):
         return "text/html"
     return "text/plain"
 
 
-def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
+def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     """Return byte-authoritative MIME, refusing a contradictory declaration."""
     detected = _detected_mime(content=content)
     declared = declared_mime.partition(";")[0].strip().lower()

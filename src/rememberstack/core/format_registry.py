@@ -15,6 +15,7 @@ does (D117 parking) unless the stock table keeps an older route for them.
 
 from collections.abc import Collection
 from dataclasses import dataclass
+import mmap
 from pathlib import PurePosixPath
 from typing import Final
 from typing import Literal
@@ -360,7 +361,11 @@ _STORED_MIMES: Final = frozenset(
 
 
 def detect_mime(
-    *, file_name: str, declared_mime: str, content: bytes, routed_mimes: Collection[str]
+    *,
+    file_name: str,
+    declared_mime: str,
+    content: bytes | mmap.mmap,
+    routed_mimes: Collection[str],
 ) -> str:
     """Return the MIME E0 stores for one arriving file (D138 §3).
 
@@ -457,7 +462,7 @@ def _mime_for_file_name(*, file_name: str) -> str | None:
     return None
 
 
-def _looks_like_text(*, content: bytes) -> bool:
+def _looks_like_text(*, content: bytes | mmap.mmap) -> bool:
     """Step 3: valid UTF-8 with no NUL byte in the first 64 KiB."""
     head = content[:SNIFF_BYTES]
     if b"\x00" in head:

@@ -7415,6 +7415,28 @@ deployment's values into another's work.
      OCR or vision route have its provider fetch the input by URL instead of receiving
      uploaded bytes. Usage the route incurs is returned in `usage_events` and metered as
      for any route; the size and pre-OCR limits are checked before the URL is signed.
+   - *Register a stored object (2026-11-07).* `UploadIngestor.ingest_stored(deployment_id,
+     key, size, mime, filename, title=None, source_path=None, ingested_by=None)` ingests a
+     file a client wrote to the raw store itself (direct multipart upload by pre-signed
+     URL). The engine streams the object once (`StreamingReadPort.iter_bytes`) to hash it
+     into a temporary file and classifies it on a memory map of that file, so the object
+     is never held in memory whole; content detection gives the same answer for a mapped
+     file as for its bytes, reads it in bounded windows, and for a mapped file does not
+     recognise an office package whose ZIP directory exceeds 64 MiB (about 700,000
+     entries; a starting point) or whose `mimetype` member uses a compression other than
+     stored or DEFLATE (ODF requires it stored), so a crafted package cannot exhaust
+     memory. Bytes in memory keep the previous behaviour exactly. D74 admission, MIME
+     validation, versioning and D55 deduplication are exactly those of `ingest`. The raw
+     object stays at `key`, which becomes the version's raw object; the engine neither
+     copies nor moves it. `key` must be `uploads/<id>` with an opaque id of 16–128
+     characters from `[A-Za-z0-9_-]`, because hard forget purges a version's raw key in
+     every store and its manifests are immutable. Each content keeps one raw object, the
+     first one recorded, and only that one is purged by hard forget; so when identical
+     bytes are already stored under another key, that version answers and every ingest
+     path (`ingest`, `ingest_observed`, `ingest_stored`) deletes the copy it wrote or was
+     given. Callers never delete registered objects. The declared size must
+     match, the uploader chooses the storage class (D51 routing is not applied), and a
+     deployment with managed ingest metering (which needs the bytes) refuses this path.
    - *No deployment state on local disk.* `SelfHostSettings.forget_manifest_bucket_name`
      keeps D74 hard-forget manifests as immutable objects in that dedicated bucket
      (`ObjectStoreForgetManifestStore`, same contract as the local root) instead of

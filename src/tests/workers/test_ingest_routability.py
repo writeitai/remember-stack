@@ -51,6 +51,10 @@ class _RecordingCatalog:
         self.defer_reason: DeferReason | None = None
         self.recorded_mime: str | None = None
 
+    def raw_object_key(self, *, deployment_id: object, content_hash: str) -> None:
+        """No content is kept here, so no written copy is ever released."""
+        _ = deployment_id, content_hash
+
     def record_upload(
         self,
         *,
