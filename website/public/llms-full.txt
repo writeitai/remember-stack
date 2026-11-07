@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.18.2](https://github.com/writeitai/remember-stack/releases/tag/v0.18.2)
-([on PyPI](https://pypi.org/project/remember/0.18.2/)).
+[v0.18.3](https://github.com/writeitai/remember-stack/releases/tag/v0.18.3)
+([on PyPI](https://pypi.org/project/remember/0.18.3/)).
 
 ## 3. Point the client at your endpoint
 
@@ -6763,8 +6763,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.18.2` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.2` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.18.3` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.3` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -6946,7 +6946,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.18.2
+git checkout v0.18.3
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -6958,7 +6958,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.18.2`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.18.3`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -9672,7 +9672,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.18.2/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.18.3/openapi.json).
 
 ## Base URL
 
@@ -17841,7 +17841,7 @@ Source: https://remember.dev/docs/reference/cli
 
 # CLI
 
-This page describes the `remember` CLI (v0.18.2), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.18.3), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -19944,7 +19944,11 @@ published as `rememberstack`.
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
 
-## Unreleased
+## 0.18.3 (November 2026)
+
+A stock self-hosted deployment needs no action: its database migrations are
+unchanged, and its Compose file changes only the release image tags. The **Action needed** item applies only to programs
+that embed the engine and call `ingest_stored`.
 
 **Processing.**
 
@@ -19952,8 +19956,9 @@ need action from you are marked **Action needed**.
   pages) is no longer refused. It is split into page-range batches that each
   fit, every batch is OCR'd, and the pages are stitched back in order, so
   every page is still OCR'd and metered once. Below both limits the request
-  and the result are unchanged. Only a single page over the byte limit is
-  refused. `PdfConverter.convert_path` and `MistralOcrConverter.convert_path`
+  and the result are unchanged. The engine's own 100 MB PDF reading limit
+  still applies when it reads the file itself (the stock in-process path);
+  within that, only a single page over the byte limit is refused. `PdfConverter.convert_path` and `MistralOcrConverter.convert_path`
   convert a PDF from a file on disk without reading it whole.
 
 **Integration.**
@@ -19971,8 +19976,9 @@ need action from you are marked **Action needed**.
 
 ## 0.18.2 (November 2026)
 
-A stock self-hosted deployment needs no action. Its database migrations, its
-Compose file and its default conversion are unchanged.
+A stock self-hosted deployment needs no action. Its database migrations and its
+default conversion are unchanged, and its Compose file changes only the release
+image tags.
 
 **Processing.**
 

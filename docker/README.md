@@ -68,6 +68,15 @@ The tag workflow mechanically publishes the two-platform manifest and attaches
 digests, to the GitHub release. The release-contract checker fails if that job,
 either required platform, or the digest evidence artifact disappears.
 
+### 0.18.3 (PostgreSQL 19 RC 1), 2026-11-07
+
+`Dockerfile.postgres` is unchanged since 0.18.2, and its pins were re-verified:
+- **Base image.** The `19rc1-trixie` amd64 and arm64 children are still the pinned ones, and
+  there is no RC 2 or GA image.
+- **PGDG packages.** pgvector `0.8.6-1.pgdg13+2` and pg_partman `5.5.0-1.pgdg13+1` resolve.
+- **pg_textsearch.** `v1.5.1` is still the latest release, and the source archive checksum
+  matches.
+
 ### 0.18.2 (PostgreSQL 19 RC 1), 2026-11-07
 
 `Dockerfile.postgres` is unchanged since 0.18.1, and its pins were re-verified:
