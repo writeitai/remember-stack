@@ -13,7 +13,6 @@ from typing import Literal
 from benchmarks.locomo.ablation import AblationProfile
 from benchmarks.locomo.ablation import review_retrieval_ablation
 from benchmarks.locomo.ablation import run_retrieval_ablation
-from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -122,17 +121,22 @@ def main(argv: list[str] | None = None) -> int:
             answer_provider = (
                 None
                 if profile.startswith("codex-")
-                else _seat_provider(recorder=recorder)
+                else _provider(run_dir=args.run, stage="answer", recorder=recorder)
             )
-            judge_provider = _seat_provider(recorder=recorder)
-            if profile in {"codex-p3-mcp", "mcp", "mcp-p3"}:
-                with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
+            judge_provider = _provider(
+                run_dir=args.run, stage="judge", recorder=recorder
+            )
+            if profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}:
+                with MemoryClient(
+                    timeout=run_api_timeout_seconds(run_dir=args.run)
+                ) as client:
                     summary = run_retrieval_ablation(
                         run_dir=args.run,
                         sample_id=args.sample,
                         profile=profile,
                         output=args.output,
                         p3_root=args.p3_root,
+                        answer_prompt=args.answer_prompt,
                         max_questions=args.max_questions,
                         max_agent_calls=args.max_agent_calls,
                         max_judge_calls=args.max_judge_calls,
@@ -149,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
                     profile=profile,
                     output=args.output,
                     p3_root=args.p3_root,
+                    answer_prompt=args.answer_prompt,
                     max_questions=args.max_questions,
                     max_agent_calls=args.max_agent_calls,
                     max_judge_calls=args.max_judge_calls,
@@ -341,14 +346,19 @@ def _parser() -> argparse.ArgumentParser:
     _run_and_sample(ablation)
     ablation.add_argument(
         "--profile",
-        choices=("codex-p3", "codex-p3-mcp", "mcp", "mcp-p3"),
+        choices=("codex-p3", "codex-p3-mcp", "mcp", "mcp-p3", "full"),
         required=True,
     )
     ablation.add_argument("--output", type=Path, required=True)
     ablation.add_argument(
         "--p3-root",
         type=Path,
-        help="ordinary local P3 directory; required only by profiles containing p3",
+        help="ordinary local P3 directory; required by full and profiles containing p3",
+    )
+    ablation.add_argument(
+        "--answer-prompt",
+        type=Path,
+        help="UTF-8 answer template for the full profile; frozen into the output",
     )
     ablation.add_argument(
         "--max-questions",

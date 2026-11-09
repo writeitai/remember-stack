@@ -6176,6 +6176,15 @@ an [unchosen proposal](design/proposals/grouped_fact_adjudication.md).
 
 ## D124. Compare local P3 and the OSS MCP surface without reprocessing
 
+**Answer-prompt amendment, 2026-11-09:** extend the same independent runner
+with a `full` profile over the exact source-pinned SDK/P3 surface. Freeze an
+optional answer template in each output and keep the source models, budgets,
+judge and original artifacts unchanged. This replaces the four-profile-only
+scope; the existing access comparisons retain their contracts. Live readiness
+comparison ignores probe timestamps, not serving identity. See the updated
+[design](plan/designs/locomo_retrieval_ablation_design.md#61-full-surface-answer-prompt-trials)
+and [analysis](plan/analysis/locomo_answer_prompt_trials.md).
+
 **Status:** accepted 2026-09-14, binding when merged. Add an explicitly
 experimental, resumable answer-and-judge runner over one already-processed
 LoCoMo sample. Its four profiles are native Codex with local P3, native Codex

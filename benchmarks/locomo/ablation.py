@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from string import Formatter
 import sys
 import time
 from typing import Annotated
@@ -38,6 +39,7 @@ from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import protocol_for_key
+from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.retrieval import assured_tool_catalog
 from benchmarks.locomo.retrieval import p3_tool_catalog
 from benchmarks.locomo.retrieval import P3Mount
@@ -49,6 +51,7 @@ from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.models import ContextBundleV2
 from remember.models import Envelope
+from remember.models import PipelineReadinessReport
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
 from rememberstack.adapters import CodexSubscriptionAuditError
@@ -63,12 +66,13 @@ from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 
-AblationProfile = Literal["codex-p3", "codex-p3-mcp", "mcp", "mcp-p3"]
+AblationProfile = Literal["codex-p3", "codex-p3-mcp", "mcp", "mcp-p3", "full"]
 AuditStatus = Literal["not_required", "pending", "clean", "invalid"]
 
 _CONFIG_FILE: Final = "ablation.json"
 _STATE_FILE: Final = "state.json"
 _SUMMARY_FILE: Final = "summary.json"
+_PROMPT_FILE: Final = "answer-prompt.txt"
 _SCHEMA: Final = "LoCoMoRetrievalAblation/v1"
 _CODEX_MODEL: Final = "gpt-5.6-luna"
 _MCP_MODEL: Final = "openai/gpt-5.6-luna"
@@ -198,7 +202,7 @@ class AblationConfiguration(_FrozenModel):
     item_ids: tuple[str, ...]
     profile: AblationProfile
     answer_provider: Literal["codex_subscription", "openrouter"]
-    answer_model: Literal["gpt-5.6-luna", "openai/gpt-5.6-luna"]
+    answer_model: Annotated[str, Field(min_length=1)]
     answer_reasoning_effort: Literal["high"] = _ANSWER_REASONING
     answer_temperature: float | None
     answer_prompt_sha256: str
@@ -220,6 +224,7 @@ class ActionUsage(_FrozenModel):
     total: int = Field(ge=0)
     shell: int = Field(ge=0)
     mcp: int = Field(ge=0)
+    direct: int = Field(default=0, ge=0)
 
 
 class AblationState(BaseModel):
@@ -266,6 +271,7 @@ class AblationSummary(_FrozenModel):
     runtime_actions: int = Field(ge=0)
     shell_actions: int = Field(ge=0)
     mcp_actions: int = Field(ge=0)
+    direct_actions: int = Field(default=0, ge=0)
     questions_using_mcp: int = Field(ge=0)
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)
@@ -350,9 +356,17 @@ def run_retrieval_ablation(
     answer_provider: ModelProviderPort | None,
     judge_provider: ModelProviderPort,
     client: MemoryClient | None,
+    answer_prompt: Path | None = None,
 ) -> AblationSummary:
-    """Run or resume one four-arm answer-and-judge experiment."""
-    context = runner._load_run(run_dir=run_dir)  # noqa: SLF001
+    """Run or resume an isolated access or full-surface prompt experiment."""
+    if answer_prompt is not None and profile != "full":
+        raise runner.ExecutionGuardError("--answer-prompt requires --profile full")
+    prompt_template = (
+        answer_prompt.read_bytes().decode("utf-8")
+        if answer_prompt is not None
+        else _answer_template(profile=profile)
+    )
+    context = runner._load_run(run_dir=run_dir, current_pins=False)  # noqa: SLF001
     questions = runner._sample_questions(  # noqa: SLF001
         context=context, sample_id=sample_id
     )
@@ -387,10 +401,10 @@ def run_retrieval_ablation(
         raise runner.ExecutionGuardError("source readiness has no P3 version")
 
     needs_mcp = profile in {"codex-p3-mcp", "mcp", "mcp-p3"}
-    needs_p3 = profile in {"codex-p3", "codex-p3-mcp", "mcp-p3"}
+    needs_p3 = profile in {"codex-p3", "codex-p3-mcp", "mcp-p3", "full"}
     server: EngineMcpServer | None = None
     mcp_tools: tuple[ToolDescriptor, ...] = ()
-    if needs_mcp:
+    if needs_mcp or profile == "full":
         if client is None:
             raise runner.ExecutionGuardError("this profile requires a live SDK client")
         _guard_live_source(
@@ -400,8 +414,15 @@ def run_retrieval_ablation(
             checkpointed=checkpointed,
             client=client,
         )
-        server = EngineMcpServer(client=client, read_only=True, path_ingest=False)
-        mcp_tools = _mcp_catalog(server=server)
+        if profile == "full":
+            _guard_full_contract(context=context)
+            mcp_tools = runner._require_current_query_surface(  # noqa: SLF001
+                context=context, client=client
+            )
+            _validate_full_prompt(template=prompt_template, tools=mcp_tools)
+        else:
+            server = EngineMcpServer(client=client, read_only=True, path_ingest=False)
+            mcp_tools = _mcp_catalog(server=server)
 
     mount: P3Mount | None = None
     if needs_p3:
@@ -420,6 +441,7 @@ def run_retrieval_ablation(
             profile=profile,
             p3_version=p3_version if needs_p3 else None,
             mcp_tools=mcp_tools,
+            prompt_template=prompt_template,
         )
         _run_answers(
             output=output,
@@ -431,11 +453,13 @@ def run_retrieval_ablation(
             mount=mount,
             server=server,
             mcp_tools=mcp_tools,
+            prompt_template=prompt_template,
+            client=client,
             answer_provider=answer_provider,
             max_agent_calls=max_agent_calls,
             max_evaluator_cost_usd=max_evaluator_cost_usd,
         )
-        if needs_mcp:
+        if needs_mcp or profile == "full":
             assert client is not None
             _guard_live_source(
                 context=context,
@@ -444,6 +468,8 @@ def run_retrieval_ablation(
                 checkpointed=checkpointed,
                 client=client,
             )
+            if profile == "full":
+                runner._require_current_query_surface(context=context, client=client)  # noqa: SLF001
         _run_judges(
             output=output,
             configuration=configuration,
@@ -559,7 +585,7 @@ def _guard_live_source(
     context: _SourceContext,
     sample_id: str,
     version_ids: tuple[UUID, ...],
-    checkpointed: object,
+    checkpointed: PipelineReadinessReport,
     client: MemoryClient,
 ) -> None:
     """Require the live MCP deployment to remain the exact processed source."""
@@ -571,7 +597,9 @@ def _guard_live_source(
             pipeline=True, p1=True, live_graph=True, p3=True
         ),
     )
-    if live != checkpointed or not runner._readiness_matches_protocol(  # noqa: SLF001
+    if runner._readiness_fingerprint(readiness=live) != (  # noqa: SLF001
+        runner._readiness_fingerprint(readiness=checkpointed)  # noqa: SLF001
+    ) or not runner._readiness_matches_protocol(  # noqa: SLF001
         readiness=live,
         version_ids=set(version_ids),
         repository_revision=configuration.repository_revision,
@@ -595,6 +623,59 @@ def _guard_live_source(
     )
 
 
+def _guard_full_contract(*, context: _SourceContext) -> None:
+    """Keep the full profile's non-prompt model and judge contracts unchanged."""
+    source = context.configuration
+    canonical = protocol_for_key(DEFAULT_PROTOCOL_KEY)
+    expected = {
+        "answer_agent_model": canonical.answer_agent_model,
+        "answer_agent_reasoning_effort": canonical.answer_agent_reasoning_effort,
+        "answer_agent_temperature": canonical.answer_agent_temperature,
+        "answer_schema_sha256": _schema_hash(model=canonical.answer_schema),
+        "execution_profile": canonical.execution_profile,
+        "max_tool_calls_per_question": canonical.max_tool_calls_per_question,
+        "max_agent_calls_per_question": canonical.max_agent_calls_per_question,
+        "answer_reader_retry_budget": canonical.answer_reader_retry_budget,
+        "answer_word_cap": canonical.answer_word_cap,
+        "judge_model": canonical.judge_model,
+        "judge_reasoning_effort": canonical.judge_reasoning_effort,
+        "judge_temperature": canonical.judge_temperature,
+        "judge_prompt_sha256": prompt_sha256(template=canonical.judge_prompt_template),
+        "judge_schema_sha256": _schema_hash(model=canonical.judge_schema),
+        "judge_repetitions": canonical.judge_repetitions,
+    }
+    for field, value in expected.items():
+        if getattr(source, field) != value:
+            raise runner.ExecutionGuardError(f"full profile source {field} changed")
+
+
+def _validate_full_prompt(*, template: str, tools: tuple[ToolDescriptor, ...]) -> None:
+    """Reject malformed or incomplete full templates before paid model calls."""
+    required = {
+        "question",
+        "tools",
+        "trace",
+        "guard_feedback",
+        "answer_word_cap_instruction",
+    }
+    try:
+        fields = {
+            field
+            for _text, field, _spec, _conversion in Formatter().parse(template)
+            if field is not None
+        }
+        if fields != required:
+            raise ValueError("use exactly the canonical answer-template placeholders")
+        render_answer_agent_prompt(
+            question="Validate template formatting.",
+            tools=tools,
+            trace=(),
+            template=template,
+        )
+    except (KeyError, ValueError, IndexError, AttributeError) as error:
+        raise runner.ExecutionGuardError(f"invalid answer template: {error}") from error
+
+
 def _load_or_create_output(
     *,
     output: Path,
@@ -604,6 +685,7 @@ def _load_or_create_output(
     profile: AblationProfile,
     p3_version: str | None,
     mcp_tools: tuple[ToolDescriptor, ...],
+    prompt_template: str | None = None,
 ) -> tuple[AblationConfiguration, AblationState]:
     """Create one immutable experiment identity or validate its exact resume."""
     if (output / _CONFIG_FILE).exists():
@@ -615,6 +697,7 @@ def _load_or_create_output(
             profile=profile,
             p3_version=p3_version,
             mcp_tools=mcp_tools,
+            prompt_template=prompt_template,
         )
         persisted = configuration.model_dump(
             mode="python", exclude={"created_at", "fingerprint"}
@@ -625,6 +708,11 @@ def _load_or_create_output(
             or state.fingerprint != configuration.fingerprint
         ):
             raise runner.BenchmarkRunError("ablation output identity changed")
+        if (
+            profile == "full"
+            and (output / _PROMPT_FILE).read_bytes().decode("utf-8") != prompt_template
+        ):
+            raise runner.BenchmarkRunError("frozen answer prompt changed")
         _validate_state(state=state, questions=questions, configuration=configuration)
         return configuration, state
     if output.exists() and any(output.iterdir()):
@@ -636,6 +724,7 @@ def _load_or_create_output(
         profile=profile,
         p3_version=p3_version,
         mcp_tools=mcp_tools,
+        prompt_template=prompt_template,
     )
     configuration = AblationConfiguration.model_validate(
         {
@@ -653,8 +742,14 @@ def _load_or_create_output(
         ),
         audit_status=("pending" if profile.startswith("codex-") else "not_required"),
     )
-    _atomic_model(path=output / _CONFIG_FILE, value=configuration)
+    if profile == "full":
+        assert prompt_template is not None
+        output.mkdir(parents=True, exist_ok=True)
+        temporary = output / f".{_PROMPT_FILE}.tmp"
+        temporary.write_bytes(prompt_template.encode("utf-8"))
+        temporary.replace(output / _PROMPT_FILE)
     _atomic_model(path=output / _STATE_FILE, value=state)
+    _atomic_model(path=output / _CONFIG_FILE, value=configuration)
     return configuration, state
 
 
@@ -708,12 +803,17 @@ def _configuration_base(
     profile: AblationProfile,
     p3_version: str | None,
     mcp_tools: tuple[ToolDescriptor, ...],
+    prompt_template: str | None = None,
 ) -> dict[str, object]:
     """Return every immutable ablation field except time and fingerprint."""
     source = context.configuration
     canonical = protocol_for_key(DEFAULT_PROTOCOL_KEY)
     native = profile.startswith("codex-")
-    prompt_template = _answer_template(profile=profile)
+    prompt_template = (
+        prompt_template
+        if prompt_template is not None
+        else _answer_template(profile=profile)
+    )
     answer_schema: type[BaseModel] = NativeAnswer if native else AnswerAgentStep
     visible_mcp_tools = (
         (*mcp_tools, *p3_tool_catalog()) if profile == "mcp-p3" else mcp_tools
@@ -729,9 +829,21 @@ def _configuration_base(
         "item_ids": tuple(question.item_id for question in questions),
         "profile": profile,
         "answer_provider": "codex_subscription" if native else "openrouter",
-        "answer_model": _CODEX_MODEL if native else _MCP_MODEL,
+        "answer_model": (
+            source.answer_agent_model
+            if profile == "full"
+            else _CODEX_MODEL
+            if native
+            else _MCP_MODEL
+        ),
         "answer_reasoning_effort": _ANSWER_REASONING,
-        "answer_temperature": None if native else 0.0,
+        "answer_temperature": (
+            source.answer_agent_temperature
+            if profile == "full"
+            else None
+            if native
+            else 0.0
+        ),
         "answer_prompt_sha256": hashlib.sha256(
             prompt_template.encode("utf-8")
         ).hexdigest(),
@@ -743,7 +855,9 @@ def _configuration_base(
         "judge_prompt_sha256": prompt_sha256(template=canonical.judge_prompt_template),
         "judge_schema_sha256": _schema_hash(model=canonical.judge_schema),
         "mcp_catalog_sha256": (
-            _catalog_hash(tools=visible_mcp_tools) if visible_mcp_tools else None
+            _catalog_hash(tools=visible_mcp_tools)
+            if visible_mcp_tools and profile != "full"
+            else None
         ),
         "p3_version": p3_version,
     }
@@ -760,6 +874,8 @@ def _run_answers(
     mount: P3Mount | None,
     server: EngineMcpServer | None,
     mcp_tools: tuple[ToolDescriptor, ...],
+    prompt_template: str,
+    client: MemoryClient | None,
     answer_provider: ModelProviderPort | None,
     max_agent_calls: int,
     max_evaluator_cost_usd: Decimal,
@@ -807,6 +923,40 @@ def _run_answers(
                     max_agent_calls=max_agent_calls,
                     max_evaluator_cost_usd=max_evaluator_cost_usd,
                 )
+            elif profile == "full":
+                if client is None or answer_provider is None or mount is None:
+                    raise runner.BenchmarkRunError(
+                        "full profile lost its providers or P3"
+                    )
+                source = context.configuration
+                record = runner._answer_one(  # noqa: SLF001
+                    question=question,
+                    client=client,
+                    provider=answer_provider,
+                    tools=mcp_tools,
+                    doc_sessions=doc_sessions,
+                    state=state.run_state,
+                    max_agent_calls=max_agent_calls,
+                    max_evaluator_cost_usd=max_evaluator_cost_usd,
+                    answer_agent_model=source.answer_agent_model,
+                    answer_agent_temperature=source.answer_agent_temperature,
+                    answer_agent_reasoning_effort=source.answer_agent_reasoning_effort,
+                    max_tool_calls_per_question=source.max_tool_calls_per_question,
+                    max_agent_calls_per_question=source.max_agent_calls_per_question,
+                    answer_reader_retry_budget=source.answer_reader_retry_budget,
+                    answer_word_cap=source.answer_word_cap,
+                    retrieval_budget=source.retrieval_budget,
+                    answer_schema=AnswerAgentStep,
+                    answer_prompt_template=prompt_template,
+                    p3=mount,
+                )
+                actions = ActionUsage(
+                    item_id=question.item_id,
+                    total=len(record.tool_calls),
+                    shell=0,
+                    mcp=0,
+                    direct=len(record.tool_calls),
+                )
             else:
                 if server is None or answer_provider is None:
                     raise runner.BenchmarkRunError("MCP profile lost its providers")
@@ -836,7 +986,7 @@ def _run_answers(
                     max_agent_calls_per_question=_MAX_AGENT_CALLS_PER_QUESTION,
                     answer_reader_retry_budget=_ANSWER_RETRY_BUDGET,
                     answer_schema=AnswerAgentStep,
-                    answer_prompt_template=_answer_template(profile=profile),
+                    answer_prompt_template=prompt_template,
                     mcp_tool_shape=True,
                     require_content_before_answer=True,
                     p3=cast(P3Mount, p3_facade),
@@ -1141,6 +1291,7 @@ def _summarize(
         runtime_actions=sum(value.total for value in action_values),
         shell_actions=sum(value.shell for value in action_values),
         mcp_actions=sum(value.mcp for value in action_values),
+        direct_actions=sum(value.direct for value in action_values),
         questions_using_mcp=sum(value.mcp > 0 for value in action_values),
         tokens_in=sum(usage.tokens_in for usage in usages),
         tokens_out=sum(usage.tokens_out for usage in usages),
@@ -1262,6 +1413,8 @@ def _codex_mcp_overrides(*, tool_names: frozenset[str]) -> tuple[str, ...]:
 
 def _answer_template(*, profile: AblationProfile) -> str:
     """Return the exact route-specific prompt template bound by the run."""
+    if profile == "full":
+        return protocol_for_key(DEFAULT_PROTOCOL_KEY).answer_prompt_template
     if profile == "mcp-p3":
         template = _MCP_P3_PROMPT
     elif profile == "mcp":

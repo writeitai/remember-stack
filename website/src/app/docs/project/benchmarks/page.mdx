@@ -323,3 +323,29 @@ LOCOMO_PROTOCOL=full-v40 LOCOMO_MAX_EVALUATOR_COST_USD=60 \
 It takes a comma-separated list of conversation ids. Its limits (tier,
 questions, calls, cost, drain timeout) are set with `LOCOMO_*` environment
 variables at the top of the script.
+
+### Compare answer prompts without ingestion
+
+Use `retrieval-ablation --profile full` to re-answer one completely processed
+sample with the same live store, source-pinned 22 SDK/P3 tools, Luna settings,
+retrieval budget, call limits, and canonical judge. An optional UTF-8
+`--answer-prompt` file uses the existing answer-template format placeholders.
+Without it, the current canonical template is used.
+
+```bash
+uv run python -m benchmarks.locomo retrieval-ablation \
+  --run .benchmark-runs/development --sample conv-47 --profile full \
+  --p3-root /path/to/p3 --answer-prompt /path/to/answer-template.txt \
+  --output .benchmark-runs/prompt-trial-1 --max-questions 20 \
+  --max-agent-calls 180 --max-judge-calls 20 \
+  --max-evaluator-cost-usd 2 --execute
+```
+
+The output saves the frozen template, its hash, source and runner revisions,
+complete new answers/tool traces/grades, usage, and summary. It leaves the source
+run untouched. Identical commands resume missing work; changed prompts or
+source identity require a new output directory. Live readiness, exact ingests,
+models, query surface and P3 must still match. The source judge prompt/schema
+must equal the current judge. These are development trials; retain every trial
+and do not report a selected trial as held-out evaluation. Archive the output
+alongside the processed-store backups.

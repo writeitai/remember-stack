@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from benchmarks.locomo import ablation
+from benchmarks.locomo import cli
 from benchmarks.locomo import runner
 from benchmarks.locomo.cli import _parser
 from benchmarks.locomo.model import AnswerRecord
@@ -18,8 +19,13 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import RunState
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
+from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import JUDGE_MODEL
+from benchmarks.locomo.protocol import prompt_sha256
+from benchmarks.locomo.protocol import protocol_for_key
 from benchmarks.locomo.protocol import PROTOCOL_NAME
+from benchmarks.locomo.protocol import schema_sha256
+from benchmarks.locomo.retrieval import answer_tool_catalog
 from benchmarks.locomo.retrieval import assured_tool_catalog
 from benchmarks.locomo.retrieval import P3Mount
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
@@ -32,9 +38,11 @@ from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool as catalogue_tool
+from remember.models import PipelineReadinessReport
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
 from rememberstack.adapters import CodexSubscriptionAccessError
+from rememberstack.adapters import OpenRouterSettings
 from rememberstack.model import ProviderCallUsage
 from rememberstack.ports import ModelProviderPort
 
@@ -332,12 +340,13 @@ def test_native_access_failure_stops_the_run(
         ("codex-p3-mcp", True, True),
         ("mcp", False, True),
         ("mcp-p3", True, True),
+        ("full", True, True),
     ),
 )
-def test_cli_exposes_the_four_declared_profiles(
+def test_cli_exposes_the_declared_profiles(
     profile: str, needs_p3: bool, needs_mcp: bool
 ) -> None:
-    """One command names all four arms without silently adding another route."""
+    """The full profile also requires the live source and P3 publication."""
     argv = [
         "retrieval-ablation",
         "--run",
@@ -364,7 +373,266 @@ def test_cli_exposes_the_four_declared_profiles(
 
     assert args.profile == profile
     assert (args.p3_root is not None) is needs_p3
-    assert (profile in {"codex-p3-mcp", "mcp", "mcp-p3"}) == needs_mcp
+    assert (profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}) == needs_mcp
+
+
+def test_full_prompt_is_frozen_and_resume_rejects_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prompt trials bind exact bytes and never mutate the original answers."""
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+    context = _SyntheticContext(
+        configuration=_configuration(),
+        state=RunState(protocol_name=PROTOCOL_NAME, protocol_fingerprint="source"),
+    )
+    output = tmp_path / "trial"
+    values = {
+        "output": output,
+        "context": context,
+        "questions": (_question(),),
+        "sample_id": "conv-test",
+        "profile": "full",
+        "p3_version": "p3-v1",
+        "mcp_tools": answer_tool_catalog(),
+        "prompt_template": "Question: {question}\r\n",
+    }
+    configuration, _state = ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
+    assert configuration.answer_model == ANSWER_AGENT_MODEL
+    assert configuration.source_processing_revision == "a" * 40
+    assert configuration.ablation_runner_revision == "b" * 40
+    assert (output / "answer-prompt.txt").read_bytes() == b"Question: {question}\r\n"
+    ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(**{**values, "prompt_template": "Changed"})  # type: ignore[arg-type]  # noqa: SLF001
+    (output / "answer-prompt.txt").write_text("corrupt", encoding="utf-8")
+    with pytest.raises(runner.BenchmarkRunError, match="frozen answer prompt changed"):
+        ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
+    assert context.state.answers == {}
+
+
+def test_full_profile_calls_the_native_loop_with_source_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The experiment changes only the template, not access, models or depth."""
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+    question = _question()
+    context = _SyntheticContext(
+        configuration=_configuration(),
+        state=RunState(protocol_name=PROTOCOL_NAME, protocol_fingerprint="source"),
+    )
+    output = tmp_path / "trial"
+    tools = answer_tool_catalog()
+    configuration, state = ablation._load_or_create_output(  # noqa: SLF001
+        output=output,
+        context=context,
+        questions=(question,),
+        sample_id="conv-test",
+        profile="full",
+        p3_version="p3-v1",
+        mcp_tools=tools,
+        prompt_template="General candidate: {question}",
+    )
+    observed: dict[str, object] = {}
+
+    def capture_answer(**values: object) -> AnswerRecord:
+        """Capture the native call without any paid provider requests."""
+        observed.update(values)
+        return _answer(question=question)
+
+    monkeypatch.setattr(runner, "_answer_one", capture_answer)
+    client = cast(MemoryClient, object())
+    mount = cast(P3Mount, object())
+    ablation._run_answers(  # noqa: SLF001
+        output=output,
+        configuration=configuration,
+        state=state,
+        questions=(question,),
+        context=context,
+        profile="full",
+        mount=mount,
+        server=None,
+        mcp_tools=tools,
+        prompt_template="General candidate: {question}",
+        client=client,
+        answer_provider=cast(ModelProviderPort, object()),
+        max_agent_calls=9,
+        max_evaluator_cost_usd=Decimal("1"),
+    )
+    assert observed["client"] is client
+    assert observed["p3"] is mount
+    assert observed["tools"] == tools and len(tools) == 22
+    assert observed["answer_agent_model"] == context.configuration.answer_agent_model
+    assert observed["answer_agent_reasoning_effort"] == "high"
+    assert observed["retrieval_budget"] == context.configuration.retrieval_budget
+    assert observed["max_tool_calls_per_question"] == 8
+    assert observed["max_agent_calls_per_question"] == 9
+    assert observed["answer_reader_retry_budget"] == 2
+    assert observed["answer_prompt_template"] == "General candidate: {question}"
+    assert "mcp_tool_shape" not in observed
+    assert "require_content_before_answer" not in observed
+    assert tuple(state.run_state.answers) == (question.item_id,)
+    assert context.state.answers == {}
+
+
+def test_full_profile_rejects_judge_drift_and_incomplete_prompts() -> None:
+    """A prompt comparison cannot silently change grading or omit the question."""
+    protocol = protocol_for_key(DEFAULT_PROTOCOL_KEY)
+    source = _configuration().model_copy(
+        update={
+            "execution_profile": protocol.execution_profile,
+            "answer_schema_sha256": schema_sha256(model=protocol.answer_schema),
+            "judge_prompt_sha256": prompt_sha256(
+                template=protocol.judge_prompt_template
+            ),
+            "judge_schema_sha256": schema_sha256(model=protocol.judge_schema),
+        }
+    )
+    context = _SyntheticContext(
+        configuration=source,
+        state=RunState(protocol_name=PROTOCOL_NAME, protocol_fingerprint="source"),
+    )
+    ablation._guard_full_contract(context=context)  # noqa: SLF001
+    context.configuration = source.model_copy(update={"judge_prompt_sha256": "changed"})
+    with pytest.raises(runner.ExecutionGuardError, match="judge_prompt_sha256 changed"):
+        ablation._guard_full_contract(context=context)  # noqa: SLF001
+    ablation._validate_full_prompt(  # noqa: SLF001
+        template=protocol.answer_prompt_template, tools=answer_tool_catalog()
+    )
+    with pytest.raises(runner.ExecutionGuardError, match="invalid answer template"):
+        ablation._validate_full_prompt(template="Answer immediately.", tools=())  # noqa: SLF001
+
+
+def test_full_cli_pins_flex_routing_and_saved_http_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Standalone trials enforce canonical provider routing without ambient exports."""
+    protocol = protocol_for_key(DEFAULT_PROTOCOL_KEY)
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "offline-test")
+    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY", raising=False)
+    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", raising=False)
+    monkeypatch.setattr(cli, "run_protocol", lambda **_values: protocol)
+    monkeypatch.setattr(cli, "run_api_timeout_seconds", lambda **_values: 321.0)
+    monkeypatch.setattr(cli, "build_generation_recorder", lambda **_values: None)
+    settings_seen: list[OpenRouterSettings] = []
+    timeouts: list[float] = []
+
+    def provider(
+        *, settings: OpenRouterSettings, recorder: object
+    ) -> ModelProviderPort:
+        """Capture construction without creating a model client."""
+        settings_seen.append(settings)
+        return cast(ModelProviderPort, object())
+
+    class Client:
+        """Context manager that captures the selected source HTTP budget."""
+
+        def __init__(self, *, timeout: float) -> None:
+            timeouts.append(timeout)
+
+        def __enter__(self) -> "Client":
+            """Expose the fake read client."""
+            return self
+
+        def __exit__(self, *_values: object) -> None:
+            """Close without performing any API operation."""
+
+    monkeypatch.setattr(cli, "OpenRouterModelProvider", provider)
+    monkeypatch.setattr(cli, "MemoryClient", Client)
+    monkeypatch.setattr(
+        cli,
+        "run_retrieval_ablation",
+        lambda **_values: SimpleNamespace(model_dump_json=lambda: "{}"),
+    )
+    assert (
+        cli.main(
+            [
+                "retrieval-ablation",
+                "--run",
+                "/tmp/source",
+                "--sample",
+                "conv-test",
+                "--profile",
+                "full",
+                "--output",
+                "/tmp/trial",
+                "--p3-root",
+                "/tmp/p3",
+                "--max-questions",
+                "20",
+                "--max-agent-calls",
+                "180",
+                "--max-judge-calls",
+                "20",
+                "--max-evaluator-cost-usd",
+                "2",
+                "--execute",
+            ]
+        )
+        == 0
+    )
+    assert len(settings_seen) == 2
+    for settings in settings_seen:
+        assert settings.chat_provider_only == ["openai/flex", "openai"]
+        assert settings.chat_provider_order == ["openai/flex", "openai"]
+    assert timeouts == [321.0]
+
+
+@pytest.mark.parametrize("drift", (False, True))
+def test_live_source_ignores_probe_time_but_rejects_serving_drift(
+    monkeypatch: pytest.MonkeyPatch, drift: bool
+) -> None:
+    """A fresh observation is compatible; a changed build still blocks spending."""
+    timestamp = "2026-09-14T12:00:00Z"
+    checkpointed = PipelineReadinessReport.model_validate(
+        {
+            "ready": True,
+            "versions": [],
+            "build_revision": "a" * 40,
+            "capabilities": {
+                name: {
+                    "required": True,
+                    "ready": True,
+                    "checked_at": timestamp,
+                    "reason": "ready",
+                }
+                for name in ("pipeline", "p1", "live_graph", "p3")
+            },
+        }
+    )
+    payload = checkpointed.model_dump(mode="json")
+    for capability in payload["capabilities"].values():
+        capability["checked_at"] = "2026-09-14T12:01:00Z"
+    if drift:
+        payload["build_revision"] = "c" * 40
+    live = PipelineReadinessReport.model_validate(payload)
+    client = SimpleNamespace(
+        pipeline_readiness=lambda **_values: live,
+        describe_query_space=lambda: {"surface_manifest_hash": "surface-hash"},
+        list_operations=assured_tool_catalog,
+    )
+    context = _SyntheticContext(
+        configuration=_configuration(),
+        state=RunState(protocol_name=PROTOCOL_NAME, protocol_fingerprint="source"),
+    )
+    monkeypatch.setattr(runner, "_readiness_matches_protocol", lambda **_values: True)
+    monkeypatch.setattr(runner, "_require_exact_live_ingests", lambda **_values: None)
+    if drift:
+        with pytest.raises(runner.ExecutionGuardError, match="live readiness differs"):
+            ablation._guard_live_source(  # noqa: SLF001
+                context=context,
+                sample_id="conv-test",
+                version_ids=(),
+                checkpointed=checkpointed,
+                client=cast(MemoryClient, client),
+            )
+    else:
+        ablation._guard_live_source(  # noqa: SLF001
+            context=context,
+            sample_id="conv-test",
+            version_ids=(),
+            checkpointed=checkpointed,
+            client=cast(MemoryClient, client),
+        )
 
 
 def test_ablation_output_resumes_without_touching_source_state(
