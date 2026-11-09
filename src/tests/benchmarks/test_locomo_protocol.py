@@ -368,7 +368,9 @@ def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     assert "caused, enabled, or motivated the outcome" in normalized_prompt
     assert 'answer "Likely no"' in normalized_prompt
     assert 'answer "Likely yes"' in normalized_prompt
-    assert "qualify it as likely or possible rather than abstaining" in normalized_prompt
+    assert (
+        "qualify it as likely or possible rather than abstaining" in normalized_prompt
+    )
     assert "multiple distinct values that directly satisfy the question" in (
         normalized_prompt
     )
