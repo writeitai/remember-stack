@@ -193,7 +193,7 @@ from readiness.
 ## Retrieval-access ablations (development only)
 
 The additive D124 runner reuses one completely processed Full-v40 sample and
-compares four answer routes without re-ingesting it:
+compares answer routes or full-surface prompt variants without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
 | --- | --- | --- |
@@ -201,6 +201,13 @@ compares four answer routes without re-ingesting it:
 | `codex-p3-mcp` | native Codex subscription | local P3 plus read-only OSS MCP |
 | `mcp` | OpenRouter Luna | read-only OSS MCP only |
 | `mcp-p3` | OpenRouter Luna | read-only OSS MCP plus bounded P3-like tools |
+| `full` | source-pinned canonical Luna | all 22 SDK/P3 tools, optional frozen `--answer-prompt` template |
+
+The `full` profile keeps source models, retrieval budgets, judge and call limits;
+it saves exact prompt bytes plus independent answers/traces/grades. Use a new
+output for each template; identical inputs resume missing work. Provider routing
+uses the canonical Flex-to-normal OpenAI allowlist, and HTTP timeout comes from
+the saved source. Keep all trials and report them as development results.
 
 This starts with OSS artifacts only. P3 is already an ordinary published
 directory, so copy it from the benchmark host or restore it with the existing
@@ -213,7 +220,7 @@ test -s /local/conv-42-p3/.snapshot-version
 ```
 
 Run one profile into its own empty output directory. The P3 argument is required
-only for profile names containing `p3`:
+for `full` and profile names containing `p3`:
 
 ```bash
 uv run --extra benchmark python -m benchmarks.locomo retrieval-ablation \

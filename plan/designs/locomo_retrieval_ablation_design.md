@@ -246,6 +246,11 @@ current canonical template. Resume requires the same input template and the
 same saved bytes, as well as the unchanged experiment identity. An incomplete
 or corrupted output fails closed rather than adopting a different prompt.
 
+Provider composition enforces the canonical Flex-to-normal OpenAI allowlist
+and order; transport uses the saved source HTTP timeout. The source execution
+profile, call/retry limits, word cap, and judge repetition count must match the
+canonical contract.
+
 The source run is loaded with immutable recorded pins, rather than demanding
 that its original answer prompt match the experiment runner. Source integrity,
 current compatible ingestion generations, live build identity, models, all
@@ -292,7 +297,7 @@ Codex output as a comparable result.
 
 No profile triggers ingestion or P3 publication. `codex-*` answer calls report
 subscription tokens and zero provider-reported marginal USD, with the existing
-warning that zero is not free. `mcp-*` answers and every judge use the pinned
+warning that zero is not free. `mcp-*`/`full` answers and every judge use the pinned
 OpenRouter seats and shared reported-spend ceiling. All calls remain bounded by
 explicit run-absolute ceilings.
 
@@ -315,7 +320,7 @@ not accepted in this experiment.
 
 The implementation is complete only when tests prove:
 
-1. all four profiles expose exactly their declared access paths;
+1. all access-comparison profiles expose exactly their declared access paths;
 2. MCP definitions omit result schemas and write tools;
 3. MCP error bits and decoded content drive trace, error and `Unknown`
    classification correctly;

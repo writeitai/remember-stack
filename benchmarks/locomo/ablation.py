@@ -632,11 +632,17 @@ def _guard_full_contract(*, context: _SourceContext) -> None:
         "answer_agent_reasoning_effort": canonical.answer_agent_reasoning_effort,
         "answer_agent_temperature": canonical.answer_agent_temperature,
         "answer_schema_sha256": _schema_hash(model=canonical.answer_schema),
+        "execution_profile": canonical.execution_profile,
+        "max_tool_calls_per_question": canonical.max_tool_calls_per_question,
+        "max_agent_calls_per_question": canonical.max_agent_calls_per_question,
+        "answer_reader_retry_budget": canonical.answer_reader_retry_budget,
+        "answer_word_cap": canonical.answer_word_cap,
         "judge_model": canonical.judge_model,
         "judge_reasoning_effort": canonical.judge_reasoning_effort,
         "judge_temperature": canonical.judge_temperature,
         "judge_prompt_sha256": prompt_sha256(template=canonical.judge_prompt_template),
         "judge_schema_sha256": _schema_hash(model=canonical.judge_schema),
+        "judge_repetitions": canonical.judge_repetitions,
     }
     for field, value in expected.items():
         if getattr(source, field) != value:
@@ -736,11 +742,14 @@ def _load_or_create_output(
         ),
         audit_status=("pending" if profile.startswith("codex-") else "not_required"),
     )
-    _atomic_model(path=output / _CONFIG_FILE, value=configuration)
-    _atomic_model(path=output / _STATE_FILE, value=state)
     if profile == "full":
         assert prompt_template is not None
-        (output / _PROMPT_FILE).write_bytes(prompt_template.encode("utf-8"))
+        output.mkdir(parents=True, exist_ok=True)
+        temporary = output / f".{_PROMPT_FILE}.tmp"
+        temporary.write_bytes(prompt_template.encode("utf-8"))
+        temporary.replace(output / _PROMPT_FILE)
+    _atomic_model(path=output / _STATE_FILE, value=state)
+    _atomic_model(path=output / _CONFIG_FILE, value=configuration)
     return configuration, state
 
 

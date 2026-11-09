@@ -13,7 +13,6 @@ from typing import Literal
 from benchmarks.locomo.ablation import AblationProfile
 from benchmarks.locomo.ablation import review_retrieval_ablation
 from benchmarks.locomo.ablation import run_retrieval_ablation
-from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -122,11 +121,15 @@ def main(argv: list[str] | None = None) -> int:
             answer_provider = (
                 None
                 if profile.startswith("codex-")
-                else _seat_provider(recorder=recorder)
+                else _provider(run_dir=args.run, stage="answer", recorder=recorder)
             )
-            judge_provider = _seat_provider(recorder=recorder)
+            judge_provider = _provider(
+                run_dir=args.run, stage="judge", recorder=recorder
+            )
             if profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}:
-                with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
+                with MemoryClient(
+                    timeout=run_api_timeout_seconds(run_dir=args.run)
+                ) as client:
                     summary = run_retrieval_ablation(
                         run_dir=args.run,
                         sample_id=args.sample,

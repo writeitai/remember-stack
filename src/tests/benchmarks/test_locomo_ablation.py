@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from benchmarks.locomo import ablation
+from benchmarks.locomo import cli
 from benchmarks.locomo import runner
 from benchmarks.locomo.cli import _parser
 from benchmarks.locomo.model import AnswerRecord
@@ -41,6 +42,7 @@ from remember.models import PipelineReadinessReport
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
 from rememberstack.adapters import CodexSubscriptionAccessError
+from rememberstack.adapters import OpenRouterSettings
 from rememberstack.model import ProviderCallUsage
 from rememberstack.ports import ModelProviderPort
 
@@ -477,6 +479,7 @@ def test_full_profile_rejects_judge_drift_and_incomplete_prompts() -> None:
     protocol = protocol_for_key(DEFAULT_PROTOCOL_KEY)
     source = _configuration().model_copy(
         update={
+            "execution_profile": protocol.execution_profile,
             "answer_schema_sha256": schema_sha256(model=protocol.answer_schema),
             "judge_prompt_sha256": prompt_sha256(
                 template=protocol.judge_prompt_template
@@ -497,6 +500,81 @@ def test_full_profile_rejects_judge_drift_and_incomplete_prompts() -> None:
     )
     with pytest.raises(runner.ExecutionGuardError, match="invalid answer template"):
         ablation._validate_full_prompt(template="Answer immediately.", tools=())  # noqa: SLF001
+
+
+def test_full_cli_pins_flex_routing_and_saved_http_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Standalone trials enforce canonical provider routing without ambient exports."""
+    protocol = protocol_for_key(DEFAULT_PROTOCOL_KEY)
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "offline-test")
+    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY", raising=False)
+    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", raising=False)
+    monkeypatch.setattr(cli, "run_protocol", lambda **_values: protocol)
+    monkeypatch.setattr(cli, "run_api_timeout_seconds", lambda **_values: 321.0)
+    monkeypatch.setattr(cli, "build_generation_recorder", lambda **_values: None)
+    settings_seen: list[OpenRouterSettings] = []
+    timeouts: list[float] = []
+
+    def provider(
+        *, settings: OpenRouterSettings, recorder: object
+    ) -> ModelProviderPort:
+        """Capture construction without creating a model client."""
+        settings_seen.append(settings)
+        return cast(ModelProviderPort, object())
+
+    class Client:
+        """Context manager that captures the selected source HTTP budget."""
+
+        def __init__(self, *, timeout: float) -> None:
+            timeouts.append(timeout)
+
+        def __enter__(self) -> "Client":
+            """Expose the fake read client."""
+            return self
+
+        def __exit__(self, *_values: object) -> None:
+            """Close without performing any API operation."""
+
+    monkeypatch.setattr(cli, "OpenRouterModelProvider", provider)
+    monkeypatch.setattr(cli, "MemoryClient", Client)
+    monkeypatch.setattr(
+        cli,
+        "run_retrieval_ablation",
+        lambda **_values: SimpleNamespace(model_dump_json=lambda: "{}"),
+    )
+    assert (
+        cli.main(
+            [
+                "retrieval-ablation",
+                "--run",
+                "/tmp/source",
+                "--sample",
+                "conv-test",
+                "--profile",
+                "full",
+                "--output",
+                "/tmp/trial",
+                "--p3-root",
+                "/tmp/p3",
+                "--max-questions",
+                "20",
+                "--max-agent-calls",
+                "180",
+                "--max-judge-calls",
+                "20",
+                "--max-evaluator-cost-usd",
+                "2",
+                "--execute",
+            ]
+        )
+        == 0
+    )
+    assert len(settings_seen) == 2
+    for settings in settings_seen:
+        assert settings.chat_provider_only == ["openai/flex", "openai"]
+        assert settings.chat_provider_order == ["openai/flex", "openai"]
+    assert timeouts == [321.0]
 
 
 @pytest.mark.parametrize("drift", (False, True))
