@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from benchmarks.locomo import cli
@@ -13,6 +14,7 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
+from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
@@ -22,6 +24,8 @@ from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
+from benchmarks.locomo.protocol import protocol_for_key
+from benchmarks.locomo.protocol import protocol_for_name
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.protocol import render_answer_agent_prompt
@@ -339,10 +343,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v39"
-    assert DEFAULT_PROTOCOL_KEY == "full-v39"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v40"
+    assert DEFAULT_PROTOCOL_KEY == "full-v40"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -368,7 +372,9 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "caused, enabled, or motivated the outcome" in normalized_prompt
     assert 'answer "Likely no"' in normalized_prompt
     assert 'answer "Likely yes"' in normalized_prompt
-    assert "evidence gives no direction about that dependency" in normalized_prompt
+    assert (
+        "qualify it as likely or possible rather than abstaining" in normalized_prompt
+    )
     assert "multiple distinct values that directly satisfy the question" in (
         normalized_prompt
     )
@@ -424,6 +430,21 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     )
     assert 'time={"mode": "at", "at": "<timestamp>"}' in rendered
     assert "all_sources" not in prompt
+    assert 'Never finish with "Unknown", "not mentioned", "cannot determine"' in (
+        normalized_prompt
+    )
+    assert 'finish with "Unknown".' not in normalized_prompt
+    assert 'Use "Unknown" only when' not in normalized_prompt
+    assert (
+        "Prefer direct statements, then clear conversational implications, then the most plausible inference"
+        in normalized_prompt
+    )
+    assert 'qualify the answer with "likely" or "possibly"' in normalized_prompt
+    assert (
+        "Do not invent supporting events, quotes, personal details, or certainty"
+        in normalized_prompt
+    )
+    assert "Preserve the question's entity and time constraints" in normalized_prompt
 
 
 def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
@@ -459,10 +480,10 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v39",)
-    protocol = PROTOCOL_REGISTRY["full-v39"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v40",)
+    protocol = PROTOCOL_REGISTRY["full-v40"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v39"
+    assert protocol.name == "RS-LoCoMo-Full-v40"
     assert protocol.answer_agent_model == "openai/gpt-6-luna"
     assert protocol.answer_agent_reasoning_effort == "high"
     assert protocol.judge_reasoning_effort == "high"
@@ -470,6 +491,11 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
     assert protocol.tool_catalog_sha256 == tool_catalog_sha256()
+    for retired_key in ("full-v38", "full-v39"):
+        with pytest.raises(ValueError, match="retired or unknown protocol"):
+            protocol_for_key(cast(ProtocolKey, retired_key))
+    with pytest.raises(ValueError, match="historical protocol.*read-only"):
+        protocol_for_name("RS-LoCoMo-Full-v39")
 
 
 def test_prepare_cli_selects_protocol_only_at_prepare(
@@ -500,7 +526,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v39"]
+    assert selected == ["full-v40"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -675,7 +701,7 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v39")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v40")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 

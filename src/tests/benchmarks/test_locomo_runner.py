@@ -1125,7 +1125,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v39", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
+    (("full-v40", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -2008,7 +2008,7 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v39","protocol_fingerprint":'
+        '{"protocol_name":"RS-LoCoMo-Full-v40","protocol_fingerprint":'
         f'"{prepared.protocol_fingerprint}",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
@@ -2228,7 +2228,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v39"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v40"
     assert prepared.answer_agent_model == "openai/gpt-6-luna"
     assert prepared.answer_agent_reasoning_effort == "high"
     assert prepared.answer_reader_retry_budget == 2
@@ -3546,7 +3546,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v39"]
+    protocol = PROTOCOL_REGISTRY["full-v40"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",
@@ -3707,8 +3707,15 @@ def test_configured_retrieval_depth_reaches_the_api_and_saved_trace() -> None:
     assert requests[0] == {"query": "Where?", "k": 50, "candidate_k": 200}
 
 
+@pytest.mark.parametrize(
+    ("historical_name", "keep_profile"),
+    (("RS-LoCoMo-Full-v38", False), ("RS-LoCoMo-Full-v39", True)),
+)
 def test_historical_protocol_is_read_only_without_an_executable_definition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    historical_name: str,
+    keep_profile: bool,
 ) -> None:
     """Inspect old recorded identities without retaining their execution branches."""
     _patch_prepared_inputs(monkeypatch=monkeypatch)
@@ -3716,15 +3723,17 @@ def test_historical_protocol_is_read_only_without_an_executable_definition(
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
     configuration_path = run_dir / "run.json"
     configuration = json.loads(configuration_path.read_text())
-    configuration.pop("execution_profile")
+    if not keep_profile:
+        configuration.pop("execution_profile")
+        configuration.update(
+            answer_agent_model="openai/gpt-5.6-luna",
+            judge_model="openai/gpt-5.6-luna",
+            answer_agent_reasoning_effort="none",
+            judge_reasoning_effort="none",
+            api_timeout_seconds=60.0,
+        )
     configuration.update(
-        protocol_name="RS-LoCoMo-Full-v38",
-        adapter_version="historical-adapter",
-        answer_agent_model="openai/gpt-5.6-luna",
-        judge_model="openai/gpt-5.6-luna",
-        answer_agent_reasoning_effort="none",
-        judge_reasoning_effort="none",
-        api_timeout_seconds=60.0,
+        protocol_name=historical_name, adapter_version="historical-adapter"
     )
     base = {
         key: value
@@ -3742,9 +3751,11 @@ def test_historical_protocol_is_read_only_without_an_executable_definition(
     state_path.write_text(json.dumps(state))
     before = {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
     recorded = runner.load_recorded_run(run_dir=run_dir)
-    assert recorded.configuration.answer_agent_model == "openai/gpt-5.6-luna"
-    assert recorded.configuration.execution_profile is None
-    assert summarize_run(run_dir=run_dir).protocol_name == "RS-LoCoMo-Full-v38"
+    assert (
+        recorded.configuration.answer_agent_model == configuration["answer_agent_model"]
+    )
+    assert (recorded.configuration.execution_profile is not None) == keep_profile
+    assert summarize_run(run_dir=run_dir).protocol_name == historical_name
     with pytest.raises(ValueError, match="historical protocol.*read-only"):
         run_protocol(run_dir=run_dir)
     assert before == {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}

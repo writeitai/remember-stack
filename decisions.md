@@ -3074,7 +3074,13 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D106 amendment.** The current protocol is `RS-LoCoMo-Full-v21`. It retains
+> **Current protocol amendment, 2026-11-09.** Execution uses only
+> `RS-LoCoMo-Full-v40` (`full-v40`): the Luna/Flex and Jev profile with the
+> best-supported-answer policy recorded in the D104 amendment below. Its
+> unchanged judge still scores noncompliant abstentions wrong. See the
+> [current benchmark design](plan/designs/locomo_benchmark_design.md).
+
+> **Historical D106 amendment.** The D106 protocol was `RS-LoCoMo-Full-v21`. It retains
 > v20's dataset, rendered documents, models, tools, budgets, prompts, and
 > scoring and pins the D106 observation adjudicator generation.
 
@@ -5085,6 +5091,20 @@ is unchanged. Does not change D95, D99, or D100.
 
 ## D104. Counterfactual answers may follow retrieved causal evidence
 
+**Partial supersession, owner amendment 2026-11-09.** Full-v40 replaces this
+entry's `Unknown` fallback and blanket prohibition on outside knowledge with
+best-supported answers: direct source statements, then conversational
+implications, then plausible contextual inference using ordinary general
+knowledge. Incomplete evidence calls for `likely` or `possibly` attached to an
+actual answer, not abstention. Source/entity/date fidelity and the prohibition
+on invented supporting details remain binding. Causal reasoning, prompt-only
+execution, unchanged judge/budgets, no category/item hints, and D99's objective
+content-before-answer guard survive. This amendment changes no engine or
+ingestion reuse identity. Rationale:
+[answer-policy analysis](plan/analysis/locomo_best_supported_answers_20261109.md);
+current contract: [benchmark design §7](plan/designs/locomo_benchmark_design.md#7-answer-loop).
+The original decision below is historical where these clauses are replaced.
+
 **Decision (2026-09-01).** Advance the current benchmark protocol to
 `RS-LoCoMo-Full-v19`. Its answer prompt explicitly permits hypothetical and
 counterfactual answers inferred from causal or motivational relationships in
@@ -6274,8 +6294,8 @@ R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
 
 ## D128. GLM ingest variant of the v38 LoCoMo protocol
 
-**Execution selection superseded, 2026-10-23:** current LoCoMo execution uses
-one `full-v39` profile. The historical GLM benchmark branch is removed; its saved
+**Execution selection superseded, updated 2026-11-09:** current LoCoMo execution uses
+one `full-v40` profile. The historical GLM benchmark branch is removed; its saved
 artifacts remain read-only. The general D127 provider-rotation contract survives.
 See [current benchmark design](plan/designs/locomo_benchmark_design.md).
 

@@ -1,8 +1,9 @@
 # LoCoMo full-system benchmark design
 
-Current owner-requested contract, 2026-10-23; delivery and review are tracked in
-PR #514. Acceptance of a design does not establish a runtime result. See
+Current owner-requested contract, updated 2026-11-09 for best-supported answers;
+the model-profile delivery was tracked in PR #514. Acceptance of a design does not establish a runtime result. See
 [implementation analysis](../analysis/locomo-models-and-independent-judging-20261023.md)
+and [answer-policy analysis](../analysis/locomo_best_supported_answers_20261109.md)
 and [superseded protocol history](../analysis/locomo-protocol-history-through-v38.md).
 
 ## 1. Acceptance boundary
@@ -29,7 +30,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v39 (full-v39)
+protocol                 RS-LoCoMo-Full-v40 (full-v40)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -45,7 +46,7 @@ max agent calls/question 9
 invalid-completion retry 2 additional attempts within the 9-call cap
 answer word cap          off
 judge repetitions        1
-API transport budget     180 seconds
+API transport budget     300 seconds
 primary metric           judge accuracy
 secondary metric         official LoCoMo F1
 ```
@@ -455,21 +456,32 @@ fields and respect grain, validity, freshness, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, or summaries and must not seek
 gold or evaluator artifacts through another channel.
 
-Loop guards in the frozen answer prompt (v20): never repeat a tool call with the
+Loop guards in the frozen answer prompt: never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
-before answering "Unknown". The first two remain prompt discipline. D99 makes
+before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-For hypothetical and counterfactual questions, the frozen v20 prompt also
-requires the agent to reason only from causal or motivational relationships in
-the retrieved trace. The source need not state the hypothetical verbatim. A
-condition that caused, enabled, or motivated the questioned outcome supports
-the corresponding `Likely yes`/`Likely no` answer; `Unknown` remains correct
-when the evidence gives no direction. This is prompt discipline only: the
-harness does not infer question type or inspect evidence semantics, so it adds
-no hidden retry or category-specific execution path.
+Full-v40 requires the best-supported answer to each scored question, including
+an inference when the conclusion is not stated verbatim. Prefer direct statements,
+then clear conversational implications, then the most plausible interpretation
+of retrieved clues using ordinary general knowledge. For incomplete or competing
+evidence, qualify an actual answer with `likely` or `possibly`; do not replace it
+with `Unknown`, `not mentioned`, `cannot determine`, or equivalent abstention.
+This does not authorize invented source details, certainty, or substitution of
+another entity or date. Source evidence remains authoritative about what happened.
+
+Hypothetical and counterfactual questions follow the same policy: reason from
+causal or motivational relationships, select the better-supported outcome, and
+qualify uncertainty. These are prompt instructions. The existing harness does
+not classify inferred question types, repair an abstention after content retrieval,
+or manufacture answers. A noncompliant answer or infrastructure failure remains
+visible under the unchanged judge and budgets. There is no hidden retry or
+category-specific execution path. Engine negatives and ingestion semantics do
+not change. Changed prompt bytes require a new evaluation identity. This
+prompt-policy change does not add cross-revision ingestion adoption; §9 remains
+the canonical run contract.
 
 The frozen v20 prompt additionally requires complete direct-value coverage:
 when several retrieved values each satisfy the requested action or
@@ -498,11 +510,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v39 \
+  --protocol full-v40 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Execution uses `full-v39`; later stages
+`--protocol` exists only on `prepare`. Execution uses `full-v40`; later stages
 read the immutable current choice from the saved run. Historical protocols are
 read-only and cannot be selected as an execution fallback.
 
