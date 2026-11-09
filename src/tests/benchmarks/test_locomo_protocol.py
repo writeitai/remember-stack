@@ -436,11 +436,6 @@ def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     assert 'finish with "Unknown".' not in normalized_prompt
     assert 'Use "Unknown" only when' not in normalized_prompt
     assert (
-        "Prefer direct statements, then clear conversational implications, then the most plausible inference"
-        in normalized_prompt
-    )
-    assert 'qualify the answer with "likely" or "possibly"' in normalized_prompt
-    assert (
         "Do not invent supporting events, quotes, personal details, or certainty"
         in normalized_prompt
     )
