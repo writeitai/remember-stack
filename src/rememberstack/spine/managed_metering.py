@@ -215,7 +215,6 @@ class ManagedMeterCatalog:
                             "completed_at": datetime.now(timezone.utc),
                             "reason_code": "source_forgotten",
                             "profile_complete": False,
-                            "version_commit_sequence": None,
                         },
                     )
                     accepted += 1
