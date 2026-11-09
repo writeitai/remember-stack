@@ -2248,6 +2248,113 @@ def test_generic_error_with_generation_id_is_not_assumed_unbilled() -> None:
 
 
 @pytest.mark.parametrize("routed", [False, True])
+def test_explicit_provider_unavailable_with_id_recovers_without_usage_lookup(
+    monkeypatch: pytest.MonkeyPatch, routed: bool
+) -> None:
+    """An uncharged unavailable attempt can retry; only the answer has usage."""
+    recorder = _FakeRecorder()
+    completion = _completion(content='{"answer":"Prague"}')
+    completion["model"] = "openai/gpt-6-luna"
+    completion["provider"] = "openai"
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="offline",
+            chat_provider_only=["openai/flex", "openai"] if routed else None,
+            chat_provider_order=["openai/flex", "openai"] if routed else None,
+        ),
+        responses=[
+            httpx.Response(
+                200,
+                json={
+                    "id": "gen-unavailable-attempt",
+                    "error": {
+                        "code": 502,
+                        "message": "The provider could not process this request.",
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                },
+            ),
+            httpx.Response(200, json=completion),
+        ],
+        recorder=recorder,
+    )
+    lookups: list[str] = []
+
+    def metadata(*, generation_id: str) -> dict[str, object]:
+        """A rejected request has no completed-generation accounting to fetch."""
+        lookups.append(generation_id)
+        raise AssertionError("Do not reconcile an explicitly unbilled rejection.")
+
+    monkeypatch.setattr(provider, "_get_generation", metadata)
+    try:
+        result = provider.generate(
+            request=ModelRequest(model="openai/gpt-6-luna", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+    assert result.output.answer == "Prague"
+    assert len(seen) == 2 and not lookups
+    assert recorder.records[-1].usage == result.usage
+    if routed:
+        assert [record.outcome for record in recorder.records] == [
+            "transport_error",
+            "succeeded",
+        ]
+        assert recorder.records[0].usage is None
+        initial_provider = seen[0]["provider"]
+        surviving_provider = seen[1]["provider"]
+        assert isinstance(initial_provider, dict)
+        assert isinstance(surviving_provider, dict)
+        assert initial_provider["order"] == ["openai/flex", "openai"]
+        assert surviving_provider["order"] == ["openai"]
+
+
+@pytest.mark.parametrize(
+    "evidence", [{"usage": {}}, {"usage": None}, {"choices": []}, {"choices": None}]
+)
+def test_provider_unavailable_never_overrides_possible_paid_output(
+    evidence: dict[str, object],
+) -> None:
+    """Explicit unavailability cannot erase any choices or usage field."""
+    from rememberstack.adapters.openrouter import _retryable_upstream_error
+    from rememberstack.adapters.openrouter import unbilled_capacity_rejection
+
+    response = httpx.Response(
+        200,
+        json={
+            "id": "gen-possibly-billable",
+            "error": {"code": 502, "metadata": {"error_type": "provider_unavailable"}},
+            **evidence,
+        },
+    )
+    assert not _retryable_upstream_error(response=response)
+    assert not unbilled_capacity_rejection(response=response)
+
+
+@pytest.mark.parametrize(
+    "status,code", [(401, 502), (403, 502), (200, 401), (200, 403)]
+)
+def test_provider_unavailable_does_not_override_authentication_failure(
+    status: int, code: int
+) -> None:
+    """Contradictory availability metadata cannot make an auth error retryable."""
+    from rememberstack.adapters.openrouter import _retryable_upstream_error
+    from rememberstack.adapters.openrouter import unbilled_capacity_rejection
+
+    response = httpx.Response(
+        status,
+        json={
+            "id": "gen-rejected-credentials",
+            "error": {"code": code, "metadata": {"error_type": "provider_unavailable"}},
+        },
+    )
+    assert not _retryable_upstream_error(response=response)
+    assert not unbilled_capacity_rejection(response=response)
+
+
+@pytest.mark.parametrize("routed", [False, True])
 @pytest.mark.parametrize("capture", [False, True])
 def test_accounting_failure_retains_identifiers_without_provider_content(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, routed: bool, capture: bool
