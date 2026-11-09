@@ -2303,8 +2303,12 @@ def test_explicit_provider_unavailable_with_id_recovers_without_usage_lookup(
             "succeeded",
         ]
         assert recorder.records[0].usage is None
-        assert seen[0]["provider"]["order"] == ["openai/flex", "openai"]
-        assert seen[1]["provider"]["order"] == ["openai"]
+        initial_provider = seen[0]["provider"]
+        surviving_provider = seen[1]["provider"]
+        assert isinstance(initial_provider, dict)
+        assert isinstance(surviving_provider, dict)
+        assert initial_provider["order"] == ["openai/flex", "openai"]
+        assert surviving_provider["order"] == ["openai"]
 
 
 @pytest.mark.parametrize(
