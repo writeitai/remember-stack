@@ -1,0 +1,326 @@
+{
+  "scope": "unchanged direct-engine DB replay; zero network model calls; not HTTP or live provider latency",
+  "source_revision": "fb4a5f5a4cc2eb415df3a8f5b7908bb506bf58d0",
+  "runtime_image": "rememberstack-retrieval:8cd181fe0",
+  "evaluated_at": "2026-11-07T00:30:16+00:00",
+  "passes": 5,
+  "total_calls": 120,
+  "network_model_calls": 0,
+  "negative_results": 0,
+  "operations": {
+    "claims_and_sources_context": {
+      "wall": {
+        "n": 15,
+        "p50_ms": 1478.212,
+        "empirical_p95_ms": 1688.083,
+        "max_ms": 1688.083
+      },
+      "serialization": {
+        "n": 15,
+        "p50_ms": 0.851,
+        "empirical_p95_ms": 1.223,
+        "max_ms": 1.223
+      },
+      "first_observed_pass": {
+        "n": 3,
+        "p50_ms": 1466.252,
+        "empirical_p95_ms": 1494.211,
+        "max_ms": 1494.211
+      },
+      "subsequent_passes": {
+        "n": 12,
+        "p50_ms": 1478.619,
+        "empirical_p95_ms": 1688.083,
+        "max_ms": 1688.083
+      },
+      "median_sql_count": 53,
+      "median_sql_seconds": 1.4036412853747606,
+      "phases": {
+        "chunk_body": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 11.389,
+            "empirical_p95_ms": 15.438,
+            "max_ms": 15.438
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 11.389,
+            "empirical_p95_ms": 15.438,
+            "max_ms": 15.438
+          }
+        },
+        "chunk_eligibility_and_content": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 437.757,
+            "empirical_p95_ms": 565.175,
+            "max_ms": 565.175
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 426.775,
+            "empirical_p95_ms": 549.962,
+            "max_ms": 549.962
+          }
+        },
+        "chunk_nomination": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 94.835,
+            "empirical_p95_ms": 114.231,
+            "max_ms": 114.231
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 94.826,
+            "empirical_p95_ms": 114.221,
+            "max_ms": 114.221
+          }
+        },
+        "claim_eligibility_and_content": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 807.752,
+            "empirical_p95_ms": 887.88,
+            "max_ms": 887.88
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 807.752,
+            "empirical_p95_ms": 887.88,
+            "max_ms": 887.88
+          }
+        },
+        "claim_nomination": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 82.236,
+            "empirical_p95_ms": 101.686,
+            "max_ms": 101.686
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 82.052,
+            "empirical_p95_ms": 101.393,
+            "max_ms": 101.393
+          }
+        },
+        "embedding": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 0.193,
+            "empirical_p95_ms": 0.467,
+            "max_ms": 0.467
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 0.193,
+            "empirical_p95_ms": 0.467,
+            "max_ms": 0.467
+          }
+        },
+        "freshness": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 1.299,
+            "empirical_p95_ms": 2.215,
+            "max_ms": 2.215
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 1.299,
+            "empirical_p95_ms": 2.215,
+            "max_ms": 2.215
+          }
+        },
+        "layer_admission": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 1.201,
+            "empirical_p95_ms": 2.231,
+            "max_ms": 2.231
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 1.201,
+            "empirical_p95_ms": 2.231,
+            "max_ms": 2.231
+          }
+        },
+        "pending_probe": {
+          "inclusive": {
+            "n": 15,
+            "p50_ms": 1.394,
+            "empirical_p95_ms": 2.111,
+            "max_ms": 2.111
+          },
+          "exclusive": {
+            "n": 15,
+            "p50_ms": 1.394,
+            "empirical_p95_ms": 2.111,
+            "max_ms": 2.111
+          }
+        }
+      }
+    },
+    "facts_context": {
+      "wall": {
+        "n": 40,
+        "p50_ms": 2252.599,
+        "empirical_p95_ms": 2344.641,
+        "max_ms": 2393.583
+      },
+      "serialization": {
+        "n": 40,
+        "p50_ms": 0.947,
+        "empirical_p95_ms": 1.327,
+        "max_ms": 1.43
+      },
+      "first_observed_pass": {
+        "n": 8,
+        "p50_ms": 2260.936,
+        "empirical_p95_ms": 2303.936,
+        "max_ms": 2303.936
+      },
+      "subsequent_passes": {
+        "n": 32,
+        "p50_ms": 2252.599,
+        "empirical_p95_ms": 2354.588,
+        "max_ms": 2393.583
+      },
+      "median_sql_count": 146.0,
+      "median_sql_seconds": 2.161564564332366,
+      "phases": {
+        "embedding": {
+          "inclusive": {
+            "n": 40,
+            "p50_ms": 0.147,
+            "empirical_p95_ms": 0.208,
+            "max_ms": 0.27
+          },
+          "exclusive": {
+            "n": 40,
+            "p50_ms": 0.147,
+            "empirical_p95_ms": 0.208,
+            "max_ms": 0.27
+          }
+        },
+        "fact_confirmation": {
+          "inclusive": {
+            "n": 40,
+            "p50_ms": 808.982,
+            "empirical_p95_ms": 850.871,
+            "max_ms": 873.25
+          },
+          "exclusive": {
+            "n": 40,
+            "p50_ms": 808.982,
+            "empirical_p95_ms": 850.871,
+            "max_ms": 873.25
+          }
+        },
+        "fact_enrichment": {
+          "inclusive": {
+            "n": 40,
+            "p50_ms": 2.205,
+            "empirical_p95_ms": 3.21,
+            "max_ms": 3.719
+          },
+          "exclusive": {
+            "n": 40,
+            "p50_ms": 2.205,
+            "empirical_p95_ms": 3.21,
+            "max_ms": 3.719
+          }
+        },
+        "fact_evidence": {
+          "inclusive": {
+            "n": 40,
+            "p50_ms": 48.929,
+            "empirical_p95_ms": 53.211,
+            "max_ms": 57.978
+          },
+          "exclusive": {
+            "n": 40,
+            "p50_ms": 48.929,
+            "empirical_p95_ms": 53.211,
+            "max_ms": 57.978
+          }
+        },
+        "fact_nomination": {
+          "inclusive": {
+            "n": 40,
+            "p50_ms": 1366.239,
+            "empirical_p95_ms": 1456.684,
+            "max_ms": 1475.002
+          },
+          "exclusive": {
+            "n": 40,
+            "p50_ms": 1366.068,
+            "empirical_p95_ms": 1456.492,
+            "max_ms": 1474.892
+          }
+        },
+        "layer_admission": {
+          "inclusive": {
+            "n": 40,
+            "p50_ms": 1.688,
+            "empirical_p95_ms": 2.119,
+            "max_ms": 6.071
+          },
+          "exclusive": {
+            "n": 40,
+            "p50_ms": 1.688,
+            "empirical_p95_ms": 2.119,
+            "max_ms": 6.071
+          }
+        }
+      }
+    },
+    "resolve_entity": {
+      "wall": {
+        "n": 65,
+        "p50_ms": 47.468,
+        "empirical_p95_ms": 61.753,
+        "max_ms": 85.167
+      },
+      "serialization": {
+        "n": 65,
+        "p50_ms": 0.073,
+        "empirical_p95_ms": 0.116,
+        "max_ms": 0.196
+      },
+      "first_observed_pass": {
+        "n": 13,
+        "p50_ms": 47.298,
+        "empirical_p95_ms": 85.167,
+        "max_ms": 85.167
+      },
+      "subsequent_passes": {
+        "n": 52,
+        "p50_ms": 47.482,
+        "empirical_p95_ms": 61.753,
+        "max_ms": 64.83
+      },
+      "median_sql_count": 5,
+      "median_sql_seconds": 0.04416998289525509,
+      "phases": {
+        "layer_admission": {
+          "inclusive": {
+            "n": 65,
+            "p50_ms": 1.401,
+            "empirical_p95_ms": 1.946,
+            "max_ms": 9.857
+          },
+          "exclusive": {
+            "n": 65,
+            "p50_ms": 1.401,
+            "empirical_p95_ms": 1.946,
+            "max_ms": 9.857
+          }
+        }
+      }
+    }
+  }
+}
