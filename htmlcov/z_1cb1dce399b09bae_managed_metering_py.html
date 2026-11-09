@@ -66,8 +66,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_1cb1dce399b09bae_minio_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-07 13:00 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
+            created at 2026-11-09 15:10 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -89,8 +89,8 @@
     <p class="run"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="key">import</span> <span class="nam">httpx</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="key">from</span> <span class="nam">pydantic</span> <span class="key">import</span> <span class="nam">SecretStr</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span><span class="op">.</span><span class="nam">metering</span> <span class="key">import</span> <span class="nam">ManagedDocumentVersionOutcomeV2</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span><span class="op">.</span><span class="nam">metering</span> <span class="key">import</span> <span class="nam">ManagedIngestMeasurementV2</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span><span class="op">.</span><span class="nam">metering</span> <span class="key">import</span> <span class="nam">ManagedDocumentVersionOutcome</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span><span class="op">.</span><span class="nam">metering</span> <span class="key">import</span> <span class="nam">ManagedIngestMeasurement</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span><span class="op">.</span><span class="nam">metering</span> <span class="key">import</span> <span class="nam">MeterAdmissionResult</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span><span class="op">.</span><span class="nam">metering</span> <span class="key">import</span> <span class="nam">MeterReceiptConflict</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span><span class="op">.</span><span class="nam">metering</span> <span class="key">import</span> <span class="nam">MeterReceiptUnauthorized</span>&nbsp;</span><span class="r"></span></p>
@@ -98,7 +98,7 @@
     <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="key">class</span> <span class="nam">ControlPlaneMeterReceipts</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Deliver v2 receipts with a deployment-scoped ``umc_mi_`` bearer.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Deliver v3 receipts with a deployment-scoped ``umc_mi_`` bearer.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">    <span class="key">def</span> <span class="nam">__init__</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -114,7 +114,7 @@
     <p class="run"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_client</span> <span class="op">=</span> <span class="nam">httpx</span><span class="op">.</span><span class="nam">Client</span><span class="op">(</span><span class="nam">timeout</span><span class="op">=</span><span class="nam">timeout_s</span><span class="op">,</span> <span class="nam">transport</span><span class="op">=</span><span class="nam">transport</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">    <span class="key">def</span> <span class="nam">admit_measurement</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span> <span class="op">*</span><span class="op">,</span> <span class="nam">measurement</span><span class="op">:</span> <span class="nam">ManagedIngestMeasurementV2</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span> <span class="op">*</span><span class="op">,</span> <span class="nam">measurement</span><span class="op">:</span> <span class="nam">ManagedIngestMeasurement</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">    <span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">MeterAdmissionResult</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">        <span class="str">&quot;&quot;&quot;Post one canonical measurement and validate its stable decision.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">        <span class="nam">body</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_post</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -128,7 +128,7 @@
     <p class="mis mis2 show_mis"><span class="n"><a id="t44" href="#t44">44</a></span><span class="t">                <span class="str">&quot;meter admission returned an invalid decision&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t45" href="#t45">45</a></span><span class="t">            <span class="op">)</span> <span class="key">from</span> <span class="nam">error</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t46" href="#t46">46</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t">    <span class="key">def</span> <span class="nam">acknowledge_outcome</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="op">*</span><span class="op">,</span> <span class="nam">outcome</span><span class="op">:</span> <span class="nam">ManagedDocumentVersionOutcomeV2</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t">    <span class="key">def</span> <span class="nam">acknowledge_outcome</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="op">*</span><span class="op">,</span> <span class="nam">outcome</span><span class="op">:</span> <span class="nam">ManagedDocumentVersionOutcome</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t48" href="#t48">48</a></span><span class="t">        <span class="str">&quot;&quot;&quot;Post one terminal receipt and require an explicit acknowledgement.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t">        <span class="nam">body</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_post</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t50" href="#t50">50</a></span><span class="t">            <span class="nam">path</span><span class="op">=</span><span class="str">&quot;/processed-input/outcomes&quot;</span><span class="op">,</span> <span class="nam">payload</span><span class="op">=</span><span class="nam">outcome</span><span class="op">.</span><span class="nam">model_dump</span><span class="op">(</span><span class="nam">mode</span><span class="op">=</span><span class="str">&quot;json&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -172,8 +172,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_1cb1dce399b09bae_minio_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-07 13:00 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
+            created at 2026-11-09 15:10 +0000
         </p>
     </div>
 </footer>
