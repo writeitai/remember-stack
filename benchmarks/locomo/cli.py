@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
                 else _seat_provider(recorder=recorder)
             )
             judge_provider = _seat_provider(recorder=recorder)
-            if profile in {"codex-p3-mcp", "mcp", "mcp-p3"}:
+            if profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}:
                 with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                     summary = run_retrieval_ablation(
                         run_dir=args.run,
@@ -133,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
                         profile=profile,
                         output=args.output,
                         p3_root=args.p3_root,
+                        answer_prompt=args.answer_prompt,
                         max_questions=args.max_questions,
                         max_agent_calls=args.max_agent_calls,
                         max_judge_calls=args.max_judge_calls,
@@ -149,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
                     profile=profile,
                     output=args.output,
                     p3_root=args.p3_root,
+                    answer_prompt=args.answer_prompt,
                     max_questions=args.max_questions,
                     max_agent_calls=args.max_agent_calls,
                     max_judge_calls=args.max_judge_calls,
@@ -341,14 +343,19 @@ def _parser() -> argparse.ArgumentParser:
     _run_and_sample(ablation)
     ablation.add_argument(
         "--profile",
-        choices=("codex-p3", "codex-p3-mcp", "mcp", "mcp-p3"),
+        choices=("codex-p3", "codex-p3-mcp", "mcp", "mcp-p3", "full"),
         required=True,
     )
     ablation.add_argument("--output", type=Path, required=True)
     ablation.add_argument(
         "--p3-root",
         type=Path,
-        help="ordinary local P3 directory; required only by profiles containing p3",
+        help="ordinary local P3 directory; required by full and profiles containing p3",
+    )
+    ablation.add_argument(
+        "--answer-prompt",
+        type=Path,
+        help="UTF-8 answer template for the full profile; frozen into the output",
     )
     ablation.add_argument(
         "--max-questions",

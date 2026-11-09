@@ -5,6 +5,8 @@
 **Decision:** D124.
 **Analysis:**
 [`locomo_retrieval_access_ablations.md`](../analysis/locomo_retrieval_access_ablations.md).
+**Prompt-trial amendment, 2026-11-09:**
+[`locomo_answer_prompt_trials.md`](../analysis/locomo_answer_prompt_trials.md).
 
 ## 1. Problem and scope
 
@@ -14,13 +16,13 @@ P3 corpus. P3 is the published, navigable corpus snapshot: an ordinary directory
 tree whose `.snapshot-version` identifies the immutable publication.
 
 This design adds an **answer-and-judge-only development experiment** over one
-already-processed LoCoMo sample. It does not change the canonical Full-v31
+already-processed LoCoMo sample. It does not change the canonical
 protocol, ingestion, retrieval contracts, P3 format, public judge rubric or
 product claims. It introduces no UMC or RememberFS dependency.
 
 ## 2. Decision
 
-One source run may produce four independent ablation outputs:
+One source run may produce independent ablation outputs:
 
 | Profile key | Runtime | Allowed corpus access |
 | --- | --- | --- |
@@ -28,18 +30,19 @@ One source run may produce four independent ablation outputs:
 | `codex-p3-mcp` | native Codex subscription agent | local P3 filesystem and OSS RememberStack MCP |
 | `mcp` | OpenRouter Luna provider-neutral agent | OSS RememberStack MCP only |
 | `mcp-p3` | OpenRouter Luna provider-neutral agent | OSS RememberStack MCP and benchmark P3 MCP tools |
+| `full` | canonical provider-neutral answer loop | exact source-pinned SDK/P3 catalog, with an optional experimental answer prompt |
 
 The command is:
 
 ```text
 python -m benchmarks.locomo retrieval-ablation \
   --run SOURCE_RUN --sample SAMPLE --profile PROFILE \
-  --output ABLATION_DIR [--p3-root LOCAL_P3] \
+  --output ABLATION_DIR [--p3-root LOCAL_P3] [--answer-prompt TEMPLATE] \
   --max-questions N --max-agent-calls N --max-judge-calls N \
   --max-evaluator-cost-usd USD --execute
 ```
 
-`--p3-root` is required only by profiles whose key contains `p3`. It is an
+`--p3-root` is required by `full` and profiles whose key contains `p3`. It is an
 ordinary local directory obtained through the existing OSS publication,
 restore or copy workflow. Its `.snapshot-version` must equal the P3 version in
 the source run's checkpointed readiness.
@@ -71,7 +74,7 @@ Before spending, the runner loads and validates the source run's immutable
 files and requires:
 
 - the selected sample is completely ingested in one deployment;
-- the source run has checkpointed exact Full-v31 readiness;
+- the source run has checkpointed exact source-protocol readiness;
 - for an MCP profile, live documents still equal the source run's ingest
   records and the serving revision/query-space manifest still match that
   source run;
@@ -199,7 +202,7 @@ visible.
 
 ## 6. Shared answer and judge semantics
 
-All profiles share the current Full-v31 rules for:
+The four access-comparison profiles retain their frozen shared rules for:
 
 - shortest complete final answers;
 - claims versus adjudicated facts and their time labels;
@@ -218,10 +221,48 @@ existing tool-or-answer step. Prompt and schema hashes bind both forms.
 Every answer arm uses the Luna model family at reasoning effort `high`: native
 Codex uses subscription model `gpt-5.6-luna`, and provider-neutral arms use
 OpenRouter `openai/gpt-5.6-luna`. The provider/runtime difference remains a
-disclosed crossed factor. All profiles use the canonical Full-v31 OpenRouter
-Luna judge at its pinned `none` reasoning effort, temperature, prompt, schema,
-repetitions and gold answer. Source-protocol provider variants do not silently
+disclosed crossed factor. All profiles use the current canonical OpenRouter
+judge and its pinned model, reasoning effort, temperature, prompt, schema,
+repetitions and gold answer. The `full` profile also requires these judge pins
+to equal the processed source run before any paid model call. Source-protocol provider variants do not silently
 add Gemma or Codex seats. Judge output is never visible to a later answer.
+
+### 6.1 Full-surface answer prompt trials
+
+The `full` profile calls the existing canonical answer loop directly, using
+all 22 source-pinned SDK/P3 tools, the source model/reasoning/temperature,
+retrieval budget, word cap, eight-tool/nine-model-call limits, and retry policy.
+It does not wrap tools as MCP or add an experimental content-before-answer
+policy. Its direct SDK/P3 action count is reported separately from MCP/shell.
+The canonical full catalog hash remains bound by the source fingerprint;
+`mcp_catalog_sha256` is absent for this profile.
+
+`--answer-prompt` is accepted only for `full`. Its UTF-8 template is rendered
+through the existing answer renderer, which supplies only the question, tool
+catalog, trace, and guard fields, never reference answers. The template must
+use the renderer's existing format placeholders. Its exact bytes are saved as
+`answer-prompt.txt` and bound by `answer_prompt_sha256`. Omission uses the
+current canonical template. Resume requires the same input template and the
+same saved bytes, as well as the unchanged experiment identity. An incomplete
+or corrupted output fails closed rather than adopting a different prompt.
+
+The source run is loaded with immutable recorded pins, rather than demanding
+that its original answer prompt match the experiment runner. Source integrity,
+current compatible ingestion generations, live build identity, models, all
+processing layers, exact ingests, surface/catalog, and P3 version still must
+validate. Live readiness is compared using the canonical identity fingerprint,
+which ignores only probe timestamps and version-row ordering. Actual version,
+model, publication, readiness, or build changes still reject the experiment.
+Live guards run before and after answering. Source and runner revisions remain
+separate; a prompt-only experiment does not claim that old ingestion ran a new
+backend.
+
+Each prompt uses a new output directory and answers the whole sample. Preserve
+all trial outputs, including failures and regressions. A prompt comparison
+holds models, tools, retrieval depth, and judge fixed; changing any of those is
+a separate experiment. These are development results, not held-out publication
+scores. Promoting a general prompt to the canonical protocol requires review
+and an ordinary source change, not editing an existing run's fingerprints.
 
 ## 7. Results, failure and recovery
 
