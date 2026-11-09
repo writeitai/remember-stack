@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v38 protocol."""
+"""Typed values for the full-system LoCoMo protocol and historical artifacts."""
 
 from __future__ import annotations
 

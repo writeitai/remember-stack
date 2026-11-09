@@ -19758,7 +19758,7 @@ negative results or the judge. Old runs retain their original prompts and grades
 this protocol requires a new run identity. Its offline checks establish no score.
 
 The saved run records its non-secret ingestion environment, component/model
-bindings, approved provider order and 180-second API transport budget. CI checks
+bindings, approved provider order and 300-second API transport budget. CI checks
 the native System One backup remains disabled (`REMEMBERSTACK_TYPESAFE_BACKUP=none`),
 so adding an optional product adapter cannot silently change benchmark providers.
 CI also checks

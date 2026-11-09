@@ -15,6 +15,7 @@ from benchmarks.locomo.ablation import review_retrieval_ablation
 from benchmarks.locomo.ablation import run_retrieval_ablation
 from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
+from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.runner import answer_sample
@@ -232,7 +233,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v38: prepare is local; ingest/answer/judge require "
+            f"{PROTOCOL_NAME}: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )

@@ -1274,7 +1274,7 @@ def _validate_run(
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v38")
+        raise BenchmarkRunError(f"run dataset hash is not {PROTOCOL_NAME}")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1284,7 +1284,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v38")
+        raise BenchmarkRunError(f"run dataset commit is not {PROTOCOL_NAME}")
     if current_pins and configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:

@@ -46,7 +46,7 @@ max agent calls/question 9
 invalid-completion retry 2 additional attempts within the 9-call cap
 answer word cap          off
 judge repetitions        1
-API transport budget     180 seconds
+API transport budget     300 seconds
 primary metric           judge accuracy
 secondary metric         official LoCoMo F1
 ```
