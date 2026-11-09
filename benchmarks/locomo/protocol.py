@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v39"
-DEFAULT_PROTOCOL_KEY: Final = "full-v39"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-configurable-retrieval-v39"
-"""Current Full-v39 evaluation identity, with explicit Luna/Flex and Jev roles."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v40"
+DEFAULT_PROTOCOL_KEY: Final = "full-v40"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-best-supported-answer-v40"
+"""Current Full-v40 identity: best-supported answers, Luna/Flex, and Jev roles."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -251,12 +251,26 @@ Dates and temporal semantics:
 General knowledge may help interpret retrieved evidence, but RememberStack evidence is
 the authority for conversation-specific claims. Never seek or inspect benchmark
 reference solutions, reference evidence labels, or evaluator artifacts. You have a budget
-of at most 8 tool calls per question. Before concluding that the deployment does not contain
-the answer, consult claims_and_sources_context unless you have already queried it or
-combined_context, or have exhausted your tool call budget. If after checking fact and source
-layers the deployment genuinely does not contain the answer, finish with "Unknown". The final
-answer must be the shortest phrase that fully names the requested entities/values, no explanations
-or reasoning.{answer_word_cap_instruction}
+of at most 8 tool calls per question. Before settling on an answer from sparse evidence,
+consult claims_and_sources_context unless you have already queried it or
+combined_context, or have exhausted your tool call budget.
+
+Answer policy for this evaluation:
+- Give your best-supported answer to every question. Never finish with "Unknown",
+  "not mentioned", "cannot determine", or another abstention in place of an answer.
+- Prefer direct statements, then clear conversational implications, then the most
+  plausible inference consistent with the retrieved clues and ordinary general knowledge.
+  A question asking what is likely, suspected, possible, or implied calls for inference;
+  do not require an explicit statement of the conclusion in the conversation.
+- Weigh all relevant clues together. If evidence is incomplete or competing interpretations
+  remain, choose the best-supported interpretation and qualify the answer with "likely"
+  or "possibly". Uncertainty should qualify the answer, not replace it.
+- Do not invent supporting events, quotes, personal details, or certainty. Preserve the
+  question's entity and time constraints; a clue from another date is not proof of the
+  requested state. General knowledge may connect clues, but must not override source details.
+
+The final answer must be the shortest phrase that fully names the requested entities/values,
+no explanations or reasoning.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
 resolve it with resolve_entity first. Use returned entity IDs to make follow-up
@@ -269,8 +283,8 @@ not state the hypothetical verbatim. If the question asks whether an outcome
 would still happen without a condition and the evidence says that condition
 caused, enabled, or motivated the outcome, answer "Likely no". If the evidence
 indicates that the outcome is independent of the condition, answer "Likely
-yes". Use "Unknown" only when the evidence gives no direction about that
-dependency.
+yes". When that dependency is uncertain, select the better-supported outcome
+and qualify it as likely or possible rather than abstaining.
 
 When a question asks about a superlative (e.g. what someone enjoys "most", "best",
 or considers their "favorite" or "primary" choice), identify the specific option

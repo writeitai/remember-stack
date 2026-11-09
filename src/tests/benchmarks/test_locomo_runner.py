@@ -1125,7 +1125,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v39", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
+    (("full-v40", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -2008,7 +2008,7 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v39","protocol_fingerprint":'
+        '{"protocol_name":"RS-LoCoMo-Full-v40","protocol_fingerprint":'
         f'"{prepared.protocol_fingerprint}",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
@@ -2228,7 +2228,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v39"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v40"
     assert prepared.answer_agent_model == "openai/gpt-6-luna"
     assert prepared.answer_agent_reasoning_effort == "high"
     assert prepared.answer_reader_retry_budget == 2
@@ -3546,7 +3546,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v39"]
+    protocol = PROTOCOL_REGISTRY["full-v40"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",

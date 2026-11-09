@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v39 setup
+# RS-LoCoMo-Full-v40 setup
 
 One current execution profile uses Luna 6 for ingestion and vision at low
 reasoning, Luna 6 for answering and judging at high reasoning, and Jev
@@ -23,15 +23,28 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v39 \
+  --protocol full-v40 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v39` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v40` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
+
+Full-v40 asks the answerer to give its best-supported answer to every scored
+question, including a qualified inference when evidence is indirect. It forbids
+terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
+`possibly` attached to an actual answer. The prompt still forbids invented source
+details, preserves entity/time constraints, and exposes no reference answers.
+This is benchmark answer-agent policy, not a change to engine evidence or typed
+negatives. The existing judge, models, retrieval depths, and call/cost guards are
+unchanged. Noncompliant model outputs and infrastructure failures remain visible;
+the harness never fabricates an answer to replace them. Prepare a new run for
+this protocol; preserve old answers and fingerprints. Retained ingestion may be
+used only when its document bytes and ingestion contract match, with its original
+ingestion provenance recorded separately from the evaluation revision.
 
 V17 must ingest into a fresh store built from the repository revision recorded
 in `run.json`. Store backups protect interrupted work and allow restoration of
@@ -180,7 +193,7 @@ from readiness.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v39 sample and
+The additive D124 runner reuses one completely processed Full-v40 sample and
 compares four answer routes without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -251,7 +264,7 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v39 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v40 protocol and
 its source state are never modified by this command.
 
 ## Sharded runs

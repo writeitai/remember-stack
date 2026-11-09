@@ -35,7 +35,7 @@ model.
 <Callout type="warning">
 
 No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v39`. The numbers under [Recorded results](#recorded-results)
+`RS-LoCoMo-Full-v40`. The numbers under [Recorded results](#recorded-results)
 belong to earlier protocols and earlier engine builds. Do not compare them
 with other systems' published scores.
 
@@ -125,7 +125,7 @@ The summary reports:
 
 ### The current protocol
 
-Execution uses one profile, `RS-LoCoMo-Full-v39` (key `full-v39`). It selects
+Execution uses one profile, `RS-LoCoMo-Full-v40` (key `full-v40`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
 answering and judging. All these Luna seats prefer OpenAI Flex and permit
@@ -133,6 +133,14 @@ normal OpenAI Luna as the only fallback. Standard processing can cost more;
 provider-returned usage determines the recorded cost. Embeddings remain Qwen through Nebius. The existing
 semantic judge policy is retained. The limits remain eight tool calls and
 nine model calls per question, with no hard answer length cap.
+
+The answerer must give its best-supported answer rather than abstain with
+`Unknown`. It may use ordinary general knowledge to connect retrieved clues
+and qualify an indirect conclusion with `likely` or `possibly`. It must still
+preserve the question's entity and date, and may not invent supporting dialogue
+or personal details. This evaluation policy does not change the engine's typed
+negative results or the judge. Old runs retain their original prompts and grades;
+this protocol requires a new run identity. Its offline checks establish no score.
 
 The saved run records its non-secret ingestion environment, component/model
 bindings, approved provider order and 180-second API transport budget. CI checks
@@ -237,7 +245,7 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-No run of `RS-LoCoMo-Full-v39`, or of any protocol after v18, is recorded.
+No run of `RS-LoCoMo-Full-v40`, or of any protocol after v18, is recorded.
 When one is, it will appear here with its protocol, revision, tier, cost
 and failure counts.
 
@@ -276,7 +284,7 @@ Then, stage by stage, for one conversation (`conv-26`) of the smoke tier:
 ```bash
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v39
+  --output .benchmark-runs/smoke --protocol full-v40
 
 uv run python -m benchmarks.locomo ingest \
   --run .benchmark-runs/smoke --sample conv-26 \
@@ -308,7 +316,7 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v39 LOCOMO_MAX_EVALUATOR_COST_USD=60 \
+LOCOMO_PROTOCOL=full-v40 LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```
 
