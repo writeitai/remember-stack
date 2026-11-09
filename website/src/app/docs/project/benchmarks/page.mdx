@@ -324,6 +324,11 @@ It takes a comma-separated list of conversation ids. Its limits (tier,
 questions, calls, cost, drain timeout) are set with `LOCOMO_*` environment
 variables at the top of the script.
 
+The canonical answer prompt weighs clues against the requested attribute,
+keeps distinct source-supported possibilities for questions allowing several
+answers, and resolves relative dates into explicit calendar periods at the
+precision supported by the source. It adds no examples or reference hints.
+
 ### Compare answer prompts without ingestion
 
 Use `retrieval-ablation --profile full` to re-answer one completely processed

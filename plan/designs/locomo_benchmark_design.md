@@ -464,9 +464,15 @@ only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
 Full-v40 requires the best-supported answer to each scored question, including
-an inference when the conclusion is not stated verbatim. Prefer direct statements,
-then clear conversational implications, then the most plausible interpretation
-of retrieved clues using ordinary general knowledge. For incomplete or competing
+an inference when the conclusion is not stated verbatim. Prefer direct statements
+that answer the requested attribute or relationship, then conversational
+implications, then plausible inference from distinctive concrete source clues.
+A recurring topic or general reaction does not outweigh clues explaining the
+requested attribute. Single-choice questions select the best-supported answer;
+questions allowing several possibilities cover the distinct source-supported
+possibilities, combining synonyms and omitting ungrounded speculation.
+A final answer to a relative-date question names an explicit calendar date,
+range or period, anchored to the source timestamp at supported precision. For incomplete or competing
 evidence, qualify an actual answer with `likely` or `possibly`; do not replace it
 with `Unknown`, `not mentioned`, `cannot determine`, or equivalent abstention.
 This does not authorize invented source details, certainty, or substitution of
