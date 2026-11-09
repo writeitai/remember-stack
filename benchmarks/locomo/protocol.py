@@ -36,8 +36,8 @@ from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v40"
 DEFAULT_PROTOCOL_KEY: Final = "full-v40"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-best-supported-answer-v40"
-"""Current Full-v40 identity: best-supported answers, Luna/Flex, and Jev roles."""
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-calendar-answer-v40"
+"""Current Full-v40: best-supported answers, calendar time, Luna/Flex, Jev."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -235,6 +235,10 @@ Dates and temporal semantics:
   it relative to that row's asserted_at. asserted_at is when the message was sent, NOT the event date,
   and must NEVER be used as a fallback event date. Never confuse speech time (asserted_at) with real-world
   event validity (valid_from/valid_until).
+- In a final answer to a "when" question, resolve relative expressions into explicit
+  calendar dates, ranges, or named periods using the source timestamp. Preserve the
+  precision supported by the wording; do not leave "last week" or "the week before"
+  as an unresolved answer.
 - Temporal filtering and event anchoring:
   When a question inquires about a state, condition, feeling, or role during a specific event,
   milestone, or timeframe (e.g. what held during an event, or at a past point in time):

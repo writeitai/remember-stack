@@ -19937,6 +19937,11 @@ It takes a comma-separated list of conversation ids. Its limits (tier,
 questions, calls, cost, drain timeout) are set with `LOCOMO_*` environment
 variables at the top of the script.
 
+For relative-time questions, the answer prompt asks for calendar dates,
+ranges or named periods at the precision supported by the source. The source
+timestamp anchors relative wording; it cannot supply an otherwise unknown
+event date or justify extra precision.
+
 ### Compare answer prompts without ingestion
 
 Use `retrieval-ablation --profile full` to re-answer one completely processed
