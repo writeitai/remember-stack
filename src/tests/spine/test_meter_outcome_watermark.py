@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import event
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.spine.managed_metering import ManagedMeterCatalog
@@ -36,8 +37,11 @@ class ReadyVersion:
         return SimpleNamespace(versions=(SimpleNamespace(ready=True, stages=(stage,)),))
 
 
+@pytest.mark.parametrize(
+    "capture_timeout,expect_timeout", [("5s", False), ("250ms", True)]
+)
 def test_snapshot_fence_waits_for_allocated_success_sequence(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capture_timeout: str, expect_timeout: bool
 ) -> None:
     """A capture cannot observe a maximum before an earlier allocated insert commits."""
     try:
@@ -70,18 +74,12 @@ def test_snapshot_fence_waits_for_allocated_success_sequence(
                 raise TimeoutError("test did not release the outcome writer")
 
     def capture() -> int | None:
-        """Take the same outcome-table SHARE lock as the storage collector."""
+        """Capture in one volatile SQL function, as the UMC collector does."""
         with engine.begin() as connection:
-            connection.execute(text("SET LOCAL lock_timeout = '5s'"))
+            connection.execute(text(f"SET LOCAL lock_timeout = '{capture_timeout}'"))
             capture_started.set()
-            connection.execute(text("LOCK TABLE managed_ingest_outcomes IN SHARE MODE"))
             return cast(
-                "int | None",
-                connection.scalar(
-                    text(
-                        "SELECT max(version_commit_sequence) FROM managed_ingest_outcomes"
-                    )
-                ),
+                "int | None", connection.scalar(text("SELECT test_capture_watermark()"))
             )
 
     def capture_is_waiting() -> bool:
@@ -120,6 +118,15 @@ def test_snapshot_fence_waits_for_allocated_success_sequence(
                     "CREATE TABLE managed_ingest_outcomes (measurement_id uuid PRIMARY KEY, document_version_id text, outcome text NOT NULL, completed_at timestamptz NOT NULL, reason_code text, profile_complete boolean NOT NULL, version_commit_sequence bigint UNIQUE)"
                 )
             )
+            connection.execute(
+                text(
+                    "CREATE FUNCTION test_capture_watermark() RETURNS bigint "
+                    "LANGUAGE plpgsql AS $$ BEGIN "
+                    "LOCK TABLE managed_ingest_outcomes IN SHARE MODE; "
+                    "RETURN (SELECT max(version_commit_sequence) FROM managed_ingest_outcomes); "
+                    "END $$"
+                )
+            )
             version_id, measurement_id, deployment_id = uuid4(), uuid4(), uuid4()
             connection.execute(
                 text("INSERT INTO document_versions VALUES (:v, 'ready')"),
@@ -146,20 +153,28 @@ def test_snapshot_fence_waits_for_allocated_success_sequence(
                 )
                 reader = pool.submit(capture)
                 assert capture_started.wait(timeout=5), "capture did not start"
-                deadline = monotonic() + 3
-                while (
-                    not reader.done()
-                    and not capture_is_waiting()
-                    and monotonic() < deadline
-                ):
-                    sleep(0.02)
-                assert not reader.done() and capture_is_waiting(), (
-                    "capture bypassed an allocated outcome"
-                )
+                if expect_timeout:
+                    with pytest.raises(OperationalError) as error:
+                        reader.result(timeout=5)
+                    assert getattr(error.value.orig, "sqlstate", None) == "55P03"
+                else:
+                    deadline = monotonic() + 3
+                    while (
+                        not reader.done()
+                        and not capture_is_waiting()
+                        and monotonic() < deadline
+                    ):
+                        sleep(0.02)
+                    assert not reader.done() and capture_is_waiting(), (
+                        "capture bypassed an allocated outcome"
+                    )
             finally:
                 release.set()
             assert writer.result(timeout=5) == 1
-            assert reader.result(timeout=5) == 1
+            if expect_timeout:
+                assert capture() == 1
+            else:
+                assert reader.result(timeout=5) == 1
 
         # Replay does not create a second outcome, and a failed outcome does
         # not consume a success sequence.
