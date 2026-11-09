@@ -42,9 +42,8 @@ This is benchmark answer-agent policy, not a change to engine evidence or typed
 negatives. The existing judge, models, retrieval depths, and call/cost guards are
 unchanged. Noncompliant model outputs and infrastructure failures remain visible;
 the harness never fabricates an answer to replace them. Prepare a new run for
-this protocol; preserve old answers and fingerprints. Retained ingestion may be
-used only when its document bytes and ingestion contract match, with its original
-ingestion provenance recorded separately from the evaluation revision.
+this protocol; preserve old answers and fingerprints. This prompt change adds
+no cross-revision ingestion-adoption command or compatibility contract.
 
 V17 must ingest into a fresh store built from the repository revision recorded
 in `run.json`. Store backups protect interrupted work and allow restoration of

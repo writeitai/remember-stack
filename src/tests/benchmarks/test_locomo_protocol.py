@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from benchmarks.locomo import cli
@@ -13,6 +14,7 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
+from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
@@ -22,6 +24,8 @@ from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
+from benchmarks.locomo.protocol import protocol_for_key
+from benchmarks.locomo.protocol import protocol_for_name
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.protocol import render_answer_agent_prompt
@@ -426,6 +430,21 @@ def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     )
     assert 'time={"mode": "at", "at": "<timestamp>"}' in rendered
     assert "all_sources" not in prompt
+    assert 'Never finish with "Unknown", "not mentioned", "cannot determine"' in (
+        normalized_prompt
+    )
+    assert 'finish with "Unknown".' not in normalized_prompt
+    assert 'Use "Unknown" only when' not in normalized_prompt
+    assert (
+        "Prefer direct statements, then clear conversational implications, then the most plausible inference"
+        in normalized_prompt
+    )
+    assert 'qualify the answer with "likely" or "possibly"' in normalized_prompt
+    assert (
+        "Do not invent supporting events, quotes, personal details, or certainty"
+        in normalized_prompt
+    )
+    assert "Preserve the question's entity and time constraints" in normalized_prompt
 
 
 def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
@@ -472,6 +491,11 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
     assert protocol.tool_catalog_sha256 == tool_catalog_sha256()
+    for retired_key in ("full-v38", "full-v39"):
+        with pytest.raises(ValueError, match="retired or unknown protocol"):
+            protocol_for_key(cast(ProtocolKey, retired_key))
+    with pytest.raises(ValueError, match="historical protocol.*read-only"):
+        protocol_for_name("RS-LoCoMo-Full-v39")
 
 
 def test_prepare_cli_selects_protocol_only_at_prepare(

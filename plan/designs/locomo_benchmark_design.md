@@ -479,9 +479,9 @@ not classify inferred question types, repair an abstention after content retriev
 or manufacture answers. A noncompliant answer or infrastructure failure remains
 visible under the unchanged judge and budgets. There is no hidden retry or
 category-specific execution path. Engine negatives and ingestion semantics do
-not change. Changed prompt bytes require a new evaluation identity; retained
-ingestion must have matching source bytes and ingestion contracts and retain
-its original provenance separately from the new evaluation revision.
+not change. Changed prompt bytes require a new evaluation identity. This
+prompt-policy change does not add cross-revision ingestion adoption; §9 remains
+the canonical run contract.
 
 The frozen v20 prompt additionally requires complete direct-value coverage:
 when several retrieved values each satisfy the requested action or

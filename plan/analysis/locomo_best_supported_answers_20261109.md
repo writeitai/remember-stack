@@ -36,10 +36,13 @@ does not synthesize replacements. No new private retries or model calls are
 introduced; cost remains within existing ceilings. Engine typed negatives,
 claim/fact semantics, ingestion identities, and source visibility are unaffected.
 
-Validation is a fresh 20-question conv-47 answer/judge run over retained,
-contract-compatible ingestion, with original results preserved. Its fresh
-prompt hash, evaluation revision, source-ingestion provenance, tool traces,
-answers, grades, and verified GCS backups must remain distinguishable from the
-previous run. Repeating this development conversation is not evidence of
-held-out generalization or a full-benchmark result. No score is claimed here
-before execution.
+Validation uses a fresh 20-question conv-47 evaluation, with original results
+preserved. This PR adds no native ingestion-adoption feature or provenance
+field; the canonical run contract remains the benchmark design §9. The owner's
+later request to verify pipeline changes also requires resolving whether this
+operational test should ingest afresh, rather than treating retained ingestion
+as proof of the changed pipeline. The execution mode, exact merged revision,
+new prompt identity, answers, grades, traces, and verified GCS receipts belong
+in the operational runbook. Repeating this development conversation is not
+evidence of held-out generalization or a full-benchmark result. No score is
+claimed here before execution.
