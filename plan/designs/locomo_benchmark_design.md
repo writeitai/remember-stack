@@ -468,8 +468,7 @@ an inference when the conclusion is not stated verbatim. Prefer direct statement
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
 the final answer names an explicit calendar date, range or named period using
-the source timestamp at supported precision. Other answer-policy instructions
-and their placement retain the baseline. For incomplete or competing
+the source timestamp at supported precision. For incomplete or competing
 evidence, qualify an actual answer with `likely` or `possibly`; do not replace it
 with `Unknown`, `not mentioned`, `cannot determine`, or equivalent abstention.
 This does not authorize invented source details, certainty, or substitution of

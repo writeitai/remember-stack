@@ -48,3 +48,20 @@ The owner changed the campaign gate to conv-47 >=18/20, followed by conv-42
 20/20 under this same prompt, before full publication. Inspect per-question
 regressions as well as aggregate score. No score improvement is claimed before
 those complete runs; this is development selection, not a held-out result.
+
+## Review disposition
+
+Antigravity approved the exact template for a complete development trial at
+engine head `2dee0698a`, while holding canonical merge for the score gate and
+integration reconciliation. Current-state design/public docs now state the
+active calendar contract directly; the historical comparison stays here.
+The operations runbook makes the sequence explicit: after conv-47 >=18/20,
+merge the exact approved prompt, build merged main, then fresh native conv-42.
+
+The reviewer also suggested assertions pinning the prose and adapter constant.
+Those were not added: they would repeat implementation text without testing
+model behavior. Existing functional tests cover frozen prompt persistence,
+resume rejection after a changed prompt, source-setting propagation, required
+format fields, and rejection of judge drift. The complete 20-question trial
+measures answer behavior; its scores and regressions remain empirical rather
+than a claim that a prose assertion guarantees calendar reasoning.

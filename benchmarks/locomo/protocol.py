@@ -37,7 +37,7 @@ from rememberstack.model import ToolDescriptor
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v40"
 DEFAULT_PROTOCOL_KEY: Final = "full-v40"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-calendar-answer-v40"
-"""Current Full-v40: baseline answers, explicit calendar time, Luna/Flex, Jev."""
+"""Current Full-v40: best-supported answers, calendar time, Luna/Flex, Jev."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2

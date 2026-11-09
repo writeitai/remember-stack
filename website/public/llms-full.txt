@@ -19937,11 +19937,10 @@ It takes a comma-separated list of conversation ids. Its limits (tier,
 questions, calls, cost, drain timeout) are set with `LOCOMO_*` environment
 variables at the top of the script.
 
-The canonical answer prompt resolves relative-time answers into calendar dates,
-ranges or named periods using the source timestamp at supported precision. The
-other baseline answer instructions and their placement are retained; models,
-retrieval, tools and judge are unchanged. No example answers or reference hints
-are added.
+For relative-time questions, the answer prompt asks for calendar dates,
+ranges or named periods at the precision supported by the source. The source
+timestamp anchors relative wording; it cannot supply an otherwise unknown
+event date or justify extra precision.
 
 ### Compare answer prompts without ingestion
 
