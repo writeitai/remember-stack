@@ -189,6 +189,13 @@ actually enforces; which are added at final loading; and which are equivalent.
 Remove repeated work only after proving that selected eligible rows, ordering,
 refill and early-stop behavior remain correct.
 
+The public `hydrate_claims` and `hydrate_chunks` primitives also accept IDs
+from a caller that may never have run nomination. They still need authoritative
+eligibility conditions. A compound context operation may consolidate its own
+overlapping work, but that does not justify deleting guards from the standalone
+primitives or adding a caller-controlled "already validated" bypass. Share
+canonical predicates/views while preserving each public operation's contract.
+
 Combining SQL is not an end in itself. A large all-row CTE or a planner fence
 that scans the corpus could undo #542. The plan must remain driven by bounded
 candidates and appropriate indexes at large corpus sizes.
