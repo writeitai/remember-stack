@@ -324,10 +324,11 @@ It takes a comma-separated list of conversation ids. Its limits (tier,
 questions, calls, cost, drain timeout) are set with `LOCOMO_*` environment
 variables at the top of the script.
 
-The canonical answer prompt weighs clues against the requested attribute,
-keeps distinct source-supported possibilities for questions allowing several
-answers, and resolves relative dates into explicit calendar periods at the
-precision supported by the source. It adds no examples or reference hints.
+The canonical answer prompt resolves relative-time answers into calendar dates,
+ranges or named periods using the source timestamp at supported precision. The
+other baseline answer instructions and their placement are retained; models,
+retrieval, tools and judge are unchanged. No example answers or reference hints
+are added.
 
 ### Compare answer prompts without ingestion
 

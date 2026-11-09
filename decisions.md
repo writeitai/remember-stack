@@ -5091,13 +5091,12 @@ is unchanged. Does not change D95, D99, or D100.
 
 ## D104. Counterfactual answers may follow retrieved causal evidence
 
-**Answer-scope clarification, 2026-11-09.** Full-v40 weighs evidence against
-what the question requests, distinguishes a single choice from several
-source-supported possibilities, and resolves relative dates into explicit
-calendar periods in final answers. No example answers or category-specific
-execution is added. Models, judge, retrieval and ingestion remain unchanged;
-new prompt bytes have a new evaluation identity. Rationale:
-[scope analysis](plan/analysis/locomo_answer_scope_prompt_20261109.md).
+**Calendar-output clarification, 2026-11-09.** Full-v40 retains the baseline
+answer policy and instruction placement, adding only explicit calendar values
+for relative-date answers at source-supported precision. It supplies no example
+answers or week convention. Prompt/adapter bytes create a new evaluation
+identity; models, judge, tools, retrieval and ingestion are unchanged. Rationale:
+[calendar analysis](plan/analysis/locomo_calendar_answer_prompt_20261109.md).
 
 **Partial supersession, owner amendment 2026-11-09.** Full-v40 replaces this
 entry's `Unknown` fallback and blanket prohibition on outside knowledge with

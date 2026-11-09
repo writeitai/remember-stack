@@ -39,10 +39,10 @@ terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
 `possibly` attached to an actual answer. The prompt still forbids invented source
 details, preserves entity/time constraints, and exposes no reference answers.
 This is benchmark answer-agent policy, not a change to engine evidence or typed
-negatives. The answer policy weighs clues against the requested attribute, preserves
-distinct source-supported possibilities when several answers are allowed, and
-resolves relative dates into explicit calendar periods at supported precision.
-The existing judge, models, retrieval depths, and call/cost guards are unchanged. Noncompliant model outputs and infrastructure failures remain visible;
+negatives. Relative-date answers name an explicit calendar date, range, or period
+using the source timestamp at supported precision. All other baseline answer
+instructions and their placement are retained. The existing judge, models,
+retrieval depths, and call/cost guards are unchanged. Noncompliant model outputs and infrastructure failures remain visible;
 the harness never fabricates an answer to replace them. Prepare a new run for
 this protocol; preserve old answers and fingerprints. This prompt change adds
 no cross-revision ingestion-adoption command or compatibility contract.

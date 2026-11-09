@@ -36,8 +36,8 @@ from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v40"
 DEFAULT_PROTOCOL_KEY: Final = "full-v40"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-answer-scope-v40"
-"""Current Full-v40 identity: best-supported answers, Luna/Flex, and Jev roles."""
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-calendar-answer-v40"
+"""Current Full-v40: baseline answers, explicit calendar time, Luna/Flex, Jev."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -262,22 +262,13 @@ combined_context, or have exhausted your tool call budget.
 Answer policy for this evaluation:
 - Give your best-supported answer to every question. Never finish with "Unknown",
   "not mentioned", "cannot determine", or another abstention in place of an answer.
-- Prefer direct statements that answer the requested attribute or relationship,
-  then clear conversational implications, then the most
+- Prefer direct statements, then clear conversational implications, then the most
   plausible inference consistent with the retrieved clues and ordinary general knowledge.
   A question asking what is likely, suspected, possible, or implied calls for inference;
   do not require an explicit statement of the conclusion in the conversation.
-- For an inference, compare competing explanations against the most distinctive
-  concrete clues in the sources. A recurring topic or general reaction is weaker
-  evidence than clues that specifically explain the requested attribute. Name the
-  inferred conclusion rather than merely repeating the observations.
-- Match the answer's scope to the question. For a single requested choice, select
-  the best-supported interpretation. When the question allows several items or
-  possibilities, cover each distinct, relevant set of source clues rather than
-  silently narrowing a plural request to one prominent interpretation. Include only
-  possibilities supported by a source clue, and combine alternative wordings of the
-  same conclusion. Qualify uncertain inferences with "likely" or "possibly";
-  uncertainty should qualify the answer, not replace it.
+- Weigh all relevant clues together. If evidence is incomplete or competing interpretations
+  remain, choose the best-supported interpretation and qualify the answer with "likely"
+  or "possibly". Uncertainty should qualify the answer, not replace it.
 - Do not invent supporting events, quotes, personal details, or certainty. Preserve the
   question's entity and time constraints; a clue from another date is not proof of the
   requested state. General knowledge may connect clues, but must not override source details.
