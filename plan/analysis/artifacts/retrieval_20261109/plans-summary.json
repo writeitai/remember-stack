@@ -1,0 +1,35 @@
+{
+  "scope": "three representative archived statements; one observed plan each; no embedding or HTTP",
+  "queries": [
+    {
+      "archived_statement": 800,
+      "component": "claim_eligibility_content_256_ids",
+      "sql_sha256": "a9c4ec6fde89767082072846297532fb0d82fc81c3378d76329314f0ee0c9b17",
+      "planning_ms": 112.949,
+      "execution_ms": 663.295,
+      "rows": 256.0,
+      "shared_hit_blocks": 628498,
+      "shared_read_blocks": 0
+    },
+    {
+      "archived_statement": 821,
+      "component": "chunk_eligibility_metadata_116_ids",
+      "sql_sha256": "b8fc71a03570641ca6891727acfc80657deec2ee27868e9a001e11165f21aecc",
+      "planning_ms": 47.097,
+      "execution_ms": 515.497,
+      "rows": 116.0,
+      "shared_hit_blocks": 135588,
+      "shared_read_blocks": 0
+    },
+    {
+      "archived_statement": 125,
+      "component": "scoped_fact_nomination",
+      "sql_sha256": "26572f9ced9c3f595125598474c10ec53d81653306ebbd4609226fc0fa77be6c",
+      "planning_ms": 332.69,
+      "execution_ms": 83.073,
+      "rows": 201.0,
+      "shared_hit_blocks": 29421,
+      "shared_read_blocks": 0
+    }
+  ]
+}

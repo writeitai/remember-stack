@@ -1,0 +1,15 @@
+{
+  "verified_at": "2026-11-09T08:55:26.883486+00:00",
+  "archive": {
+    "gcs_uri": "gs://remember-stack-locomo-backups/reports/locomo-retrieval-profile-20261109/20261109T085525Z-fb4a5f5a4/evidence.tar.zst",
+    "bytes": 328976,
+    "sha256": "503675523c2841bc9be19d4bb1f7869a94c6485448b830698a93dcd231a036a6",
+    "generation": "1794214526582719"
+  },
+  "manifest_uri": "gs://remember-stack-locomo-backups/reports/locomo-retrieval-profile-20261109/20261109T085525Z-fb4a5f5a4/manifest.json",
+  "manifest_sha256": "c275ba830580a31a1710093ca17d960c32c05e07b3bbc80c7ec8be53dbfffa5f",
+  "file_count": 14,
+  "archive_upload_download_sha256_verified": true,
+  "manifest_upload_download_bytes_verified": true,
+  "secret_value_scan_passed": true
+}

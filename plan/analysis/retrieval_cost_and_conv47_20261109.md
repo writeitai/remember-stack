@@ -160,6 +160,22 @@ it can lag a tombstone. Maintaining it synchronously introduces write fanout
 and contention. Measure a candidate-bound joined read before adding another
 state-maintenance mechanism.
 
+### 6.1 What representation consistency protects
+
+A representation is converted text for one observed document version. A PDF
+version can be read as R1, then reread as R2 after an OCR/conversion correction.
+Chunk offsets and a section tree belong to the named representation, so text
+from R1 cannot be cited with R2's offsets. Old representations are processing
+history, not automatically alternative source testimony.
+
+The current chunk path first reads published coordinates and metadata, then
+`chunk_texts` joins indexed text back to the published chunk relation, and the
+caller compares the section role read through both paths. Selecting body and
+metadata through one authoritative join could make their correspondence
+structural. Any removal of the comparison requires proving it sees the same
+section/generation and scope in both paths. This is not semantic validation by
+a model and must not be described as a reason to reprocess unchanged content.
+
 ## 7. Snapshot consistency and repeated checks
 
 The current ranked-read context pins one read-only repeatable-read snapshot,
@@ -231,6 +247,14 @@ mode and declared effective periods determine current behavior. Existing
 history-oriented interfaces must be audited rather than assuming one flag
 exposes every older version or extraction row.
 
+In particular, the default **snapshot** lineage treats each observed version
+as independent dated testimony and keeps old-version claims current testimony.
+A **living** lineage retires testimony present only in replaced versions.
+The chunk relation can represent any live ready version, while a particular
+text scope still decides which versions it selects. Thus "search only current"
+and "search all old evidence" are both inadequate descriptions of the current
+combined claim/chunk semantics.
+
 An agent-facing history policy could return relevant retained versions with
 source dates, version IDs, served/current-version status, effective intervals,
 occurrences and applicable fact state. Some fields already exist. A complete
@@ -261,14 +285,242 @@ Do not shrink result depth or add a model to hide the current costs. The
 aspiration is database work in a few hundred milliseconds on this fixture,
 not an established result or an end-to-end promise including an external model.
 
-## 12. Conv-47 diagnosis and measurement results
+## 12. Measurements completed on 2026-11-09
 
-Pending in this first draft: fresh stage measurements and reinspection of the
-three latest wrong answers against original dialogue, exact reader-visible
-traces and the frozen prompt. The existing canonical result is 17/20. Do not
-rerun, relabel, change a reference or attribute a miss solely from the score.
+[Machine-readable measurements](artifacts/retrieval_20261109/measurements.json)
+and the [diagnostic harness](artifacts/retrieval_20261109/profile.py) preserve
+the experiment. No serving method's arguments, return value, SQL or ranking
+was changed. Timing wrappers observe existing calls; a finite saved-vector
+provider rejects unknown embedding inputs instead of making a network call.
 
-## 13. Costs, correctness and scope limits
+The input is the 24 requests from the earlier R3 database-boundary audit:
+eight fact contexts, three claims/sources contexts and thirteen entity
+lookups. Five passes produce 120 completed operations with zero negative
+results. This is a deliberately failure-selected fixture, not a random sample
+of production traffic or all 60 R4 tool calls. First-pass numbers are first
+observations after starting the copy, not a verified OS-cache-cold test.
+
+An isolated PostgreSQL RC1 copy of the retained R4 volume was used. Original
+R3/R4 containers and their paid data stayed stopped and unchanged. The base
+application image/dependencies are `rememberstack-retrieval:8cd181fe0`; its
+`/app/src` was mounted read-only from source `fb4a5f5a4`, whose relevant query
+files are byte-identical to the evaluated source. This is a direct-engine
+measurement of schema `p9_45_0066`, not a full v0.19 HTTP deployment/readiness
+claim. The evaluation instant was pinned to 2026-11-07 00:30:16 UTC. No schema
+migration, setup, ingestion worker or paid ingestion stage ran.
+
+| Operation | Samples | Median wall | Empirical p95 | Median SQL commands |
+| --- | ---: | ---: | ---: | ---: |
+| Entity lookup | 65 | 47 ms | 62 ms | 5 |
+| Facts context | 40 | 2,253 ms | 2,345 ms | 146 |
+| Claims/sources context | 15 | 1,478 ms | 1,688 ms | 53 |
+
+The p95 is the nearest-rank empirical statistic, with repeated queries on one
+small store; it is not a production SLO. The median cursor SQL times are
+2,162 ms for facts and 1,404 ms for claims/sources. Cursor timings include
+statement execution/transport through the local Unix socket, not a pure
+server CPU clock. Decoding, model construction and instrument logging add
+other time. Diagnostic instrumentation overhead was not independently
+subtracted.
+
+### 12.1 Where the time goes
+
+| Component | Median inclusive wall time |
+| --- | ---: |
+| Claim nominations, semantic plus keyword | 82 ms |
+| Claim eligibility/content/citation loading | 808 ms |
+| Chunk nominations, semantic plus keyword | 95 ms |
+| Chunk eligibility/metadata/content loading | 438 ms |
+| Raw indexed chunk-body read, nested inside the preceding row | 11 ms |
+| Fact nomination, including its internal eligibility work | 1,366 ms |
+| Final fact confirmation | 809 ms |
+| Supporting fact evidence read | 49 ms |
+| Fact enrichment | 2 ms |
+
+Nested phase times overlap: the raw chunk-body time is included in chunk
+loading, and the embedding wrapper is included in nomination. Component
+medians need not add to the overall median. JSON serialization of the final
+model was below 1.5 ms in every sample. Layer admission and text freshness/
+pending probes were around 1–2 ms at their medians. The saved-vector lookup
+was under a millisecond and is not a provider latency measurement.
+
+This refines the earlier hypothesis. Copying raw chunk text and serializing
+JSON are not the demonstrated dominant costs. The expensive areas are the
+mixed eligibility/metadata/citation reads and fact nomination/confirmation.
+The current wrappers cannot separate eligibility CPU from fetching columns
+inside a single SQL statement. Use representative query plans before claiming
+which join or field dominates. Reducing the number of fully processed
+candidates remains worth considering, but simply deferring a string copy is
+not established as the solution.
+
+Warm passes did not remove the cost: facts medians were 2,261 ms in the first
+pass and 2,253 ms subsequently; claims/sources were 1,466 and 1,479 ms. Thus
+these observations do not support a cold-start explanation. They also do not
+yet measure the isolated benefit of removing entity-coverage counting.
+
+Three representative archived statements were also explained once on the
+same copy with read-only execution, JIT off and no parallel gather workers.
+See [plans-summary.json](artifacts/retrieval_20261109/plans-summary.json).
+
+| Statement | Planning | Execution | Returned rows | Shared-buffer hits |
+| --- | ---: | ---: | ---: | ---: |
+| Claim eligibility/content, 256 requested IDs | 113 ms | 663 ms | 256 | 628,498 |
+| Chunk eligibility/metadata, 116 IDs | 47 ms | 515 ms | 116 | 135,588 |
+| Scoped fact nomination | 333 ms | 83 ms | 201 | 29,421 |
+
+All three recorded zero shared-read blocks in these observations. Buffer hits
+are repeated logical accesses, not distinct pages or a dataset-size estimate.
+They show substantial cached database work; the fact statement also spends
+more time planning than executing. They do not establish which individual
+join to remove. This is one observation per statement, using the archived
+parameters, not a p95 measurement of each phase. Compact query structure and
+repeated eligibility work merit investigation alongside entity coverage.
+
+### 12.2 External embedding latency is independent
+
+Three separate live embedding probes used the retained Qwen3-Embedding-8B,
+1,536-dimension, Nebius-pinned configuration. They completed in 0.836, 1.701
+and 0.610 seconds, with reported total provider cost `$0.00000048`. See
+[embedding-probes.json](artifacts/retrieval_20261109/embedding-probes.json).
+These are three independent transport observations, not an end-to-end context
+benchmark or a provider availability guarantee. They are excluded from the
+120 saved-vector replays. No answer or judge model call was made.
+
+### 12.3 Preservation and operational notes
+
+All fifteen checked product fingerprints (thirteen stored-table multisets and
+two complete published views) match the saved R4 source after the experiment;
+see [store-evidence.json](artifacts/retrieval_20261109/store-evidence.json).
+That includes the unchanged ingestion cost ledger. Query flags, results and
+D56 identities were not rewritten. Initial harness startup failed before
+measurement because a full `/app` mount hid the image's dependency environment,
+then because the report directory was not writable by the image user. The
+successful run mounted only source read-only and used a writable private report
+directory. Neither failure generated answers, changed data or made model calls.
+
+The raw timing events, SQL text without parameters, three query plans, executed
+harness, copied-store fingerprints, runtime identities and aggregate/miss
+reports are archived in GCS. The archive was downloaded to verify its SHA-256;
+the manifest and receipt were also downloaded byte-for-byte. See the
+[receipt](artifacts/retrieval_20261109/gcs-receipt.json) and
+[runtime record](artifacts/retrieval_20261109/runtime.json). After verification
+the temporary database container and its copied data were removed. No original
+benchmark container was started. The full campaign remains paused.
+
+## 13. Why the three latest conv-47 answers are wrong canonically
+
+The inspected run is R4, not the older R3 run that suffered database timeouts.
+All three generated answers are `Unknown`; all three frozen judgments are
+WRONG. The canonical score remains **17/20**. We did not regenerate answers,
+rejudge, alter a reference, or award an alternative score. The
+[miss record](artifacts/retrieval_20261109/misses.json) captures the question,
+reference, original dialogue and availability in the returned chunks.
+
+All 31 rendered session documents and the raw conversation were searched;
+the cited turns, neighboring context, targeted matches, saved tool responses
+and frozen answering prompt were inspected. The reader trace
+projection removes ranking/empty containers, not chunk text. Thus reference
+presence here is more than presence somewhere in the database: it is in the
+evidence supplied for a subsequent answer-agent call. Availability still does
+not prove the model attended to or interpreted a particular sentence.
+
+### 13.1 qa/0000: suspected health problems; gold `Obesity`
+
+Raw reference D1:27 is John on 17 March 2022: his fingers are too big for
+bowling, and perhaps he should take up exercise and run in the morning.
+It does not state body weight, obesity, a diagnosis or a medical suspicion.
+The turn appears at returned chunk positions 26, 34 and 19 in three successive
+claims/sources searches, each returning 50 chunks. There is no timeout or
+missing-reference explanation for the final abstention.
+
+A secondary engine observation is that the stored claims preserve John's
+dislike of bowling and his praise of James's bowling, but targeted keyword
+searches of the 822 stored claim texts found no corresponding large-fingers/
+exercise cue. This is not a proof that no differently worded cue exists.
+This can weaken the fact-first route. It did not prevent the complete cue
+from reaching the answerer through chunks. We have not inspected the original
+Selection decision sufficiently to label the omission an extraction bug.
+
+An earlier D1:23 metadata caption mentions a medical chart, but the raw turn
+has no image URL or diagnosis, and its spoken text discusses a game project.
+That caption does not establish obesity. No stronger explicit obesity/weight
+statement was found in the full rendered conversation or targeted raw-text
+inspection.
+
+The frozen prompt makes conversation evidence authoritative and permits
+`Unknown` when the deployment lacks an answer. Its explicit qualified-inference
+rule is framed around hypothetical/counterfactual dependencies, not every
+open-domain question. The observed outcome is consistent with conservative
+abstention instead of the benchmark's expected health inference. The gold is
+weakly supported by its cited reference; this does not prove every annotation
+or the model's internal reasoning wrong. It is not evidence of a retrieval
+timeout, an OCR miss or a strict judge rejecting a correct generated entity.
+
+### 13.2 qa/0006: Connecticut residence; gold `Likely yes`
+
+Raw D5:1, dated 12 April 2022, says James adopted a puppy from a shelter in
+Stamford the previous week. The latest source response contains that raw turn
+at chunk position 15/50 and the extracted claim about adopting the puppy in
+Stamford. The earlier R3 missing-reference problem is absent in R4.
+
+The gold requires interpreting Stamford as the Connecticut location and then
+inferring likely residence from where a puppy was adopted. Adoption location
+is not an explicit residence statement. The source date is also April, whereas
+the answerer's searches ask about current residence. Later D29:10 says James
+rented an apartment near McGee's bar but gives no state; we should not assign
+that bar an external location and silently turn it into a residence fact.
+
+This is the clearest answering-policy/calibration opportunity: the benchmark
+accepts a qualified commonsense inference and the agent returns `Unknown`
+despite having the premise. A general rule about supported, qualified inference
+could be tested separately. Hard-coding a Stamford-to-residence rule would be
+benchmark-specific and is not proposed. The trace supports this classification
+but does not reveal the model's internal cause. The judge correctly marks
+`Unknown` wrong against its frozen reference; no strictness error is shown.
+
+### 13.3 qa/0011: feelings on April 10; gold `seeking solitude`
+
+The raw dataset dates D6 to **20 April 2022**. D6:7 says John wanted to be
+alone with nature **two days ago**, resolving to **18 April**, not April 10.
+The original QA nevertheless asks April 10 and cites D6:7. This conflict exists
+in the raw dataset, before rendering or engine time normalization. Neighboring
+sessions are April 4 and April 12; there is no April 10 session to reinterpret
+as the cited April 20 turn.
+
+The cited chunk arrived at positions 24/50 and 33/50 in two source reads. The
+extracted claim explicitly says John wanted to be alone with nature on
+2022-04-18. The agent also made an April-10 semantic chunk search. This case
+therefore demonstrates a correct extracted relative date and a concrete
+question/reference conflict, rather than evidence that the engine converted
+April 10 to April 18 or failed to return the cited mood statement.
+
+`Unknown` is a defensible response to the literal April-10 question. It stays
+canonical WRONG because the frozen judge compares the question, gold and
+answer without the underlying source dialogue. This is an annotation conflict,
+not a demonstrated judge malfunction. Changing the judge cannot make the
+source dates agree.
+
+### 13.4 Shared observations and bounded conclusions
+
+The three answers have no answer or judge failure, and their tool responses
+have no typed negatives. Correct-reference coverage alone does not establish
+that a question has a uniquely supported answer. Here two references demand
+inference of different strength and the third contradicts the question's date.
+
+The recorded input-token totals are 541,216, 238,404 and 518,742 across their
+respective agent loops. They are sums across model calls, not individual
+context-window sizes or proof of overflow. Individual claims/sources envelopes
+are roughly 122–128 thousand JSON characters before reader compaction, and
+successive traces repeat prior content. That is a real context-volume/cost
+observation; attention dilution is a hypothesis, not an established cause.
+No context-length provider failure is recorded.
+
+The next optimization should address measured engine work. A separate
+answering-policy experiment can examine calibrated inference, while the date
+conflict remains an observed benchmark issue. Neither a reranker nor more
+candidate depth is established as a cure for these three latest abstentions.
+
+## 14. Costs, correctness and scope limits
 
 This work changes no ingestion generation, content identity or D56 reuse key.
 It performs no paid ingestion and introduces no serving algorithm or schema
