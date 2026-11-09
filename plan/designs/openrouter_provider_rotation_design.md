@@ -2,14 +2,15 @@
 
 Binding design for D127. Analysis:
 `plan/analysis/openrouter_inference_capacity_20260916.md`.
-Status: accepted pending review; implementation follows in a stacked PR.
+Status: accepted and implemented.
 
 ## Problem
 
-The chat seat pins providers with `allow_fallbacks: false` and never rotates: when the
+Before ordered rotation, the chat seat pinned providers with `allow_fallbacks: false`: when the
 routed provider overloads, the adapter retry and the work-ledger retries all hit the same
 engine, converting transient 429s into dead letters (R14: 45/997 from DeepInfra 429s).
-Embeddings declare an ordered shortlist with OpenRouter-side fallbacks, but neither path rotates client-side on overload today.
+Embeddings already declared an ordered shortlist with OpenRouter-side fallbacks;
+neither path rotated client-side on overload.
 
 ## Decision
 
@@ -68,6 +69,17 @@ rotation, a split throttle budget, and per-call host recording.
   retry. Standard-price fallback requires that endpoint in the explicit approved
   routing policy; Flex exhaustion alone never widens the allowlist. Actual usage
   is recorded at the serving endpoint's rate, not an assumed Flex rate.
+- The explicit transient envelope `error.metadata.error_type = provider_unavailable`
+  is another recognized unbilled rejection, subject to the same HTTP/error-code
+  checks and strict absence of both `choices` and `usage`. An allocated ID is
+  allowed for this specific rejection. It uses the existing throttle budget,
+  approved provider set and transport-event recording, without fabricating usage
+  or first attempting to reconcile a nonexistent completed generation. Generic
+  ID-bearing errors still require accounting recovery. This distinction follows
+  [OpenRouter's failed-attempt billing contract](https://openrouter.ai/pricing)
+  (retrieved2026-11-09); the adapter does not request separately billable auxiliary
+  services. Incident evidence and alternatives are in the
+  [unavailability analysis](../analysis/openrouter_provider_unavailable_20261109.md).
 - Successful responses require usable token/cost accounting. If inline
   accounting is unusable, poll only the existing generation's metadata with
   the bounded 0/1/2/3/5-second waits. Exhaustion remains a nonretryable

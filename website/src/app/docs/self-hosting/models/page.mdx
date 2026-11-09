@@ -177,6 +177,13 @@ processing when Flex is unavailable, set both chat provider variables to
 standard processing can cost more, and no other provider is admitted. A
 Flex-only allowlist continues to forbid standard-price fallback.
 
+The same bounded retry path handles a transient error whose
+`error.metadata.error_type` is `provider_unavailable`, even when OpenRouter has
+allocated an ID, provided neither choices nor usage is present. This follows
+[OpenRouter's failed-attempt billing policy](https://openrouter.ai/pricing).
+Generic ID-bearing errors and any response with choices or usage still require
+accounting recovery; this rule does not assume missing usage means zero cost.
+
 If a completed response has unusable token or cost accounting, the adapter
 looks up that existing generation's metadata. If recovery fails, the work item
 stops with an accounting error containing the generation ID and lookup status.

@@ -1068,7 +1068,7 @@ def _response_retry_after_s(*, response: httpx.Response) -> float | None:
 
 
 def unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
-    """Identify a received pre-generation rejection, never infer it from a timeout."""
+    """Identify an explicit unbilled rejection, never infer it from a timeout."""
     try:
         body = response.json()
     except ValueError:
@@ -1090,11 +1090,18 @@ def unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
             code is None
             or str(code) in {str(value) for value in _TRANSIENT_UPSTREAM_CODES}
         )
-        and "flex processing is temporarily unavailable"
-        in str(error.get("message", "")).lower()
+        and (
+            "flex processing is temporarily unavailable"
+            in str(error.get("message", "")).lower()
+            or (
+                isinstance(error.get("metadata"), dict)
+                and error["metadata"].get("error_type") == "provider_unavailable"
+            )
+        )
     ):
-        # OpenRouter can allocate an id before OpenAI rejects uncharged Flex
-        # admission. Preserve choices/usage as a strict no-replay boundary.
+        # OpenRouter can allocate an id for an unbilled failed attempt. Its
+        # documented billing policy excludes failed model-token attempts;
+        # preserve choices/usage as a strict boundary against replaying output.
         return True
     return "id" not in body and response.status_code in (429, 503)
 
