@@ -25,7 +25,8 @@ run_dir=$2
 dataset_path=$3
 python_bin=${LOCOMO_PYTHON:-.venv/bin/python}
 tier=${LOCOMO_TIER:-publication}
-protocol=${LOCOMO_PROTOCOL:-full-v40}
+protocol=${LOCOMO_PROTOCOL:-full-v41}
+image_inputs=${LOCOMO_IMAGE_INPUTS:-}
 mount_root=${LOCOMO_MOUNT_ROOT:-$run_dir/.mounts}
 max_documents=${LOCOMO_MAX_DOCUMENTS:-100}
 max_questions=${LOCOMO_MAX_QUESTIONS:-1540}
@@ -188,6 +189,8 @@ export REMEMBERSTACK_BUILD_REVISION
 REMEMBERSTACK_BUILD_REVISION=$(git rev-parse HEAD)
 
 if [[ ! -f "$run_dir/run.json" ]]; then
+  [[ -n "$image_inputs" && -f "$image_inputs/index.json" ]] ||
+    die "LOCOMO_IMAGE_INPUTS must name a complete frozen prepare-images bundle"
   if [[ -d "$run_dir" ]] &&
     find "$run_dir" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
     die "run directory is non-empty but has no run.json: $run_dir"
@@ -197,6 +200,7 @@ if [[ ! -f "$run_dir/run.json" ]]; then
     --dataset "$dataset_path" \
     --tier "$tier" \
     --protocol "$protocol" \
+    --images "$image_inputs" \
     --output "$run_dir"
 fi
 

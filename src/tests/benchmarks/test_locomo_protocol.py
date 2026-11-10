@@ -90,7 +90,8 @@ def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> N
     )
 
     rendered = render_session(
-        sample=sample, session=session,
+        sample=sample,
+        session=session,
         image_readings={("conv-test", "D1:1", 1): "## Visual description\nA red lamp."},
     )
 

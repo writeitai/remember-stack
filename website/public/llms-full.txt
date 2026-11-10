@@ -19659,7 +19659,7 @@ model.
 **Warning:**
 
 No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v40`. The numbers under [Recorded results](#recorded-results)
+`RS-LoCoMo-Full-v41`. The numbers under [Recorded results](#recorded-results)
 belong to earlier protocols and earlier engine builds. Do not compare them
 with other systems' published scores.
 
@@ -19747,7 +19747,7 @@ The summary reports:
 
 ### The current protocol
 
-Execution uses one profile, `RS-LoCoMo-Full-v40` (key `full-v40`). It selects
+Execution uses one profile, `RS-LoCoMo-Full-v41` (key `full-v41`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
 answering and judging. All these Luna seats prefer OpenAI Flex and permit
@@ -19775,12 +19775,26 @@ protocols are read-only historical records; they cannot be selected for
 execution or silently used as a fallback. Changing configuration does not
 relabel or re-ingest an old store.
 
-Luna is also the native image-description converter default. The stock
-LoCoMo renderer supplies dataset-derived captions and image queries as
-text; it does not itself fetch images or run OCR. Configuring the vision
-lane does not establish that a particular benchmark run used it. Actual
-conversion metadata must identify whichever cached or native visual data
-was supplied to that run.
+Image preparation uses the shared Mistral OCR and Luna vision converter over
+actual source pixels, without questions or reference answers. `prepare-images`
+plans locally by default; paid execution requires `--execute`, provider keys
+and finite cache-absolute conversion/cost ceilings. Successful independent
+lanes are reused. Uncertain interrupted paid attempts require inspection.
+The reported-cost limit stops new admissions; already admitted calls finish.
+OCR uses its configured page-price meter; vision records provider-returned usage.
+
+Offline `prepare --images <bundle>` requires complete image coverage, copies
+the original pixels, readings, native provenance, binary assets and accounting
+into the run, and fingerprints them. The renderer attaches labeled derived
+readings to their exact source turns and speakers; downstream sessions are
+ordinary E0 Markdown, not native image-origin representations. It never
+silently substitutes a caption when an available image's reading is missing.
+Permanently inaccessible source URLs require explicit `--allow-unavailable`
+with typed failures, visible markers and coverage counts. Provider failures
+still stop preparation. Frozen run inputs are independent of ambient caches
+and are included by the ordinary GCS run archive. Changed image input requires
+a new run and fresh ingestion. This input change keeps the v40 answer/judge
+templates, retrieval budgets and core generations unchanged.
 
 The answerer checks question completeness, distinct events and participants,
 and adjacent dialogue. No score is established for this protocol by its
@@ -19867,7 +19881,7 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-No run of `RS-LoCoMo-Full-v40`, or of any protocol after v18, is recorded.
+No run of `RS-LoCoMo-Full-v41`, or of any protocol after v18, is recorded.
 When one is, it will appear here with its protocol, revision, tier, cost
 and failure counts.
 
@@ -19902,9 +19916,18 @@ export REMEMBERSTACK_OPENROUTER_API_KEY=<openrouter key>
 Then, stage by stage, for one conversation (`conv-26`) of the smoke tier:
 
 ```bash
+uv run --extra benchmark python -m benchmarks.locomo prepare-images \
+  --dataset /path/to/locomo10.json --tier smoke \
+  --cache /private/locomo-images-cache --output /private/locomo-image-inputs \
+  --max-conversions 1000 --max-cost-usd 10
+
+# The command above only plans. After reviewing it, add --execute and supply
+# REMEMBERSTACK_MISTRAL_OCR_API_KEY and REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY.
+# Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v40
+  --output .benchmark-runs/smoke --protocol full-v41 \
+  --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
   --run .benchmark-runs/smoke --sample conv-26 \
@@ -19936,7 +19959,8 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v40 LOCOMO_MAX_EVALUATOR_COST_USD=60 \
+LOCOMO_PROTOCOL=full-v41 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
+  LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```
 

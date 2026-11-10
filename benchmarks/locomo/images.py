@@ -53,7 +53,9 @@ class StoredImageConversion(ConversionResult):
     """The complete native result, including binary assets and origin labels."""
 
     @field_serializer("derived_assets")
-    def encode_assets(self, assets: tuple[DerivedAsset, ...]) -> list[dict[str, JsonValue]]:
+    def encode_assets(
+        self, assets: tuple[DerivedAsset, ...]
+    ) -> list[dict[str, JsonValue]]:
         """Preserve native binary assets in an explicit base64 JSON form."""
         return [
             StoredImageAsset.model_validate(asset.model_dump()).model_dump(mode="json")
@@ -66,7 +68,9 @@ class StoredImageConversion(ConversionResult):
         """Read the durable encoding without changing the native asset model."""
         if isinstance(value, (list, tuple)):
             return tuple(
-                item if isinstance(item, DerivedAsset) else StoredImageAsset.model_validate(item)
+                item
+                if isinstance(item, DerivedAsset)
+                else StoredImageAsset.model_validate(item)
                 for item in value
             )
         return value
@@ -90,6 +94,12 @@ class ImageConversionProfile(FrozenModel):
         vision = ImageDescriptionSettings.model_validate(
             dict(self.vision, api_key=credential)
         )
+        if self.ocr != ocr.model_dump(
+            mode="json", exclude={"api_key"}
+        ) or self.vision != vision.model_dump(mode="json", exclude={"api_key"}):
+            raise ValueError(
+                "image profile must contain the complete canonical non-secret settings"
+            )
         if (
             vision.model != "openai/gpt-6-luna"
             or vision.reasoning_effort != "low"

@@ -523,7 +523,7 @@ before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-Full-v40 requires the best-supported answer to each scored question, including
+Full-v41 requires the best-supported answer to each scored question, including
 an inference when the conclusion is not stated verbatim. Prefer direct statements,
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
@@ -569,14 +569,22 @@ envelope-evidence only. It remains separate from the primary score.
 Local preparation:
 
 ```bash
+uv run --extra benchmark python -m benchmarks.locomo prepare-images \
+  --dataset /absolute/path/locomo10.json --tier smoke \
+  --cache /private/locomo-image-cache --output /private/locomo-image-inputs \
+  --max-conversions 1000 --max-cost-usd 10
+
+# Review the plan; execute it explicitly with the OCR and vision keys.
+# With the resulting immutable image bundle, prepare without provider calls:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v40 \
+  --protocol full-v41 \
+  --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Execution uses `full-v40`; later stages
+`--protocol` exists only on `prepare`. Execution uses `full-v41`; later stages
 read the immutable current choice from the saved run. Historical protocols are
 read-only and cannot be selected as an execution fallback.
 
