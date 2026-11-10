@@ -15,6 +15,7 @@ import ipaddress
 import os
 from pathlib import Path
 import socket
+import struct
 import tempfile
 from threading import Lock
 from typing import Iterator
@@ -29,8 +30,11 @@ from pydantic import model_validator
 
 from benchmarks.locomo.dataset import load_dataset
 from benchmarks.locomo.dataset import load_manifest
+from benchmarks.locomo.dataset import validate_manifest
 from benchmarks.locomo.images import bytes_hash
+from benchmarks.locomo.images import ConversionAttempt
 from benchmarks.locomo.images import IMAGE_ACCOUNTING
+from benchmarks.locomo.images import image_attempt_key
 from benchmarks.locomo.images import IMAGE_INDEX
 from benchmarks.locomo.images import IMAGE_MAX_BYTES
 from benchmarks.locomo.images import image_reading_path
@@ -40,7 +44,9 @@ from benchmarks.locomo.images import ImageReading
 from benchmarks.locomo.images import ImageUnavailable
 from benchmarks.locomo.images import load_image_inputs
 from benchmarks.locomo.images import original_image_path
+from benchmarks.locomo.images import PreparationState
 from benchmarks.locomo.images import PreparedImage
+from benchmarks.locomo.images import require_image_reading_accounting
 from benchmarks.locomo.images import Sha256
 from benchmarks.locomo.images import source_images
 from benchmarks.locomo.images import SourceImage
@@ -117,13 +123,21 @@ class HttpImageFetcher:
         target = url
         try:
             for _ in range(6):
-                parsed = urlsplit(target)
+                try:
+                    parsed = urlsplit(target)
+                    port = parsed.port
+                except ValueError as error:
+                    raise SourceUnavailable(
+                        reason=ImageUnavailable(
+                            kind="invalid_url", detail="malformed source URL"
+                        )
+                    ) from error
                 if (
                     parsed.scheme not in {"http", "https"}
                     or parsed.hostname is None
                     or parsed.username is not None
                     or parsed.password is not None
-                    or parsed.port not in (None, 80, 443)
+                    or port not in (None, 80, 443)
                 ):
                     raise SourceUnavailable(
                         reason=ImageUnavailable(
@@ -157,7 +171,7 @@ class HttpImageFetcher:
                         )
                     chunks: list[bytes] = []
                     size = 0
-                    for chunk in response.iter_bytes():
+                    for chunk in response.iter_bytes(chunk_size=65_536):
                         size += len(chunk)
                         if size > self._max_bytes:
                             raise SourceUnavailable(
@@ -168,20 +182,36 @@ class HttpImageFetcher:
                             )
                         chunks.append(chunk)
                     content = b"".join(chunks)
-                with Image.open(io.BytesIO(content)) as image:
-                    if image.format not in {"PNG", "JPEG"} or getattr(
-                        image, "is_animated", False
-                    ):
-                        raise SourceUnavailable(
-                            reason=ImageUnavailable(
-                                kind="unsupported_image",
-                                detail="source is not static JPEG/PNG",
+                try:
+                    with Image.open(io.BytesIO(content)) as image:
+                        if image.format not in {"PNG", "JPEG"} or getattr(
+                            image, "is_animated", False
+                        ):
+                            raise SourceUnavailable(
+                                reason=ImageUnavailable(
+                                    kind="unsupported_image",
+                                    detail="source is not static JPEG/PNG",
+                                )
                             )
+                        image.verify()
+                        mime: Literal["image/png", "image/jpeg"] = (
+                            "image/png" if image.format == "PNG" else "image/jpeg"
                         )
-                    image.verify()
-                    mime: Literal["image/png", "image/jpeg"] = (
-                        "image/png" if image.format == "PNG" else "image/jpeg"
-                    )
+                except SourceUnavailable:
+                    raise
+                except (
+                    OSError,
+                    ValueError,
+                    SyntaxError,
+                    EOFError,
+                    struct.error,
+                    Image.DecompressionBombError,
+                ) as error:
+                    raise SourceUnavailable(
+                        reason=ImageUnavailable(
+                            kind="unsupported_image", detail=type(error).__name__
+                        )
+                    ) from error
                 return FetchedImage(content=content, mime=mime)
         except SourceUnavailable:
             raise
@@ -216,36 +246,6 @@ class CachedOriginal(FrozenModel):
         elif self.sha256 is not None or self.mime is not None:
             raise ValueError("unavailable original cannot have converted pixels")
         return self
-
-
-class ConversionAttempt(FrozenModel):
-    """Write-ahead record: unknown interrupted attempts are not regenerated."""
-
-    key: NonEmpty
-    original_sha256: Sha256
-    status: Literal["inflight", "complete", "retryable_failure", "blocked"]
-    events: tuple[ConverterUsageEvent, ...] = ()
-    outcomes: tuple[str, ...] = ()
-    error_type: str | None = None
-
-
-class PreparationState(FrozenModel):
-    """Persistent cache-absolute accounting, including failed attempts."""
-
-    schema_version: Literal[1] = 1
-    attempts: tuple[ConversionAttempt, ...] = ()
-
-    @property
-    def cost_usd(self) -> Decimal:
-        """Sum recorded native OCR meter and returned vision charges once."""
-        return sum(
-            (
-                event.usage.cost_usd
-                for attempt in self.attempts
-                for event in attempt.events
-            ),
-            start=Decimal(0),
-        )
 
 
 class ImagePreparationSummary(FrozenModel):
@@ -284,16 +284,26 @@ def _write_model(*, path: Path, value: FrozenModel) -> None:
 def _immutable_bytes(*, path: Path, content: bytes) -> None:
     """Keep first-written immutable input, rejecting occupied corrupt bytes."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".image-artifact-", dir=path.parent)
     try:
-        with path.open("xb") as handle:
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-    except FileExistsError:
-        if path.read_bytes() != content:
-            raise ImagePreparationError(
-                f"occupied image artifact differs: {path.name}"
-            ) from None
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_bytes() != content:
+                raise ImagePreparationError(
+                    f"occupied image artifact differs: {path.name}"
+                ) from None
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 @contextmanager
@@ -349,6 +359,14 @@ class _ImageCache:
             if self._state_path.exists()
             else PreparationState()
         )
+        if not self.state.attempts and any(
+            path.is_file()
+            for directory in (root / "converted", root / "lane-objects")
+            for path in directory.rglob("*")
+        ):
+            raise ImagePreparationError(
+                "occupied paid image cache lacks a completed accounting record"
+            )
         self.store = LocalFSObjectStore(root=root / "lane-objects")
 
     def original(self, *, url: str, fetcher: ImageFetcher) -> CachedOriginal:
@@ -391,6 +409,10 @@ class _ImageCache:
         if not path.exists():
             return None
         result = ImageReading.model_validate_json(path.read_bytes())
+        try:
+            require_image_reading_accounting(state=self.state, reading=result)
+        except ValueError as error:
+            raise ImagePreparationError(str(error)) from error
         if (
             result.original_sha256 != original_sha256
             or result.converter_version != self.profile.converter_version
@@ -400,8 +422,9 @@ class _ImageCache:
 
     def begin(self, *, original_sha256: str) -> int:
         """Admit bounded work and fsync its marker before any provider call."""
-        key = (
-            original_sha256 + ":" + bytes_hash(self.profile.converter_version.encode())
+        key = image_attempt_key(
+            original_sha256=original_sha256,
+            converter_version=self.profile.converter_version,
         )
         with self._lock:
             previous = [a for a in self.state.attempts if a.key == key]
@@ -591,6 +614,25 @@ def _publish_bundle(
         return verified.sha256
 
 
+def _validate_preparation_request(
+    *, output: Path, max_conversions: int, max_cost_usd: Decimal, workers: int
+) -> None:
+    """Check the same local admission bounds before planning or execution."""
+    if (
+        max_conversions < 1
+        or not max_cost_usd.is_finite()
+        or max_cost_usd <= 0
+        or not 1 <= workers <= 16
+    ):
+        raise ImagePreparationError(
+            "image limits must be positive/finite; workers must be 1-16"
+        )
+    if output.exists():
+        raise ImagePreparationError(
+            "image output already exists; never overwrite a frozen bundle"
+        )
+
+
 def prepare_image_inputs(
     *,
     dataset: LoCoMoDataset,
@@ -606,19 +648,12 @@ def prepare_image_inputs(
     allow_unavailable: bool = False,
 ) -> ImagePreparationSummary:
     """Prepare source-only image input, preserving failures and paid lane reuse."""
-    if (
-        max_conversions < 1
-        or not max_cost_usd.is_finite()
-        or max_cost_usd <= 0
-        or not 1 <= workers <= 16
-    ):
-        raise ImagePreparationError(
-            "image limits must be positive/finite; workers must be1-16"
-        )
-    if output.exists():
-        raise ImagePreparationError(
-            "image output already exists; never overwrite a frozen bundle"
-        )
+    _validate_preparation_request(
+        output=output,
+        max_conversions=max_conversions,
+        max_cost_usd=max_cost_usd,
+        workers=workers,
+    )
     if converter.version != profile.converter_version:
         raise ImagePreparationError("converter differs from the recorded image profile")
     sources = source_images(dataset=dataset, sample_ids=sample_ids)
@@ -732,10 +767,17 @@ def prepare_images_command(
     """Plan without I/O/providers, or explicitly execute the canonical image route."""
     dataset = load_dataset(dataset_path)
     manifest = load_manifest(tier)
+    questions = validate_manifest(dataset=dataset, manifest=manifest)
+    _validate_preparation_request(
+        output=output,
+        max_conversions=max_conversions,
+        max_cost_usd=max_cost_usd,
+        workers=workers,
+    )
     sample_ids = tuple(
         s.sample_id
         for s in dataset.samples
-        if any(item.startswith(s.sample_id + "/") for item in manifest.item_ids)
+        if any(question.sample_id == s.sample_id for question in questions)
     )
     sources = source_images(dataset=dataset, sample_ids=sample_ids)
     if not execute:

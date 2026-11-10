@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 import hashlib
-import json
 from pathlib import Path
 import shutil
 from typing import Annotated
@@ -30,6 +30,7 @@ from rememberstack.adapters.converters.image_ocr_description import (
 )
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
 from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DerivedAsset
 
 IMAGE_INPUT_POLICY = "locomo-ocr-vision-inputs-2026.11-v1"
@@ -39,6 +40,64 @@ IMAGE_ACCOUNTING = "accounting.json"
 IMAGE_MAX_BYTES = 25_000_000
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 ImageKey = tuple[str, str, int]
+
+
+class ConversionAttempt(FrozenModel):
+    """Write-ahead record: unknown interrupted attempts are not regenerated."""
+
+    key: NonEmpty
+    original_sha256: Sha256
+    status: Literal["inflight", "complete", "retryable_failure", "blocked"]
+    events: tuple[ConverterUsageEvent, ...] = ()
+    outcomes: tuple[str, ...] = ()
+    error_type: str | None = None
+
+    @model_validator(mode="after")
+    def require_one_outcome_per_receipt(self) -> ConversionAttempt:
+        """Reject truncated accounting before accepting converted output."""
+        if len(self.events) != len(self.outcomes):
+            raise ValueError("image attempt receipts/outcomes differ")
+        return self
+
+
+class PreparationState(FrozenModel):
+    """Persistent cache-absolute accounting, including failed attempts."""
+
+    schema_version: Literal[1] = 1
+    attempts: tuple[ConversionAttempt, ...] = ()
+
+    @property
+    def cost_usd(self) -> Decimal:
+        """Sum recorded native OCR meter and returned vision charges once."""
+        return sum(
+            (
+                event.usage.cost_usd
+                for attempt in self.attempts
+                for event in attempt.events
+            ),
+            start=Decimal(0),
+        )
+
+
+def image_attempt_key(*, original_sha256: str, converter_version: str) -> str:
+    """Identify an attempted conversion without depending on model output."""
+    return original_sha256 + ":" + bytes_hash(converter_version.encode())
+
+
+def require_completed_image_attempt(
+    *, state: PreparationState, original_sha256: str, converter_version: str
+) -> None:
+    """Require durable completion and accounting before accepting paid output."""
+    key = image_attempt_key(
+        original_sha256=original_sha256, converter_version=converter_version
+    )
+    attempt = next((item for item in reversed(state.attempts) if item.key == key), None)
+    if (
+        attempt is None
+        or attempt.status != "complete"
+        or attempt.original_sha256 != original_sha256
+    ):
+        raise ValueError("cached image reading lacks a completed accounting record")
 
 
 class StoredImageAsset(DerivedAsset):
@@ -168,6 +227,27 @@ class ImageReading(FrozenModel):
     conversion: StoredImageConversion
 
 
+def require_image_reading_accounting(
+    *, state: PreparationState, reading: ImageReading
+) -> None:
+    """Require completed work and all retained lane receipts for this image."""
+    require_completed_image_attempt(
+        state=state,
+        original_sha256=reading.original_sha256,
+        converter_version=reading.converter_version,
+    )
+    receipts = [
+        event
+        for attempt in state.attempts
+        if attempt.original_sha256 == reading.original_sha256
+        for event in attempt.events
+    ]
+    if not reading.conversion.usage_events or any(
+        event not in receipts for event in reading.conversion.usage_events
+    ):
+        raise ValueError("image reading has missing provider usage receipts")
+
+
 class ImageInputIndex(FrozenModel):
     """Immutable, complete source-image inventory copied into a prepared run."""
 
@@ -261,8 +341,7 @@ def load_image_inputs(
     accounting = _checked_bytes(
         path=root / IMAGE_ACCOUNTING, expected=index.accounting_sha256
     )
-    if not isinstance(json.loads(accounting), dict):
-        raise ValueError("image accounting snapshot is not an object")
+    state = PreparationState.model_validate_json(accounting)
     readings: dict[ImageKey, str] = {}
     for image in index.images:
         if image.unavailable is not None:
@@ -287,6 +366,7 @@ def load_image_inputs(
             or reading.converter_version != index.profile.converter_version
         ):
             raise ValueError("image reading has another source or converter identity")
+        require_image_reading_accounting(state=state, reading=reading)
         components = reading.conversion.manifest.components
         if not {"mistral-ocr", "vision-description"} <= {
             component.name for component in components

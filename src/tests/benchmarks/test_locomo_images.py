@@ -5,6 +5,7 @@ from datetime import timezone
 from decimal import Decimal
 import json
 from pathlib import Path
+import struct
 
 from benchmarks.locomo import image_preparation
 from benchmarks.locomo import runner
@@ -15,9 +16,9 @@ from benchmarks.locomo.image_preparation import FetchedImage
 from benchmarks.locomo.image_preparation import HttpImageFetcher
 from benchmarks.locomo.image_preparation import ImagePreparationError
 from benchmarks.locomo.image_preparation import native_image_profile
-from benchmarks.locomo.image_preparation import PreparationState
 from benchmarks.locomo.image_preparation import prepare_image_inputs
 from benchmarks.locomo.image_preparation import SourceUnavailable
+from benchmarks.locomo.images import bytes_hash
 from benchmarks.locomo.images import IMAGE_ACCOUNTING
 from benchmarks.locomo.images import IMAGE_INDEX
 from benchmarks.locomo.images import IMAGE_MAX_BYTES
@@ -27,6 +28,7 @@ from benchmarks.locomo.images import ImageInputIndex
 from benchmarks.locomo.images import ImageReading
 from benchmarks.locomo.images import ImageUnavailable
 from benchmarks.locomo.images import load_image_inputs
+from benchmarks.locomo.images import PreparationState
 from benchmarks.locomo.model import LoCoMoDataset
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
@@ -296,6 +298,62 @@ def test_interrupted_attempt_is_not_automatically_rebilled(tmp_path: Path) -> No
     assert calls == before and not (tmp_path / "uncertain").exists()
 
 
+@pytest.mark.parametrize("state_change", ["inflight", "missing_ledger"])
+def test_cached_reading_cannot_bypass_unresolved_or_missing_accounting(
+    tmp_path: Path, state_change: str
+) -> None:
+    """Even a full cached reading requires durable completed accounting."""
+    calls: list[str] = []
+    converter, profile = _binding(calls=calls)
+    _prepare(root=tmp_path, output="first", converter=converter, profile=profile)
+    path = tmp_path / "cache" / "preparation-state.json"
+    if state_change == "missing_ledger":
+        path.unlink()
+    else:
+        payload = json.loads(path.read_bytes())
+        payload["attempts"][0]["status"] = "inflight"
+        path.write_text(json.dumps(payload))
+    before = list(calls)
+    with pytest.raises(ImagePreparationError, match="completed accounting record"):
+        _prepare(root=tmp_path, output="refused", converter=converter, profile=profile)
+    assert calls == before and not (tmp_path / "refused").exists()
+
+
+@pytest.mark.parametrize(
+    "state_change", ["inflight", "empty_ledger", "missing_outcome", "missing_receipt"]
+)
+def test_offline_bundle_rejects_incomplete_accounting_even_with_matching_hashes(
+    tmp_path: Path, state_change: str
+) -> None:
+    """A checksum alone does not establish completed, parseable accounting."""
+    calls: list[str] = []
+    converter, profile = _binding(calls=calls)
+    _prepare(root=tmp_path, output="bundle", converter=converter, profile=profile)
+    accounting = tmp_path / "bundle" / IMAGE_ACCOUNTING
+    payload = json.loads(accounting.read_bytes())
+    if state_change == "empty_ledger":
+        payload = {}
+    elif state_change == "inflight":
+        payload["attempts"][0]["status"] = "inflight"
+    elif state_change == "missing_outcome":
+        payload["attempts"][0]["outcomes"] = []
+    else:
+        payload["attempts"][0]["events"].pop()
+        payload["attempts"][0]["outcomes"].pop()
+    accounting.write_text(json.dumps(payload))
+    index_path = tmp_path / "bundle" / IMAGE_INDEX
+    index = ImageInputIndex.model_validate_json(index_path.read_bytes())
+    index_path.write_text(
+        index.model_copy(
+            update={"accounting_sha256": bytes_hash(accounting.read_bytes())}
+        ).model_dump_json()
+    )
+    with pytest.raises(ValueError):
+        load_image_inputs(
+            root=tmp_path / "bundle", dataset=_dataset(), sample_ids=("conv-test",)
+        )
+
+
 def test_explicit_unavailable_sources_are_disclosed_not_silently_replaced(
     tmp_path: Path,
 ) -> None:
@@ -498,9 +556,55 @@ def test_download_checks_redirects_byte_limit_and_static_image_format(
                 ("127.0.0.1",) if host == "127.0.0.1" else ("8.8.8.8",)
             ),
         )
-        with pytest.raises(SourceUnavailable):
+        with pytest.raises(SourceUnavailable) as failure:
             fetcher.fetch(url="https://example.test/image.png")
+        assert failure.value.reason.kind == (
+            "invalid_url" if kind == "redirect_private" else "unsupported_image"
+        )
     assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    "image_error",
+    [
+        SyntaxError,
+        EOFError,
+        struct.error,
+        image_preparation.Image.DecompressionBombError,
+    ],
+)
+def test_corrupt_or_decompression_bomb_sources_are_typed_unavailable(
+    monkeypatch: pytest.MonkeyPatch, image_error: type[Exception]
+) -> None:
+    """Pillow failures cannot escape the explicit source-unavailable policy."""
+
+    def broken_image(*_args: object, **_kwargs: object) -> None:
+        """Stand in for a corrupt header or prohibitively large pixel count."""
+        raise image_error("unusable source")
+
+    monkeypatch.setattr(image_preparation.Image, "open", broken_image)
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, content=_PNG)
+        )
+    ) as client:
+        fetcher = HttpImageFetcher(client=client, resolve=lambda _host: ("8.8.8.8",))
+        with pytest.raises(SourceUnavailable) as failure:
+            fetcher.fetch(url="https://example.test/image.png")
+        assert failure.value.reason.kind == "unsupported_image"
+
+
+def test_malformed_port_is_invalid_without_source_http() -> None:
+    """A malformed URL is distinguishable from a network outage."""
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: pytest.fail("no HTTP call permitted")
+        )
+    ) as client:
+        fetcher = HttpImageFetcher(client=client, resolve=lambda _host: ("8.8.8.8",))
+        with pytest.raises(SourceUnavailable) as failure:
+            fetcher.fetch(url="https://example.test:bad-port/image.png")
+        assert failure.value.reason.kind == "invalid_url"
 
 
 def test_prepare_images_plan_creates_no_cache_and_requires_no_provider_keys(
@@ -527,3 +631,29 @@ def test_prepare_images_plan_creates_no_cache_and_requires_no_provider_keys(
     )
     assert summary.source_references == 3 and not summary.executed
     assert not (tmp_path / "output").exists() and not (tmp_path / "cache").exists()
+
+
+@pytest.mark.parametrize("invalid", ["workers", "attempts", "cost", "occupied"])
+def test_prepare_images_plan_checks_admission_limits_and_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    """Planning rejects the same invalid local request as paid execution."""
+    _patch_inputs(monkeypatch=monkeypatch)
+    monkeypatch.setattr(image_preparation, "load_dataset", lambda _path: _dataset())
+    monkeypatch.setattr(image_preparation, "load_manifest", runner.load_manifest)
+    output = tmp_path / "output"
+    if invalid == "occupied":
+        output.mkdir()
+    with pytest.raises(ImagePreparationError):
+        image_preparation.prepare_images_command(
+            dataset_path=tmp_path / "data.json",
+            tier="smoke",
+            output=output,
+            cache_dir=tmp_path / "cache",
+            execute=False,
+            max_conversions=0 if invalid == "attempts" else 10,
+            max_cost_usd=Decimal(0) if invalid == "cost" else Decimal("1"),
+            workers=0 if invalid == "workers" else 2,
+            allow_unavailable=False,
+        )
+    assert not (tmp_path / "cache").exists()
