@@ -41,7 +41,7 @@
 > unchanged.
 
 **Status:** accepted as operator-directed 2026-08-26 and amended through D151
-on 2026-11-10. Implementation review still applies before code lands;
+on 2026-11-10. Dual implementation review still applies before code lands;
 this document is the *how*, not a phased MVP.
 **Date:** 2026-08-26
 **Decision log:** D95, D96, D97, D99, D100, D102, D151
