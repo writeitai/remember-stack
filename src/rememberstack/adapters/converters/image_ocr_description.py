@@ -239,6 +239,22 @@ class _LaneOutcome:
     retryable: bool
 
 
+def image_ocr_description_version(
+    *,
+    ocr_version: str,
+    ocr_settings: MistralOcrSettings,
+    description_settings: ImageDescriptionSettings,
+) -> str:
+    """Compute the shared route identity without creating provider clients."""
+    return (
+        f"{IMAGE_OCR_DESCRIPTION_CONVERTER_VERSION}"
+        f":ocr-{ocr_version}"
+        f":ocr-endpoint-{ocr_settings.base_url}"
+        f":ocr-max-{ocr_settings.max_document_bytes}"
+        f":desc-{description_settings.version_fingerprint()}"
+    )
+
+
 class ImageOcrDescriptionConverter:
     """The dual-lane image route: dedicated OCR plus vision description."""
 
@@ -284,12 +300,10 @@ class ImageOcrDescriptionConverter:
     @property
     def version(self) -> str:
         """Assembly pin plus both lanes' output-affecting fingerprints (D38)."""
-        return (
-            f"{IMAGE_OCR_DESCRIPTION_CONVERTER_VERSION}"
-            f":ocr-{self._ocr.version}"
-            f":ocr-endpoint-{self._ocr_settings.base_url}"
-            f":ocr-max-{self._ocr_settings.max_document_bytes}"
-            f":desc-{self._description_settings.version_fingerprint()}"
+        return image_ocr_description_version(
+            ocr_version=self._ocr.version,
+            ocr_settings=self._ocr_settings,
+            description_settings=self._description_settings,
         )
 
     def convert(

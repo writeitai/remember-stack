@@ -36,6 +36,11 @@ from benchmarks.locomo.dataset import load_dataset
 from benchmarks.locomo.dataset import load_manifest
 from benchmarks.locomo.dataset import manifest_bytes_hash
 from benchmarks.locomo.dataset import validate_manifest
+from benchmarks.locomo.images import copy_image_inputs
+from benchmarks.locomo.images import IMAGE_DIRECTORY
+from benchmarks.locomo.images import load_image_inputs
+from benchmarks.locomo.images import LoadedImageInputs
+from benchmarks.locomo.images import source_images
 from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
@@ -175,6 +180,7 @@ def prepare_run(
     output: Path,
     protocol: ProtocolKey = DEFAULT_PROTOCOL_KEY,
     retrieval_budget: ContextRetrievalBudget | None = None,
+    images: Path | None = None,
 ) -> RunConfiguration:
     """Validate, fingerprint, and render a local run without remote calls."""
     selected_protocol = protocol_for_key(protocol)
@@ -184,14 +190,32 @@ def prepare_run(
     questions = validate_manifest(dataset=dataset, manifest=manifest)
     if output.exists() and any(output.iterdir()):
         raise BenchmarkRunError(f"output directory is not empty: {output}")
-    output.mkdir(parents=True, exist_ok=True)
     sample_ids = tuple(
         sample.sample_id
         for sample in dataset.samples
         if any(question.sample_id == sample.sample_id for question in questions)
     )
+    if images is None and source_images(dataset=dataset, sample_ids=sample_ids):
+        raise BenchmarkRunError(
+            "source images require --images with a complete frozen OCR/Luna bundle; "
+            "run prepare-images first"
+        )
+    if images is not None:
+        # Validate before creating the run, then re-validate its independent copy.
+        load_image_inputs(root=images, dataset=dataset, sample_ids=sample_ids)
+    output.mkdir(parents=True, exist_ok=True)
+    image_inputs = (
+        copy_image_inputs(
+            source=images, run_dir=output, dataset=dataset, sample_ids=sample_ids
+        )
+        if images is not None
+        else None
+    )
     documents = _prepare_documents(
-        run_dir=output, dataset=dataset, sample_ids=sample_ids
+        run_dir=output,
+        dataset=dataset,
+        sample_ids=sample_ids,
+        image_inputs=image_inputs,
     )
     revision = _repository_revision()
     base = {
@@ -204,6 +228,9 @@ def prepare_run(
         "manifest_sha256": manifest_bytes_hash(manifest=manifest),
         "item_ids_sha256": manifest.item_ids_sha256,
         "documents_sha256": _models_hash(values=documents),
+        "image_inputs_sha256": image_inputs.sha256
+        if image_inputs is not None
+        else None,
         "item_count": len(manifest.item_ids),
         "sample_ids": sample_ids,
         "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
@@ -1155,7 +1182,11 @@ class _RunContext:
 
 
 def _prepare_documents(
-    *, run_dir: Path, dataset: LoCoMoDataset, sample_ids: tuple[str, ...]
+    *,
+    run_dir: Path,
+    dataset: LoCoMoDataset,
+    sample_ids: tuple[str, ...],
+    image_inputs: LoadedImageInputs | None = None,
 ) -> tuple[PreparedDocument, ...]:
     """Render and atomically persist every selected sample's sessions."""
     documents: list[PreparedDocument] = []
@@ -1163,7 +1194,13 @@ def _prepare_documents(
     for sample_id in sample_ids:
         sample = samples[sample_id]
         for session in sample.sessions:
-            content = render_session(sample=sample, session=session).encode()
+            content = render_session(
+                sample=sample,
+                session=session,
+                image_readings=image_inputs.readings
+                if image_inputs is not None
+                else None,
+            ).encode()
             relative = (
                 Path("documents") / sample_id / f"{session.session_id.lower()}.md"
             )
@@ -1213,7 +1250,7 @@ def load_recorded_run(*, run_dir: Path) -> _RunContext:
 
     Every check of :func:`_load_run` that compares the run with itself — the
     recomputed protocol fingerprint, manifest, item, document and dataset
-    hashes, the rendered documents and the full state/identity
+    hashes, the saved source documents and the full state/identity
     correspondence — runs; only the comparison with the *current* code's
     protocol pins and adapter version is skipped, so a baseline produced by
     another revision stays comparable (D142 LoCoMo gate).
@@ -1335,6 +1372,8 @@ def _validate_run(
         base["retrieval_budget"] = configuration.retrieval_budget.model_dump(
             mode="json"
         )
+    if "image_inputs_sha256" in configuration.model_fields_set:
+        base["image_inputs_sha256"] = configuration.image_inputs_sha256
     if configuration.execution_profile is not None:
         base["execution_profile"] = configuration.execution_profile.model_dump(
             mode="json"
@@ -1386,6 +1425,7 @@ def _validate_run(
         configuration=configuration,
         dataset=dataset,
         documents=documents,
+        current_pins=current_pins,
     )
 
 
@@ -1395,16 +1435,41 @@ def _validate_documents(
     configuration: RunConfiguration,
     dataset: LoCoMoDataset,
     documents: tuple[PreparedDocument, ...],
+    current_pins: bool,
 ) -> None:
-    """Require the exact current deterministic session rendering."""
+    """Verify saved inputs; re-render only the current executable protocol."""
+    image_inputs = None
+    if configuration.image_inputs_sha256 is not None:
+        image_inputs = load_image_inputs(
+            root=run_dir / IMAGE_DIRECTORY,
+            dataset=dataset,
+            sample_ids=configuration.sample_ids,
+        )
+        if image_inputs.sha256 != configuration.image_inputs_sha256:
+            raise BenchmarkRunError("prepared image input index changed")
+    elif current_pins and source_images(
+        dataset=dataset, sample_ids=configuration.sample_ids
+    ):
+        raise BenchmarkRunError("current protocol requires frozen image inputs")
     expected: list[PreparedDocument] = []
     samples = dataset.sample_map()
     for sample_id in configuration.sample_ids:
         sample = samples[sample_id]
         for session in sample.sessions:
-            content = render_session(sample=sample, session=session).encode()
             relative = (
                 Path("documents") / sample_id / f"{session.session_id.lower()}.md"
+            )
+            saved = (run_dir / relative).read_bytes()
+            content = (
+                render_session(
+                    sample=sample,
+                    session=session,
+                    image_readings=image_inputs.readings
+                    if image_inputs is not None
+                    else None,
+                ).encode()
+                if current_pins
+                else saved
             )
             expected.append(
                 PreparedDocument(

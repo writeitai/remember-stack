@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v40"
-DEFAULT_PROTOCOL_KEY: Final = "full-v40"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-calendar-answer-v40"
-"""Current Full-v40: best-supported answers, calendar time, Luna/Flex, Jev."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v41"
+DEFAULT_PROTOCOL_KEY: Final = "full-v41"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-ocr-vision-v41"
+"""Current Full-v41: frozen OCR/Luna images, calendar answers, Luna/Flex, Jev."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -474,8 +474,13 @@ class SessionQuestionDiagnostic:
     malformed_fields: int
 
 
-def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
-    """Render one session without fetching images or leaking annotations."""
+def render_session(
+    *,
+    sample: LoCoMoSample,
+    session: LoCoMoSession,
+    image_readings: Mapping[tuple[str, str, int], str] | None = None,
+) -> str:
+    """Render source turns and their frozen image readings, never fetching images."""
     lines = [
         f"# LoCoMo {sample.sample_id} — session {session.session_id}",
         "",
@@ -501,6 +506,21 @@ def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
             lines.append(
                 "Dataset-provided derived image search query for "
                 f"{turn.dia_id}: {turn.image_query}"
+            )
+        for ordinal, _ in enumerate(turn.image_urls, start=1):
+            key = sample.sample_id, turn.dia_id, ordinal
+            if image_readings is None or key not in image_readings:
+                raise ValueError(
+                    f"missing frozen image reading: {sample.sample_id}/{turn.dia_id}/{ordinal}"
+                )
+            owner = f"{turn.dia_id}; speaker {turn.speaker}; image {ordinal}"
+            lines.extend(
+                (
+                    f"[Attached image reading: {owner}. OCR, visual observations and "
+                    "interpretations below are derived from the original pixels.]",
+                    image_readings[key].rstrip(),
+                    f"[End attached image reading: {owner}]",
+                )
             )
     return "\n".join(lines) + "\n"
 

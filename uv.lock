@@ -2159,6 +2159,7 @@ benchmark = [
     { name = "google-cloud-storage" },
     { name = "nltk" },
     { name = "openai-codex" },
+    { name = "pillow" },
     { name = "pyyaml" },
     { name = "regex" },
 ]
@@ -2237,6 +2238,7 @@ requires-dist = [
     { name = "openai-codex", marker = "extra == 'benchmark'", specifier = "==0.147.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.44.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.44.0" },
+    { name = "pillow", marker = "extra == 'benchmark'", specifier = ">=11.3" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pydantic-settings", specifier = ">=2.10" },
     { name = "pyyaml", marker = "extra == 'benchmark'", specifier = ">=6.0" },
