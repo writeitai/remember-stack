@@ -51,7 +51,7 @@ attempt and all native lane usage receipts; a populated paid cache without
 its ledger fails closed. Planning and execution validate the same manifest,
 finite limits and unoccupied output path. Integration cases cover missing
 ledgers, unresolved completion, truncated outcomes/receipts, Pillow errors
-and invalid plan bounds. A follow-up review remains required before merge.
+and invalid plan bounds. The follow-up approval is recorded below.
 
 The source-image policy may explicitly record permanently unavailable
 originals, with visible coverage markers. It does not admit provider failure,
@@ -114,3 +114,28 @@ The overall design, D56 converter-version extractions (`src/rememberstack/adapte
   When running `prepare-images` without `--execute` (plan mode), `prepare_images_command` does not call `validate_manifest(dataset=dataset, manifest=manifest)` and returns before `prepare_image_inputs` checks `max_conversions >= 1`, `max_cost_usd > 0`, `1 <= workers <= 16`, and `not output.exists()`. Invalid bounds or an already-occupied `--output` directory pass during planning and only fail once `--execute` is added.
 * **Minimal Fix**:
   Call `validate_manifest(dataset=dataset, manifest=manifest)` and run the parameter/output-existence checks in `prepare_images_command` before the `if not execute:` return.
+
+
+## Follow-up approval
+
+Antigravity approved source `4e2405963011b0fa066ca3f97b3c037b0099412c`
+using the same isolated, inline-only review procedure and required 180-minute
+print timeout. The subsequent commit only records this approval; it changes
+no reviewed implementation, tests, model binding or prompt.
+
+**APPROVED**
+
+All three findings from the initial review are resolved cleanly, and no blocking correctness, accounting, or reuse issues remain in the changed files:
+
+1. **Source-image error classification (`benchmarks/locomo/image_preparation.py`, `src/tests/benchmarks/test_locomo_images.py`)**:
+   - `HttpImageFetcher.fetch` now catches `ValueError` on `urlsplit(target)` / `parsed.port` and raises `SourceUnavailable(reason=ImageUnavailable(kind="invalid_url", detail="malformed source URL"))` before any network I/O.
+   - Image format and verification errors (`OSError`, `ValueError`, `SyntaxError`, `EOFError`, `struct.error`, `Image.DecompressionBombError`) are caught around the Pillow `Image.open(...)` / `image.verify()` block and mapped to `ImageUnavailable(kind="unsupported_image", detail=type(error).__name__)`.
+   - Unit and integration tests cover malformed ports, private redirects, oversized payloads, non-image payloads, and Pillow parser/decompression-bomb exceptions.
+
+2. **Durable immutable writes, cache-hit accounting verification, and offline bundle accounting validation (`benchmarks/locomo/images.py`, `benchmarks/locomo/image_preparation.py`, `src/tests/benchmarks/test_locomo_images.py`)**:
+   - `_immutable_bytes` now writes and `fsync`s a sibling temporary file, links it exclusively via `os.link(temporary, path)`, verifies byte equality if the target already exists, `fsync`s the parent directory, and unlinks the temporary path.
+   - `_ImageCache.__init__` fails closed if `converted/` or `lane-objects/` is populated without attempt records in `preparation-state.json`.
+   - `ConversionAttempt` enforces `len(self.events) == len(self.outcomes)`, and `require_image_reading_accounting` (called in both `_ImageCache.read_cached` and `load_image_inputs`) verifies that the latest matching attempt for `(original_sha256, converter_version)` has `status == "complete"` and that all `reading.conversion.usage_events` (including reused OCR lane checkpoints across attempts for the same `original_sha256`) are present in `state.attempts`.
+
+3. **Dry-run (`prepare-images` without `--execute`) validation (`benchmarks/locomo/image_preparation.py`, `src/tests/benchmarks/test_locomo_images.py`)**:
+   - `prepare_images_command` now runs `validate_manifest(dataset=dataset, manifest=manifest)` and `_validate_preparation_request(...)` prior to the `if not execute:` return, sharing the exact bounds and output-path checks with `prepare_image_inputs`.
