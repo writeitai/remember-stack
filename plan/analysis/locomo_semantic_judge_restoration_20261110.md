@@ -63,3 +63,14 @@ conv-47 and require at least 18/20. Full publication remains conditional on
 both fresh gates, healthy ingestion/retrieval, verified backups and budget.
 A score under the restored rubric is labeled with that policy; it is not a
 one-variable comparison against the preceding run that also lacked image input.
+
+## Upstream check
+
+Retrieved 2026-11-10: [Mem0's pinned LoCoMo prompts](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/benchmarks/locomo/prompts.py).
+The upstream grader accepts partial list matches, equivalent concepts and
+additional detail, same-valence feelings about one event, date differences
+up to fourteen days and duration differences up to fifty percent. Its
+optional evidence mode can accept a source-supported answer despite a flawed
+reference. This confirms that the separate sidecar has broader acceptance
+rules than the historical branch template restored here; it does not make
+their scores interchangeable.

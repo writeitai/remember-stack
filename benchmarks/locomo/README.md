@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v41 setup
+# RS-LoCoMo-Full-v42 setup
 
 One current execution profile uses Luna 6 for ingestion and vision at low
 reasoning, Luna 6 for answering and judging at high reasoning, and Jev
@@ -55,13 +55,13 @@ Once a bundle exists, preparation is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v41 \
+  --protocol full-v42 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v41` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v42` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -75,18 +75,25 @@ image text is labeled, including observations versus interpretations. Session
 documents remain ordinary E0 Markdown inputs; the archived native image source
 maps are audit records, not Markdown's native source-origin labels. Standard
 run-directory GCS backups include this complete input and accounting snapshot.
-Changed image input requires a new run and fresh ingestion. The answer and
-judge templates remain those of v40 for this image-input change.
+Changed image input requires a new run and fresh ingestion. The answer
+template remains the selected baseline plus calendar clarification.
+Full-v42 restores the historical branch's explicit core-fact semantic judge:
+an answer is correct when it identifies or encompasses the reference's core
+fact, entity, date or event. Synonyms and additional context do not invalidate
+that match. A contradiction, fundamentally different fact/entity/time or
+missing/Unknown answer is wrong. Equivalent calendar and relative dates are
+accepted without a fixed date-error tolerance. Luna high still judges; old
+Sol grades are not relabeled. This is a new protocol identity, not a new score.
 
-Full-v41 asks the answerer to give its best-supported answer to every scored
+Full-v42 asks the answerer to give its best-supported answer to every scored
 question, including a qualified inference when evidence is indirect. It forbids
 terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
 `possibly` attached to an actual answer. The prompt still forbids invented source
 details, preserves entity/time constraints, and exposes no reference answers.
 This is benchmark answer-agent policy, not a change to engine evidence or typed
 negatives. Relative-date answers name an explicit calendar date, range, or period
-using the source timestamp at supported precision. The existing judge, models,
-retrieval depths, and call/cost guards are unchanged. Noncompliant model outputs and infrastructure failures remain visible;
+using the source timestamp at supported precision. Models, retrieval depths,
+and call/cost guards are unchanged. Noncompliant model outputs and infrastructure failures remain visible;
 the harness never fabricates an answer to replace them. Prepare a new run for
 this protocol; preserve old answers and fingerprints. This prompt change adds
 no cross-revision ingestion-adoption command or compatibility contract.
@@ -238,7 +245,7 @@ from readiness.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v41 sample and
+The additive D124 runner reuses one completely processed Full-v42 sample and
 compares answer routes or full-surface prompt variants without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -316,7 +323,7 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v41 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v42 protocol and
 its source state are never modified by this command.
 
 ## Sharded runs
