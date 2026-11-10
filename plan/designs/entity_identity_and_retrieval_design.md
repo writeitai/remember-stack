@@ -12,12 +12,17 @@
 > acceptance or source-attribution dependency is introduced. Section 3.1.2 and the
 > implementation contracts contain the complete boundary.
 
+> **D151 amendment (2026-11-10).** Matches commit against their recorded input
+> snapshot after source and canonical-target checks. New-entity decisions
+> separately recheck bounded identity membership. Ordinary profile/alias
+> enrichment does not invalidate inference; §3.3.2 is the current contract.
+>
 > **Binding D100 amendment (2026-08-31).** T4 is one joint call on the
 > configured simple model over every candidate in the bounded snapshot. It
 > returns one candidate id or `new`, preferring a compatible existing entity
 > unless evidence positively distinguishes a new referent. The current
 > generation has no frontier seat, confidence-routing branch,
-> `insufficient_evidence`, or provisional mint. D99's snapshot/revalidation,
+> `insufficient_evidence`, or provisional mint. D99's snapshot audit, with D151 commit checks,
 > T3 diagnostics, convergence, and recovery contracts remain binding.
 >
 > **Historical D99 amendment (2026-08-28; superseded in part by D100).** T4 distinguishes `same`,
@@ -35,11 +40,11 @@
 > P2 rebuild. The D95–D97 identity, profile, and retrieval behavior is otherwise
 > unchanged.
 
-**Status:** accepted as operator-directed 2026-08-26 and amended through D102
-on 2026-08-31. Dual implementation review still applies before code lands;
+**Status:** accepted as operator-directed 2026-08-26 and amended through D151
+on 2026-11-10. Dual implementation review still applies before code lands;
 this document is the *how*, not a phased MVP.
 **Date:** 2026-08-26
-**Decision log:** D95, D96, D97, D99, D100, D102
+**Decision log:** D95, D96, D97, D99, D100, D102, D151
 **Analysis:**
 [`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
 [`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
@@ -240,10 +245,10 @@ generation provider.
 
 On an anchor hit, the resolver records the T0 decision and binding immediately
 in its first lemma-locked transaction. On the provider path, binding state is
-part of the optimistic snapshot and is reloaded under the same lock before
-commit. A T4 match or conflict row that lands during another call therefore
-invalidates that stale call; the bounded retry may use T0 or the ordinary
-cascade. Provider calls remain outside transactions.
+retained as input evidence. D151 rechecks its identity memberships for a new
+entity decision; a completed match does not restart when a peer anchor arrives.
+A changed local identity membership can retry a new-entity decision through T0
+or the ordinary cascade. Provider calls remain outside transactions.
 
 `deployments.document_binding_generation` gates the shortcut. New empty
 deployments bootstrap `document-t0-v1`; migration leaves existing deployments
@@ -463,29 +468,67 @@ attempt. Review, forget, and other callers that require synchronous repair may
 let the typed contention propagate and retry their operation. Query timeouts,
 connection failures, and all other database errors remain failures.
 
-### 3.3.2 Resolver provider calls do not hold the lemma transaction lock
+### 3.3.2 Parallel resolution commits a match against its decision snapshot (D151)
 
-The normalized-lemma advisory lock remains the database-enforced serialization
-point for identity writes. Resolution uses an optimistic three-part operation:
+A changing description does not change an entity ID. If one worker decides that
+an incoming mention refers to entity A while another adds a fact to A's profile,
+the first worker can record that decision without asking the model again.
+This replaces D99's whole-candidate/profile equality requirement. See
+[the alternatives and cost analysis](../analysis/parallel_identity_resolution.md).
 
-1. lock briefly, load the bounded candidate/profile snapshot and completeness,
-   fingerprint it, then commit;
-2. run T3 embedding and T4 generation with no database transaction held; and
-3. lock again, reconstruct the same snapshot, and commit the mention/decision,
-   exclusions, aliases, and optional mint only if the fingerprint is unchanged.
+Each attempt has three parts:
 
-A changed fingerprint discards the stale provider result, records its cost, and
-retries from step 1 up to a bounded attempt count. Exhaustion raises a typed
-retryable contention error; it never commits stale identity authority. The
-worker ledger then applies its ordinary persisted backoff and attempt budget,
-which is distinct from the resolver's short in-call retries. Repeated contention
-can still end visibly in DLQ after that outer budget; the contract is explicit
-replay without manual worker-count changes, not an impossible guarantee that
-contention can never dead-letter. The
-fingerprint covers candidate ids/order, completeness, canonical names, current
-profile summaries and salient facts. Adding, retiring, merging, or refreshing a
-candidate therefore invalidates an in-flight decision. This is the same
-snapshot/unlocked-provider/revalidation pattern used by `ProfileRefresher`.
+1. In a short transaction, use the existing hard-forget shared fence, require and
+   share-lock the live source lineage, then take the shared deployment identity
+   epoch and the normalized-lemma lock. Use a valid document-local T0 anchor or
+   load the bounded candidate/profile evidence and local memberships. Commit.
+2. Run T3/T4 without any database transaction or advisory lock held.
+3. Open another transaction with the same lock order. Require the source to
+   remain live and apply the operation-specific checks below. Commit the mention,
+   decision, aliases, document membership and any supported exclusion together.
+
+**Existing match.** The selected ID must come from the supplied snapshot. Under
+shared identity protection, follow merge redirects to an active canonical root.
+A missing, retired or broken/cyclic target requires another bounded attempt;
+ordinary profile, alias, candidate-order or peer-anchor changes do not. Retain
+both the model-selected ID and the canonical committed ID in decision features.
+A peer document anchor arriving during inference does not erase this decision;
+conflicting memberships remain visible and disable future T0 reuse normally.
+
+**New entity.** Under the same lemma lock, reload only the bounded candidate IDs
+and document-local identity memberships, including projection generation.
+Compare sets, not profile prose, aliases, scores, anchor confidence or ordering.
+Changed identity membership requires another attempt using the new candidates.
+Unchanged membership allows the positively distinguished new entity to be
+created. Same-lemma mints cannot bypass this check. A new alias for an identity
+outside the supplied candidate set can change membership and therefore require
+new inference. Bounded blocking is still a recall ceiling; this is not a global
+no-duplicate guarantee for different names. Same names can legitimately name
+different referents, so no unique-name constraint or exact-name auto-match is
+introduced.
+
+This policy accepts decisions based on the evidence supplied at preparation,
+not a promise that all model evidence is unchanged at publication. Newly added
+facts or candidates may lead a later decision to another outcome; existing
+review/merge mechanisms retain their roles. Candidate completeness, original
+candidate order, T3 diagnostics, model/rationale, the selected/canonical IDs,
+commit policy and deterministic input-snapshot digest are audit evidence.
+Do not copy raw profile snapshots into another prose store. The digest does not
+reconstruct the prompt; it attests the bounded candidate/binding input.
+
+The production resolver runs within ordinary worker attempts. D74 establishes
+its barrier and drains those attempts before scrubbing; an active forget stops
+late commits. The live lineage lock serializes commits with D135 deletion.
+These source/forget checks remain mandatory. Provider work holds no such lock.
+Profile embeddings still require exact input-hash revalidation: a vector is a
+representation of particular text, unlike an identity ID.
+
+Only structural races consume the bounded in-call retries. Exhaustion remains
+an explicit typed contention error handled by the ordinary persisted worker
+backoff and attempt budget; it is not hidden by an automatic SQL requeue or a
+serial worker requirement. The resolver generation changes to record the new
+policy. Extraction, chunk/vector reuse keys and the normalizer output generation
+are unchanged; accepted old decisions are not rewritten or automatically rerun.
 
 ### 3.3.3 T3 outcome diagnostics
 
@@ -806,12 +849,12 @@ Minimum rows:
 | Site | Contract |
 |---|---|
 | `EntityRef` | canonical `name`; `surface` when the claim spelling differs; **no type** |
-| `CascadeResolver.resolve` | load bounded document-binding state plus global candidates under the lemma lock; commit an anchor hit in that transaction; otherwise decide outside it and re-lock/revalidate before writing; bounded contention retry |
+| `CascadeResolver.resolve` | load bounded document-binding state plus global candidates under the lemma lock; commit an anchor hit in that transaction; otherwise decide outside it, then source/canonical-target checks for matches or membership checks for creation; bounded structural retry |
 | candidate result | load `limit + 1`, return bounded candidates plus `search_complete`; order the bounded set by T3 relevance before T4 |
 | `T4Selection` | exactly `match(candidate_id)` or `new`, plus confidence/rationale used only for audit; selected ids must belong to the supplied snapshot |
 | `_T4_PROMPT` | one joint configured-simple-model call with the bounded incoming claim and every candidate's deduplicated aliases (starting cap: 20), current profile description, salient facts, and T3 score/gate; explicit match bias |
 | document-local binding | primary key `(deployment_id, doc_id, canonical_lemma, entity_id)`; every decision upserts membership; only T4 match stores source decision id + partition timestamp; one active row with a current source authorizes, zero/conflict fails to the global cascade |
-| optimistic snapshot | include binding identity/source/conflict state along with candidates and completeness; revalidate both under the existing lemma lock before provider-path commit |
+| decision snapshot | retain candidate evidence/completeness and input digest; D151 matches follow an active canonical target, while creation rechecks candidate/local identity sets under the lemma lock |
 | resolution decision features | every D102 decision stamps `document-t0-v1`, `doc_id`, and canonical lemma; T4 also retains candidate completeness/order, every T3 score/gate, selected candidate or `new`, rationale/model, and one bounded T3 outcome reason; no current provisional authority |
 | document-local T0 decision | normal mention plus method `T0`, `is_new_entity=false`, and the source T4 confidence; document contract/coordinate and source T4 decision id; no T1/T2, embedding, or generation call |
 | review/re-decision and unmerge restore | use the same binding writer for the decision's document/canonical lemma/entity; a human split creates its conflict row before commit; merge status filtering and unmerge reactivation remain fail-closed |
@@ -880,7 +923,7 @@ generations are abandoned, not dual-run. Sequencing:
 | Hats on facts | Duplicate of predicates + observation text |
 | Keep types for “list companies” | Enumerative lists come from observation/profile text; facets if ever added are derived from those facts |
 | Description as identity key | Move city → new person; profile is evidence, not the key |
-| Hold the lemma lock across provider calls | Serializes unrelated database work behind network latency; snapshot and revalidation preserve commit correctness with a short critical section |
+| Hold the lemma lock across provider calls | Serializes unrelated database work behind network latency; snapshot decisions and operation-specific commit checks preserve short critical sections |
 
 ---
 
@@ -894,8 +937,13 @@ generations are abandoned, not dual-run. Sequencing:
   the anchored document, do not use document-local T0. T4 `new`, invalid source,
   inactive entity, unset binding generation, and a second active binding row
   fail to the ordinary cascade.
-- A T4 anchor or conflict row committed during an unlocked peer call changes
-  the revalidated snapshot; the peer retries rather than committing stale T4.
+- A peer T4 anchor/profile update does not repeat a completed match. Changed
+  candidate or local identity memberships repeat a new-entity decision.
+- Twenty simultaneous matches survive profile/alias enrichment with one T4
+  response each. Competing same-lemma creation checks prevent duplicate
+  empty-registry mints and reconsider a newly created candidate.
+- A selected entity merged during inference resolves to its live canonical
+  root; retirement, source deletion and a native forget barrier remain checked.
 - D74 removes document bindings; clearing readiness disables replay; rebuild
   restores D102 rows and conservatively over-blocks ambiguous historical rows.
 - Human re-decision/unmerge restore writes binding membership before it can

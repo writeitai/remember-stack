@@ -1,7 +1,10 @@
 """WP-2.1 acceptance: the T0-T4 cascade, verdicts, and the golden-set curves."""
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
+from threading import Event
 from uuid import UUID
 from uuid import uuid4
 
@@ -25,14 +28,20 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EntityRef
 from rememberstack.model import ResolutionThresholds
 from rememberstack.model import ResolverConfig
+from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ResolutionContendedError
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import seed_resolver_version
+from rememberstack.spine.clustering import apply_merge
 from rememberstack.spine.document_bindings import DocumentBindingRebuilder
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.fact_applications import ApplicationInputChanged
+from rememberstack.spine.forget import ForgetCatalog
+from rememberstack.spine.resolver import _CandidateSnapshot
+from rememberstack.spine.resolver import _DecisionOutcome
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from tests.database_reset import reset_database
@@ -798,10 +807,10 @@ def test_t4_provider_call_does_not_hold_the_lemma_lock(database_engine: Engine) 
     assert lock_was_free is True
 
 
-def test_document_anchor_arriving_during_t4_invalidates_stale_snapshot(
+def test_document_anchor_arriving_during_t4_preserves_completed_match(
     database_engine: Engine,
 ) -> None:
-    """A peer T4 anchor makes the in-flight resolver retry through local T0."""
+    """D151: a peer anchor does not erase an independently completed T4 match."""
     peer_provider = FakeModelProvider(generate_router=_match_first_router)
     peer_resolver = _resolver(engine=database_engine, provider=peer_provider)
     outer_calls = 0
@@ -842,7 +851,7 @@ def test_document_anchor_arriving_during_t4_invalidates_stale_snapshot(
                 )
             ).scalars()
         )
-    assert methods == ("T0", "T4_small", "T0")
+    assert methods == ("T0", "T4_small", "T4_small")
 
 
 def test_t4_rejects_candidate_id_outside_snapshot(database_engine: Engine) -> None:
@@ -872,10 +881,10 @@ def test_t4_rejects_candidate_id_outside_snapshot(database_engine: Engine) -> No
         )
 
 
-def test_changed_candidate_snapshot_discards_stale_t4_result(
+def test_new_candidate_does_not_repeat_completed_existing_match(
     database_engine: Engine,
 ) -> None:
-    """D99: a candidate arriving during T4 forces a fresh bounded decision."""
+    """D151: a match is audited against its original supplied candidate set."""
     inserted_candidate = uuid4()
     provider_calls = 0
 
@@ -934,15 +943,18 @@ def test_changed_candidate_snapshot_discards_stale_t4_result(
             text("SELECT count(*) FROM mentions")
         ).scalar_one()
     assert resolved.entity_id == first.entity_id
-    assert provider_calls == 2
-    assert features["candidate_count"] == 2
+    assert provider_calls == 1
+    assert features["candidate_count"] == 1
+    assert features["selected_entity_id"] == str(first.entity_id)
+    assert features["commit_policy"] == "snapshot-match-membership-mint-v1"
+    assert len(features["input_snapshot_sha256"]) == 64
     assert mention_count == 2
 
 
 def test_repeated_candidate_changes_exhaust_without_stale_commit(
     database_engine: Engine,
 ) -> None:
-    """Bounded optimistic retries end in a typed, commit-free error."""
+    """New-entity decisions still fail visibly after bounded membership races."""
     provider_calls = 0
 
     def keep_mutating(_prompt: str, type_name: str) -> dict[str, object]:
@@ -968,7 +980,7 @@ def test_repeated_candidate_changes_exhaust_without_stale_commit(
                 ),
                 {"alias": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": entity_id},
             )
-        return _match_first_router(_prompt, type_name)
+        return _new_entity_router(_prompt, type_name)
 
     provider = FakeModelProvider(generate_router=keep_mutating)
     resolver = _resolver(engine=database_engine, provider=provider)
@@ -995,6 +1007,385 @@ def test_repeated_candidate_changes_exhaust_without_stale_commit(
     assert provider_calls == 3
     assert mention_count == 1
     assert decision_count == 1
+
+
+def test_twenty_parallel_matches_survive_profile_and_alias_enrichment(
+    database_engine: Engine,
+) -> None:
+    """All twenty calls overlap and each completed match uses one T4 response."""
+    seed_provider = FakeModelProvider(generate_router=_match_first_router)
+    seed = _resolver(engine=database_engine, provider=seed_provider).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined."),
+    )
+    documents = tuple(uuid4() for _ in range(20))
+    for index, doc_id in enumerate(documents):
+        _insert_document(
+            engine=database_engine, doc_id=doc_id, source_ref=f"parallel-{index}"
+        )
+    prepared = Barrier(21)
+    release = Event()
+
+    def overlapping_match(prompt: str, type_name: str) -> dict[str, object]:
+        """Hold inference until all peers prepared and the profile changed."""
+        prepared.wait(timeout=20)
+        assert release.wait(timeout=20)
+        return _match_first_router(prompt, type_name)
+
+    provider = FakeModelProvider(generate_router=overlapping_match)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = [
+            pool.submit(
+                resolver.resolve,
+                deployment_id=_DEPLOYMENT_ID,
+                reference=EntityRef(name="Caroline"),
+                claim=_claim(claim_text="Caroline returned.", doc_id=doc_id),
+            )
+            for doc_id in documents
+        ]
+        try:
+            prepared.wait(timeout=20)
+            with database_engine.begin() as connection:
+                connection.execute(
+                    text("""
+                    INSERT INTO observations(observation_id,deployment_id,
+                      subject_entity_id,statement,evidence_count,normalizer_version)
+                    VALUES (:id,:deployment,:entity,'Caroline works in Berlin',1,'test')
+                    """),
+                    {
+                        "id": uuid4(),
+                        "deployment": _DEPLOYMENT_ID,
+                        "entity": seed.entity_id,
+                    },
+                )
+                connection.execute(
+                    text("""
+                    INSERT INTO aliases(alias_id,deployment_id,entity_id,alias_text,
+                      normalized_lemma,provenance)
+                    VALUES (:id,:deployment,:entity,'Caro','caro','source')
+                    """),
+                    {
+                        "id": uuid4(),
+                        "deployment": _DEPLOYMENT_ID,
+                        "entity": seed.entity_id,
+                    },
+                )
+            EntityProfileRefresher(
+                engine=database_engine,
+                model_provider=seed_provider,
+                embedding_model="qwen/qwen3-embedding-8b",
+            ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=seed.entity_id)
+        finally:
+            release.set()
+        results = [future.result(timeout=20) for future in futures]
+    assert len(provider.generated_prompts) == 20
+    assert all(result.entity_id == seed.entity_id for result in results)
+    assert all(not result.created for result in results)
+    with database_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM entities")).scalar() == 1
+        assert connection.execute(text("SELECT count(*) FROM mentions")).scalar() == 21
+
+
+def test_parallel_new_decisions_reconsider_concurrently_created_identity(
+    database_engine: Engine,
+) -> None:
+    """One new identity commits; its racing peer reuses it after one fresh call."""
+    original = _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_match_first_router),
+    ).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline is the original person."),
+    )
+    documents = (uuid4(), uuid4())
+    for index, doc_id in enumerate(documents):
+        _insert_document(
+            engine=database_engine, doc_id=doc_id, source_ref=f"new-race-{index}"
+        )
+    both_deciding = Barrier(2)
+
+    def new_or_racing_identity(prompt: str, type_name: str) -> dict[str, object]:
+        """Distinguish the original person and match a peer's new identity."""
+        candidates = _t4_candidates(prompt)
+        if len(candidates) == 1:
+            both_deciding.wait(timeout=20)
+            return _new_entity_router(prompt, type_name)
+        candidate = next(
+            item
+            for item in candidates
+            if item["candidate_id"] != str(original.entity_id)
+        )
+        return {
+            "decision": "match",
+            "candidate_id": candidate["candidate_id"],
+            "confidence": 0.9,
+        }
+
+    provider = FakeModelProvider(generate_router=new_or_racing_identity)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                resolver.resolve,
+                deployment_id=_DEPLOYMENT_ID,
+                reference=EntityRef(name="Caroline"),
+                claim=_claim(
+                    claim_text="Caroline is a different person from the original.",
+                    doc_id=doc_id,
+                ),
+            )
+            for doc_id in documents
+        ]
+        results = [future.result(timeout=20) for future in futures]
+    assert len(provider.generated_prompts) == 3
+    assert results[0].entity_id == results[1].entity_id != original.entity_id
+    assert sorted(result.created for result in results) == [False, True]
+    with database_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM entities")).scalar() == 2
+
+
+def test_parallel_empty_registry_mints_only_one_entity(
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two empty snapshots cannot both mint without seeing the racing identity."""
+    documents = (uuid4(), uuid4())
+    for index, doc_id in enumerate(documents):
+        _insert_document(
+            engine=database_engine, doc_id=doc_id, source_ref=f"empty-race-{index}"
+        )
+    provider = FakeModelProvider(generate_router=_match_first_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    decide = resolver._decide
+    both_empty = Barrier(2)
+
+    def overlap_empty_snapshots(
+        *,
+        deployment_id: UUID,
+        reference: EntityRef,
+        claim: ClaimForNormalization,
+        snapshot: _CandidateSnapshot,
+        meter: CostMeterPort | None,
+        call_key: str,
+    ) -> _DecisionOutcome:
+        """Force both real transactions to observe an empty candidate registry."""
+        if not snapshot.candidates:
+            both_empty.wait(timeout=20)
+        return decide(
+            deployment_id=deployment_id,
+            reference=reference,
+            claim=claim,
+            snapshot=snapshot,
+            meter=meter,
+            call_key=call_key,
+        )
+
+    monkeypatch.setattr(resolver, "_decide", overlap_empty_snapshots)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                resolver.resolve,
+                deployment_id=_DEPLOYMENT_ID,
+                reference=EntityRef(name="Caroline"),
+                claim=_claim(doc_id=doc_id),
+            )
+            for doc_id in documents
+        ]
+        results = [future.result(timeout=20) for future in futures]
+    assert results[0].entity_id == results[1].entity_id
+    assert sorted(result.created for result in results) == [False, True]
+    assert len(provider.generated_prompts) == 1
+    with database_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM entities")).scalar() == 1
+
+
+def test_profile_change_does_not_repeat_new_entity_decision(
+    database_engine: Engine,
+) -> None:
+    """Creation rechecks membership, not the older candidates' changing prose."""
+    original = _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_match_first_router),
+    ).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(),
+    )
+
+    def enrich_and_distinguish(prompt: str, type_name: str) -> dict[str, object]:
+        """Change an existing profile while still distinguishing another person."""
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE entities SET profile_summary='More facts' WHERE entity_id=:id"
+                ),
+                {"id": original.entity_id},
+            )
+        return _new_entity_router(prompt, type_name)
+
+    provider = FakeModelProvider(generate_router=enrich_and_distinguish)
+    result = _resolver(engine=database_engine, provider=provider).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Another person is also called Caroline."),
+    )
+    assert result.created and result.entity_id != original.entity_id
+    assert len(provider.generated_prompts) == 1
+
+
+def test_match_follows_merge_completed_during_inference(
+    database_engine: Engine,
+) -> None:
+    """A completed match follows its selected member to the live merge root."""
+    seed_provider = FakeModelProvider(generate_router=_match_first_router)
+    selected = _seed_profiled_entity(
+        engine=database_engine,
+        provider=seed_provider,
+        name="Caroline",
+        statement="Caroline lives in Berlin",
+    )
+    survivor = _seed_profiled_entity(
+        engine=database_engine,
+        provider=seed_provider,
+        name="Caro Smith",
+        statement="Caro Smith lives in Berlin",
+    )
+
+    def merge_during_inference(prompt: str, type_name: str) -> dict[str, object]:
+        """Use the real merge writer while the provider holds no DB locks."""
+        with database_engine.begin() as connection:
+            connection.execute(text("SET LOCAL statement_timeout = '3s'"))
+            apply_merge(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                survivor_id=survivor,
+                absorbed_id=selected,
+                trigger_lemmas=["caroline"],
+                evidence={"test": "concurrent merge"},
+                blast_radius=2,
+                decided_by="human",
+            )
+        return _match_first_router(prompt, type_name)
+
+    provider = FakeModelProvider(generate_router=merge_during_inference)
+    result = _resolver(engine=database_engine, provider=provider).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline returned to Berlin."),
+    )
+    assert result.entity_id == survivor and not result.created
+    assert len(provider.generated_prompts) == 1
+    with database_engine.connect() as connection:
+        features = connection.execute(
+            text("SELECT features FROM resolution_decisions WHERE decision_id=:id"),
+            {"id": result.decision_id},
+        ).scalar_one()
+    assert features["selected_entity_id"] == str(selected)
+    assert features["committed_entity_id"] == str(survivor)
+
+
+def test_retired_match_target_requires_fresh_resolution(
+    database_engine: Engine,
+) -> None:
+    """A valid model ID cannot publish a new mention to a retired target."""
+    original = _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_match_first_router),
+    ).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(),
+    )
+
+    def retire_during_inference(prompt: str, type_name: str) -> dict[str, object]:
+        """Retire the selected ID before its in-flight response is published."""
+        with database_engine.begin() as connection:
+            connection.execute(
+                text("UPDATE entities SET status='retired' WHERE entity_id=:id"),
+                {"id": original.entity_id},
+            )
+        return _match_first_router(prompt, type_name)
+
+    provider = FakeModelProvider(generate_router=retire_during_inference)
+    result = _resolver(engine=database_engine, provider=provider).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(),
+    )
+    assert result.entity_id != original.entity_id and result.created
+    assert len(provider.generated_prompts) == 1
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM resolution_decisions WHERE entity_id=:id"),
+                {"id": original.entity_id},
+            ).scalar_one()
+            == 1
+        )
+
+
+def test_deleted_source_cannot_publish_completed_resolution(
+    database_engine: Engine,
+) -> None:
+    """A source deletion during inference prevents late mentions and bindings."""
+    _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_match_first_router),
+    ).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(),
+    )
+
+    def delete_during_inference(prompt: str, type_name: str) -> dict[str, object]:
+        """Tombstone the source in a separate transaction during provider work."""
+        with database_engine.begin() as connection:
+            connection.execute(
+                text("UPDATE documents SET deleted_at=now() WHERE doc_id=:doc"),
+                {"doc": _DOC_ID},
+            )
+        return _match_first_router(prompt, type_name)
+
+    provider = FakeModelProvider(generate_router=delete_during_inference)
+    with pytest.raises(LookupError, match="source is deleted or missing"):
+        _resolver(engine=database_engine, provider=provider).resolve(
+            deployment_id=_DEPLOYMENT_ID,
+            reference=EntityRef(name="Caroline"),
+            claim=_claim(),
+        )
+    with database_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM mentions")).scalar() == 1
+
+
+def test_forget_barrier_stops_inflight_resolution(database_engine: Engine) -> None:
+    """Native forget admission may run during inference and fences publication."""
+    _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_match_first_router),
+    ).resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(),
+    )
+
+    def prepare_forget(prompt: str, type_name: str) -> dict[str, object]:
+        """Use real hard-forget admission after the inference input was read."""
+        ForgetCatalog(engine=database_engine).prepare(
+            deployment_id=_DEPLOYMENT_ID, doc_id=_DOC_ID, forget_id=uuid4()
+        )
+        return _match_first_router(prompt, type_name)
+
+    provider = FakeModelProvider(generate_router=prepare_forget)
+    with pytest.raises(ApplicationInputChanged, match="fenced by hard forget"):
+        _resolver(engine=database_engine, provider=provider).resolve(
+            deployment_id=_DEPLOYMENT_ID,
+            reference=EntityRef(name="Caroline"),
+            claim=_claim(),
+        )
+    with database_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM mentions")).scalar() == 1
 
 
 def test_low_confidence_selection_is_audited_without_frontier_routing(

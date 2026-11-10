@@ -98,3 +98,7 @@ To switch the claims or facts layer off for a deployment, narrow a request to so
 understand how a layer switched on later is backfilled without re-paying for unchanged text,
 start with [D143's processing layers design](designs/processing_layers_design.md) and its
 [analysis](analysis/processing_layer_toggles.md).
+
+For parallel ingestion without repeating completed identity decisions when
+profiles are enriched, see [D151's commit contract](designs/entity_identity_and_retrieval_design.md#332-parallel-resolution-commits-a-match-against-its-decision-snapshot-d151)
+and the [alternatives analysis](analysis/parallel_identity_resolution.md).

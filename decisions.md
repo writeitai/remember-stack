@@ -4551,6 +4551,14 @@ query principle remains; only its public Cypher surface is removed.
 
 ## D99. Identity uncertainty is provisional and converges after profile publication
 
+> **D151 partial supersession (2026-11-10).** Resolver matches now commit
+> against their recorded evidence after source/canonical-target checks;
+> new-entity decisions recheck bounded identity memberships separately.
+> Whole-profile and peer-anchor equality no longer invalidate completed matches.
+> T0's initial anchor validation, binary T4, completeness audit, provider work
+> outside transactions and exact profile-vector revalidation remain in force.
+
+
 > **D100 amendment (2026-08-31).** D100 supersedes D99's tri-state T4,
 > pairwise small→frontier ladder, provisional mint authority, and
 > insufficient-evidence diagnostics. D99's candidate completeness audit,
@@ -4703,6 +4711,14 @@ Preserves D20 registry self-containment, D95's no exact-name auto-merge rule,
 D97's explicit ambiguity and zero-LLM engine query path, and D98's live graph.
 
 ## D100. T4 is one binary, match-biased candidate-selection call
+
+> **D151 partial supersession (2026-11-10).** Resolver matches now commit
+> against their recorded evidence after source/canonical-target checks;
+> new-entity decisions recheck bounded identity memberships separately.
+> Whole-profile and peer-anchor equality no longer invalidate completed matches.
+> T0's initial anchor validation, binary T4, completeness audit, provider work
+> outside transactions and exact profile-vector revalidation remain in force.
+
 
 **Contract enforcement, 2026-11-06:** the provider response schema enumerates
 the exact supplied candidate IDs plus null, and local parsing validates the
@@ -4875,6 +4891,14 @@ authorization. Does not change D55 versioning, D74 forget, D95/D99/D100
 identity, or any retrieval contract.
 
 ## D102. Exact T0 may replay a T4 match inside one document
+
+> **D151 partial supersession (2026-11-10).** Resolver matches now commit
+> against their recorded evidence after source/canonical-target checks;
+> new-entity decisions recheck bounded identity memberships separately.
+> Whole-profile and peer-anchor equality no longer invalidate completed matches.
+> T0's initial anchor validation, binary T4, completeness audit, provider work
+> outside transactions and exact profile-vector revalidation remain in force.
+
 
 **Decision (2026-08-31).** Keep T0 candidate-only across the entity registry,
 but add one narrow exact-name verdict. After a current, non-superseded
@@ -7756,3 +7780,43 @@ and gains `cost_class`, `unit` and `format_family` (`p9_46_0067`, which refuses 
 while staged originals remain undrained). Unmetered deployments are unaffected. The
 control plane must accept the v3 receipt before a deployment runs this release.
 
+
+
+## D151. Parallel identity matches survive ordinary profile enrichment
+
+**Decision (2026-11-10, owner authorized).** Separate the commit rules for an
+existing identity match and for creating a new entity. A model match is a
+verdict against its supplied evidence snapshot. Under short hard-forget,
+live-lineage, shared identity and lemma guards, follow the selected entity's
+redirects to an active root and record the decision. Ordinary profile/alias
+updates, candidate ordering or a peer anchor do not repeat inference. A missing
+or retired target still requires another attempt.
+
+A new-entity decision separately reloads the bounded candidate IDs and local
+document identity memberships under the lemma lock. A membership change retries
+against the new identities; unchanged profiles are not a prerequisite. Keep
+same-name distinct referents possible. No provider call holds a database lock,
+no global serial worker requirement is introduced, and no retry/DLQ failure is
+hidden. Hard forget's ordinary-work drain and active barrier remain mandatory.
+
+**Rationale and tradeoff.** Broad snapshot equality made normal enrichment
+invalidate paid decisions and caused observed retries/DLQ under parallel
+normalization. The new policy removes this artificial dependency. It deliberately
+accepts a match based on earlier evidence even if a new candidate or fact arrives
+before commit. Selected/canonical IDs, the existing bounded decision audit,
+commit policy and an input digest retain provenance; this is not a claim that
+the latest evidence would produce an identical model answer.
+
+**Scope and cost.** New resolver generation, unchanged model prompts, thresholds,
+normalizer outputs and chunk/extraction/embedding reuse keys. No migration,
+second registry, raw profile audit copies, automatic re-ingestion or automatic
+replay path. Profile vectors still require exact input hashes. Same-lemma
+creation races are protected; different-name identity recall stays bounded by
+the existing candidate generator. Real PostgreSQL parallelism tests prove
+commit behavior and provider counts; benchmark accuracy and production
+throughput require separate measurements.
+
+**Design:** [entity identity §3.3.2](plan/designs/entity_identity_and_retrieval_design.md#332-parallel-resolution-commits-a-match-against-its-decision-snapshot-d151).
+**Analysis:** [parallel identity resolution](plan/analysis/parallel_identity_resolution.md).
+**Amends:** D99 whole-snapshot equality and D102 in-flight binding invalidation;
+retains D95/D100 identity decisions, D21 reversible merges and D74/D135 deletion.
