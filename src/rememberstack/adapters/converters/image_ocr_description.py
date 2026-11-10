@@ -27,6 +27,7 @@ import time
 from typing import Any
 from typing import ClassVar
 from typing import Final
+from typing import Literal
 
 import httpx
 from PIL import Image
@@ -117,6 +118,8 @@ class ImageDescriptionSettings(BaseSettings):
     api_key: SecretStr
     base_url: str = "https://openrouter.ai/api/v1"
     model: str = DEFAULT_VISION_MODEL
+    detail: Literal["auto", "low", "high", "original"] = "high"
+    """Provider observation resolution; high requests bounded visual detail."""
     timeout_s: float = Field(default=120.0, gt=0)
     max_image_bytes: int = Field(default=10_000_000, gt=0)
     """Deterministic input ceiling before either provider call. Starting point."""
@@ -175,6 +178,7 @@ class ImageDescriptionSettings(BaseSettings):
         """Every output-affecting option, folded into the converter version."""
         base = (
             f"{self.model}"
+            f":detail-{self.detail}"
             f":prompt-{DESCRIPTION_PROMPT_VERSION}"
             f":max-{self.max_description_chars}"
             f":tok-{self.max_tokens}"
@@ -504,7 +508,13 @@ class ImageOcrDescriptionConverter:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": _DESCRIPTION_PROMPT},
-                        {"type": "image_url", "image_url": {"url": data_url}},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_url,
+                                "detail": self._description_settings.detail,
+                            },
+                        },
                     ],
                 }
             ],

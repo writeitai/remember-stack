@@ -298,6 +298,20 @@ def test_interrupted_attempt_is_not_automatically_rebilled(tmp_path: Path) -> No
     assert calls == before and not (tmp_path / "uncertain").exists()
 
 
+def test_provider_rejection_keeps_actionable_lane_diagnostic(tmp_path: Path) -> None:
+    """A failed vision request retains its cause and the paid OCR receipt."""
+    calls: list[str] = []
+    broken, profile = _binding(calls=calls, vision_status=400)
+    with pytest.raises(ImagePreparationError, match="preparation-state.json"):
+        _prepare(root=tmp_path, output="failed", converter=broken, profile=profile)
+    state = json.loads((tmp_path / "cache" / "preparation-state.json").read_bytes())
+    attempt = state["attempts"][0]
+    assert attempt["status"] == "blocked" and attempt["retryable"] is False
+    assert attempt["failed_call_keys"] == ["description"]
+    assert "HTTP 400" in attempt["error_detail"]
+    assert [event["call_key"] for event in attempt["events"]] == ["ocr"]
+
+
 @pytest.mark.parametrize("state_change", ["inflight", "missing_ledger"])
 def test_cached_reading_cannot_bypass_unresolved_or_missing_accounting(
     tmp_path: Path, state_change: str
