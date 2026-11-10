@@ -91,6 +91,17 @@ Notes an implementer needs:
   relationships; separate observation from inference; do not correct or replace OCR.
   The description call receives pixels, not the OCR transcript. Rationale and rejected
   alternatives: `../analysis/media_handling/always_ocr_and_description.md`.
+- **Visual observation resolution is explicit.** The description request carries
+  `REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL`, default `high`; supported values are
+  `auto`, `low`, `high` and `original`, subject to provider/model support. Both lanes
+  receive byte-identical source images. The provider may resize internally according
+  to the selected detail; the adapter does not crop or resample the source. OCR
+  remains independent and receives its original input. Detail belongs in the native
+  profile and description fingerprint, so changing it refreshes vision output while
+  preserving a matching OCR checkpoint. Old output is never relabeled. This setting
+  does not replace local decode bounds or guarantee acceptance by every provider;
+  rejected requests remain visible failures. Rationale and the one-time checkpoint
+  boundary: `../analysis/image_description_detail_20261110.md`.
 - **One versioned representation, two attributed outputs.** Assemble `document.md` in
   deterministic order: `## Visible text (OCR)` then `## Visual description`. OCR ranges
   retain `ocr` / `source_expression`; description ranges retain the appropriate

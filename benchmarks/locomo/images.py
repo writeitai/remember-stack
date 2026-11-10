@@ -51,6 +51,9 @@ class ConversionAttempt(FrozenModel):
     events: tuple[ConverterUsageEvent, ...] = ()
     outcomes: tuple[str, ...] = ()
     error_type: str | None = None
+    failed_call_keys: tuple[str, ...] = ()
+    retryable: bool | None = None
+    error_detail: str | None = Field(default=None, max_length=1200)
 
     @model_validator(mode="after")
     def require_one_outcome_per_receipt(self) -> ConversionAttempt:

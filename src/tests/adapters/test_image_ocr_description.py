@@ -5,6 +5,7 @@ from decimal import Decimal
 import io
 import json
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -982,6 +983,40 @@ def test_description_reasoning_and_provider_only_are_explicit_and_keyed() -> Non
         "allow_fallbacks": False,
         "data_collection": "deny",
     }
+    assert first.version != changed.version
+
+
+def test_description_detail_is_explicit_and_preserves_paid_ocr() -> None:
+    """Changing visual resolution refreshes vision only, using original bytes."""
+    calls: list[str] = []
+    payloads: list[dict[str, Any]] = []
+    store = MemoryLaneCheckpoints()
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Capture the provider's visual resolution and original pixel payload."""
+        payloads.append(json.loads(request.content))
+        calls.append("description")
+        return httpx.Response(200, json=_description_body())
+
+    first = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=httpx.MockTransport(description),
+    )
+    first.convert(content=_PNG, mime="image/png", checkpoints=store)
+    changed = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=httpx.MockTransport(description),
+        detail="original",
+    )
+    changed.convert(content=_PNG, mime="image/png", checkpoints=store)
+    changed.convert(content=_PNG, mime="image/png", checkpoints=store)
+    assert calls.count("ocr") == 1 and calls.count("description") == 2
+    first_image = payloads[0]["messages"][0]["content"][1]["image_url"]
+    changed_image = payloads[1]["messages"][0]["content"][1]["image_url"]
+    assert first_image["detail"] == "high"
+    assert changed_image["detail"] == "original"
+    assert first_image["url"] == changed_image["url"]
+    assert base64.b64decode(first_image["url"].split(",", 1)[1]) == _PNG
     assert first.version != changed.version
 
 

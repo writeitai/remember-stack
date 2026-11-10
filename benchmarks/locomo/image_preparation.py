@@ -484,6 +484,15 @@ class _ImageCache:
                         "error_type": type(error).__name__
                         if error is not None
                         else None,
+                        "failed_call_keys": error.failed_call_keys
+                        if isinstance(error, ConverterLaneError)
+                        else (),
+                        "retryable": error.retryable
+                        if isinstance(error, ConverterLaneError)
+                        else None,
+                        "error_detail": str(error)[:1200]
+                        if isinstance(error, ConverterLaneError)
+                        else None,
                     }
                 ),
             )
@@ -723,7 +732,8 @@ def prepare_image_inputs(
                     pending.clear()
         if failure is not None:
             raise ImagePreparationError(
-                f"image preparation stopped: {type(failure).__name__}; cache/receipts preserved"
+                f"image preparation stopped: {type(failure).__name__}; "
+                f"cache/receipts preserved; inspect {cache_dir / 'preparation-state.json'}"
             ) from failure
         digest = _publish_bundle(
             output=output,

@@ -19329,6 +19329,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | OpenRouter key for image descriptions; required by `image_ocr_description`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL` | `high` | `auto`, `low`, `high`, `original` | Explicit provider observation resolution. High requests bounded preprocessing of the original image; exact sizing and supported values depend on the model. Changes refresh the description checkpoint while retaining matching OCR. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Approved endpoints in preference order. One entry disables fallback; multiple entries allow fallback only within the list. The LoCoMo profile uses `["openai/flex","openai"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
