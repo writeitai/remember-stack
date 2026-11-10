@@ -1,9 +1,10 @@
 # LoCoMo full-system benchmark design
 
-Current owner-requested contract, updated 2026-11-09 for best-supported answers;
+Current owner-requested contract, updated 2026-11-10 for actual image inputs;
 the model-profile delivery was tracked in PR #514. Acceptance of a design does not establish a runtime result. See
 [implementation analysis](../analysis/locomo-models-and-independent-judging-20261023.md)
 and [answer-policy analysis](../analysis/locomo_best_supported_answers_20261109.md)
+and [image-input parity analysis](../analysis/locomo_image_input_parity_20261110.md)
 and [superseded protocol history](../analysis/locomo-protocol-history-through-v38.md).
 
 ## 1. Acceptance boundary
@@ -30,7 +31,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v40 (full-v40)
+protocol                 RS-LoCoMo-Full-v41 (full-v41)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -222,8 +223,67 @@ document. Every turn is rendered:
 [D1:3 | 1:56 pm on 8 May, 2023 | UTC assumed] Caroline: ...
 ```
 
-Image URLs are not fetched. Dataset captions and image queries are included only with explicit
-derived-data labels. Session summaries and event summaries are never ingested.
+Before offline preparation, `prepare-images` resolves source image URLs and runs
+the shared `ImageOcrDescriptionConverter`: dedicated Mistral OCR plus Luna visual
+description at low reasoning. Both lanes consume actual source pixels. The
+operation requires explicit execution and finite conversion-attempt and reported
+cost ceilings. Bound preparation concurrency and each image's byte/pixel limits;
+never use a question, reference answer or gold evidence to choose images or guide
+their description. Dataset captions and queries remain explicitly derived data.
+Session summaries and event summaries are never ingested.
+
+### 3.1 Immutable image input and cost provenance
+
+A required image bundle binds every selected source image to sample, session,
+turn, speaker, ordinal and URL. It retains original image bytes/hash, MIME,
+converter identity, complete typed conversion output (including origin/source
+map and derived assets), requested model/effort/routing and actual component and
+usage records. The ordinary renderer inserts its OCR and visual reading below
+the owning dialogue turn, labeled as derived image content rather than a quote
+from the speaker. Observation and interpretation labels are preserved. The
+session is then ingested through ordinary E0 as Markdown; its passthrough ranges
+must not be described as native image-origin ranges. The converter's original
+typed provenance remains in the image bundle for inspection.
+
+Offline `prepare --images <bundle>` validates complete source-reference coverage,
+hashes and the current image profile, copies the immutable input into its run,
+and fingerprints the image index as well as the rendered documents. It makes
+no provider call. Resume revalidates those same frozen files without consulting
+an ambient cache or refetching a URL. Changing an image, conversion identity or
+reading requires a new prepared run and fresh ingestion. It does not relabel an
+old checkpoint. Historical reads validate saved manifests and file hashes
+without retaining an executable old renderer.
+
+Missing/corrupt bundle files or failed required conversion lanes stop preparation.
+Remote originals can be permanently inaccessible in this fixed dataset. An
+explicit allow-unavailable policy may retain a typed fetch/format failure and
+display that unavailability beside the labeled dataset caption; it must report
+converted and unavailable counts. It never treats a missing conversion cache
+entry as proof of remote unavailability. Unexpected provider/accounting failures
+remain errors regardless of that policy.
+
+A separate persistent preparation cache holds original bytes, content-addressed
+readings and the native independent lane checkpoints. The paid-work identity is
+image bytes plus the shared lane configuration, not turn ordinals or model
+output. Unchanged images reuse paid results, including OCR when only vision
+changes; different images cannot share checkpoints accidentally. A cache writer
+lock prevents duplicate concurrent preparation. Record usage before publishing
+reusable success, and preserve a conversion's write-ahead attempt marker so an
+uncertain interruption cannot automatically repeat a paid call. A known
+retryable lane failure can resume while reusing its successful sibling.
+
+The finite cost ceiling checks recorded cost before admitting another bounded
+conversion. Calls already admitted may finish over that ceiling; the existing
+provider hard allowance remains unchanged. OCR's configured page-price meter
+and OpenRouter's returned vision usage are identified separately from a fully
+reconciled provider invoice. Preserve prior receipts when resuming; cache hits
+are not billed or counted as new calls. All original pixels, readings and frozen
+accounting/provenance files are inside the run archive uploaded to GCS.
+
+This replaces the caption-only Full-v40 preparation contract. Answer/judge
+templates, Luna/Jev roles, retrieval budgets and core component generations do
+not change as part of image restoration. The changed rendered image content is
+the declared one-time ingestion boundary; no global engine reuse key is bumped.
 
 ```text
 source_kind       locomo

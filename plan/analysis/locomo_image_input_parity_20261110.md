@@ -74,6 +74,40 @@ The binding benchmark design must select and describe the supported path before
 implementation. Core OCR/vision logic stays shared, not copied from the old
 untyped batch script. Old model branches and old generation pins are not restored.
 
+### Integration selected after inspecting the shipped ports
+
+Use an explicit immutable preparation bundle and the existing dual-lane image
+converter. The current SDK ingests one file, and the binding file contract does
+not expand Markdown's embedded images or invent attachment authority. Adding
+a new multi-document attachment contract is unnecessary for this adapter repair.
+The converter's full manifest, source map, derived assets and lane receipts stay
+in the bundle; the rendered session labels the inserted reading as derived
+OCR/visual content attached to its exact turn. The downstream session remains
+an ordinary E0 Markdown input. This exercises the shared converter and the
+ordinary text ingestion path, not the worker's image-upload route; do not claim
+that the session's passthrough origin ranges are native image-origin ranges.
+
+The pinned dataset has910 image URL references and862 distinct URLs. A read-only
+inventory of the retained mirror found775 image-turn files and135 explicitly
+caption-only entries. Therefore requiring every remote original to remain
+reachable would block even the historical successful source set. Missing or
+corrupt prepared artifacts and provider failures remain errors. A caller may
+explicitly allow recorded remote-image unavailability; each such reference has
+a typed reason and visible disclosure, and coverage is reported. No missing
+artifact silently selects a caption. The original cached pixels can be imported
+as source bytes after hash verification; old unversioned derived Markdown is
+not accepted as an attested new conversion.
+
+Cache payment identity is original image hash plus the shared lane fingerprint.
+A mutable cache is separate from the immutable bundle copied into the run.
+Independent native lane checkpoints preserve successful OCR if vision fails or
+changes. A write-ahead conversion marker and usage recorder distinguish a
+retryable known failure from an uncertain interrupted paid attempt; the latter
+requires inspection rather than automatic regeneration. Concurrent preparation
+is bounded and one writer owns a cache. Cost ceilings are reported-cost admission
+checks; already admitted calls may finish above the limit. They are not a new
+provider hard allowance. Preserve raw sources and all accounting records.
+
 ## Verification and paid reuse
 
 Use synthetic fixtures to prove multi-image ownership, actual OCR/visual text
