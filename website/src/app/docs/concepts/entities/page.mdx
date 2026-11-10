@@ -71,6 +71,26 @@ Two refinements matter in practice:
   resolves normally. If the claim has several references with that exact
   text, none is skipped.
 
+## Parallel ingestion
+
+Workers can resolve mentions concurrently. Each identity decision uses a bounded
+snapshot of candidate evidence, and model calls hold no database locks. Adding
+facts or aliases to a candidate while a decision is running does not automatically
+repeat a completed match. Before recording it, the engine checks that its source
+is live and follows the selected entity's merge redirects to an active identity.
+The audit retains the original selection and the committed canonical ID.
+
+Creating a new entity has an additional check: if the candidate identities or
+local document memberships changed during the decision, the worker reconsiders
+those identities before creating another. This protects competing same-name
+creation without treating all people with one name as the same person. Structural
+races still have bounded retries and can surface as processing failures. Profile
+embeddings retain their separate exact-input checks.
+
+A completed match describes the evidence shown to the model. Newly added evidence
+can influence later decisions; the engine does not promise that all candidate
+descriptions stayed unchanged until the match was recorded.
+
 ## Merges and reversibility
 
 Identity is revisited as knowledge grows. When an entity's profile is

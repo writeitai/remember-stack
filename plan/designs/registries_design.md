@@ -22,14 +22,14 @@
 > binary call over every candidate in the bounded snapshot. It selects one
 > candidate id or `new`; the current generation has no frontier seat,
 > confidence-routing branch, `insufficient_evidence`, or provisional mint.
-> D99's completeness audit, T3 diagnostics, provider revalidation, profile
+> D99's completeness audit, T3 diagnostics, D151 commit checks, profile
 > convergence, and recovery behavior remain binding. Section 3 contains the
 > current cascade.
 
 > **Historical D99 amendment (2026-08-28; superseded in part by D100).** Identity uncertainty is provisional,
 > not a durable negative edge. Candidate completeness, tri-state T4,
 > post-profile neighborhood convergence, T3 gate diagnostics, and the resolver's
-> unlocked-provider/locked-revalidation transaction contract are normative in
+> unlocked-provider/operation-specific commit contract (D151) are normative in
 > [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md)
 > §3 and supersede binary-T4 wording below.
 
@@ -241,7 +241,9 @@ list globally; D102 permits only the T4-backed document-local replay below.
   remains a conservative conflict. `deployments.document_binding_generation`
   gates projection completeness and survives unrelated resolver-generation
   bumps. An anchor hit commits in its first lemma-locked transaction; provider
-  paths revalidate binding/conflict state with the candidate snapshot. Exact
+  paths use D151: existing matches check the canonical target, while new-entity
+  decisions recheck candidate and document identity memberships. Profile
+  enrichment and peer-anchor changes alone do not repeat completed matches. Exact
   T0 writes a normal mention and decision with its source T4 decision id. T1/T2
   never accept, and a different document never inherits the binding.
 - Human re-decision and unmerge restoration use the same transactional binding
