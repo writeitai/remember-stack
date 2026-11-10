@@ -487,7 +487,7 @@ def test_offline_run_copies_image_inputs_and_validates_saved_bytes(
         images=tmp_path / "bundle",
     )
     assert config.image_inputs_sha256 is not None and config.protocol_name.endswith(
-        "v41"
+        "v42"
     )
     assert calls == before
     (tmp_path / "bundle" / IMAGE_INDEX).write_text("corrupt ambient source")
@@ -500,8 +500,11 @@ def test_offline_run_copies_image_inputs_and_validates_saved_bytes(
         runner.load_recorded_run(run_dir=tmp_path / "run")
 
 
+@pytest.mark.parametrize(
+    "historical_name", ["RS-LoCoMo-Full-v40", "RS-LoCoMo-Full-v41"]
+)
 def test_caption_only_historical_run_remains_read_only_without_old_renderer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, historical_name: str
 ) -> None:
     """Historical files retain their own hashes; no legacy execution path returns."""
     from tests.benchmarks.test_locomo_runner import _patch_prepared_inputs
@@ -511,7 +514,7 @@ def test_caption_only_historical_run_remains_read_only_without_old_renderer(
         dataset_path=tmp_path / "data.json", tier="smoke", output=tmp_path / "run"
     )
     payload = config.model_dump(mode="json", exclude={"protocol_fingerprint"})
-    payload["protocol_name"] = "RS-LoCoMo-Full-v40"
+    payload["protocol_name"] = historical_name
     fingerprint_keys = payload.keys() - {"dataset_path", "prepared_at"}
     payload["protocol_fingerprint"] = runner._canonical_hash(
         {key: payload[key] for key in fingerprint_keys}

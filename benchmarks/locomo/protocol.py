@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v41"
-DEFAULT_PROTOCOL_KEY: Final = "full-v41"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-ocr-vision-v41"
-"""Current Full-v41: frozen OCR/Luna images, calendar answers, Luna/Flex, Jev."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v42"
+DEFAULT_PROTOCOL_KEY: Final = "full-v42"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-semantic-judge-v42"
+"""Current Full-v42: OCR/Luna images and restored branch semantic judge."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -361,12 +361,12 @@ of value. Stay within the existing tool and model-call budgets.
 QUESTION:
 {question}"""
 
-JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the
-gold answer. Be generous about concise paraphrases that identify the same topic.
-For time questions, accept equivalent formats or relative expressions only when
-they denote the same date or time period. Extra wording does not make an otherwise
-correct answer wrong. A missing, unknown, contradictory, or different answer is
-WRONG.
+JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the gold answer.
+Evaluate semantic correctness generously:
+- If the generated answer contains, identifies, or encompasses the core fact, entity, date, or event specified by the gold answer, classify it as CORRECT.
+- For time and date questions, accept equivalent calendar expressions, relative expressions (e.g. 'last Friday', 'January 21'), or answers that identify the specific date even if they also mention an encompassing deadline or related action (such as printing or finishing by a certain date).
+- Additional explanatory detail, context, surrounding conversational framing, or synonyms do not make an answer wrong as long as the essential truth of the gold answer is conveyed.
+- Classify as WRONG only if the answer is genuinely contradictory to the gold answer, asserts a fundamentally different fact/entity/time, or is missing/Unknown.
 
 Question: {question}
 Gold answer: {gold_answer}
