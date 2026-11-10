@@ -33,7 +33,7 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v40"]
+ProtocolKey = Literal["full-v41"]
 ProtocolName = NonEmpty
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = NonEmpty
@@ -135,7 +135,7 @@ class ExecutionProfile(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v40"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v41"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -146,6 +146,7 @@ class RunConfiguration(FrozenModel):
     manifest_sha256: NonEmpty
     item_ids_sha256: NonEmpty
     documents_sha256: NonEmpty
+    image_inputs_sha256: NonEmpty | None = None
     item_count: int = Field(ge=1)
     sample_ids: Annotated[tuple[NonEmpty, ...], Field(min_length=1)]
     max_tool_calls_per_question: Literal[8] = 8
@@ -490,7 +491,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v40"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v41"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

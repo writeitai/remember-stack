@@ -89,13 +89,19 @@ def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> N
         ),
     )
 
-    rendered = render_session(sample=sample, session=session)
+    rendered = render_session(
+        sample=sample,
+        session=session,
+        image_readings={("conv-test", "D1:1", 1): "## Visual description\nA red lamp."},
+    )
 
     assert (
         "[D1:1 | 1:00 pm on 1 May, 2023 | UTC assumed] Alpha: Look at this." in rendered
     )
     assert "Dataset-provided derived image caption" in rendered
     assert "Dataset-provided derived image search query" in rendered
+    assert "A red lamp." in rendered
+    assert "D1:1; speaker Alpha; image 1" in rendered
     assert "source timezone absent; adapter assumes UTC" in rendered
     assert "https://example.test" not in rendered
     assert rendered.endswith("\n")
@@ -345,8 +351,8 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
 
 def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v40"
-    assert DEFAULT_PROTOCOL_KEY == "full-v40"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v41"
+    assert DEFAULT_PROTOCOL_KEY == "full-v41"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -480,10 +486,10 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v40",)
-    protocol = PROTOCOL_REGISTRY["full-v40"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v41",)
+    protocol = PROTOCOL_REGISTRY["full-v41"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v40"
+    assert protocol.name == "RS-LoCoMo-Full-v41"
     assert protocol.answer_agent_model == "openai/gpt-6-luna"
     assert protocol.answer_agent_reasoning_effort == "high"
     assert protocol.judge_reasoning_effort == "high"
@@ -526,7 +532,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v40"]
+    assert selected == ["full-v41"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -701,7 +707,7 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v40")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v41")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 

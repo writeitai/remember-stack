@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v40 setup
+# RS-LoCoMo-Full-v41 setup
 
 One current execution profile uses Luna 6 for ingestion and vision at low
 reasoning, Luna 6 for answering and judging at high reasoning, and Jev
@@ -17,23 +17,68 @@ Install the repository plus deterministic scorer dependencies:
 uv sync --extra benchmark
 ```
 
-The safe first command is local and makes no API or model call:
+Plan source-image preparation first. Without `--execute` this creates no files
+and makes no source HTTP or provider call; the limits below are admission
+ceilings, not a cost estimate:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo prepare-images \
+  --dataset /absolute/path/locomo10.json --tier smoke \
+  --cache /private/locomo-image-cache --output /private/locomo-image-inputs \
+  --max-conversions 1000 --max-cost-usd 10
+```
+
+To execute, add `--execute` and configure `REMEMBERSTACK_MISTRAL_OCR_API_KEY`
+and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`. The shared converter sends
+original JPEG/PNG bytes to Mistral OCR and Luna vision (low reasoning,
+Flex then standard OpenAI). It receives no question or reference answer.
+`--workers` defaults to two images, each with its two native conversion lanes.
+Successful independent lanes are cached by original image hash and native
+settings, so retrying a failed vision lane does not repeat successful OCR.
+The cache-absolute attempt/cost ceilings include failures and prior invocations;
+already admitted calls finish and may exceed the reported-cost admission stop.
+OCR uses its configured page-price meter, while vision records returned usage.
+An unresolved interrupted attempt stops automatic paid replay for inspection.
+
+Inaccessible remote originals fail by default. Explicit `--allow-unavailable`
+records typed fetch/format failures and visible coverage markers. It never
+allows a provider failure or missing conversion file to become a silent
+caption-only result. The summary reports converted/unavailable counts. Keep
+the private immutable bundle: it includes original pixels, native conversion
+provenance, binary assets, and accounting. A reusable input bundle must cover
+the same dataset and selected samples; the development and publication tiers
+both select all ten conversations.
+
+Once a bundle exists, preparation is local and makes no API or model call:
 
 ```bash
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v40 \
+  --protocol full-v41 \
+  --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v40` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v41` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
-Full-v40 asks the answerer to give its best-supported answer to every scored
+The run contains its own `image-inputs/` copy. Its index and every original and
+converted reading are hash-checked; changes to an ambient cache cannot alter
+prepared input. Every source image requires a frozen reading or an explicitly
+recorded unavailable-original marker. OCR/vision text retains its sample,
+session, turn, speaker and image ordinal beside the source dialogue. Derived
+image text is labeled, including observations versus interpretations. Session
+documents remain ordinary E0 Markdown inputs; the archived native image source
+maps are audit records, not Markdown's native source-origin labels. Standard
+run-directory GCS backups include this complete input and accounting snapshot.
+Changed image input requires a new run and fresh ingestion. The answer and
+judge templates remain those of v40 for this image-input change.
+
+Full-v41 asks the answerer to give its best-supported answer to every scored
 question, including a qualified inference when evidence is indirect. It forbids
 terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
 `possibly` attached to an actual answer. The prompt still forbids invented source
@@ -193,7 +238,7 @@ from readiness.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v40 sample and
+The additive D124 runner reuses one completely processed Full-v41 sample and
 compares answer routes or full-surface prompt variants without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -271,7 +316,7 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v40 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v41 protocol and
 its source state are never modified by this command.
 
 ## Sharded runs

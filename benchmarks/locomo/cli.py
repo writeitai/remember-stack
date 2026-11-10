@@ -13,6 +13,7 @@ from typing import Literal
 from benchmarks.locomo.ablation import AblationProfile
 from benchmarks.locomo.ablation import review_retrieval_ablation
 from benchmarks.locomo.ablation import run_retrieval_ablation
+from benchmarks.locomo.image_preparation import prepare_images_command
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -46,12 +47,27 @@ def main(argv: list[str] | None = None) -> int:
         recorder = build_generation_recorder(
             settings=LangfuseRecorderSettings.model_validate({})
         )
+        if args.command == "prepare-images":
+            summary = prepare_images_command(
+                dataset_path=args.dataset,
+                tier=args.tier,
+                output=args.output,
+                cache_dir=args.cache,
+                execute=args.execute,
+                max_conversions=args.max_conversions,
+                max_cost_usd=args.max_cost_usd,
+                workers=args.workers,
+                allow_unavailable=args.allow_unavailable,
+            )
+            print(summary.model_dump_json())
+            return 0
         if args.command == "prepare":
             configuration = prepare_run(
                 dataset_path=args.dataset,
                 tier=args.tier,
                 output=args.output,
                 protocol=args.protocol,
+                images=args.images,
                 retrieval_budget=ContextRetrievalBudget(
                     k=args.retrieval_k, candidate_k=args.retrieval_candidate_k
                 ),
@@ -244,6 +260,41 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    images = commands.add_parser(
+        "prepare-images",
+        help="plan or explicitly run metered OCR/Luna source-image preparation",
+    )
+    images.add_argument("--dataset", type=Path, required=True)
+    images.add_argument(
+        "--tier", choices=("smoke", "development", "publication"), required=True
+    )
+    images.add_argument("--cache", type=Path, required=True)
+    images.add_argument("--output", type=Path, required=True)
+    images.add_argument("--execute", action="store_true")
+    images.add_argument(
+        "--max-conversions",
+        type=int,
+        required=True,
+        help="cache-absolute converter-attempt ceiling, including failures",
+    )
+    images.add_argument(
+        "--max-cost-usd",
+        type=_positive_decimal,
+        required=True,
+        help="cache-absolute recorded-spend admission stop; admitted calls finish",
+    )
+    images.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="concurrent source images, each with OCR and vision lanes (1-16)",
+    )
+    images.add_argument(
+        "--allow-unavailable",
+        action="store_true",
+        help="explicitly record unavailable originals with coverage markers; provider failures still stop",
+    )
+
     prepare = commands.add_parser(
         "prepare", help="validate and render a local run (no API/model calls)"
     )
@@ -252,6 +303,11 @@ def _parser() -> argparse.ArgumentParser:
         "--tier", choices=("smoke", "development", "publication"), required=True
     )
     prepare.add_argument("--output", type=Path, required=True)
+    prepare.add_argument(
+        "--images",
+        type=Path,
+        help="frozen prepare-images bundle; required when source turns contain image URLs",
+    )
     prepare.add_argument(
         "--protocol", choices=tuple(PROTOCOL_REGISTRY), default=DEFAULT_PROTOCOL_KEY
     )
