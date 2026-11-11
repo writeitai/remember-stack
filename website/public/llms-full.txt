@@ -20065,8 +20065,12 @@ alongside the processed-store backups.
 
 The current answer prompt preserves defining criteria in constraint deductions,
 compares credible references across sessions before narrowing to one candidate,
-and retains relevant restrictions with their source qualifiers. These rules do
-not change ingestion or the primary judge. A frozen older processed store can
+and retains relevant restrictions with their source qualifiers without adding
+unsupported denials. If resolved-entity filters leave required details missing,
+it searches claims and chunks without that semantic filter and verifies
+attribution from the source. Deployment, visibility and time boundaries remain
+in force. These rules do not change ingestion, ranking or the primary judge.
+A frozen older processed store can
 be tested with an explicitly saved answer-template override in the full-profile
 comparison runner that produced it; its source identity remains unchanged.
 

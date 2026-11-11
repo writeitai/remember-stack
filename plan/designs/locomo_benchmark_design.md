@@ -583,7 +583,19 @@ for credible candidates across sessions before narrowing every follow-up to one
 name, then choose the supported referent or preserve a supported ambiguity.
 This does not require pooling casual mentions. Retain relevant limitations with
 the source's qualifiers; a related restriction does not establish a stronger
-category or diagnosis. These rules contain no benchmark-specific values.
+category or diagnosis, and it does not establish the absence of another
+category. Negative claims require supporting evidence or a logically valid
+exclusion. These rules contain no benchmark-specific values.
+
+Resolved entity IDs are a starting semantic filter, not a guarantee of complete
+context. A description of a related object may lack a resolved mention of its
+owner. When a required detail remains unresolved after entity-scoped reads,
+search claims and sources for that detail or object class without `entity_ids`,
+then verify ownership in the source and adjacent chunks. The same deployment,
+source-visibility and temporal boundaries apply. The engine never silently
+relaxes a caller's explicit entity filter, and broader retrieval does not prove
+attribution. This conditional search uses the existing public tools and the
+same call budget; it adds no ranking model or ingestion work.
 
 Full-v44 records these prompt changes under a new identity; the restored
 Full-v42 judge, models, retrieval depth, eight-tool/nine-model-call cap and all
