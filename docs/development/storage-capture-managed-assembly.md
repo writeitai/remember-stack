@@ -121,10 +121,11 @@ ACK checking and financial settlement remain independent existing contracts.
 
 The checked implementation source is `52d6c2767`. Its actual composed native
 run and exact quantities are recorded in the [dated validation receipt](storage-capture-managed-assembly-validation-20261111.json).
-One same-cell/same-T provider invocation captured two ordinary native engine
-views and the same eight FSIT S3 filesystems. Both genuine canonical outputs
-passed independent control-plane framing checks and exact durable replay;
-all four native sessions closed. The receipt records earlier fixture failures
+The run recorded two scopes at one cut, one provider invocation and the same
+actual S3 provider. Canonical-object quantities were 0 and 18 bytes. It recorded
+four distinct original native backends, zero ordinary sessions remaining,
+an independent control-plane framing PASS and replay without another native
+or provider cut. The receipt records earlier fixture failures
 and the corrected forward cut instead of describing them as successful cuts.
 
 The functional data covers zero/nonzero retained originals and failed/succeeded
