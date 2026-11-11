@@ -69,8 +69,11 @@ private schema must be pinned by the qualified native profile.
 `iter_store_references` reads actual catalog locator seeds without live/current
 or success-only filters: raw objects; all five representation URI fields;
 structure sidecars; supplied reference artifacts; projection trees; K page and
-curation paths; K planner/compiler transcripts; and accepted portable forget
-intents. Native content identities and locators use private fields with
+curation paths; K planner/compiler transcripts; and every native forget
+intent, including `preparing`. A forget seed carries its actual UUID with
+`locator_kind=journal_intent`; the qualified journal adapter derives its
+concrete key and proves stored presence. PostgreSQL alone cannot assert the
+ObjectStore or LocalFS journal layout. Native content identities and locators use private fields with
 suppressed repr/validation inputs. Trees, manifests, K origin/history and
 unmatched store resources still require the engine's qualified store profile
 and complete provider evidence. A locator seed is neither a provider item nor
@@ -97,14 +100,15 @@ identity uses the actual PID/server-start pair; it requires no extra stats
 privilege for a definer to inspect the collector's session.
 
 The [native component receipt](storage-capture-original-view-validation-20261111.json)
-pins exact source/test blobs. Five native cases passed in **7.41 seconds** on
+pins exact source/test blobs. Five native cases passed in **7.76 seconds** on
 the cached PostgreSQL 19rc1 image with real migrations and deployment bootstrap.
 They observed 1,030 original references across bounded pages and 1,900 immutable
-allocated-relation records. The original-view acquisition bracket was 5,217
+allocated-relation records. The original-view acquisition bracket was 5,137
 microseconds in this synthetic fixture, not a populated-load pause bound.
 Post-cut DML grew current table allocation while captured bytes/references
 remained unchanged, and extraction DDL refused with `55P03`. Failed
-representation references remained visible. Actual committed terminal rows
+representation references and preparing native forget UUID intents remained
+visible. Actual committed terminal rows
 survived post-cut ACK/deletion changes; a lower sequence committed afterward
 did not enter the original set. Their digests matched the existing v3 bodies.
 A native reader timeout refused with `25P04`; context cancellation closed both

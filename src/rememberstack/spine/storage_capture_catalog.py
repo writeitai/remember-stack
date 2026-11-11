@@ -66,18 +66,20 @@ class NativeCatalogAcquisition(_NativeRecord):
 
 
 class NativeStoreReference(_NativeRecord):
-    """One actual native locator, including failed and superseded references.
+    """One native store locator or journal intent, including unfinished state.
 
     A tree/repository locator is a root to expand through qualified store
     evidence, never a fabricated object or a row-byte estimate. Only raw
-    objects record a native length; missing length remains explicit.
+    objects record a native length; missing length remains explicit. A journal
+    intent carries the actual forget UUID, not an invented store path. Its
+    qualified adapter derives the concrete journal key and proves presence.
     """
 
     native_class: str
     native_id: SecretStr = Field(repr=False)
     store_role: Literal["raw", "artifacts", "corpus", "forget", "knowledge"]
     locator: SecretStr = Field(repr=False)
-    locator_kind: Literal["object", "tree", "repository_path"]
+    locator_kind: Literal["object", "tree", "repository_path", "journal_intent"]
     recorded_bytes: UnsignedDecimal | None
     native_state: str | None
 
@@ -148,11 +150,17 @@ BEGIN
   IF section = 'acquire' THEN
     RETURN jsonb_build_object('identity',native_identity,'deployment_id',NULL,'storage',NULL);
   ELSIF section = 'bind' THEN
+    IF after_class <> '' OR after_id <> '' THEN
+      RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_cursor';
+    END IF;
     RETURN jsonb_build_object('identity',native_identity,'deployment_id',native_scope::text,'storage',
       (SELECT jsonb_build_object('raw_bucket',raw_bucket,
         'artifacts_bucket',artifacts_bucket,'corpusfs_bucket',corpusfs_bucket,
         'knowledge_repo_uri',knowledge_repo_uri) FROM public.deployments));
   ELSIF section = 'identity' THEN
+    IF after_class <> '' OR after_id <> '' THEN
+      RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_cursor';
+    END IF;
     page := '[]'::jsonb;
   ELSIF section = 'references' THEN
     WITH native_references AS (
@@ -201,9 +209,9 @@ BEGIN
         FROM public.knowledge_plan_runs WHERE deployment_id=native_scope
       UNION ALL
       SELECT 'forget_manifests.portable_intent',forget_id::text,'forget',
-        'forget-manifests/'||forget_id::text||'.json','object',NULL,status::text
+        forget_id::text,'journal_intent',NULL,status::text
         FROM public.forget_manifests
-        WHERE deployment_id=native_scope AND status::text <> 'preparing'
+        WHERE deployment_id=native_scope
     ), bounded AS (
       SELECT * FROM native_references WHERE
         (native_class COLLATE "C",native_id COLLATE "C") >

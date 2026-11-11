@@ -287,6 +287,12 @@ def test_terminal_members_are_original_committed_rows_not_ack_or_sequence_prefix
     second = _seed_version(scope=capture_scope)
     late = _seed_version(scope=capture_scope)
     with capture_scope.connect(role=capture_scope.admin_role) as admin:
+        forget_id = uuid4()
+        admin.execute(
+            "INSERT INTO public.forget_manifests(forget_id,deployment_id,doc_id,schema_version) "
+            "SELECT %s,deployment_id,doc_id,1 FROM public.document_versions WHERE version_id=%s",
+            (forget_id, first.version_id),
+        )
         admin.execute(
             "INSERT INTO public.document_representations(representation_id,deployment_id,"
             "version_id,route,markdown_uri,status) SELECT %s,deployment_id,%s,'fixture',"
@@ -327,6 +333,13 @@ def test_terminal_members_are_original_committed_rows_not_ack_or_sequence_prefix
                 and row.native_state == "failed"
                 and row.locator.get_secret_value()
                 == "s3://synthetic-capture-artifacts/failed.md"
+                for row in view.iter_store_references()
+            )
+            assert any(
+                row.native_class == "forget_manifests.portable_intent"
+                and row.native_state == "preparing"
+                and row.locator_kind == "journal_intent"
+                and row.locator.get_secret_value() == str(forget_id)
                 for row in view.iter_store_references()
             )
 
