@@ -36,6 +36,7 @@ src/tests/spine/test_review_queue.py
 src/tests/spine/test_supersession.py
 src/tests/spine/test_unmerge_ripple.py
 src/tests/spine/test_work_ledger.py
+src/tests/spine/test_storage_capture_guard_pg.py
 src/tests/surfaces/test_cost_export.py
 src/tests/surfaces/test_envelope_contract.py
 src/tests/surfaces/test_graph_queries.py

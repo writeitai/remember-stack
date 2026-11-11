@@ -78,3 +78,27 @@ provider staging and periods without customer-usable coverage still need their
 own qualified bounds. In particular this experiment does not prove BM25/HNSW
 maintenance obeys the proposed cut or that `pg_total_relation_size` includes
 every extension resource. The existing price and limits remain unchanged.
+
+The [completed local BM25 counterexample](pg19_bm25_heap_share_counterexample_20261111.md)
+shows why the actual native guard must qualify maintenance admission: a
+privileged spill grew an index while its heap SHARE lock remained held.
+It does not establish the permissions of ordinary deployed writer LOGINs or
+qualify a replacement capture profile.
+
+The [subsequent ordinary-role and native-index experiment](pg19_bm25_native_guard_20261111.md)
+shows why self-revoking EXECUTE is insufficient for the existing runtime owner,
+and qualifies a no-move SQL index lock plus a fixed, restricted collector
+operation on this disposable fixture. Its physical samples were taken while
+the guard held; it is not a full engine capture or deployed profile.
+
+The [TOAST follow-up](pg19_toast_guard_counterexample_20261111.md) proves that
+this SQL-only index primitive remains incomplete: native TOAST vacuum changed
+allocation under the parent/public-index locks. The native operation must
+also lock the actual owned TOAST and index relations.
+
+The [native relation-guard component receipt](pg19_relation_guard_native_validation_20261111.json)
+records the full migrated-schema eight-case qualification of the existing-SQL
+replacement, including the unchanged-value TOAST option lock, 1,900 unique
+physical relation records, exact fork/total reconciliation, ordinary LOGIN
+boundary and real native timeout release. Completed capture, populated pause,
+clock, provider, classification and financial qualification remain separate.

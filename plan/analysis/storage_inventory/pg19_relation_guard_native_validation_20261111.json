@@ -1,0 +1,47 @@
+{
+  "status": "completed disposable full-migrated-schema SQL guard component qualification; not a historic capture or managed capability",
+  "date": "2026-11-11",
+  "image": "sha256:e97ef047169b272734e95f660cca3a4de74c637d0b7c3a7c633122a8f04af43e",
+  "native_module_git_blob": "79748a2decceef5b2c8f90bbfe6d317e8ab94d55",
+  "native_tests_git_blob": "178abc0086f41ff097984f32d0b736e90fc17fb2",
+  "tests_passed": 9,
+  "pytest_elapsed_seconds": 4.55,
+  "actual_login": true,
+  "definer_nologin_nosuperuser": true,
+  "superseded_execute_grant_removed": true,
+  "native_transaction_timeout_state": "25P04",
+  "blocked_bm25_spill_state": "55P03",
+  "blocked_toast_vacuum_state": "55P03",
+  "direct_customer_table_select_state": "42501",
+  "assume_definer_role_state": "42501",
+  "rollback_restores_parent_and_toast_catalog": true,
+  "original_read_only_rr_snapshot_acquired_while_guarded": true,
+  "sample_properties": {
+    "native_relation_count": "1900",
+    "native_allocated_fork_bytes": "10117120",
+    "native_guard_through_sample_us": "112294",
+    "native_table_count": "350",
+    "native_index_count": "860",
+    "native_toast_count": "345",
+    "native_toast_index_count": "345"
+  },
+  "containers_removed": true,
+  "production_resources_changed": false,
+  "limits": [
+    "fresh migrated-and-bootstrapped schema, not populated production load",
+    "no proved T/clock uncertainty or completed original-view capture witness",
+    "no provider authentication/matching, classification, resource mapping, durable publication or financial eligibility",
+    "sequences/WAL/system catalogs/extension side resources remain separate; no guessed zero",
+    "hosted CI does not opt into this separate disposable database input"
+  ],
+  "catalog_search_path": {
+    "installed": "pg_catalog, pg_temp",
+    "normal_migrated_collector_TEMP": false,
+    "extra_TEMP_granted_only_in_owned_regression": true,
+    "before_fix_temporary_view_marker_state": "P0001",
+    "before_fix_marker_executed_as_definer": true,
+    "after_fix_real_reconciled_sample": true,
+    "temporary_privilege_restored": true,
+    "temporary_functions_are_not_searched": true
+  }
+}
