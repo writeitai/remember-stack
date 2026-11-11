@@ -90,3 +90,8 @@ shows why self-revoking EXECUTE is insufficient for the existing runtime owner,
 and qualifies a no-move SQL index lock plus a fixed, restricted collector
 operation on this disposable fixture. Its physical samples were taken while
 the guard held; it is not a full engine capture or deployed profile.
+
+The [TOAST follow-up](pg19_toast_guard_counterexample_20261111.md) proves that
+this SQL-only index primitive remains incomplete: native TOAST vacuum changed
+allocation under the parent/public-index locks. The native operation must
+also lock the actual owned TOAST and index relations.
