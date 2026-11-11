@@ -20113,7 +20113,8 @@ component amounts, and complete committed terminal membership. Operators
 supply qualified source/store/clock profiles, dedicated ordinary collector
 connections, provider transport and durable evidence storage. One bounded
 batch captures Projects at the same cut; immutable canonical pages support
-exact replay. See the repository's storage-capture development documentation
+exact replay. See the repository's
+[storage-capture development documentation](https://github.com/writeitai/remember-stack/blob/main/docs/development/storage-capture-managed-assembly.md)
 for the callable boundary and functional validation limits.
 
 **Processing and concurrency.**
