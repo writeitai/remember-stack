@@ -1,6 +1,10 @@
 """Adversarial D152 encoding checks; fixtures are not native capture proof."""
 
 from collections.abc import Iterator
+from datetime import datetime
+import json
+from pathlib import Path
+from uuid import UUID
 
 from pydantic import ValidationError
 import pytest
@@ -12,6 +16,8 @@ from rememberstack.core.storage_capture import iter_capture_pages
 from rememberstack.core.storage_capture import manifest_payload_digest
 from rememberstack.core.storage_capture import member_payload_digest
 from rememberstack.core.storage_capture import membership_set_digest
+from rememberstack.core.storage_capture import terminal_receipt_digest
+from rememberstack.model.metering import ManagedDocumentVersionOutcome
 from rememberstack.model.storage_capture import StorageCaptureAck
 from rememberstack.model.storage_capture import StorageCaptureEncodingError
 from rememberstack.model.storage_capture import StorageCaptureManifest
@@ -100,6 +106,9 @@ def test_empty_set_has_no_page_and_exact_ack() -> None:
     assert pages == ()
     manifest = _manifest(request=request, pages=pages)
     check_capture_encoding(manifest=manifest, pages=pages, page_member_limit=2)
+    decoded = StorageCaptureManifest.model_validate_json(manifest.model_dump_json())
+    assert decoded == manifest
+    check_capture_encoding(manifest=decoded, pages=pages, page_member_limit=2)
     ack = StorageCaptureAck(
         capture_id=manifest.capture_id,
         manifest_digest=manifest.manifest_digest,
@@ -163,7 +172,7 @@ def test_changed_member_payload_refuses() -> None:
         )
 
 
-@pytest.mark.parametrize("value", ["-1", "+1", "00", "01", "1.0", 1, True])
+@pytest.mark.parametrize("value", ["-1", "+1", "00", "01", "1.0", "1\n", "٠", 1, True])
 def test_noncanonical_unsigned_values_refuse(value: object) -> None:
     """Signs, coercion and alternate spellings cannot create another encoding."""
     payload = _reference(number=1).model_dump(mode="json")
@@ -180,3 +189,35 @@ def test_undeclared_content_does_not_leak_in_validation_error() -> None:
     with pytest.raises(ValidationError) as failure:
         StorageReferenceMember.model_validate(payload)
     assert marker not in str(failure.value)
+
+
+def _receipt_vectors() -> list[dict[str, object]]:
+    """Load actual existing-v3 reference outputs recorded with the design."""
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "plan/analysis/storage_capture_receipt_digest_vectors.json"
+    )
+    return json.loads(path.read_text())["vectors"]
+
+
+@pytest.mark.parametrize("vector", _receipt_vectors())
+def test_v3_receipt_digest_matches_existing_cross_repository_vectors(
+    vector: dict[str, object],
+) -> None:
+    """The engine independently reproduces actual CP reference output bytes."""
+    outcome = ManagedDocumentVersionOutcome.model_validate(vector["wire_outcome"])
+    assert terminal_receipt_digest(outcome=outcome) == vector["sha256"]
+
+
+def test_v3_receipt_digest_refuses_host_local_timestamp() -> None:
+    """A missing native timezone cannot silently depend on the collector host."""
+    outcome = ManagedDocumentVersionOutcome(
+        measurement_id=UUID("11111111-2222-4333-8444-555555555555"),
+        outcome="failed",
+        completed_at=datetime(2026, 1, 15, 12, 30),
+        profile_complete=False,
+    )
+    with pytest.raises(
+        StorageCaptureEncodingError, match="terminal_timestamp_not_aware"
+    ):
+        terminal_receipt_digest(outcome=outcome)

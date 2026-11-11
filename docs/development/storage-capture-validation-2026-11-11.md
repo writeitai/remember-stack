@@ -6,11 +6,15 @@ authenticate a provider, qualify a storage profile, persist capture completion
 or authorise a financial charge. Synthetic protocol fixtures are not evidence
 of a real storage cut.
 
-On 2026-11-11 the focused suite passed **13 tests in 0.81 seconds** under
+On 2026-11-11 the focused suite passed **22 tests in 0.58 seconds** under
 Python 3.12.2 and Pydantic 2.13.4. It checks zero-byte reference preservation,
 bounded streaming consumption, exact empty sets and ACK replay, missing-page
 refusal, duplicate/reordered members, payload tampering, noncanonical unsigned
-values and content-value suppression in validation errors.
+values and content-value suppression in validation errors. It also round-trips
+the JSON manifest, independently matches the six recorded existing-v3 terminal
+digest vectors and refuses a host-local timestamp without native timezone
+evidence. The v3 helper preserves its existing plain hash, UUID/string forms,
+nulls and JSON integers; it does not apply the new capture-domain encoding.
 
 Run in the normal repository development environment:
 

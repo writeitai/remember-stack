@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from collections.abc import Iterator
+from datetime import timezone
 import hashlib
 from itertools import islice
 import json
 
 from pydantic import BaseModel
 
+from rememberstack.model.metering import ManagedDocumentVersionOutcome
 from rememberstack.model.storage_capture import StorageCaptureAck
 from rememberstack.model.storage_capture import StorageCaptureEncodingError
 from rememberstack.model.storage_capture import StorageCaptureManifest
@@ -52,6 +54,24 @@ def member_payload_digest(*, member: StorageMember) -> str:
     return _record_digest(
         domain=_MEMBER_DOMAINS[member.kind], record=member, omit="payload_digest"
     )
+
+
+def terminal_receipt_digest(*, outcome: ManagedDocumentVersionOutcome) -> str:
+    """Match the existing v3 receipt digest without a new domain or ID format.
+
+    Native committed SQL timestamps must be aware. The old v3 JSON integers,
+    UUID/string forms, defaults and nulls remain separate from capture encoding.
+    """
+    if outcome.completed_at.tzinfo is None or outcome.completed_at.utcoffset() is None:
+        raise StorageCaptureEncodingError("terminal_timestamp_not_aware")
+    payload = outcome.model_dump(mode="json")
+    payload["completed_at"] = (
+        outcome.completed_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+    encoded = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def page_payload_digest(*, page: StorageCapturePage) -> str:
