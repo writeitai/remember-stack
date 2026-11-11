@@ -49,10 +49,34 @@ skips TOAST kinds when traversing a view. Its
 also schedules TOAST relations independently. Sources retrieved 2026-11-11;
 neither a view nor an assumption about a parent-only vacuum is exclusion.
 
-The next implementation uses the existing PostgreSQL relation-lock primitive
-for the complete native-owned relation set, including TOAST and indexes,
-behind the fixed, owner-installed operation. A small internal native helper
-can expose that primitive to the NOLOGIN definer while the collector retains
-only EXECUTE on the closed operation. The helper is not a customer SQL API,
-an all-writer permission framework, or permission to change ownership,
-background policy, prices or customer limits. Exact closure, deadlines,+authority and in-guard physical sampling still need native qualification.
+The successful follow-up retains existing SQL: reapply the TOAST option's
+actual value through its public parent, or RESET that option when absent.
+This holds the required TOAST maintenance lock. A new C helper and image
+rebuild are unnecessary; see the ordinary-role validation below. Exact
+closure, deadlines, authority and in-guard physical sampling still need full
+native qualification. No customer SQL API, all-writer permission framework,
+ownership change, background policy, price or customer limit follows.
+
+## Existing SQL also fences TOAST maintenance
+
+In the same fixed NOLOGIN definer function, the ordinary collector invoked
+`ALTER TABLE public.capture_fixture RESET(toast.autovacuum_enabled)` when that
+option was absent. Native `pg_locks` showed a retained
+ShareUpdateExclusiveLock on the TOAST heap. Native TOAST VACUUM and runtime
+BM25 spill both refused with `55P03`; the collector's direct table read and
+owner-role assumption still refused with `42501`.
+
+This is a logical settings no-op, **not** a catalog-write no-op. The observed
+TOAST catalog row `xmin` changed from 671 to 692 inside the guard, while its
+OID, filenode and NULL options remained the same. Rolling the guard back
+restored `xmin=671` and the exact original options. The source
+[ATExecSetRelOptions](https://github.com/postgres/postgres/blob/REL_19_RC1/src/backend/commands/tablecmds.c)
+opens the TOAST relation with the command's lock mode, updates both catalog
+rows, and closes the TOAST relation with NoLock. Source retrieved 2026-11-11.
+Explicit options must be SET to their actual existing value; absent options
+must be RESET. Do not add a default or silently disable background work.
+
+The guard samples allocation before its rollback release. The aborted catalog
+writes still have WAL, invalidation and cleanup cost; rollback does not make
+collection free. Their populated-profile pause and I/O cost remains an
+operator qualification requirement, not a new customer charge or proven floor.

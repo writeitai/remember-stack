@@ -1,4 +1,4 @@
-# Storage capture encoding checks
+# Storage capture checks
 
 The initial implementation supplies the closed D152 record types and pure
 canonical encoding/exact-membership checks. It does not collect native bytes,
@@ -32,3 +32,23 @@ Pyright; no dependency or image download was needed. Full current-head CI and
 the actual native/provider/profile tests remain delivery requirements. The
 existing two-version/provider-call tests must still qualify D56 when the native
 consumer is integrated with ingestion.
+
+The separate native relation guard uses the existing PostgreSQL SQL lock
+paths, including unchanged-value TOAST reloptions and unchanged-tablespace
+index DDL. It installs only a fixed function using already provisioned
+definer/collector roles; it creates no LOGIN, membership, secret, migration,
+CLI, scheduler or API. Its supported schema/build, native deadline and
+transaction bounds are explicit. Allocation is sampled while those locks
+remain held; rollback release restores the logically unchanged catalog
+options but does not erase the operator's WAL/cleanup cost.
+
+The completed primitive counterexamples and ordinary-role observations are
+tracked in [the inventory analysis](../../plan/analysis/storage_inventory/README.md).
+The new full-engine native regression suite uses only
+`REMEMBERSTACK_STORAGE_GUARD_TEST_DATABASE_URL`, refuses a database whose name
+does not start `capture_guard_`, and requires that scratch database to start
+empty. It never reads the normal application database setting or resets an
+existing schema. An external disposable-container harness owns removal.
+Full-schema execution of this new fixed function remains under qualification
+at this checkpoint; it is not a completed D152 T/clock/view witness or a
+classified/chargeable capture. No role or function has been installed live.
