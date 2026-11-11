@@ -78,3 +78,9 @@ provider staging and periods without customer-usable coverage still need their
 own qualified bounds. In particular this experiment does not prove BM25/HNSW
 maintenance obeys the proposed cut or that `pg_total_relation_size` includes
 every extension resource. The existing price and limits remain unchanged.
+
+The [completed local BM25 counterexample](pg19_bm25_heap_share_counterexample_20261111.md)
+shows why the actual native guard must qualify maintenance admission: a
+privileged spill grew an index while its heap SHARE lock remained held.
+It does not establish the permissions of ordinary deployed writer LOGINs or
+qualify a replacement capture profile.
