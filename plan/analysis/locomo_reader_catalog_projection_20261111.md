@@ -53,3 +53,10 @@ pool, permission, judge prompt, or tool budget changes. Explicit prompt-override
 experiments also record the immutable runner revision and template hash. Keep
 all failed trials and use a fresh complete20-question arm only after both
 targeted questions pass. Do not merge this candidate on a size reduction alone.
+
+Offline projection check for candidate23ab8c81c: the ordinary empty-trace prompt
+is29324 characters, and the same two final traces are239867 and257164
+characters. This removes135833 repeated catalog characters while retaining
+more descriptor metadata than the MCP shape. All394 benchmark tests, Ruff,
+docs truth/generated-doc checks and targeted Pyright pass. These checks do not
+establish an accuracy gain; paid comparison is still pending.
