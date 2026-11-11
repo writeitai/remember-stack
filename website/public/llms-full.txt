@@ -19688,7 +19688,7 @@ model.
 **Warning:**
 
 No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v43`. The numbers under [Recorded results](#recorded-results)
+`RS-LoCoMo-Full-v44`. The numbers under [Recorded results](#recorded-results)
 belong to earlier protocols and earlier engine builds. Do not compare them
 with other systems' published scores.
 
@@ -19776,7 +19776,7 @@ The summary reports:
 
 ### The current protocol
 
-Execution uses one profile, `RS-LoCoMo-Full-v43` (key `full-v43`). It selects
+Execution uses one profile, `RS-LoCoMo-Full-v44` (key `full-v44`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
 answering and judging. All these Luna seats prefer OpenAI Flex and permit
@@ -19831,7 +19831,7 @@ still stop preparation. Frozen run inputs are independent of ambient caches
 and are included by the ordinary GCS run archive. Changed image input requires
 a new run and fresh ingestion. Image restoration keeps retrieval budgets and
 core generations unchanged. Full-v42 additionally restores the historical
-branch's semantic judge template. Full-v43 extends the answer instructions
+branch's semantic judge template. Full-v44 extends the answer instructions
 without changing that judge or the models.
 
 The answerer checks question completeness, distinct events and participants,
@@ -19925,7 +19925,7 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-This results table contains no protocol after v18. The Full-v43 prompt
+This results table contains no protocol after v18. The Full-v44 prompt
 change establishes no score. Any additional published result must identify
 its protocol, revision, tier, cost and failure counts.
 
@@ -19970,7 +19970,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v43 \
+  --output .benchmark-runs/smoke --protocol full-v44 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -20003,7 +20003,7 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v43 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
+LOCOMO_PROTOCOL=full-v44 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
   LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```
@@ -20062,6 +20062,13 @@ models, query surface and P3 must still match. The source judge prompt/schema
 must equal the current judge. These are development trials; retain every trial
 and do not report a selected trial as held-out evaluation. Archive the output
 alongside the processed-store backups.
+
+The current answer prompt preserves defining criteria in constraint deductions,
+compares credible references across sessions before narrowing to one candidate,
+and retains relevant restrictions with their source qualifiers. These rules do
+not change ingestion or the primary judge. A frozen older processed store can
+be tested with an explicitly saved answer-template override in the full-profile
+comparison runner that produced it; its source identity remains unchanged.
 
 ---
 
