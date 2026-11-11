@@ -382,6 +382,8 @@ def run_retrieval_ablation(
     answer_model: str | None = None,
     answer_workers: int = 1,
     answer_provider_only: tuple[str, ...] | None = None,
+    judge_model: str | None = None,
+    item_ids: tuple[str, ...] | None = None,
 ) -> AblationSummary:
     """Run or resume an isolated access, prompt or answer-model experiment."""
     if answer_prompt is not None and profile != "full":
@@ -392,6 +394,13 @@ def run_retrieval_ablation(
         if not answer_model or any(character.isspace() for character in answer_model):
             raise runner.ExecutionGuardError(
                 "--answer-model must be a nonempty identifier without whitespace"
+            )
+    if judge_model is not None:
+        if profile != "full":
+            raise runner.ExecutionGuardError("--judge-model requires --profile full")
+        if not judge_model or any(character.isspace() for character in judge_model):
+            raise runner.ExecutionGuardError(
+                "--judge-model must be a nonempty identifier without whitespace"
             )
     if not 1 <= answer_workers <= 16:
         raise runner.ExecutionGuardError("--answer-workers must be between 1 and 16")
@@ -418,6 +427,18 @@ def run_retrieval_ablation(
     questions = runner._sample_questions(  # noqa: SLF001
         context=context, sample_id=sample_id
     )
+    if item_ids is not None:
+        if not item_ids or len(set(item_ids)) != len(item_ids):
+            raise runner.ExecutionGuardError("--item requires distinct selected IDs")
+        unknown = set(item_ids) - {question.item_id for question in questions}
+        if unknown:
+            raise runner.ExecutionGuardError(
+                "--item IDs are not in the selected sample: "
+                + ", ".join(sorted(unknown))
+            )
+        questions = tuple(
+            question for question in questions if question.item_id in item_ids
+        )
     _guard_local_execution(
         run_dir=run_dir,
         output=output,
@@ -429,6 +450,13 @@ def run_retrieval_ablation(
         max_questions=max_questions,
         execute=execute,
     )
+    if profile == "full":
+        _guard_full_contract(context=context)
+    readiness_protocol = (
+        protocol_for_key(DEFAULT_PROTOCOL_KEY).name
+        if profile == "full"
+        else context.configuration.protocol_name
+    )
     version_ids = tuple(
         record.version_id
         for record in context.state.ingests.values()
@@ -439,7 +467,7 @@ def run_retrieval_ablation(
         readiness=checkpointed,
         version_ids=set(version_ids),
         repository_revision=context.configuration.repository_revision,
-        protocol_name=context.configuration.protocol_name,
+        protocol_name=readiness_protocol,
     ):
         raise runner.ExecutionGuardError(
             "source run lacks exact checkpointed canonical readiness"
@@ -461,9 +489,9 @@ def run_retrieval_ablation(
             version_ids=version_ids,
             checkpointed=checkpointed,
             client=client,
+            canonical_full=profile == "full",
         )
         if profile == "full":
-            _guard_full_contract(context=context)
             mcp_tools = runner._require_current_query_surface(  # noqa: SLF001
                 context=context, client=client
             )
@@ -493,6 +521,7 @@ def run_retrieval_ablation(
             answer_model=answer_model,
             answer_workers=answer_workers,
             answer_provider_only=answer_provider_only,
+            judge_model=judge_model,
         )
         _run_answers(
             output=output,
@@ -518,6 +547,7 @@ def run_retrieval_ablation(
                 version_ids=version_ids,
                 checkpointed=checkpointed,
                 client=client,
+                canonical_full=profile == "full",
             )
             if profile == "full":
                 runner._require_current_query_surface(context=context, client=client)  # noqa: SLF001
@@ -638,10 +668,13 @@ def _guard_live_source(
     version_ids: tuple[UUID, ...],
     checkpointed: PipelineReadinessReport,
     client: MemoryClient,
+    canonical_full: bool = False,
 ) -> None:
     """Require the live MCP deployment to remain the exact processed source."""
     configuration = context.configuration
     state = context.state
+    if canonical_full:
+        _guard_full_contract(context=context)
     live = client.pipeline_readiness(
         version_ids=version_ids,
         require=runner.ReadinessRequirements(
@@ -654,7 +687,11 @@ def _guard_live_source(
         readiness=live,
         version_ids=set(version_ids),
         repository_revision=configuration.repository_revision,
-        protocol_name=configuration.protocol_name,
+        protocol_name=(
+            protocol_for_key(DEFAULT_PROTOCOL_KEY).name
+            if canonical_full
+            else configuration.protocol_name
+        ),
     ):
         raise runner.ExecutionGuardError(
             "live readiness differs from the processed source checkpoint"
@@ -740,6 +777,7 @@ def _load_or_create_output(
     answer_model: str | None = None,
     answer_workers: int = 1,
     answer_provider_only: tuple[str, ...] | None = None,
+    judge_model: str | None = None,
 ) -> tuple[AblationConfiguration, AblationState]:
     """Create one immutable experiment identity or validate its exact resume."""
     if (output / _CONFIG_FILE).exists():
@@ -755,6 +793,7 @@ def _load_or_create_output(
             answer_model=answer_model,
             answer_workers=answer_workers,
             answer_provider_only=answer_provider_only,
+            judge_model=judge_model,
         )
         persisted = configuration.model_dump(
             mode="python", exclude={"created_at", "fingerprint"}
@@ -785,6 +824,7 @@ def _load_or_create_output(
         answer_model=answer_model,
         answer_workers=answer_workers,
         answer_provider_only=answer_provider_only,
+        judge_model=judge_model,
     )
     configuration = AblationConfiguration.model_validate(
         {
@@ -867,6 +907,7 @@ def _configuration_base(
     answer_model: str | None = None,
     answer_workers: int = 1,
     answer_provider_only: tuple[str, ...] | None = None,
+    judge_model: str | None = None,
 ) -> dict[str, object]:
     """Return every immutable ablation field except time and fingerprint."""
     source = context.configuration
@@ -912,7 +953,9 @@ def _configuration_base(
         ).hexdigest(),
         "answer_schema_sha256": _schema_hash(model=answer_schema),
         "judge_provider": "openrouter",
-        "judge_model": canonical.judge_model,
+        "judge_model": judge_model
+        if judge_model is not None
+        else canonical.judge_model,
         "judge_reasoning_effort": canonical.judge_reasoning_effort,
         "judge_temperature": canonical.judge_temperature,
         "judge_prompt_sha256": prompt_sha256(template=canonical.judge_prompt_template),
@@ -1458,7 +1501,6 @@ def _run_judges(
         raise runner.ExecutionGuardError(
             "max-judge-calls cannot cover the remaining judge calls"
         )
-    canonical = protocol_for_key(DEFAULT_PROTOCOL_KEY)
     try:
         for question in questions:
             if question.item_id in state.run_state.judges:
@@ -1470,9 +1512,9 @@ def _run_judges(
                 state=state.run_state,
                 max_judge_calls=max_judge_calls,
                 max_evaluator_cost_usd=max_evaluator_cost_usd,
-                judge_model=canonical.judge_model,
-                judge_temperature=canonical.judge_temperature,
-                judge_reasoning_effort=canonical.judge_reasoning_effort,
+                judge_model=configuration.judge_model,
+                judge_temperature=configuration.judge_temperature,
+                judge_reasoning_effort=configuration.judge_reasoning_effort,
             )
             state.run_state.judges[question.item_id] = judge
             _atomic_model(path=output / _STATE_FILE, value=state)
