@@ -117,3 +117,36 @@ belong to cloud PR959's `experiments/locomo-targeted-development-20261111/`
 workbook and trials/full06. The snapshot here establishes no complete20 result
 or held-out benchmark claim. Paid ingestion, image conversion and Sol remain
 outside this authorized answer-only experiment.
+
+## Full19 and a conservative completeness follow-up
+
+Full06 completed19/20 with20 newly generated Pro HIGH answers and20 Pro HIGH
+grades, no question failures, and64 successful tool calls. No negative or
+database-budget/timeout result was found; there were no abstentions. Both
+original target questions are CORRECT. Evaluator meter USD0.4355390650;
+complete native archive and independent readback finished20:02:24 UTC.
+
+The new marked miss omits one source-supported state from a list. The earlier
+Luna judge accepted a shorter list. Trial07 tested a universal source-to-attribute
+paragraph, but left that omission unchanged and lost the book question (2/3).
+It is rejected, not appended to the current template. The same Pro model also
+accepted an equivalent partial emotion list in07 that it rejected in full06;
+retain those labels as evidence of grading variation instead of relabelling them
+or treating a lucky verdict as restored coverage.
+
+Candidate08 returns to the full19 template and adds a rule limited to emotional
+recall: a person's own clauses can convey an attitude without an explicit state
+noun; the time of that attitude can differ from the future event it concerns.
+Translate the supported attitude into the requested type of value while keeping
+the person's identity, subject and time scope. This contains no state names,
+people, work titles, reference labels or expected answers. It neither guarantees
+an attitude from an event alone nor expands the answer to later changed reactions.
+It is an ordinary language interpretation rule, not a new extraction/scoring path.
+
+The rejected alternative was a broader unconditional attribute rule. Expanding
+the candidate search, re-ingesting or changing the judge would introduce different
+variables after sufficient source evidence already arrived.08 holds the processed
+source, renderer, models and judge wording fixed and tests the marked question
+with the original two targets. At this snapshot it is running; inspect actual
+answer coverage as well as labels before adopting it or starting a new full20.
+See cloud PR959 for exact prompts, unmodified states, costs and GCS proofs.
