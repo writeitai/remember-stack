@@ -108,3 +108,8 @@ start with [D143's processing layers design](designs/processing_layers_design.md
 For parallel ingestion without repeating completed identity decisions when
 profiles are enriched, see [D151's commit contract](designs/entity_identity_and_retrieval_design.md#332-parallel-resolution-commits-a-match-against-its-decision-snapshot-d151)
 and the [alternatives analysis](analysis/parallel_identity_resolution.md).
+
+For the non-binding retained-resource inventory and independent storage
+admission investigation, see [the analysis](analysis/storage_classification_and_admission.md)
+and [candidate contract](proposals/storage_mutation_capture_contract.md). Neither
+changes accepted billing policy or establishes a shipped capture capability.
