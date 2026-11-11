@@ -167,3 +167,24 @@ PostgreSQL's [object-size function contract](https://www.postgresql.org/docs/18/
 (retrieved 2026-11-11) defines the relation/fork, table, index and TOAST disk
 sizes. The requirement to sample these physical values under the guard follows
 from that byte basis; an MVCC row view alone supplies no physical-size freeze.
+
+## Existing v3 terminal digest compatibility
+
+The control plane already matches terminal receipts using
+[`canonical_outcome_digest`](https://github.com/writeitai/ultimate-memory-cloud/blob/dadb39562b1e2e139c46014bf9007fbba8a24828/src/ultimate_memory_cloud/billing/rating.py#L230-L237),
+read on 2026-11-11. It normalises completed_at to UTC ISO/Z, serialises the
+complete v3 JSON model with compact sorted keys and the JSON encoder's existing
+ASCII escaping, then takes plain SHA256 without a capture-domain prefix.
+The engine's existing ManagedDocumentVersionOutcome has the matching fields;
+capture must not replace its UUID/string/int/null forms with new v1 forms.
+
+The [six synthetic vectors](storage_capture_receipt_digest_vectors.json) were
+computed with the actual existing engine and control-plane models and that
+control-plane function. Two winter/summer offset pairs produce identical
+digests for equal instants; microseconds and failed/null fields are preserved.
+All six passed with Python 3.12.2 under both available Pydantic 2.11.7 and
+2.13.4 environments. Both imported source blobs were checked byte-identical to
+their recorded Git pins. This is model/digest interoperability evidence, not
+an implemented engine storage digest, native capture or financial settlement.
+Implementation must reproduce these expected bytes/digests independently in
+the engine and keep its ordinary v3 provider-call/reuse tests.

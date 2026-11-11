@@ -267,6 +267,16 @@ source, claim, prompt or filename bytes. They are not exported content hashes.
 The receipt digest binds the existing immutable canonical v3 receipt body,
 without delivery/ACK state or reformatting its identifiers into this new
 protocol's representation. No processing receipt/key is changed.
+Specifically, receipt_digest is the existing v3 terminal digest: take the complete
+v3 JSON model form, including defaults and nulls; preserve its UUID strings,
+string identifiers, booleans and JSON integers. Require an aware completed_at,
+convert it to UTC, use datetime.isoformat() with its existing automatic
+microsecond precision and replace +00:00 with Z. Encode compact sorted-key JSON
+with ensure_ascii=true as UTF-8, then take plain SHA256. There is no capture
+contract/domain prefix and no UUID32 conversion in this inner digest. The
+terminal member's own payload_digest separately uses its capture-member domain.
+The [cross-repository vectors](../analysis/storage_capture_receipt_digest_vectors.json)
+pin equivalent-offset timestamps, microseconds, nulls and existing identifiers.
 
 A reference member names a store-backed reference. Its logical_bytes is that
 reference's complete stored-version length, checked against the qualified
