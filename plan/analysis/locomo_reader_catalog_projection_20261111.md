@@ -150,3 +150,12 @@ source, renderer, models and judge wording fixed and tests the marked question
 with the original two targets. At this snapshot it is running; inspect actual
 answer coverage as well as labels before adopting it or starting a new full20.
 See cloud PR959 for exact prompts, unmodified states, costs and GCS proofs.
+
+Candidate08 observed3/3 CORRECT under Pro HIGH for both roles. The answer now
+expresses the previously omitted positive attitude, with negative-state synonyms
+retained; the original two targets also pass. This is stronger semantic coverage
+than07's lucky partial-list grade, not evidence that all future model draws will
+match. No expected state name or benchmark-specific value was added. Native GCS
+verification is pending at this snapshot, then a fresh complete20 regression
+must regenerate every answer and grade. Adopt08's class-scoped instruction in
+the draft current template, without retaining07's broader failed paragraph.

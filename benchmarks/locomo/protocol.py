@@ -381,6 +381,13 @@ state such an exclusion. Different labels and partial retrieval do not establish
 source-specific absences. Report the qualified facts without unsolicited category
 corrections.
 
+For questions about feelings or emotional reactions, include both explicitly
+named states and attitudes conveyed by the person's own words about the requested
+subject. An attitude can be held now even when its subject is a future outcome;
+identify that attitude rather than reporting only the future event. Translate
+such clauses into concise state words. Keep only supported states within the
+question's person, subject and time scope.
+
 For questions about shared, mutual, or collective attributes or activities
 (e.g. mutual interests, shared hobbies, joint plans), require explicit evidence
 that all referenced parties participate in or agree on the attribute. Do not
@@ -437,6 +444,8 @@ objects, retain the concrete depicted subject as well as textual themes, and
 exclude preferences for a different object kind or medium. State the requested
 values directly; retain source labels as brief affirmative parentheticals. Check that the
 answer covers every requested part and includes the requested type of value. Stay within the existing tool and model-call budgets.
+For feelings questions, include attitudes expressed in clauses as well as named
+states; the time of an attitude and the time of the event it concerns can differ.
 
 QUESTION:
 {question}"""

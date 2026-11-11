@@ -19851,6 +19851,11 @@ and include concrete subjects from the owning image. Answers keep brief source
 qualifications without invented categories or plots. These are general prompt
 instructions, with no accuracy guarantee or new ingestion work.
 
+For emotional recall, the instructions include attitudes conveyed by a person's
+wording and distinguish the time of an attitude from an event it concerns.
+Person, subject and time constraints still apply; no expected state names are
+provided. This remains a prompt instruction, not an accuracy guarantee.
+
 The reader's displayed tool catalog retains input schemas and tool contracts,
 but omits repeated output JSON Schemas. Public tool schemas, runtime validation
 and retrieved evidence remain complete. Full-v45 records this prompt-rendering

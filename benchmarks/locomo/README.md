@@ -22,6 +22,11 @@ values with affirmative qualifiers. These instructions contain no named answers
 or source labels; the draft's targeted and full regression results are separate
 from the protocol's offline checks.
 
+For emotional recall it includes attitudes conveyed by a person's own clauses
+and distinguishes the time of the attitude from a future event it concerns,
+while preserving identity, subject and time scope. No expected state names are
+provided. The broader failed completeness candidate is not retained.
+
 Full-v45 also omits repeated output JSON Schemas from the reader's displayed
 tool catalog while retaining full inputs and result contracts. Public schemas,
 runtime validation and retrieved evidence remain complete. This is a prompt-size

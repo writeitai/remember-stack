@@ -600,6 +600,14 @@ rather than replacing them with generic praise or inventing plot events. Give
 the requested values directly; omit search commentary before supported details.
 These rules contain no benchmark-specific values.
 
+For emotional-recall questions, include attitudes conveyed by the person's own
+clauses as well as explicitly named states. Distinguish when the attitude is held
+from the date of an event it concerns: a future object does not alone put the
+attitude in the future. Translate supported clauses into concise requested state
+values, preserving person, subject and time scope. This does not authorize later
+changed reactions or an attitude invented from an event alone. It is a general
+meaning/coverage instruction and contains no expected state names.
+
 Resolved entity IDs are a starting semantic filter, not a guarantee of complete
 context. A description of a related object may lack a resolved mention of its
 owner. When a required detail remains unresolved after entity-scoped reads,
