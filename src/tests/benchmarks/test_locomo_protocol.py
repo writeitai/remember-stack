@@ -154,7 +154,10 @@ def test_reader_catalog_keeps_inputs_and_contracts_without_output_schema() -> No
         name="read_note",
         description="Read an attributed note",
         input_schema={"type": "object", "properties": {"note": {"type": "string"}}},
-        result_schema={"type": "object", "properties": {"private_shape": {"type": "string"}}},
+        result_schema={
+            "type": "object",
+            "properties": {"private_shape": {"type": "string"}},
+        },
         result_contract="envelope",
         output_grain="evidence",
         answer_intent="assertion_history",

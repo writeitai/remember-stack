@@ -588,9 +588,7 @@ def render_answer_agent_prompt(
             for tool in tools
         ]
         if mcp_tool_shape
-        else [
-            tool.model_dump(mode="json", exclude={"result_schema"}) for tool in tools
-        ]
+        else [tool.model_dump(mode="json", exclude={"result_schema"}) for tool in tools]
     )
     tool_payload = json.dumps(
         rendered_tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
