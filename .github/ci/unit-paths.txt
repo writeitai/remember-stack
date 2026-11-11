@@ -63,6 +63,7 @@ src/tests/core/test_source_passages.py
 src/tests/core/test_source_origins.py
 src/tests/core/test_storage_capture.py
 src/tests/adapters/test_fsit_storage_capture.py
+src/tests/spine/test_managed_storage_capture.py
 src/tests/core/test_structure_skeleton.py
 src/tests/core/test_temporal.py
 src/tests/core/test_metering.py

@@ -44,6 +44,7 @@ from rememberstack.core.storage_capture import manifest_payload_digest
 from rememberstack.core.storage_capture import member_payload_digest
 from rememberstack.core.storage_capture import membership_set_digest
 from rememberstack.core.storage_capture import native_witness_digest
+from rememberstack.core.storage_capture import page_payload_digest
 from rememberstack.model.object_store import ObjectKey
 from rememberstack.model.storage_capture import StorageCaptureManifest
 from rememberstack.model.storage_capture import StorageCapturePage
@@ -128,7 +129,13 @@ class CompletedStorageCapture:
             if body is None:
                 raise ManagedStorageCaptureUnavailable("capture_durable_page_missing")
             page = StorageCapturePage.model_validate_json(body)
-            if body != profile_bytes(record=page):
+            if (
+                body != profile_bytes(record=page)
+                or page.capture_id != self.manifest.capture_id
+                or page.page_ordinal != str(ordinal)
+                or page.page_digest != self.manifest.page_digests[ordinal]
+                or page.page_digest != page_payload_digest(page=page)
+            ):
                 raise ManagedStorageCaptureUnavailable(
                     "capture_durable_page_not_canonical"
                 )
@@ -286,6 +293,7 @@ class StorageCaptureCatalog:
                             allocations=profile_bytes(record=native.allocation_sample),
                             profile=profile_bytes(record=self._profile),
                         )
+                        native.check_continuity()
                 manifest = self._publish(
                     spool=spool, request=request, witness=witness, provider=provider
                 )
@@ -353,24 +361,6 @@ class StorageCaptureCatalog:
             != self._profile.provider_clock_profile_digest
         ):
             raise ManagedStorageCaptureUnavailable("capture_provider_profile_mismatch")
-        for bracket in (
-            witness.clock.before,
-            witness.clock.after,
-            witness.guard.acquired,
-            witness.guard.held_through,
-            witness.guard.released,
-            witness.namespace_view.acquired,
-            witness.resource_view.acquired,
-        ):
-            if int(bracket.before_unix_us) > int(bracket.after_unix_us):
-                raise ManagedStorageCaptureUnavailable("capture_provider_clock_order")
-        first, last = witness.guard.first, witness.guard.last
-        if (first.backend_pid, first.relation_oid, first.virtual_transaction) != (
-            last.backend_pid,
-            last.relation_oid,
-            last.virtual_transaction,
-        ):
-            raise ManagedStorageCaptureUnavailable("capture_provider_guard_continuity")
         if int(witness.guard.released.before_unix_us) < int(
             witness.guard.held_through.before_unix_us
         ) or int(witness.extraction_completed_at_unix_us) < int(
@@ -801,12 +791,11 @@ class StorageCaptureCatalog:
         if role == "artifacts" and _REP_ATTEMPT.fullmatch(key):
             return "artifacts.unregistered_representation"
         if role == "corpus":
-            roots = tuple(
-                spool.db.execute(
-                    "SELECT prefix FROM p3 WHERE state NOT IN ('published','superseded')"
-                )
-            )
-            if sum(key.startswith(prefix + "/") for (prefix,) in roots) == 1:
+            prefix = "/".join(key.split("/")[:4])
+            row = spool.db.execute(
+                "SELECT state FROM p3 WHERE prefix=?", (prefix,)
+            ).fetchone()
+            if row is not None and row[0] in {"building", "validating", "failed"}:
                 return "corpus.unpublished_snapshot"
         raise ManagedStorageCaptureUnavailable("capture_writer_class_unknown")
 
@@ -966,6 +955,12 @@ class StorageCaptureCatalog:
         if (
             native_witness_digest(witness=witness) != manifest.native_witness_digest
             or provider.manifest_digest != manifest.provider_manifest_digest
+            or witness.capture_id != manifest.capture_id
+            or witness.deployment_id != request.deployment_id
+            or witness.profile_digest != request.native_capture_profile_digest
+            or provider.request.cut_at_unix_us != request.cut_at_unix_us
+            or native_body != profile_bytes(record=witness)
+            or provider_body != provider_canonical_bytes(record=provider)
         ):
             raise ManagedStorageCaptureUnavailable(
                 "capture_completed_evidence_conflict"

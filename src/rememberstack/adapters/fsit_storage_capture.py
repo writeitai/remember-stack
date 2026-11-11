@@ -397,6 +397,119 @@ def check_provider_manifest(*, manifest: ProviderManifest) -> None:
         or int(witness.guard.held_through.before_unix_us) < cut + uncertainty
     ):
         raise ValueError("provider_witness_cut")
+    _check_native_witness(witness=witness)
+
+
+def decode_provider_manifest(*, body: bytes) -> ProviderManifest:
+    """Decode the one exact canonical provider artifact, without origin authority."""
+    manifest = ProviderManifest.model_validate_json(body)
+    if body != provider_canonical_bytes(record=manifest):
+        raise ValueError("provider_manifest_not_canonical")
+    check_provider_manifest(manifest=manifest)
+    return manifest
+
+
+def decode_provider_page(*, body: bytes) -> ProviderPage:
+    """Decode the exact page-result wrapper, leaving complete-set checks explicit."""
+    page = ProviderPage.model_validate_json(body)
+    if body != provider_canonical_bytes(record=page):
+        raise ValueError("provider_page_not_canonical")
+    return page
+
+
+def _check_native_witness(*, witness: ProviderWitness) -> None:
+    """Match accepted FSIT witness.go and existing ValidateReleased semantics."""
+    clock, guard, fence = witness.clock, witness.guard, witness.gateway.fence
+    error = int(clock.error_us)
+    cut = int(witness.cut_at_unix_us)
+    if not 0 < error < 2**63 or not -(2**63) <= cut - error <= cut + error < 2**63:
+        raise ValueError("provider_clock_range")
+    brackets = (
+        clock.before,
+        clock.after,
+        guard.acquired,
+        guard.held_through,
+        guard.released,
+        witness.namespace_view.acquired,
+        witness.resource_view.acquired,
+    )
+    if any(int(row.before_unix_us) > int(row.after_unix_us) for row in brackets):
+        raise ValueError("provider_native_bracket_order")
+    if (
+        int(clock.before.boottime_ns) > int(fence.closed_before_ns)
+        or int(clock.after.boottime_ns) < int(fence.released_after_ns)
+        or int(clock.before.after_unix_us) > int(clock.after.before_unix_us)
+        or int(witness.extraction_completed_at_unix_us)
+        < int(guard.released.before_unix_us)
+    ):
+        raise ValueError("provider_native_clock_continuity")
+    for view in (witness.namespace_view, witness.resource_view):
+        if (
+            not 0 < int(view.backend_pid) < 2**32
+            or not 0 < int(view.database_oid) < 2**32
+            or int(view.acquired.before_unix_us) < int(guard.acquired.before_unix_us)
+            or int(view.acquired.after_unix_us) > int(guard.released.after_unix_us)
+        ):
+            raise ValueError("provider_original_view_identity")
+    for row in (guard.first, guard.last):
+        if (
+            not 0 < int(row.backend_pid) < 2**32
+            or not 0 < int(row.relation_oid) < 2**32
+        ):
+            raise ValueError("provider_guard_observation_range")
+    if (
+        guard.first.backend_pid,
+        guard.first.relation_oid,
+        guard.first.virtual_transaction,
+    ) != (
+        guard.last.backend_pid,
+        guard.last.relation_oid,
+        guard.last.virtual_transaction,
+    ):
+        raise ValueError("provider_original_guard_identity")
+    native_ns = (
+        fence.gateway_started_ns,
+        fence.filer_started_ns,
+        fence.gateway_pid,
+        fence.closed_before_ns,
+        fence.closed_after_ns,
+        fence.drained_ns,
+        fence.marker_applied_ns,
+        fence.lease_expires_ns,
+        fence.released_before_ns,
+        fence.released_after_ns,
+    )
+    if any(int(value) >= 2**63 for value in native_ns):
+        raise ValueError("provider_fence_native_range")
+    (
+        started,
+        filer,
+        pid,
+        before,
+        after,
+        drained,
+        marker,
+        expires,
+        released_before,
+        released_after,
+    ) = map(int, native_ns)
+    if (
+        not started > 0
+        or not filer > 0
+        or not pid > 0
+        or int(fence.generation) == 0
+        or any(c in fence.boot_id for c in ":\r\n\0")
+        or len(fence.marker_id) != 32
+        or any(c not in "0123456789abcdef" for c in fence.marker_id)
+        or started > before
+        or filer > before
+        or not before <= after <= drained <= marker < expires
+        or expires - before != 10_000_000_000
+        or not marker <= released_before <= released_after < expires
+        or int(fence.held_upper_bound_ms)
+        != (released_after - before + 999_999) // 1_000_000
+    ):
+        raise ValueError("provider_released_fence_order")
 
 
 def provider_page_digest(*, page: ProviderPage) -> str:

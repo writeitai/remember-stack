@@ -1,7 +1,7 @@
 # Managed capture assembly
 
-This implementation leaf depends on the original native view in engine
-PR #579 (`31b4fdf76`) and accepted D152. UMC's accepted managed capture
+This implementation leaf uses the original native view merged in engine
+PR #579 (`5841ea7d3`) and accepted D152. UMC's accepted managed capture
 amendment (PR #952, merge `2c1a3ecc`) §§1,3 and D55 §4.4 supply the commercial
 byte bases and exclusions; the engine owns native classification. This file
 records implementation status, not permission to enable managed charging.
@@ -70,6 +70,10 @@ ACK checking and financial settlement remain independent existing contracts.
 
 Current checkpoint: source mapping, resource/component assembly, original-view/
 provider orchestration and durable completion/replay code are written and
-scoped static checks pass. Real combined native/provider execution, current
+scoped static checks pass. The changed native seed projection passed the same
+five normal original-view cases against actual migrations and an ordinary
+collector on an owned cached PostgreSQL 19rc1 scratch database (8.07 seconds);
+37 focused encoding/resource/provider-vector/store tests also pass. These
+checks do not execute a combined provider/native capture. That real execution, current
 qualified source/configuration/pins, targeted source review and current-head CI
 remain required. No live capture or qualified managed result is claimed.
