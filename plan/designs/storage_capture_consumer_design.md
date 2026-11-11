@@ -52,7 +52,8 @@ An engine request has exactly:
 
 The capture identity is SHA256 of the contract's ASCII bytes, one NUL byte and
 canonical request JSON. Same identity/different input conflicts. Bindings
-identify every configured canonical, artifact, corpus, forget and K store,
+identify the native PostgreSQL store and every configured canonical, artifact,
+corpus, forget and K store,
 with role, exact store identity and admitted representation/profile. No
 customer prefix or filesystem display name repairs an incomplete binding.
 An absent component is zero only when configuration and the closed writer
@@ -295,7 +296,12 @@ Opaque member/resource/version identities are typed native UUID32 or
 profile-domain SHA256 identities, never paths or content hashes. The profile
 fixes which kind uses which identity representation. Members are unique by
 (kind, opaque_id), ordered by literal kind then canonical opaque identity, and
-paged without omission. A changed payload for one member conflicts. Counts
+paged without omission. The native capture profile pins one positive
+page_member_limit for deterministic consecutive blocks of that sorted set;
+page ordinals start at zero, only the final page may be shorter, and no page
+is empty. An empty member set has zero pages and an explicit empty digest list.
+This is a collection-memory bound, not a customer resource cap. A changed
+payload for one member conflicts. Counts
 are unsigned decimal strings, equal the actual complete member sets, and
 explicitly include zero. The manifest has four component records and an
 ordered page-digest list even for an empty logical store. A missing list is
@@ -310,6 +316,11 @@ Each record digest uses its contract's ASCII bytes, NUL and canonical bytes
 excluding its own digest field. Engine request/page/manifest/ACK contracts are
 rememberstack.storage_capture_request.v1, rememberstack.storage_capture_page.v1,
 rememberstack.storage_capture.v1 and rememberstack.storage_capture_ack.v1.
+Reference, terminal-member and resource-observation payload digests use
+rememberstack.storage_reference.v1, rememberstack.storage_terminal_member.v1
+and rememberstack.storage_resource_observation.v1 respectively. Their canonical
+preimage is the complete corresponding closed member record above, retaining
+kind and excluding only payload_digest; the domain is not an extra member field.
 Pages bind capture ID, ordinal, exact ordered members and page digest.
 The manifest binds ordered page digests and explicit component/member counts;
 its set digest binds that same ordered exact membership. Duplicates, gaps,
