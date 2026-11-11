@@ -3,11 +3,15 @@
 **Status: non-binding proposal; no implementation permission.**
 [Analysis, object writers and source boundary](../analysis/storage_classification_and_admission.md).
 [Observed schema/fork inventory](../analysis/storage_inventory/README.md).
-**Adoption trigger:** agree the full contracts below, qualify populated
-PostgreSQL/adapter measurement and provider continuity, and reconcile the
-binding engine designs listed in §8. A managed operator must separately accept
-the D55/D102 billing amendment and prove its current-terms cost floor. This
-proposal chooses no price, waiver, minimum charge or new customer limit.
+**Binding-adoption trigger:** agree the full typed contracts and selected
+enforcement/measurement mechanics, resolve the source/policy choices below,
+and reconcile the binding engine designs listed in §8 with the operator's
+D55/D102 amendment. Implementation requires that accepted design first.
+**First-enable gate:** the implemented exact profile must pass populated
+PostgreSQL/adapter/provider qualification and the current-terms cost floor.
+Design approval is not that runtime evidence, and runtime evidence is not
+permission to implement an unaccepted contract. This proposal chooses no
+price, waiver, minimum charge or new customer limit.
 
 ## 1. Decision candidate and authority boundary
 
@@ -33,8 +37,9 @@ This is a substrate permission/capture extension under D60/D61, not an
 abstraction over PostgreSQL, E0, E/K/P or paid reuse. Both maintained adapter
 profiles must implement the same contract. An adapter without the required
 capabilities cannot claim storage admission/capture support; no old collector
-or unguarded path is kept as a fallback. Local/reference implementation and
-qualification are adoption dependencies, not code shipped by this document.
+or unguarded path is kept as a fallback. The accepted contract must cover local/reference mechanics; actual
+implementation and qualification are enablement conditions, not code shipped
+or proved by this document.
 
 ## 2. One intent before resource growth
 
@@ -173,8 +178,9 @@ and self-digest rules are those in §6. These fields mean:
   Cost scope states which meter/operator budget covers each cost exactly once;
   it cannot invent cross-meter revenue, a waiver or zero supplier cost.
 
-Before approval, the engine/operator verifies every required dimension has a
-current matching native enforcement proof and already reserved authority.
+Before returning an approved resource permission at runtime, the engine/operator
+verifies every required dimension has a current matching native enforcement
+proof and already reserved authority.
 The returned `permission_digest` binds the exact request/intent/envelope/profile
 and original segment. It grants finite substrate resources, never E/K/P truth
 or permission to debit an estimate as customer usage. Concurrent child intents
@@ -411,7 +417,8 @@ strings `authority`, `disposition` and `intent`. A page digest binds its capture
 membership, contiguous page/revision coverage and every predecessor digest
 must validate relative to the exact prior ACK/predecessor records in the
 captured view; a digest is not completeness by itself. The typed resource payload/profile in §2.1 and each adapter's native evidence
-must pass their qualification vectors before binding adoption; no untyped
+must pass their qualification vectors before enablement. Binding adoption
+freezes the contract and chosen mechanics before implementation; no untyped
 mapping or numerical estimate is executable permission. This is not a protocol a running adapter advertises.
 
 The collector persists completed evidence outside the measured footprint
