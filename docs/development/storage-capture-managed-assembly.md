@@ -26,6 +26,8 @@ default or in-memory implementation. Exact capture-derived keys are:
 - `pages/<canonical_decimal_ordinal>.json`;
 - `native-witness.json`, `native-allocations.json`, `profile.json`;
 - `provider-manifest.json`;
+- `provider-pages/<canonical_decimal_ordinal>.json`, retaining original item
+  evidence independently of the provider's 72-hour expiry;
 - `manifest.json`, created **last** as the durable completion barrier.
 
 Each create is immutable; replay compares the exact existing canonical bytes
@@ -34,8 +36,40 @@ precedes delivery; the receiver's independently durable complete ACK grants
 no money or processing-delivery authority. Runtime transport and restricted
 GCS persistence belong to the managed job, not this engine library.
 
-Initial checkpoint: closed decoder/framing, exact-set page iteration and the
-required persistence port are implemented. Full typed current managed profile,
-source classification, resource matching, component assembly, original-view/
-provider orchestration, immutable completion and replay remain in progress.
-No live capture or qualified managed result is claimed.
+The concrete assembly is `rememberstack.spine.managed_storage_capture`:
+`StorageCaptureCatalog(collector_connect, provider, stores, evidence_store,
+profile, identity_key)` uses named arguments and invokes
+`capture_once(request=...)`. It starts the owned provider transport before the
+real native capture, waits for provider completion after short-guard release,
+retains the same original native view while classifying, and stages private
+indexes in a temporary operator SQLite spool. The full inventory is not held
+in a Python collection. Exact D152 page bytes use compact sorted-key JSON,
+`ensure_ascii=True`, including required defaults/nulls.
+
+Its required provider port owns `capture(request)` as a context manager;
+the pending operation supplies `complete()` and `iter_pages(manifest)` over
+the sole accepted D63 wire. Runtime supplies that authenticated transport and
+the four ordinary scoped S3 capabilities. No provider request/decoder,
+native witness or persistence fallback is manufactured inside the engine.
+
+The typed current profile/source mapping is in
+`rememberstack.spine.storage_capture_profile`; the supervising agent's exact
+source-rule technical approval is recorded in
+[the implementation analysis](../../plan/analysis/managed_storage_profile_20261111.md).
+It is not production scope/clock/cost qualification. The assembler matches
+native references, hash-bound conversion artifacts, immutable P3 manifests and
+all provider items in both directions, preserving actual zero, failed raw
+originals, excluded exposure and committed terminal members. Unknown ownership,
+unsupported K/link/legacy projection state or missing evidence refuses.
+
+Completed results expose `manifest`, `native_witness`, `provider_manifest` and
+`iter_page_bytes()` from the required durable store. Lost delivery replays those
+exact completed bytes without reopening a native/provider cut. The final
+manifest is written only after all pages and original evidence are durable.
+ACK checking and financial settlement remain independent existing contracts.
+
+Current checkpoint: source mapping, resource/component assembly, original-view/
+provider orchestration and durable completion/replay code are written and
+scoped static checks pass. Real combined native/provider execution, current
+qualified source/configuration/pins, targeted source review and current-head CI
+remain required. No live capture or qualified managed result is claimed.
