@@ -407,7 +407,7 @@ def build_managed_storage_profile(
     """
     bindings.filesystem_for(role="raw")
     rows = current_class_rules()
-    purposes = {
+    purposes: dict[str, StoragePurpose] = {
         native_class_identity(name=name): purpose for name, _, purpose, _ in rows
     }
     classification = StorageClassification(
