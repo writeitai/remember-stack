@@ -229,8 +229,8 @@
 | src/rememberstack/spine/extension\_packs.py                                                   |       40 |        1 |       16 |        1 |     96.4% |       119 |
 | src/rememberstack/spine/fact\_adjudication.py                                                 |      312 |       20 |      112 |       24 |     89.6% |331, 338-\>303, 424-425, 428, 430, 490, 505-\>512, 526, 530, 534, 587-\>592, 588-\>587, 598-\>652, 610-\>614, 611-\>610, 624, 628-\>652, 666-667, 698, 798, 813, 825, 827, 882, 932-933, 1016-\>1035 |
 | src/rememberstack/spine/fact\_application\_inputs.py                                          |      126 |        7 |       40 |        8 |     91.0% |66, 94, 187, 264, 293, 442, 533, 537-\>534 |
-| src/rememberstack/spine/fact\_applications.py                                                 |      119 |        7 |       30 |        7 |     90.6% |54, 74, 96, 196, 204, 263, 536 |
-| src/rememberstack/spine/fact\_catalog.py                                                      |      147 |       25 |       14 |        2 |     80.7% |49, 64, 105, 291-\>293, 316, 327-336, 342-343, 361-362, 386-405, 411-423, 454-465 |
+| src/rememberstack/spine/fact\_applications.py                                                 |      119 |        6 |       30 |        6 |     91.9% |54, 96, 196, 204, 263, 536 |
+| src/rememberstack/spine/fact\_catalog.py                                                      |      155 |       27 |       22 |        4 |     80.2% |49, 64, 90-91, 104-\>exit, 124, 310-\>312, 335, 346-355, 361-362, 380-381, 405-424, 430-442, 473-484 |
 | src/rememberstack/spine/fact\_graph\_contract.py                                              |       37 |        0 |       10 |        0 |    100.0% |           |
 | src/rememberstack/spine/fact\_window\_review.py                                               |      174 |        8 |       40 |        7 |     93.0% |193, 209, 269, 304, 394-403, 500, 575 |
 | src/rememberstack/spine/forget.py                                                             |      231 |       46 |       52 |       16 |     73.9% |51, 65-75, 87-92, 101, 120-121, 182, 200-207, 211-215, 222, 252, 256, 266, 368-369, 392, 413, 439-452, 485, 497-514, 537, 554, 736 |
@@ -330,7 +330,7 @@
 | src/rememberstack/spine/rank\_embed\_cache.py                                                 |      105 |       11 |       30 |        9 |     85.2% |44, 46, 48, 50, 89, 101, 125-127, 148-\>152, 175, 181 |
 | src/rememberstack/spine/readiness.py                                                          |      202 |       25 |       70 |       10 |     84.2% |82, 530-538, 554, 597, 599-\>613, 606-\>599, 614, 638, 640, 648, 650, 654-657, 660-663 |
 | src/rememberstack/spine/references.py                                                         |      233 |        6 |       44 |        4 |     96.4% |358-359, 368, 506, 535, 743 |
-| src/rememberstack/spine/resolver.py                                                           |      325 |       15 |       88 |       11 |     93.7% |445, 474, 791-794, 802-809, 819-824, 864, 940, 981, 1150, 1162, 1167, 1194 |
+| src/rememberstack/spine/resolver.py                                                           |      357 |       15 |       96 |       11 |     94.3% |523, 552, 869-872, 880-887, 897-902, 942, 1018, 1059, 1228, 1240, 1245, 1303 |
 | src/rememberstack/spine/review.py                                                             |      197 |       14 |       58 |       14 |     89.0% |140, 249, 304, 345, 385-\>396, 482-486, 533, 535, 603, 607, 626, 641, 670, 927 |
 | src/rememberstack/spine/section\_history.py                                                   |      208 |        4 |       56 |        4 |     97.0% |298, 427, 488, 643 |
 | src/rememberstack/spine/section\_index\_backfill.py                                           |       73 |        7 |       10 |        3 |     88.0% |91, 110-115, 132-137, 156 |
@@ -383,12 +383,12 @@
 | src/rememberstack/workers/knowledge\_writer.py                                                |      157 |       12 |       22 |       11 |     87.2% |81, 101, 147, 181, 198, 203, 205, 308, 345, 351, 353, 374 |
 | src/rememberstack/workers/lane\_checkpoints.py                                                |       25 |        2 |        0 |        0 |     92.0% |     48-49 |
 | src/rememberstack/workers/operations.py                                                       |       14 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/workers/p1.py                                                               |      114 |        5 |       28 |        6 |     92.3% |177, 184, 192, 196, 304-\>316, 323 |
+| src/rememberstack/workers/p1.py                                                               |      125 |        4 |       30 |        5 |     94.2% |177, 184, 192, 253-\>265, 384 |
 | src/rememberstack/workers/p3.py                                                               |      281 |        4 |       86 |        2 |     98.4% |131-136, 370-\>386, 814 |
 | src/rememberstack/workers/reconcile.py                                                        |      263 |       14 |       64 |       13 |     91.7% |164, 245-246, 253, 311, 365-366, 375, 412, 417, 451-\>443, 453, 495-\>499, 641-\>652, 678-\>682, 740, 989, 1012 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **42479** | **3249** | **10772** | **1684** | **89.9%** |           |
+| **TOTAL**                                                                                     | **42530** | **3249** | **10790** | **1684** | **89.9%** |           |
 
 
 ## Setup coverage badge
