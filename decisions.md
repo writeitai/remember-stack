@@ -7865,6 +7865,8 @@ matching provider witness cover the requested instant; complete paged extraction
 follows release of the short guard. No live-listing or watermark fallback is
 retained. The provider boundary and closed content-free engine records are
 specified in the design, including native filesystem identity distinctions.
+The provider captures a nonempty exact same-organisation/cell filesystem set;
+the managed adapter independently keeps its four distinct role binding.
 
 **Alternatives.** Counter sums conflate canonical, staged and replicated data;
 processing sequence prefixes admit uncommitted holes; row-byte estimates change

@@ -16,22 +16,48 @@ Its component/classification, independent mutation, short-boundary and
 captured-set reasoning is reusable analysis. Merging that proposal did not make
 its protocol binding or establish a running producer.
 
-The provider authority is fsit D63,
+The initially inspected provider authority is fsit D63,
 [scoped-storage-capture.md](https://github.com/writeitai/fsit/blob/585aa227bedade9bec1308f2adb41757ff4b7bed/design/designs/scoped-storage-capture.md).
-Source was read on 2026-11-11. Its accepted four-set scope is exactly the
-Project's raw, artifacts, corpus and forget filesystems, not a new filesystem
-count or customer quota. Each native filesystem ID is canonical 26-character
+Source was read on 2026-11-11. That source uses the initial consumer's four-set
+scope. The managed consumer's raw, artifacts, corpus and forget roles remain
+exact; provider cardinality is generalised separately below. Each native
+filesystem ID is canonical 26-character
 lowercase unpadded base32; hashing frames its decoded sixteen bytes.
 Organisation and engine UUIDs keep their separate UUID32 representation.
 No working public capture caller or manifest store follows from acceptance.
 
-Private provider components are being assembled at fsit draft
+The initial private provider inspection was fsit draft
 [#576](https://github.com/writeitai/fsit/pull/576), source
 1a37448c, on accepted main585aa227 after the namespace-reader merge.
-The provider owner is implementing
-materialisation and then durable publication. The engine must agree the one
+Its private materializer subsequently merged as source
+2e9dd69471acffe8b1701621e8b5c2de29c9ceb9; this does not establish a served
+host command or completed durable publication. The engine must agree the one
 typed boundary with that work rather than invent an alternate files API,
 live-listing collector or duplicate decoder.
+
+## General provider scope and the managed role binding
+
+The owner's accepted technical direction is a useful mountable.io capture
+feature for its own users, including an organisation with one filesystem.
+The provider's proposed binding amendment is
+[FSIT #577 at 16111a1ab7ffe81e84a7197e21dfb79fe015260a](https://github.com/writeitai/fsit/blob/16111a1ab7ffe81e84a7197e21dfb79fe015260a/design/designs/scoped-storage-capture.md),
+read on 2026-11-11. It selects one nonempty exact same-organisation/same-cell
+set. Its review/merge and implementation are separate gates; the older
+accepted source is not claimed to have already served this general feature.
+
+Keeping a provider-wide count of four would force a single-filesystem user
+to create empty padding. A separate one-filesystem path would duplicate
+authority and identity rules. Use one exact-set protocol instead. Finite
+qualified transport/batch/work bounds belong to operator capacity, not a new
+customer quota. Smaller valid scopes avoid unnecessary work; larger scopes
+still require their own bounded native/I/O/cost proof before enablement.
+
+The UMC adapter independently requires its four distinct role filesystems.
+Generalising the provider never permits missing roles, implicit sibling
+expansion or extra requested scope in that adapter. Four-ID canonical request
+and scope bytes/hashes stay identical; there is no compatibility verifier or
+padding branch. Item identity, byte bases, native timing, component/member/ACK
+contracts and commercial terms do not change.
 
 ## Existing authority that must survive
 
