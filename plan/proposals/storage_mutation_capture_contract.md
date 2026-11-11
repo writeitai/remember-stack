@@ -47,8 +47,8 @@ inputs, content hashes, Selection/Claimify keys or embedding policy/model keys.
 No D56 reuse boundary or generation changes.
 
 The typed intent contains an engine-assigned `authority_request_id`, deployment
-identity, operation kind, exact logical owner/reference identities, source/schema/classification/adapter profile,
-parent authority when applicable, and a conservative checked-integer resource
+identity, operation kind, exact logical owner/reference identities,
+source/schema/classification/adapter profile, parent authority when applicable, and a conservative checked-integer resource
 envelope. The envelope covers retained allocation, staging/attempt copies and
 metadata/cleanup growth, with explicit validity and finite attempt/operation
 bounds supplied by the qualified existing admission profile. A byte bound is
@@ -60,8 +60,7 @@ The operator port authorises that exact intent/envelope before the engine
 starts the first costly write or issues an upload capability. The engine
 appends the returned immutable authority binding before executing. The request
 ID exists before admission; the provider-returned authority ID is not an input
-to its own pre-admission intent digest. Permission
-proves resource availability, not an E/K/P mutation. Authority cannot be spent
+to its own pre-admission intent digest. Permission proves resource availability, not an E/K/P mutation. Authority cannot be spent
 by another intent, reused after exhaustion or silently enlarged. A request
 requiring more creates a new explicitly bounded child intent/authority request
 for the remaining unstarted writes before that growth; it does not mutate the
@@ -256,13 +255,14 @@ the following exact intent/disposition set visible in that same view: every
 intent with outstanding/cleanup resources, every intent without a disposition,
 each immutable authority binding of those intents, and each disposition
 revision not acknowledged in that view. Every unacknowledged binding is also
-included even if its intent's resources have resolved. Already
-acknowledged resolved revisions need not be emitted again; retained canonical
+included even if its intent's resources have resolved. Any included binding
+or revision also brings its intent/authority context unless exact prior ACK
+records in that view prove the same context. Already acknowledged resolved revisions need not be emitted again; retained canonical
 resources still appear in the complete reference catalog. Each included
 revision binds its predecessor, so missing history cannot be repaired by
 assuming a numeric prefix. A post-T ACK or new revision cannot retroactively
-change this manifest's membership. Stable pages use contiguous ordinals, explicit counts and
-item/page/set digests. Each disposition member is
+change this manifest's membership. Stable pages use contiguous ordinals,
+explicit counts and item/page/set digests. Each disposition member is
 `(storage_mutation_id, disposition_revision, payload_digest)`; intents and
 authority bindings have their own explicit member kinds/identities/digests.
 An intent without an authority or disposition remains an explicit intent
@@ -284,8 +284,8 @@ fields or processing-contract reuse:
 | ACK | `contract`, `capture_id`, `manifest_digest`, `set_digest` |
 
 Contracts respectively use `rememberstack.storage_intent.v1`,
-`rememberstack.storage_authority.v1`, `rememberstack.storage_disposition.v1`, `rememberstack.storage_page.v1`,
-`rememberstack.storage_capture.v1` and `rememberstack.storage_ack.v1`.
+`rememberstack.storage_authority.v1`, `rememberstack.storage_disposition.v1`,
+`rememberstack.storage_page.v1`, `rememberstack.storage_capture.v1` and `rememberstack.storage_ack.v1`.
 Operation kinds are `ingest`, `reference_change`, `metadata_change`,
 `process_stage`, `knowledge_publish`, `projection_build`, `maintenance`,
 `forget`, `delete` and `adapter_metadata`; profile-specific detail is in the
@@ -302,8 +302,7 @@ The set digest uses ASCII `rememberstack.storage_set.v1`, NUL and the ordered
 raw 32-byte page digests. Pages are ordered by member kind, mutation UUID raw
 bytes and revision (zero only for non-revisioned intent/authority members),
 then authority request UUID where relevant. Member kinds are the literal ASCII
-strings `authority`, `disposition` and `intent`. A
-page digest binds its capture ID and ordinal in its envelope. Counts, duplicate
+strings `authority`, `disposition` and `intent`. A page digest binds its capture ID and ordinal in its envelope. Counts, duplicate
 membership, contiguous page/revision coverage and every predecessor digest
 must validate relative to the exact prior ACK/predecessor records in the
 captured view; a digest is not completeness by itself. The typed payloads of
