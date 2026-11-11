@@ -38,7 +38,7 @@ intended engine, and leave all existing content/reuse identities unchanged.
   building, failed, published and superseded prefixes. A prefix/row count is
   neither a complete per-object byte manifest nor proof that every P3 object
   contains unique data rather than a serving copy.
-- [`ManagedMetering.finalize_ready_outcomes`](../../src/rememberstack/spine/managed_metering.py)
+- [`ManagedMeterCatalog._materialize_outcomes`](../../src/rememberstack/spine/managed_metering.py)
   obtains the successful processing sequence on a separate connection before
   its later outcome insert. A maximum sequence cannot prove that all prior
   outcomes are committed. Card/no-op paths also cannot be covered by assuming
