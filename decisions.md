@@ -7846,7 +7846,7 @@ retains D95/D100 identity decisions, D21 reversible merges and D74/D135 deletion
 
 ## D152. Engine-owned storage capture consumes complete provider evidence
 
-**Status:** proposed for acceptance on this PR's coordinated merge.
+**Status:** accepted on this PR's coordinated merge; not implemented.
 **Date:** 2026-11-11. **Extends:** D61's substrate evidence boundary.
 **Design:** [retained-storage consumer](plan/designs/storage_capture_consumer_design.md).
 **Analysis:** [source and scope](plan/analysis/storage_capture_consumer_20261111.md).

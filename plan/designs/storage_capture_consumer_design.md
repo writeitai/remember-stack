@@ -1,7 +1,7 @@
 # Engine-owned retained-storage captures
 
-**Decision proposed for acceptance by this PR.** Effective only on coordinated
-merge. This is the complete consumer contract, not an implemented producer,
+**Status: accepted on coordinated merge of this PR; not implemented.**
+This is the complete consumer contract, not an implemented producer,
 qualified adapter or permission to change commercial terms.
 [Analysis and source boundary](../analysis/storage_capture_consumer_20261111.md).
 The broader growth-permission proposal remains unchosen
@@ -152,6 +152,8 @@ Distinct stored copies remain distinct even when content hashes match.
 A qualified alias collapses only one demonstrated stored origin, not provider
 resource counters or unrelated logical references. Names, contents, symlink
 targets and owning-role query results never leave the provider boundary.
+Several logical references may name one stored version: retain those reference
+members while counting that actual stored origin only once.
 
 Resource facts remain separate: filesystem retained/pending/sealed counters;
 chunk groups by pending/uploading/sealed and deletion mark; multipart groups
@@ -218,6 +220,9 @@ committed terminal processing outcomes visible in the same engine view by
 their stable opaque IDs and payload digests. Outstanding/uncertain operations
 remain explicit observations; a processing failure does not prove their
 stored resources disappeared. Classification does not require a paid receipt.
+Enumerate every actually present committed terminal row in the captured view,
+without filtering by processing-delivery ACK or a sequence range. Existing
+privacy/deletion authority is not delayed to preserve financial membership.
 
 Only actually visible committed terminal members can establish storage
 eligibility; an allocated processing sequence, a maximum sequence, a count or
@@ -242,7 +247,8 @@ Components are postgres_allocated, canonical_object, k_repository and p3_origin,
 each exactly once. A reference's purpose is one source-classified value:
 canonical_raw, referenced_artifact, truth_provenance, knowledge_origin,
 projection_origin, privacy_control, staging, failed_attempt, paid_checkpoint,
-audit_operations, scratch_rebuild, cache, serving_replica or mixed_unresolved.
+audit_operations, adapter_metadata, scratch_rebuild, cache, serving_replica or
+mixed_unresolved.
 An unresolved value cannot produce a qualified component amount.
 Resource observations retain excluded/staged exposure without turning it into
 customer bytes. Receipt digests bind existing native v3 terminal receipts;
