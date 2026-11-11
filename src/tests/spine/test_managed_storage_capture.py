@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from rememberstack.spine.managed_storage_capture import _resource_set
-from rememberstack.spine.managed_storage_capture import _Spool
-from rememberstack.spine.managed_storage_capture import ManagedStorageCaptureUnavailable
+from rememberstack.profiles.managed_storage_capture import _resource_set
+from rememberstack.profiles.managed_storage_capture import _Spool
+from rememberstack.profiles.managed_storage_capture import (
+    ManagedStorageCaptureUnavailable,
+)
 
 
 def test_resource_set_matches_independent_document_and_keeps_zero(

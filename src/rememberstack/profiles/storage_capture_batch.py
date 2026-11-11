@@ -25,11 +25,11 @@ from rememberstack.core.storage_capture import capture_request_id
 from rememberstack.model.storage_capture import StorageCaptureRequest
 from rememberstack.ports.storage_capture import StorageCaptureEvidenceStore
 from rememberstack.ports.storage_capture import StorageCaptureObjectStore
-from rememberstack.spine.managed_storage_capture import check_capture_configuration
-from rememberstack.spine.managed_storage_capture import CompletedStorageCapture
-from rememberstack.spine.managed_storage_capture import replay_completed_capture
-from rememberstack.spine.managed_storage_capture import StorageCaptureCatalog
-from rememberstack.spine.storage_capture_profile import ManagedStorageCaptureProfile
+from rememberstack.profiles.managed_storage_capture import check_capture_configuration
+from rememberstack.profiles.managed_storage_capture import CompletedStorageCapture
+from rememberstack.profiles.managed_storage_capture import replay_completed_capture
+from rememberstack.profiles.managed_storage_capture import StorageCaptureCatalog
+from rememberstack.profiles.storage_capture_profile import ManagedStorageCaptureProfile
 
 
 @dataclass(frozen=True, kw_only=True)

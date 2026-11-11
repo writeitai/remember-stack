@@ -37,7 +37,7 @@ no money or processing-delivery authority. Runtime transport and restricted
 GCS persistence belong to the managed job, not this engine library.
 
 The public operation is
-`rememberstack.spine.storage_capture_batch.capture_storage_batch`, including
+`rememberstack.profiles.storage_capture_batch.capture_storage_batch`, including
 when only one Project is selected. It requires a tuple of
 `ManagedStorageCaptureInput` values, the raw `provider_transport`, and explicit
 `max_scopes` and `maximum_frame_bytes`. Use the same `max_scopes` from the
@@ -87,7 +87,7 @@ these models never establishes their qualification. No native witness or
 persistence fallback is manufactured inside the engine.
 
 The typed current profile/source mapping is in
-`rememberstack.spine.storage_capture_profile`; the supervising agent's exact
+`rememberstack.profiles.storage_capture_profile`; the supervising agent's exact
 source-rule technical approval is recorded in
 [the implementation analysis](../../plan/analysis/managed_storage_profile_20261111.md).
 It is not production scope/clock/cost qualification. The assembler matches
