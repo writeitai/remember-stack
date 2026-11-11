@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
+from concurrent.futures import FIRST_COMPLETED
+from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
@@ -13,6 +18,7 @@ import os
 from pathlib import Path
 from string import Formatter
 import sys
+from threading import Lock
 import time
 from typing import Annotated
 from typing import cast
@@ -58,11 +64,15 @@ from rememberstack.adapters import CodexSubscriptionAuditError
 from rememberstack.adapters import CodexSubscriptionInfrastructureError
 from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import CodexTurnPolicy
+from rememberstack.model import EmbeddingRequest
+from rememberstack.model import EmbeddingResponse
+from rememberstack.model import GeneratedResponse
 from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ReasoningEffort
+from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 
@@ -203,6 +213,12 @@ class AblationConfiguration(_FrozenModel):
     profile: AblationProfile
     answer_provider: Literal["codex_subscription", "openrouter"]
     answer_model: Annotated[str, Field(min_length=1)]
+    answer_workers: int = Field(
+        default=1, ge=1, le=16, exclude_if=lambda value: value == 1
+    )
+    answer_provider_only: tuple[str, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     answer_reasoning_effort: Literal["high"] = _ANSWER_REASONING
     answer_temperature: float | None
     answer_prompt_sha256: str
@@ -262,6 +278,12 @@ class AblationSummary(_FrozenModel):
     failures: dict[str, int]
     answer_provider: str
     answer_model: str
+    answer_provider_only: tuple[str, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    answer_workers: int = Field(
+        default=1, ge=1, le=16, exclude_if=lambda value: value == 1
+    )
     answer_reasoning_effort: str
     judge_provider: str
     judge_model: str
@@ -358,6 +380,8 @@ def run_retrieval_ablation(
     client: MemoryClient | None,
     answer_prompt: Path | None = None,
     answer_model: str | None = None,
+    answer_workers: int = 1,
+    answer_provider_only: tuple[str, ...] | None = None,
 ) -> AblationSummary:
     """Run or resume an isolated access, prompt or answer-model experiment."""
     if answer_prompt is not None and profile != "full":
@@ -368,6 +392,22 @@ def run_retrieval_ablation(
         if not answer_model or any(character.isspace() for character in answer_model):
             raise runner.ExecutionGuardError(
                 "--answer-model must be a nonempty identifier without whitespace"
+            )
+    if not 1 <= answer_workers <= 16:
+        raise runner.ExecutionGuardError("--answer-workers must be between 1 and 16")
+    if answer_workers != 1 and profile != "full":
+        raise runner.ExecutionGuardError("--answer-workers requires --profile full")
+    if answer_provider_only is not None:
+        if profile != "full":
+            raise runner.ExecutionGuardError(
+                "--answer-provider requires --profile full"
+            )
+        if not answer_provider_only or any(
+            not tag or any(character.isspace() for character in tag)
+            for tag in answer_provider_only
+        ):
+            raise runner.ExecutionGuardError(
+                "--answer-provider requires nonempty tags without whitespace"
             )
     prompt_template = (
         answer_prompt.read_bytes().decode("utf-8")
@@ -451,6 +491,8 @@ def run_retrieval_ablation(
             mcp_tools=mcp_tools,
             prompt_template=prompt_template,
             answer_model=answer_model,
+            answer_workers=answer_workers,
+            answer_provider_only=answer_provider_only,
         )
         _run_answers(
             output=output,
@@ -696,6 +738,8 @@ def _load_or_create_output(
     mcp_tools: tuple[ToolDescriptor, ...],
     prompt_template: str | None = None,
     answer_model: str | None = None,
+    answer_workers: int = 1,
+    answer_provider_only: tuple[str, ...] | None = None,
 ) -> tuple[AblationConfiguration, AblationState]:
     """Create one immutable experiment identity or validate its exact resume."""
     if (output / _CONFIG_FILE).exists():
@@ -709,6 +753,8 @@ def _load_or_create_output(
             mcp_tools=mcp_tools,
             prompt_template=prompt_template,
             answer_model=answer_model,
+            answer_workers=answer_workers,
+            answer_provider_only=answer_provider_only,
         )
         persisted = configuration.model_dump(
             mode="python", exclude={"created_at", "fingerprint"}
@@ -737,6 +783,8 @@ def _load_or_create_output(
         mcp_tools=mcp_tools,
         prompt_template=prompt_template,
         answer_model=answer_model,
+        answer_workers=answer_workers,
+        answer_provider_only=answer_provider_only,
     )
     configuration = AblationConfiguration.model_validate(
         {
@@ -817,6 +865,8 @@ def _configuration_base(
     mcp_tools: tuple[ToolDescriptor, ...],
     prompt_template: str | None = None,
     answer_model: str | None = None,
+    answer_workers: int = 1,
+    answer_provider_only: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     """Return every immutable ablation field except time and fingerprint."""
     source = context.configuration
@@ -831,7 +881,7 @@ def _configuration_base(
     visible_mcp_tools = (
         (*mcp_tools, *p3_tool_catalog()) if profile == "mcp-p3" else mcp_tools
     )
-    return {
+    base: dict[str, object] = {
         "schema_name": _SCHEMA,
         "source_protocol_name": source.protocol_name,
         "source_protocol_fingerprint": source.protocol_fingerprint,
@@ -874,6 +924,232 @@ def _configuration_base(
         ),
         "p3_version": p3_version,
     }
+    if answer_workers != 1:
+        base["answer_workers"] = answer_workers
+    if answer_provider_only is not None:
+        base["answer_provider_only"] = answer_provider_only
+    return base
+
+
+class _SharedAnswerBudget:
+    """Synchronize call admission and known charges, never provider network I/O."""
+
+    def __init__(
+        self, *, spent: Decimal, called: int, ceiling: Decimal, max_calls: int
+    ) -> None:
+        """Start from every already checkpointed or interrupted call."""
+        self.spent = spent
+        self.called = called
+        self.error: Exception | None = None
+        self._ceiling = ceiling
+        self._max_calls = max_calls
+        self._stopped = False
+        self._lock = Lock()
+
+    def admit(self) -> None:
+        """Reserve one model call while the shared run still permits new work."""
+        with self._lock:
+            if self._stopped:
+                raise runner.ExecutionGuardError("parallel answer admission stopped")
+            if self.called >= self._max_calls:
+                raise runner.ExecutionGuardError("answer-agent call ceiling reached")
+            runner._require_cost_before_call(spent=self.spent, ceiling=self._ceiling)  # noqa: SLF001
+            self.called += 1
+
+    def charge(self, *, usage: ProviderCallUsage) -> None:
+        """Add exactly one returned charge, including accounted provider failures."""
+        with self._lock:
+            self.spent += usage.cost_usd
+
+    def stop(self, *, error: Exception | None = None) -> None:
+        """Stop new calls while already admitted calls finish and are checkpointed."""
+        with self._lock:
+            self._stopped = True
+            if error is not None and self.error is None:
+                self.error = error
+
+
+class _QuestionProvider:
+    """Isolate one question's call/usage journal behind the shared spend guardian."""
+
+    def __init__(
+        self, *, provider: ModelProviderPort, budget: _SharedAnswerBudget
+    ) -> None:
+        """Keep the actual requested model/provider unchanged."""
+        self._provider = provider
+        self._budget = budget
+        self.usages: list[ProviderCallUsage] = []
+        self.call_count = 0
+
+    def generate[ResponseT: StructuredResponseModel](
+        self, *, request: ModelRequest, response_type: type[ResponseT]
+    ) -> GeneratedResponse[ResponseT]:
+        """Admit atomically, call concurrently, and retain every known charge."""
+        self._budget.admit()
+        self.call_count += 1
+        try:
+            response = self._provider.generate(
+                request=request, response_type=response_type
+            )
+        except ProviderCallError as error:
+            if error.usage is not None:
+                self._record(usage=error.usage)
+            raise
+        self._record(usage=response.usage)
+        return response
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Preserve the provider port; answer-loop embeddings use the live API."""
+        return self._provider.embed(request=request)
+
+    def _record(self, *, usage: ProviderCallUsage) -> None:
+        """Journal one completed/failed call before the native loop processes it."""
+        self.usages.append(usage)
+        self._budget.charge(usage=usage)
+
+
+@dataclass(frozen=True)
+class _FullAnswerOutcome:
+    """One terminal or interrupted question, ready for single-writer persistence."""
+
+    item_id: str
+    record: AnswerRecord | None
+    usages: tuple[ProviderCallUsage, ...]
+    call_count: int
+    error: Exception | None
+
+
+def _run_full_answers(
+    *,
+    output: Path,
+    configuration: AblationConfiguration,
+    state: AblationState,
+    questions: tuple[LoCoMoQuestion, ...],
+    context: _SourceContext,
+    mount: P3Mount | None,
+    tools: tuple[ToolDescriptor, ...],
+    prompt_template: str,
+    client: MemoryClient | None,
+    provider: ModelProviderPort | None,
+    doc_sessions: dict[UUID, str],
+    called: int,
+    max_agent_calls: int,
+    max_evaluator_cost_usd: Decimal,
+) -> None:
+    """Run bounded independent question loops and checkpoint completed work serially."""
+    if client is None or provider is None or mount is None:
+        raise runner.BenchmarkRunError("full profile lost its providers or P3")
+    budget = _SharedAnswerBudget(
+        spent=state.run_state.evaluator_cost_usd,
+        called=called,
+        ceiling=max_evaluator_cost_usd,
+        max_calls=max_agent_calls,
+    )
+    source = context.configuration
+
+    def answer(question: LoCoMoQuestion) -> _FullAnswerOutcome:
+        """Keep prompt traces, retries and transient state private to one question."""
+        journal = _QuestionProvider(provider=provider, budget=budget)
+        local = RunState(
+            protocol_name=state.run_state.protocol_name,
+            protocol_fingerprint=state.run_state.protocol_fingerprint,
+        )
+        try:
+            record = runner._answer_one(  # noqa: SLF001
+                question=question,
+                client=client,
+                provider=journal,
+                tools=tools,
+                doc_sessions=doc_sessions,
+                state=local,
+                max_agent_calls=max_agent_calls,
+                max_evaluator_cost_usd=max_evaluator_cost_usd,
+                answer_agent_model=configuration.answer_model,
+                answer_agent_temperature=configuration.answer_temperature,
+                answer_agent_reasoning_effort=configuration.answer_reasoning_effort,
+                max_tool_calls_per_question=source.max_tool_calls_per_question,
+                max_agent_calls_per_question=source.max_agent_calls_per_question,
+                answer_reader_retry_budget=source.answer_reader_retry_budget,
+                answer_word_cap=source.answer_word_cap,
+                retrieval_budget=source.retrieval_budget,
+                answer_schema=AnswerAgentStep,
+                answer_prompt_template=prompt_template,
+                p3=mount,
+            )
+            known_cost = sum(
+                (usage.cost_usd for usage in journal.usages), start=Decimal(0)
+            )
+            recorded_cost = (
+                Decimal(0)
+                if record.reader_usage is None
+                else record.reader_usage.cost_usd
+            )
+            if (
+                record.agent_call_count != journal.call_count
+                or recorded_cost != known_cost
+            ):
+                raise runner.BenchmarkRunError(
+                    "parallel question call/usage journal diverged"
+                )
+        except Exception as error:
+            budget.stop(error=error)
+            return _FullAnswerOutcome(
+                item_id=question.item_id,
+                record=None,
+                usages=tuple(journal.usages),
+                call_count=journal.call_count,
+                error=error,
+            )
+        return _FullAnswerOutcome(
+            item_id=question.item_id,
+            record=record,
+            usages=tuple(journal.usages),
+            call_count=journal.call_count,
+            error=None,
+        )
+
+    remaining = iter(questions)
+    first_error: Exception | None = None
+    with ThreadPoolExecutor(max_workers=configuration.answer_workers) as executor:
+        pending: set[Future[_FullAnswerOutcome]] = set()
+        for _ in range(min(configuration.answer_workers, len(questions))):
+            pending.add(executor.submit(answer, question=next(remaining)))
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                result = future.result()
+                state.run_state.evaluator_cost_usd += sum(
+                    (usage.cost_usd for usage in result.usages), start=Decimal(0)
+                )
+                if result.record is not None:
+                    state.run_state.answers[result.item_id] = result.record
+                    state.action_usage[result.item_id] = ActionUsage(
+                        item_id=result.item_id,
+                        total=len(result.record.tool_calls),
+                        shell=0,
+                        mcp=0,
+                        direct=len(result.record.tool_calls),
+                    )
+                else:
+                    runner._record_interrupted_answer(  # noqa: SLF001
+                        state=state.run_state,
+                        usages=result.usages,
+                        call_count=result.call_count,
+                    )
+                _atomic_model(path=output / _STATE_FILE, value=state)
+                if result.error is not None and first_error is None:
+                    first_error = result.error
+                    budget.stop()
+            if first_error is None:
+                for _ in range(len(done)):
+                    question = next(remaining, None)
+                    if question is not None:
+                        pending.add(executor.submit(answer, question=question))
+    if state.run_state.evaluator_cost_usd != budget.spent:
+        raise runner.BenchmarkRunError("parallel answer accounting diverged")
+    if first_error is not None:
+        raise budget.error or first_error
+    runner._require_cost_ceiling(spent=budget.spent, ceiling=max_evaluator_cost_usd)  # noqa: SLF001
 
 
 def _run_answers(
@@ -916,6 +1192,24 @@ def _run_answers(
         for record in source_state.ingests.values()
         if record.sample_id == configuration.sample_id
     }
+    if profile == "full":
+        _run_full_answers(
+            output=output,
+            configuration=configuration,
+            state=state,
+            questions=remaining,
+            context=context,
+            mount=mount,
+            tools=mcp_tools,
+            prompt_template=prompt_template,
+            client=client,
+            provider=answer_provider,
+            doc_sessions=doc_sessions,
+            called=called,
+            max_agent_calls=max_agent_calls,
+            max_evaluator_cost_usd=max_evaluator_cost_usd,
+        )
+        return
     if remaining and profile.startswith("codex-"):
         state.audit_status = "pending"
         state.audit_note = None
@@ -935,40 +1229,6 @@ def _run_answers(
                     mcp_tools=mcp_tools,
                     max_agent_calls=max_agent_calls,
                     max_evaluator_cost_usd=max_evaluator_cost_usd,
-                )
-            elif profile == "full":
-                if client is None or answer_provider is None or mount is None:
-                    raise runner.BenchmarkRunError(
-                        "full profile lost its providers or P3"
-                    )
-                source = context.configuration
-                record = runner._answer_one(  # noqa: SLF001
-                    question=question,
-                    client=client,
-                    provider=answer_provider,
-                    tools=mcp_tools,
-                    doc_sessions=doc_sessions,
-                    state=state.run_state,
-                    max_agent_calls=max_agent_calls,
-                    max_evaluator_cost_usd=max_evaluator_cost_usd,
-                    answer_agent_model=configuration.answer_model,
-                    answer_agent_temperature=configuration.answer_temperature,
-                    answer_agent_reasoning_effort=configuration.answer_reasoning_effort,
-                    max_tool_calls_per_question=source.max_tool_calls_per_question,
-                    max_agent_calls_per_question=source.max_agent_calls_per_question,
-                    answer_reader_retry_budget=source.answer_reader_retry_budget,
-                    answer_word_cap=source.answer_word_cap,
-                    retrieval_budget=source.retrieval_budget,
-                    answer_schema=AnswerAgentStep,
-                    answer_prompt_template=prompt_template,
-                    p3=mount,
-                )
-                actions = ActionUsage(
-                    item_id=question.item_id,
-                    total=len(record.tool_calls),
-                    shell=0,
-                    mcp=0,
-                    direct=len(record.tool_calls),
                 )
             else:
                 if server is None or answer_provider is None:
@@ -1287,6 +1547,8 @@ def _summarize(
         failures=dict(sorted(failures.items())),
         answer_provider=configuration.answer_provider,
         answer_model=configuration.answer_model,
+        answer_workers=configuration.answer_workers,
+        answer_provider_only=configuration.answer_provider_only,
         answer_reasoning_effort=configuration.answer_reasoning_effort,
         judge_provider=configuration.judge_provider,
         judge_model=configuration.judge_model,

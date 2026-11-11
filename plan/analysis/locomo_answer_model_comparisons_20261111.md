@@ -33,3 +33,30 @@ needed. Provider charges remain under explicit evaluator and account ceilings;
 uncertain calls retain the existing at-least-once accounting contract. Verify
 requested-model delivery and fingerprint/resume isolation with controlled
 provider tests, then run the complete sample with the frozen original store.
+
+The owner additionally requested parallel answering and a Meta Muse Ember
+comparison. Use `--answer-workers` (default one, bounded to 16) for independent
+full-profile questions. Each question owns its native trace/state and usage
+journal; one collector checkpoints completions. A short shared mutex admits
+calls and records known charges, with no provider or retrieval I/O under it.
+Bound the number of outstanding questions; on a technical failure stop new
+calls, drain already admitted calls, save other completions and interrupted
+usage, and preserve the original error. An uncertain in-flight call retains
+the existing at-least-once charge behavior. The spend threshold stops future
+admission when charges become known; up to the worker count of previously
+admitted calls can still finish. It is not an exact provider-dollar limit.
+
+An explicit ordered `--answer-provider` allowlist is needed for non-OpenAI
+answer models; freeze it in experiment identity and apply it only to the
+answer provider. The canonical judge and original source runtime retain their
+OpenAI policy. Omission inherits that source policy. Worker count and provider
+changes on resume reject the old output; omitted defaults preserve existing
+serialized identities. Do not hide routing changes in environment overrides.
+
+Live OpenRouter catalog/endpoints on 2026-11-11 list `reasoning_effort` and
+structured output for both requested models; tiny HIGH probes also succeeded.
+Sources: <https://openrouter.ai/api/v1/models>,
+<https://openrouter.ai/api/v1/models/meta/muse-ember/endpoints> and
+<https://openrouter.ai/meta/muse-ember>. The operational workbook preserves
+dated pricing/capability and usage receipts; no model-price claim is built
+into engine defaults.

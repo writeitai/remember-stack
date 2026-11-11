@@ -137,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
             answer_provider = (
                 None
                 if profile.startswith("codex-")
+                else _seat_provider(
+                    chat_provider_only=tuple(args.answer_provider), recorder=recorder
+                )
+                if args.answer_provider is not None
                 else _provider(run_dir=args.run, stage="answer", recorder=recorder)
             )
             judge_provider = _provider(
@@ -154,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
                         p3_root=args.p3_root,
                         answer_prompt=args.answer_prompt,
                         answer_model=args.answer_model,
+                        answer_workers=args.answer_workers,
+                        answer_provider_only=None
+                        if args.answer_provider is None
+                        else tuple(args.answer_provider),
                         max_questions=args.max_questions,
                         max_agent_calls=args.max_agent_calls,
                         max_judge_calls=args.max_judge_calls,
@@ -172,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
                     p3_root=args.p3_root,
                     answer_prompt=args.answer_prompt,
                     answer_model=args.answer_model,
+                    answer_workers=args.answer_workers,
+                    answer_provider_only=None
+                    if args.answer_provider is None
+                    else tuple(args.answer_provider),
                     max_questions=args.max_questions,
                     max_agent_calls=args.max_agent_calls,
                     max_judge_calls=args.max_judge_calls,
@@ -421,6 +433,17 @@ def _parser() -> argparse.ArgumentParser:
     ablation.add_argument(
         "--answer-model",
         help="explicit answer model for the full profile; frozen into experiment identity",
+    )
+    ablation.add_argument(
+        "--answer-workers",
+        type=int,
+        default=1,
+        help="concurrent full-profile questions (1-16, default 1); recorded in identity",
+    )
+    ablation.add_argument(
+        "--answer-provider",
+        action="append",
+        help="ordered full-profile answer-provider allowlist; repeat to allow multiple endpoints",
     )
     ablation.add_argument(
         "--max-questions",

@@ -20032,6 +20032,19 @@ unchanged for a model-only comparison. The judge, retrieval settings and
 processed store stay fixed. Model changes require a new output directory,
 and no ingestion or image conversion is repeated.
 
+`--answer-workers 4` answers up to four independent questions concurrently
+(default one, allowed range 1–16). Each question retains its own trace and
+completed answers are checkpointed by one writer. Shared admission keeps
+model-call and reported-spend accounting consistent. After a technical error,
+new calls stop while in-flight calls finish and are saved. Previously admitted
+calls can complete after their combined cost reaches the spending threshold;
+the provider/account allowance is the hard dollar limit. Judging stays serial.
+
+For a model served by another provider, supply `--answer-provider HOST`
+(repeat for an ordered allowlist). This changes only the answer provider;
+the judge keeps its canonical OpenAI policy. Model, provider policy and worker
+count are fingerprinted, so changing them requires a fresh output directory.
+
 ```bash
 uv run python -m benchmarks.locomo retrieval-ablation \
   --run .benchmark-runs/development --sample conv-47 --profile full \

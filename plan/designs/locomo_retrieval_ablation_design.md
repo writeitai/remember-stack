@@ -40,6 +40,7 @@ The command is:
 python -m benchmarks.locomo retrieval-ablation \
   --run SOURCE_RUN --sample SAMPLE --profile PROFILE \
   --output ABLATION_DIR [--p3-root LOCAL_P3] [--answer-prompt TEMPLATE] [--answer-model MODEL] \
+  [--answer-workers N] [--answer-provider HOST ...] \
   --max-questions N --max-agent-calls N --max-judge-calls N \
   --max-evaluator-cost-usd USD --execute
 ```
@@ -257,6 +258,30 @@ Resume with a changed model or without the originally supplied model rejects
 the output. The judge, prompt, high reasoning, temperature, retrieval depth,
 ingestion, tools and call limits remain unchanged for a model-only trial.
 This changes no canonical model or ingestion/paid-work reuse generation.
+
+`--answer-provider` supplies an ordered answer-only provider allowlist for
+`full`; it may be repeated for multiple approved endpoints. Its exact tags
+are recorded and fingerprinted. Omission retains the canonical OpenAI
+Flex-to-normal policy. Explicit routing changes neither the source runtime
+nor the judge's provider. Empty or whitespace-containing tags are rejected.
+
+`--answer-workers` controls concurrent full-profile questions, from one
+(the default) through 16. The count is fingerprinted; default values remain
+omitted from existing identities. Each question has private native-loop
+state, trace, retries and a usage journal. Provider/network I/O runs outside
+the short shared call-admission/accounting mutex. One collector writes
+completed answers and action usage atomically. No more than the selected
+worker count of questions are outstanding. Judge execution remains serial.
+
+Global model-call and reported-spend admission use all recorded previous
+work, including interrupted calls. Once a failure occurs, new calls stop;
+already admitted calls drain and successful neighboring questions remain
+checkpointed. Known charges for interrupted questions are retained exactly
+once, and resume skips completed questions. Already admitted calls may finish
+after their combined returned cost reaches the threshold; the configured
+provider/account allowance remains the hard dollar boundary. An unacknowledged
+process crash retains the existing at-least-once billing limitation, now
+bounded by the worker count of in-flight questions.
 
 Provider composition enforces the canonical Flex-to-normal OpenAI allowlist
 and order; transport uses the saved source HTTP timeout. The source execution
