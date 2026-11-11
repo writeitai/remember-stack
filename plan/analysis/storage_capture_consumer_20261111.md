@@ -153,3 +153,17 @@ PostgreSQL's [LOCK description](https://www.postgresql.org/docs/18/sql-lock.html
 acquired repeatable-read snapshot. The implemented engine profile must still
 qualify its actual pinned PostgreSQL/extension build; this source is not a
 populated capture test.
+
+The physical PostgreSQL values are sampled and spooled while the proved short
+guard still excludes writers. A retained repeatable-read view preserves later
+row/reference enumeration, not pg_relation_size values against post-cut DML.
+The consumer therefore never relabels a later physical size as the requested
+cut. PostgreSQL allocation, stored-object logical lengths and compressed K
+object/pack lengths have separate explicit byte bases; reference lengths and
+overlapping provider resource counters are not extra component sums. Exact
+classification, accepted mapping, once-counted resource-set and component
+evidence digest preimages make replay independently reproducible.
+PostgreSQL's [object-size function contract](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-DBSIZE)
+(retrieved 2026-11-11) defines the relation/fork, table, index and TOAST disk
+sizes. The requirement to sample these physical values under the guard follows
+from that byte basis; an MVCC row view alone supplies no physical-size freeze.

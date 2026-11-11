@@ -86,8 +86,13 @@ While that guard holds, establish one original read-only repeatable engine
 view and record its backend/transaction/snapshot identity and actual native
 acquisition-before/acquisition-after clock bracket. Pin extraction relations
 against DDL for that view. Sampling time when enumeration starts is not its
-acquisition time. Sample qualified allocated relation/fork evidence across
-the cut and spool the bounded records outside the measured customer set.
+acquisition time. Read and spool every qualified PostgreSQL allocated-byte
+value, including pg_relation_size/pg_total_relation_size reconciliation, while
+the short guard still excludes writers across the cut. These immutable physical
+records live outside the measured customer set before that guard releases.
+Repeatable read and an AccessShare extraction pin do not freeze physical file
+sizes against subsequent DML; later enumeration must not resample those sizes
+and label them as the earlier cut.
 The first consistent snapshot of that repeatable-read transaction must be
 acquired under the guard. Any earlier role/configuration query ends its own
 transaction before this view begins; locking after an earlier SELECT would
@@ -174,7 +179,7 @@ not claim that current LocalFS/S3 adapters already provide it.
 
 ## 4. Component meaning and commercial mapping
 
-The engine closes the schema and writer inventory for its exact source.
+For PostgreSQL, the engine closes the schema and writer inventory for its exact source.
 Relations resolve by catalog ancestry and approved partition templates/bounds,
 indexes by pg_index and TOAST by reltoastrelid. Count each qualified physical
 fork/file once and reconcile the physical-table pg_total_relation_size sum.
@@ -202,7 +207,7 @@ An additional staging/served tree is a distinct operator replica. Distinct
 raw/artifact and P3 objects stay distinct resources even when their payloads
 match; the operator's accepted mapping determines permitted inclusion without
 invented content-hash deduplication. K uses qualified actual repository object/
-pack ownership and native retained allocation, not one charge per checkout.
+pack ownership and retained byte evidence, not one charge per checkout.
 Forget control is separately durable and is not a customer funding authority.
 
 Only a complete capture with a current matching mapping may produce the four
@@ -244,7 +249,9 @@ The closed content-free record shapes are:
 | ACK | contract, capture_id, manifest_digest, set_digest |
 
 Components are postgres_allocated, canonical_object, k_repository and p3_origin,
-each exactly once. A reference's purpose is one source-classified value:
+each exactly once and ordered by literal component name. Every measured_bytes
+is an unsigned decimal integer string, including explicit zero for a qualified
+empty component. A reference's purpose is one source-classified value:
 canonical_raw, referenced_artifact, truth_provenance, knowledge_origin,
 projection_origin, privacy_control, staging, failed_attempt, paid_checkpoint,
 audit_operations, adapter_metadata, scratch_rebuild, cache, serving_replica or
@@ -259,6 +266,21 @@ source, claim, prompt or filename bytes. They are not exported content hashes.
 The receipt digest binds the existing immutable canonical v3 receipt body,
 without delivery/ACK state or reformatting its identifiers into this new
 protocol's representation. No processing receipt/key is changed.
+
+A reference member names a store-backed reference. Its logical_bytes is that
+reference's complete stored-version length, checked against the qualified
+native/store evidence, not an estimate of a PostgreSQL row or its disk pages.
+Several references can repeat the same length; never sum those reference
+lengths into a component. The PostgreSQL component uses only the allocated
+physical values spooled under the short guard. Canonical-object and P3-origin
+components use the logical stored lengths of the mapped actual origins, each
+once after qualified alias/origin matching. K uses the native profile's actual
+retained compressed object/pack-file lengths, each stored file once, not an
+uncompressed object total or repeated checkout size. The mapping selects
+permitted purposes; it cannot silently switch these byte bases. Provider
+retained/pending/sealed or multipart resource counters are never replacements
+for any of those amounts. Reference logical_bytes is matching evidence, not an
+additional fifth component. The checked total is only the four measured_bytes.
 
 The native witness contract is rememberstack.storage_native_witness.v1.
 Its identities name the original sessions/view, not newly sampled replacements.
@@ -293,6 +315,27 @@ The set digest is SHA256 over ASCII rememberstack.storage_capture_set.v1,
 NUL and the ordered raw 32-byte page digests. Native/provider witness schemas
 and profile identities are independently pinned; an arbitrary untyped map is
 not an accepted witness.
+
+The component digests have these exact preimages. Each is SHA256 over its
+listed ASCII contract, NUL and the canonical JSON document described below;
+the document contains that contract and no digest of itself.
+
+| Digest | Contract and complete canonical document |
+| --- | --- |
+| classification_digest | rememberstack.storage_classification.v1; contract, source_digest, schema_profile_digest, rules. Each rule has native_class_id and purpose, ordered by native_class_id. Every installed source/writer class appears exactly once; native_class_id is the pinned native profile's opaque class identity. |
+| operator_mapping_digest | rememberstack.storage_mapping.v1; contract, classification_digest, store_binding_digest, rules. Each rule has native_class_id, store_binding_id and component (explicit null means excluded), ordered by native_class_id then store_binding_id. The independently accepted complete mapping covers every admitted class/store pair and preserves the exclusions and byte bases above; it has no prices or caller byte amounts. |
+| resource_set_digest | rememberstack.storage_resource_set.v1; contract, capture_id, component, resources. Each resource has store_binding_id, resource_identity, version_identity, resource_evidence_digest and measured_bytes; order by the first three fields. Include each qualified stored origin/fork exactly once after proven alias/ownership resolution, with unsigned byte strings; conflicting or mixed ownership refuses qualification. |
+| evidence_digest | rememberstack.storage_component_evidence.v1; contract, capture_id, component, native_witness_digest, provider_manifest_digest, classification_digest, operator_mapping_digest, resource_set_digest and measured_bytes. |
+
+Resource evidence points to the exact native allocated-byte record or the
+qualified immutable store item/version under its pinned witness schema, never
+a new live query. A zero component has an explicit empty resource list. The
+consumer checks that its unique resource amounts sum to that component and
+that all four components match the manifest. Profile documents are immutable,
+versioned canonical JSON under their declared closed schemas; unknown schemas,
+missing rules or changed accepted documents refuse rather than being treated
+as arbitrary JSON policy. Their exact canonical bytes, not a display name or
+an operator's in-memory interpretation, determine the digests.
 
 ACK contains exactly contract, capture_id, manifest_digest and set_digest.
 Persist completion in separately classified operational storage before

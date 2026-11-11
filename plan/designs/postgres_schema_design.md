@@ -69,6 +69,7 @@ fork evidence and original bounded native view. Catalog ancestry and approved
 partition templates replace name-prefix guesses. Capture operational evidence
 is separately classified; it does not become customer data or memory truth.
 Mixed-purpose physical storage cannot be split by a fictional row-byte ratio.
+These capture invariants cannot be waived by a module-specific convention.
 
 These rules apply to every table unless a module overrides them with a stated reason.
 
