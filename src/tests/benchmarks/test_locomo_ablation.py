@@ -376,8 +376,9 @@ def test_cli_exposes_the_declared_profiles(
     assert (profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}) == needs_mcp
 
 
+@pytest.mark.parametrize("answer_model", (None, "test/alternative-model"))
 def test_full_prompt_is_frozen_and_resume_rejects_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer_model: str | None
 ) -> None:
     """Prompt trials bind exact bytes and never mutate the original answers."""
     monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
@@ -395,25 +396,31 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         "p3_version": "p3-v1",
         "mcp_tools": answer_tool_catalog(),
         "prompt_template": "Question: {question}\r\n",
+        "answer_model": answer_model,
     }
     configuration, _state = ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
-    assert configuration.answer_model == ANSWER_AGENT_MODEL
+    assert configuration.answer_model == (answer_model or ANSWER_AGENT_MODEL)
     assert configuration.source_processing_revision == "a" * 40
     assert configuration.ablation_runner_revision == "b" * 40
     assert (output / "answer-prompt.txt").read_bytes() == b"Question: {question}\r\n"
     ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
     with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
         ablation._load_or_create_output(**{**values, "prompt_template": "Changed"})  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(
+            **{**values, "answer_model": "test/different-model"}
+        )  # type: ignore[arg-type]  # noqa: SLF001
     (output / "answer-prompt.txt").write_text("corrupt", encoding="utf-8")
     with pytest.raises(runner.BenchmarkRunError, match="frozen answer prompt changed"):
         ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
     assert context.state.answers == {}
 
 
+@pytest.mark.parametrize("answer_model", (None, "test/alternative-model"))
 def test_full_profile_calls_the_native_loop_with_source_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer_model: str | None
 ) -> None:
-    """The experiment changes only the template, not access, models or depth."""
+    """The native loop receives the frozen model while other settings stay fixed."""
     monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
     question = _question()
     context = _SyntheticContext(
@@ -431,6 +438,7 @@ def test_full_profile_calls_the_native_loop_with_source_settings(
         p3_version="p3-v1",
         mcp_tools=tools,
         prompt_template="General candidate: {question}",
+        answer_model=answer_model,
     )
     observed: dict[str, object] = {}
 
@@ -461,7 +469,9 @@ def test_full_profile_calls_the_native_loop_with_source_settings(
     assert observed["client"] is client
     assert observed["p3"] is mount
     assert observed["tools"] == tools and len(tools) == 22
-    assert observed["answer_agent_model"] == context.configuration.answer_agent_model
+    assert observed["answer_agent_model"] == (
+        answer_model or context.configuration.answer_agent_model
+    )
     assert observed["answer_agent_reasoning_effort"] == "high"
     assert observed["retrieval_budget"] == context.configuration.retrieval_budget
     assert observed["max_tool_calls_per_question"] == 8
@@ -472,6 +482,39 @@ def test_full_profile_calls_the_native_loop_with_source_settings(
     assert "require_content_before_answer" not in observed
     assert tuple(state.run_state.answers) == (question.item_id,)
     assert context.state.answers == {}
+
+
+@pytest.mark.parametrize(
+    ("profile", "answer_model", "message"),
+    (
+        ("mcp", "test/model", "requires --profile full"),
+        ("codex-p3", "test/model", "requires --profile full"),
+        ("full", "", "nonempty identifier"),
+        ("full", "test/model ", "without whitespace"),
+        ("full", "test/\nmodel", "without whitespace"),
+    ),
+)
+def test_model_option_rejects_invalid_comparisons_before_source_access(
+    tmp_path: Path, profile: ablation.AblationProfile, answer_model: str, message: str
+) -> None:
+    """Invalid options fail before reading a source or making paid calls."""
+    with pytest.raises(runner.ExecutionGuardError, match=message):
+        ablation.run_retrieval_ablation(
+            run_dir=tmp_path / "missing-source",
+            sample_id="conv-test",
+            profile=profile,
+            output=tmp_path / "output",
+            p3_root=None,
+            max_questions=20,
+            max_agent_calls=180,
+            max_judge_calls=20,
+            max_evaluator_cost_usd=Decimal("2"),
+            execute=True,
+            answer_provider=None,
+            judge_provider=cast(ModelProviderPort, object()),
+            client=None,
+            answer_model=answer_model,
+        )
 
 
 def test_full_profile_rejects_judge_drift_and_incomplete_prompts() -> None:

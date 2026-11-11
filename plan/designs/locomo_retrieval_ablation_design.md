@@ -7,6 +7,8 @@
 [`locomo_retrieval_access_ablations.md`](../analysis/locomo_retrieval_access_ablations.md).
 **Prompt-trial amendment, 2026-11-09:**
 [`locomo_answer_prompt_trials.md`](../analysis/locomo_answer_prompt_trials.md).
+**Answer-model amendment, 2026-11-11:**
+[`locomo_answer_model_comparisons_20261111.md`](../analysis/locomo_answer_model_comparisons_20261111.md).
 
 ## 1. Problem and scope
 
@@ -30,14 +32,14 @@ One source run may produce independent ablation outputs:
 | `codex-p3-mcp` | native Codex subscription agent | local P3 filesystem and OSS RememberStack MCP |
 | `mcp` | OpenRouter Luna provider-neutral agent | OSS RememberStack MCP only |
 | `mcp-p3` | OpenRouter Luna provider-neutral agent | OSS RememberStack MCP and benchmark P3 MCP tools |
-| `full` | canonical provider-neutral answer loop | exact source-pinned SDK/P3 catalog, with an optional experimental answer prompt |
+| `full` | canonical provider-neutral answer loop | exact source-pinned SDK/P3 catalog, with an optional experimental answer prompt or explicit answer model |
 
 The command is:
 
 ```text
 python -m benchmarks.locomo retrieval-ablation \
   --run SOURCE_RUN --sample SAMPLE --profile PROFILE \
-  --output ABLATION_DIR [--p3-root LOCAL_P3] [--answer-prompt TEMPLATE] \
+  --output ABLATION_DIR [--p3-root LOCAL_P3] [--answer-prompt TEMPLATE] [--answer-model MODEL] \
   --max-questions N --max-agent-calls N --max-judge-calls N \
   --max-evaluator-cost-usd USD --execute
 ```
@@ -218,19 +220,20 @@ preambles mention only the routes each profile can actually use. Native Codex
 returns the final answer object above; the provider-neutral loop returns the
 existing tool-or-answer step. Prompt and schema hashes bind both forms.
 
-Every answer arm uses the Luna model family at reasoning effort `high`: native
-Codex uses subscription model `gpt-5.6-luna`, and provider-neutral arms use
-OpenRouter `openai/gpt-5.6-luna`. The provider/runtime difference remains a
-disclosed crossed factor. All profiles use the current canonical OpenRouter
+Every answer arm records its explicit model at reasoning effort `high`.
+Native Codex and MCP access profiles retain their fixed runtime bindings;
+`full` inherits the source model unless an explicit experimental model is
+requested. Provider/runtime or model differences remain disclosed crossed
+factors. All profiles use the current canonical OpenRouter
 judge and its pinned model, reasoning effort, temperature, prompt, schema,
 repetitions and gold answer. The `full` profile also requires these judge pins
 to equal the processed source run before any paid model call. Source-protocol provider variants do not silently
 add Gemma or Codex seats. Judge output is never visible to a later answer.
 
-### 6.1 Full-surface answer prompt trials
+### 6.1 Full-surface answer prompt and model trials
 
 The `full` profile calls the existing canonical answer loop directly, using
-all 22 source-pinned SDK/P3 tools, the source model/reasoning/temperature,
+all 22 source-pinned SDK/P3 tools, the source model by default and the same reasoning/temperature,
 retrieval budget, word cap, eight-tool/nine-model-call limits, and retry policy.
 It does not wrap tools as MCP or add an experimental content-before-answer
 policy. Its direct SDK/P3 action count is reported separately from MCP/shell.
@@ -245,6 +248,15 @@ use the renderer's existing format placeholders. Its exact bytes are saved as
 current canonical template. Resume requires the same input template and the
 same saved bytes, as well as the unchanged experiment identity. An incomplete
 or corrupted output fails closed rather than adopting a different prompt.
+
+`--answer-model` is also accepted only for `full`. It chooses the answer
+model explicitly; omission inherits the source model. The exact nonempty
+identifier is bound by the existing `answer_model` fingerprint field and is
+the model sent to the provider. Whitespace-containing identifiers are rejected.
+Resume with a changed model or without the originally supplied model rejects
+the output. The judge, prompt, high reasoning, temperature, retrieval depth,
+ingestion, tools and call limits remain unchanged for a model-only trial.
+This changes no canonical model or ingestion/paid-work reuse generation.
 
 Provider composition enforces the canonical Flex-to-normal OpenAI allowlist
 and order; transport uses the saved source HTTP timeout. The source execution
@@ -262,7 +274,7 @@ Live guards run before and after answering. Source and runner revisions remain
 separate; a prompt-only experiment does not claim that old ingestion ran a new
 backend.
 
-Each prompt uses a new output directory and answers the whole sample. Preserve
+Each prompt or model trial uses a new output directory and answers the whole sample. Preserve
 all trial outputs, including failures and regressions. A prompt comparison
 holds models, tools, retrieval depth, and judge fixed; changing any of those is
 a separate experiment. These are development results, not held-out publication

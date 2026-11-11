@@ -153,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
                         output=args.output,
                         p3_root=args.p3_root,
                         answer_prompt=args.answer_prompt,
+                        answer_model=args.answer_model,
                         max_questions=args.max_questions,
                         max_agent_calls=args.max_agent_calls,
                         max_judge_calls=args.max_judge_calls,
@@ -170,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                     output=args.output,
                     p3_root=args.p3_root,
                     answer_prompt=args.answer_prompt,
+                    answer_model=args.answer_model,
                     max_questions=args.max_questions,
                     max_agent_calls=args.max_agent_calls,
                     max_judge_calls=args.max_judge_calls,
@@ -415,6 +417,10 @@ def _parser() -> argparse.ArgumentParser:
         "--answer-prompt",
         type=Path,
         help="UTF-8 answer template for the full profile; frozen into the output",
+    )
+    ablation.add_argument(
+        "--answer-model",
+        help="explicit answer model for the full profile; frozen into experiment identity",
     )
     ablation.add_argument(
         "--max-questions",

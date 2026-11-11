@@ -357,10 +357,18 @@ def run_retrieval_ablation(
     judge_provider: ModelProviderPort,
     client: MemoryClient | None,
     answer_prompt: Path | None = None,
+    answer_model: str | None = None,
 ) -> AblationSummary:
-    """Run or resume an isolated access or full-surface prompt experiment."""
+    """Run or resume an isolated access, prompt or answer-model experiment."""
     if answer_prompt is not None and profile != "full":
         raise runner.ExecutionGuardError("--answer-prompt requires --profile full")
+    if answer_model is not None:
+        if profile != "full":
+            raise runner.ExecutionGuardError("--answer-model requires --profile full")
+        if not answer_model or any(character.isspace() for character in answer_model):
+            raise runner.ExecutionGuardError(
+                "--answer-model must be a nonempty identifier without whitespace"
+            )
     prompt_template = (
         answer_prompt.read_bytes().decode("utf-8")
         if answer_prompt is not None
@@ -442,6 +450,7 @@ def run_retrieval_ablation(
             p3_version=p3_version if needs_p3 else None,
             mcp_tools=mcp_tools,
             prompt_template=prompt_template,
+            answer_model=answer_model,
         )
         _run_answers(
             output=output,
@@ -686,6 +695,7 @@ def _load_or_create_output(
     p3_version: str | None,
     mcp_tools: tuple[ToolDescriptor, ...],
     prompt_template: str | None = None,
+    answer_model: str | None = None,
 ) -> tuple[AblationConfiguration, AblationState]:
     """Create one immutable experiment identity or validate its exact resume."""
     if (output / _CONFIG_FILE).exists():
@@ -698,6 +708,7 @@ def _load_or_create_output(
             p3_version=p3_version,
             mcp_tools=mcp_tools,
             prompt_template=prompt_template,
+            answer_model=answer_model,
         )
         persisted = configuration.model_dump(
             mode="python", exclude={"created_at", "fingerprint"}
@@ -725,6 +736,7 @@ def _load_or_create_output(
         p3_version=p3_version,
         mcp_tools=mcp_tools,
         prompt_template=prompt_template,
+        answer_model=answer_model,
     )
     configuration = AblationConfiguration.model_validate(
         {
@@ -804,6 +816,7 @@ def _configuration_base(
     p3_version: str | None,
     mcp_tools: tuple[ToolDescriptor, ...],
     prompt_template: str | None = None,
+    answer_model: str | None = None,
 ) -> dict[str, object]:
     """Return every immutable ablation field except time and fingerprint."""
     source = context.configuration
@@ -830,7 +843,7 @@ def _configuration_base(
         "profile": profile,
         "answer_provider": "codex_subscription" if native else "openrouter",
         "answer_model": (
-            source.answer_agent_model
+            (answer_model if answer_model is not None else source.answer_agent_model)
             if profile == "full"
             else _CODEX_MODEL
             if native
@@ -938,9 +951,9 @@ def _run_answers(
                     state=state.run_state,
                     max_agent_calls=max_agent_calls,
                     max_evaluator_cost_usd=max_evaluator_cost_usd,
-                    answer_agent_model=source.answer_agent_model,
-                    answer_agent_temperature=source.answer_agent_temperature,
-                    answer_agent_reasoning_effort=source.answer_agent_reasoning_effort,
+                    answer_agent_model=configuration.answer_model,
+                    answer_agent_temperature=configuration.answer_temperature,
+                    answer_agent_reasoning_effort=configuration.answer_reasoning_effort,
                     max_tool_calls_per_question=source.max_tool_calls_per_question,
                     max_agent_calls_per_question=source.max_agent_calls_per_question,
                     answer_reader_retry_budget=source.answer_reader_retry_budget,

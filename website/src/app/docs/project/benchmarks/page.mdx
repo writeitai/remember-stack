@@ -368,13 +368,20 @@ ranges or named periods at the precision supported by the source. The source
 timestamp anchors relative wording; it cannot supply an otherwise unknown
 event date or justify extra precision.
 
-### Compare answer prompts without ingestion
+### Compare answer prompts or models without ingestion
 
 Use `retrieval-ablation --profile full` to re-answer one completely processed
-sample with the same live store, source-pinned 22 SDK/P3 tools, Luna settings,
+sample with the same live store, source-pinned 22 SDK/P3 tools, high reasoning,
 retrieval budget, call limits, and canonical judge. An optional UTF-8
 `--answer-prompt` file uses the existing answer-template format placeholders.
 Without it, the current canonical template is used.
+
+To compare an answering model, supply `--answer-model PROVIDER/MODEL` with
+`--profile full`. The exact model is frozen in the experiment fingerprint
+and sent to the provider; omission inherits the source model. Keep the prompt
+unchanged for a model-only comparison. The judge, retrieval settings and
+processed store stay fixed. Model changes require a new output directory,
+and no ingestion or image conversion is repeated.
 
 ```bash
 uv run python -m benchmarks.locomo retrieval-ablation \
@@ -388,7 +395,7 @@ uv run python -m benchmarks.locomo retrieval-ablation \
 The output saves the frozen template, its hash, source and runner revisions,
 complete new answers/tool traces/grades, usage, and summary. It leaves the source
 run untouched. Identical commands resume missing work; changed prompts or
-source identity require a new output directory. Live readiness, exact ingests,
+source identity or answer models require a new output directory. Live readiness, exact ingests,
 models, query surface and P3 must still match. The source judge prompt/schema
 must equal the current judge. These are development trials; retain every trial
 and do not report a selected trial as held-out evaluation. Archive the output
