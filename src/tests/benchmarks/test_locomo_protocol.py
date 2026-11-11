@@ -351,8 +351,8 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
 
 def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v43"
-    assert DEFAULT_PROTOCOL_KEY == "full-v43"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v44"
+    assert DEFAULT_PROTOCOL_KEY == "full-v44"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -486,10 +486,10 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v43",)
-    protocol = PROTOCOL_REGISTRY["full-v43"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v44",)
+    protocol = PROTOCOL_REGISTRY["full-v44"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v43"
+    assert protocol.name == "RS-LoCoMo-Full-v44"
     assert protocol.answer_agent_model == "openai/gpt-6-luna"
     assert protocol.answer_agent_reasoning_effort == "high"
     assert protocol.judge_reasoning_effort == "high"
@@ -497,7 +497,14 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
     assert protocol.tool_catalog_sha256 == tool_catalog_sha256()
-    for retired_key in ("full-v38", "full-v39", "full-v40", "full-v41", "full-v42"):
+    for retired_key in (
+        "full-v38",
+        "full-v39",
+        "full-v40",
+        "full-v41",
+        "full-v42",
+        "full-v43",
+    ):
         with pytest.raises(ValueError, match="retired or unknown protocol"):
             protocol_for_key(cast(ProtocolKey, retired_key))
         with pytest.raises(ValueError, match="historical protocol.*read-only"):
@@ -532,7 +539,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v43"]
+    assert selected == ["full-v44"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -707,7 +714,7 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v43")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v44")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 

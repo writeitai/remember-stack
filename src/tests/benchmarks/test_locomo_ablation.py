@@ -675,8 +675,12 @@ def test_cli_exposes_the_declared_profiles(
 
 
 @pytest.mark.parametrize("answer_model", (None, "test/alternative-model"))
+@pytest.mark.parametrize("judge_model", (None, "test/alternative-judge"))
 def test_full_prompt_is_frozen_and_resume_rejects_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer_model: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer_model: str | None,
+    judge_model: str | None,
 ) -> None:
     """Prompt trials bind exact bytes and never mutate the original answers."""
     monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
@@ -695,9 +699,11 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         "mcp_tools": answer_tool_catalog(),
         "prompt_template": "Question: {question}\r\n",
         "answer_model": answer_model,
+        "judge_model": judge_model,
     }
     configuration, _state = ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
     assert configuration.answer_model == (answer_model or ANSWER_AGENT_MODEL)
+    assert configuration.judge_model == (judge_model or JUDGE_MODEL)
     assert configuration.source_processing_revision == "a" * 40
     assert configuration.ablation_runner_revision == "b" * 40
     assert (output / "answer-prompt.txt").read_bytes() == b"Question: {question}\r\n"
@@ -710,6 +716,14 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         )  # type: ignore[arg-type]  # noqa: SLF001
     with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
         ablation._load_or_create_output(**{**values, "answer_workers": 4})  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(
+            **{**values, "judge_model": "test/different-judge"}
+        )  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(
+            **{**values, "questions": (_question(index=1),)}
+        )  # type: ignore[arg-type]  # noqa: SLF001
     with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
         ablation._load_or_create_output(
             **{**values, "answer_provider_only": ("test-host",)}
@@ -890,6 +904,73 @@ def test_full_profile_rejects_judge_drift_and_incomplete_prompts() -> None:
         ablation._validate_full_prompt(template="Answer immediately.", tools=())  # noqa: SLF001
 
 
+def test_full_historical_name_requires_the_exact_current_nonprompt_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prompt-only source names are readable while stage and build drift fail."""
+    protocol = protocol_for_key(DEFAULT_PROTOCOL_KEY)
+    source = _configuration().model_copy(
+        update={
+            "protocol_name": "archived-prompt-name",
+            "execution_profile": protocol.execution_profile,
+            "answer_schema_sha256": schema_sha256(model=protocol.answer_schema),
+            "judge_prompt_sha256": prompt_sha256(
+                template=protocol.judge_prompt_template
+            ),
+            "judge_schema_sha256": schema_sha256(model=protocol.judge_schema),
+        }
+    )
+    context = _SyntheticContext(
+        configuration=source,
+        state=RunState(
+            protocol_name=source.protocol_name, protocol_fingerprint="source"
+        ),
+    )
+    checkpoint = PipelineReadinessReport.model_validate(
+        {"ready": True, "versions": [], "build_revision": "a" * 40, "capabilities": {}}
+    )
+    observed: list[str] = []
+
+    def matches(**values: object) -> bool:
+        """Observe the contract checked without registering a historical protocol."""
+        observed.append(str(values["protocol_name"]))
+        return True
+
+    monkeypatch.setattr(runner, "_readiness_matches_protocol", matches)
+    monkeypatch.setattr(runner, "_require_exact_live_ingests", lambda **_values: None)
+    client = SimpleNamespace(
+        pipeline_readiness=lambda **_values: checkpoint,
+        describe_query_space=lambda: {
+            "surface_manifest_hash": source.surface_manifest_hash
+        },
+        list_operations=assured_tool_catalog,
+    )
+    values = {
+        "context": context,
+        "sample_id": "conv-test",
+        "version_ids": (),
+        "checkpointed": checkpoint,
+        "client": cast(MemoryClient, client),
+        "canonical_full": True,
+    }
+    ablation._guard_live_source(**values)  # type: ignore[arg-type]  # noqa: SLF001
+    assert observed == [protocol.name]
+    client.pipeline_readiness = lambda **_values: checkpoint.model_copy(
+        update={"build_revision": "c" * 40}
+    )
+    with pytest.raises(runner.ExecutionGuardError, match="live readiness differs"):
+        ablation._guard_live_source(**values)  # type: ignore[arg-type]  # noqa: SLF001
+    context.configuration = source.model_copy(
+        update={
+            "execution_profile": protocol.execution_profile.model_copy(
+                update={"ingest_component_versions": {"extract_claims": "different"}}
+            )
+        }
+    )
+    with pytest.raises(runner.ExecutionGuardError, match="execution_profile changed"):
+        ablation._guard_live_source(**values)  # type: ignore[arg-type]  # noqa: SLF001
+
+
 def test_full_cli_pins_flex_routing_and_saved_http_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -903,6 +984,7 @@ def test_full_cli_pins_flex_routing_and_saved_http_timeout(
     monkeypatch.setattr(cli, "build_generation_recorder", lambda **_values: None)
     settings_seen: list[OpenRouterSettings] = []
     timeouts: list[float] = []
+    forwarded: list[dict[str, object]] = []
 
     def provider(
         *, settings: OpenRouterSettings, recorder: object
@@ -926,11 +1008,13 @@ def test_full_cli_pins_flex_routing_and_saved_http_timeout(
 
     monkeypatch.setattr(cli, "OpenRouterModelProvider", provider)
     monkeypatch.setattr(cli, "MemoryClient", Client)
-    monkeypatch.setattr(
-        cli,
-        "run_retrieval_ablation",
-        lambda **_values: SimpleNamespace(model_dump_json=lambda: "{}"),
-    )
+
+    def execute(**values: object) -> object:
+        """Capture selection and judge configuration without paid work."""
+        forwarded.append(values)
+        return SimpleNamespace(model_dump_json=lambda: "{}")
+
+    monkeypatch.setattr(cli, "run_retrieval_ablation", execute)
     assert (
         cli.main(
             [
@@ -945,6 +1029,10 @@ def test_full_cli_pins_flex_routing_and_saved_http_timeout(
                 "/tmp/trial",
                 "--p3-root",
                 "/tmp/p3",
+                "--judge-model",
+                "test/alternative-judge",
+                "--item",
+                "conv-test/qa/0000",
                 "--max-questions",
                 "20",
                 "--max-agent-calls",
@@ -963,6 +1051,100 @@ def test_full_cli_pins_flex_routing_and_saved_http_timeout(
         assert settings.chat_provider_only == ["openai/flex", "openai"]
         assert settings.chat_provider_order == ["openai/flex", "openai"]
     assert timeouts == [321.0]
+    assert forwarded[0]["judge_model"] == "test/alternative-judge"
+    assert forwarded[0]["item_ids"] == ("conv-test/qa/0000",)
+
+
+@pytest.mark.parametrize(
+    ("items", "message"),
+    (
+        ((), "distinct selected IDs"),
+        (("conv-test/qa/0000", "conv-test/qa/0000"), "distinct selected IDs"),
+        (("conv-other/qa/0000",), "not in the selected sample"),
+        (("conv-test/qa/0002", "conv-test/qa/0000"), "captured selection"),
+    ),
+)
+def test_subset_selection_is_validated_before_live_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    items: tuple[str, ...],
+    message: str,
+) -> None:
+    """Select canonical-order questions without changing the source or paying."""
+    questions = tuple(_question(index=index) for index in range(3))
+    context = _SyntheticContext(
+        configuration=_configuration(),
+        state=RunState(protocol_name=PROTOCOL_NAME, protocol_fingerprint="source"),
+    )
+    monkeypatch.setattr(runner, "_load_run", lambda **_values: context)
+    monkeypatch.setattr(runner, "_sample_questions", lambda **_values: questions)
+    captured: list[tuple[LoCoMoQuestion, ...]] = []
+
+    def capture(**values: object) -> None:
+        """Stop after selection, before readiness, output writes or model calls."""
+        captured.append(cast(tuple[LoCoMoQuestion, ...], values["questions"]))
+        raise runner.ExecutionGuardError("captured selection")
+
+    monkeypatch.setattr(ablation, "_guard_local_execution", capture)
+    with pytest.raises(runner.ExecutionGuardError, match=message):
+        ablation.run_retrieval_ablation(
+            run_dir=tmp_path / "source",
+            sample_id="conv-test",
+            profile="full",
+            output=tmp_path / "output",
+            p3_root=None,
+            max_questions=2,
+            max_agent_calls=18,
+            max_judge_calls=2,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            answer_provider=None,
+            judge_provider=cast(ModelProviderPort, object()),
+            client=None,
+            item_ids=items,
+        )
+    if message == "captured selection":
+        assert captured == [(questions[0], questions[2])]
+    else:
+        assert captured == []
+    assert context.state.answers == {} and not (tmp_path / "output").exists()
+
+
+def test_judging_uses_the_recorded_override_and_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A judge override controls actual execution, not just saved metadata."""
+    _context, questions, configuration, state = _full_arm(
+        output=tmp_path, question_count=1, workers=1
+    )
+    configuration = configuration.model_copy(update={"judge_model": "test/judge"})
+    state.run_state.answers[questions[0].item_id] = _answer(question=questions[0])
+    observed: dict[str, object] = {}
+
+    def judge(**values: object) -> JudgeRecord:
+        """Capture the grader request without sending a provider call."""
+        observed.update(values)
+        return JudgeRecord(
+            item_id=questions[0].item_id,
+            label="CORRECT",
+            model_called=True,
+            usage=_usage(model=str(values["judge_model"])),
+        )
+
+    monkeypatch.setattr(runner, "_judge_answer", judge)
+    ablation._run_judges(  # noqa: SLF001
+        output=tmp_path,
+        configuration=configuration,
+        state=state,
+        questions=questions,
+        judge_provider=cast(ModelProviderPort, object()),
+        max_judge_calls=1,
+        max_evaluator_cost_usd=Decimal("1"),
+    )
+    assert observed["judge_model"] == "test/judge"
+    assert observed["judge_reasoning_effort"] == "high"
+    assert observed["judge_temperature"] == configuration.judge_temperature
+    assert state.run_state.judges[questions[0].item_id].label == "CORRECT"
 
 
 @pytest.mark.parametrize("drift", (False, True))
