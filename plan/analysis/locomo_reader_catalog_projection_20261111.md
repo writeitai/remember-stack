@@ -8,7 +8,8 @@ store, judge wording and ingestion/reuse generations stay fixed.
 The first four prompt-only candidates scored0/2 with Pro HIGH reader and judge.
 Their raw source traces include the missing restriction and image subject, but
 the final output drops details, adds an unsupported category contrast, or mixes
-work media. Trial05 is still running; no score improvement is established.
+work media. Trial05 was still running when this catalog candidate was prepared; later
+results are recorded below.
 All prior outcomes and six-archive GCS readbacks are in cloud PR959,
 `experiments/locomo-targeted-development-20261111/`. This is development tuning,
 not held-out validation or proof that the engine lacks the source evidence.
@@ -88,6 +89,31 @@ rather than improve general recall and is rejected. A broader answer can still
 include irrelevant material or lead with uncertainty; the complete regression
 must expose that. There is no postprocessing, manual grade override or new
 retrieval/extraction model. Trial06 holds this template fixed and changes only
-the catalog projection. Its outcome is pending, so the combined current-protocol
-candidate remains a draft. A fresh full20 arm is allowed only after both selected
+the catalog projection. At that snapshot its outcome was pending; the combined candidate remains a
+draft until the complete regression and normal CI establish readiness. A fresh full20 arm is allowed only after both selected
 questions pass.
+
+## Passing pair and complete regression snapshot, 19:43 UTC
+
+Trial06 scored2/2 with the identical trial05 template, Pro HIGH reader/judge,
+and the compact catalog. Evaluator charge was USD0.0517141100; no question or
+judge failure occurred. Both actual model-role counts are two. Native GCS and
+independent download verification of all six archives completed19:43:25 UTC,
+including original images/readings, unchanged source state and comparison traces.
+This single comparison does not isolate stochastic answer trajectories from the
+catalog change; it is a development trigger, not a causal accuracy claim.
+
+Full06 began19:43:38 UTC with eight answer workers, the exact tested template
+and renderer behavior, both Pro HIGH roles and a USD2.50 evaluator admission
+stop. All20 answers are newly generated, with no carryover from the passing
+pair. The runtime remains the immutable tested aec35494f revision; commit
+efe52d676 makes that same explicit template canonical without changing its
+reader behavior. The current canonical empty-trace prompt is32564 characters;
+135833 repeated schema characters are still removed when holding that template
+fixed. The earlier165157/29324 comparison held the previous template fixed.
+
+Final results, actual cost, complete generated answers and verified GCS receipts
+belong to cloud PR959's `experiments/locomo-targeted-development-20261111/`
+workbook and trials/full06. The snapshot here establishes no complete20 result
+or held-out benchmark claim. Paid ingestion, image conversion and Sol remain
+outside this authorized answer-only experiment.
