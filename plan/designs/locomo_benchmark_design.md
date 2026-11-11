@@ -32,7 +32,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v43 (full-v43)
+protocol                 RS-LoCoMo-Full-v44 (full-v44)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -537,7 +537,7 @@ before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-Full-v43 requires the best-supported answer to each scored question, including
+Full-v44 requires the best-supported answer to each scored question, including
 an inference when the conclusion is not stated verbatim. Prefer direct statements,
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
@@ -576,7 +576,16 @@ requires its supported subject, premise, setting or theme, rather than praise
 about its quality. These are general answer-agent instructions, not source
 rewriting, a reranker, forced answer pooling or dataset-specific answer examples.
 
-Full-v43 records these prompt changes under a new identity; the restored
+For constraint deductions, name the compatible category and the criteria that
+make it compatible; examples illustrate that category rather than replacing it.
+For ambiguous preferences/references, independently search claims and sources
+for credible candidates across sessions before narrowing every follow-up to one
+name, then choose the supported referent or preserve a supported ambiguity.
+This does not require pooling casual mentions. Retain relevant limitations with
+the source's qualifiers; a related restriction does not establish a stronger
+category or diagnosis. These rules contain no benchmark-specific values.
+
+Full-v44 records these prompt changes under a new identity; the restored
 Full-v42 judge, models, retrieval depth, eight-tool/nine-model-call cap and all
 ingestion/reuse generations stay unchanged. Missing context can require another
 public tool read and reader continuation within that same cap. Budget exhaustion
@@ -617,12 +626,12 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v43 \
+  --protocol full-v44 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Execution uses `full-v43`; later stages
+`--protocol` exists only on `prepare`. Execution uses `full-v44`; later stages
 read the immutable current choice from the saved run. Historical protocols are
 read-only and cannot be selected as an execution fallback.
 

@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v43"
-DEFAULT_PROTOCOL_KEY: Final = "full-v43"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-dialogue-context-v43"
-"""Current Full-v43: inspect complete dialogue and attachment context."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v44"
+DEFAULT_PROTOCOL_KEY: Final = "full-v44"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-evidence-completeness-v44"
+"""Current Full-v44: preserve complete constraints and compare candidate references."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -305,6 +305,12 @@ When a question asks about a superlative (e.g. what someone enjoys "most", "best
 or considers their "favorite" or "primary" choice), identify the specific option
 the speaker singled out with that superlative rather than pooling all mentioned
 items or categories.
+Before committing to a preference or resolving an ambiguous reference, perform
+an independent claims/source search for other credible candidates in the requested
+class across sessions. Do not narrow every follow-up query to the first candidate's
+title or name. Compare the candidates against the question and source context,
+then give the best-supported referent or preserve a supported ambiguity. Casual
+mentions alone do not establish additional answers.
 
 When asked what a work is about, name its supported subject, premise, setting
 or theme rather than substituting praise or judgments about its quality.
@@ -329,6 +335,11 @@ examine all retrieved passages covering that topic and return the complete union
 of all distinct matching values across all of them. Do not stop after the first
 or highest-ranked match. Exclude merely related facts that do not satisfy the
 question's requested action or relationship.
+Retain relevant limitations or restrictions when the source describes them using
+a related but different category. Preserve the source's qualification rather than
+silently dropping the limitation or relabeling it as a stronger claim. Include it
+only when relevant to the requested property or decision; a related restriction
+does not by itself establish a stricter category or diagnosis.
 
 For questions about shared, mutual, or collective attributes or activities
 (e.g. mutual interests, shared hobbies, joint plans), require explicit evidence
@@ -344,7 +355,9 @@ that the information is missing or answering prematurely.
 For deductive questions involving negative constraints (e.g. finding options
 that avoid stated allergies, conflicts, or restrictions), deduce the compatible
 choices from the stated constraints using sound reasoning rather than answering
-"Unknown".
+"Unknown". Name the compatible category together with its defining criteria;
+representative examples may illustrate that category, but must not replace it.
+Keep these criteria in the concise answer when they determine compatibility.
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
