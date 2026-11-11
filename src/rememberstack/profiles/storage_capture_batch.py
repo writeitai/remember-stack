@@ -9,6 +9,7 @@ from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field
+import time
 
 import psycopg
 from pydantic import SecretStr
@@ -30,6 +31,65 @@ from rememberstack.profiles.managed_storage_capture import CompletedStorageCaptu
 from rememberstack.profiles.managed_storage_capture import replay_completed_capture
 from rememberstack.profiles.managed_storage_capture import StorageCaptureCatalog
 from rememberstack.profiles.storage_capture_profile import ManagedStorageCaptureProfile
+from rememberstack.spine.storage_capture_view import _check_clock_step
+from rememberstack.spine.storage_capture_view import _GUARD_LIFETIME_US
+from rememberstack.spine.storage_capture_view import _prepare
+from rememberstack.spine.storage_capture_view import _read_clock
+from rememberstack.spine.storage_capture_view import NativeCaptureProfile
+from rememberstack.spine.storage_capture_view import NativeStorageCaptureRefused
+
+
+def _prepared_collector(
+    *,
+    connect: Callable[[], psycopg.Connection],
+    request: StorageCaptureRequest,
+    profile: NativeCaptureProfile,
+    check_active: Callable[[], None],
+) -> Callable[[], psycopg.Connection]:
+    """Wait on the original idle guard session before the finite native cut.
+
+    The fixed D63 host admits at most60s preparation (host_cut_linux.go), while
+    the existing native guard admits at most10s including its release margin.
+    Only autocommit native clock reads occur here. Return that SAME connection
+    as the original guard; no RR/lock/view is acquired, borrowed or replaced.
+    """
+    first = True
+
+    def ordinary_connection() -> psycopg.Connection:
+        """Open exactly one guard and one reader under their normal ownership."""
+        nonlocal first
+        check_active()
+        connection = connect()
+        if not first:
+            return connection
+        first = False
+        try:
+            _prepare(connection=connection, transaction_timeout_ms=10_000)
+            previous = _read_clock(connection=connection)
+            cut, error = int(request.cut_at_unix_us), int(profile.clock_error_us)
+            if cut - previous.unix_us > 60_000_000 or previous.unix_us >= cut - error:
+                raise NativeStorageCaptureRefused(
+                    "native_cut_outside_preparation_budget"
+                )
+            deadline = cut + error + profile.release_margin_us
+            while deadline - previous.unix_us > _GUARD_LIFETIME_US:
+                check_active()
+                time.sleep(
+                    min(
+                        (deadline - previous.unix_us - _GUARD_LIFETIME_US) / 1_000_000,
+                        0.025,
+                    )
+                )
+                current = _read_clock(connection=connection)
+                _check_clock_step(previous=previous, current=current, error_us=error)
+                previous = current
+            check_active()
+            return connection
+        except BaseException:
+            connection.close()
+            raise
+
+    return ordinary_connection
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -150,7 +210,12 @@ def capture_storage_batch(
         ) as provider:
             for index, item in pending:
                 catalog = StorageCaptureCatalog(
-                    collector_connect=item.collector_connect,
+                    collector_connect=_prepared_collector(
+                        connect=item.collector_connect,
+                        request=item.request,
+                        profile=item.profile.native,
+                        check_active=provider.check_active,
+                    ),
                     provider=provider,
                     stores=item.stores,
                     evidence_store=item.evidence_store,

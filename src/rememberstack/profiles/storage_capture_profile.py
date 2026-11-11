@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Final
 from typing import Literal
 
 from pydantic import BaseModel
@@ -25,6 +26,9 @@ from rememberstack.model.storage_capture import StoragePurpose
 from rememberstack.model.storage_capture import UUID32
 from rememberstack.spine.storage_capture_guard import _ROOTS
 from rememberstack.spine.storage_capture_view import NativeCaptureProfile
+
+STORAGE_CAPTURE_PAGE_MEMBER_LIMIT: Final = 1024
+"""The current managed canonical member page bound, shared with the receiver."""
 
 _PG_INCLUDED = (
     "aliases",

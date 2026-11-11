@@ -332,6 +332,11 @@ class FsitStorageCaptureSource:
             self._cancelled = True
             self._condition.notify_all()
 
+    def check_active(self) -> None:
+        """Let pre-guard native preparation stop promptly on batch cancellation."""
+        with self._condition:
+            self._check_live()
+
     def check_complete(self) -> None:
         """Require every original group and successful EOF before batch exit."""
         with self._condition:

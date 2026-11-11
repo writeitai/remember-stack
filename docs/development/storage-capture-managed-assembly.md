@@ -62,6 +62,12 @@ only its original provider group; other scopes keep their original evidence.
 Transport/protocol loss cancels the shared stream. A successful worker closes
 its native view, then waits for the full original provider EOF and process exit
 before publishing durable completion. No retry or substitute cut is created.
+The fixed provider admits up to 60 seconds of preparation. Each worker waits
+on its first idle ordinary connection using autocommit native clock reads and
+continuity checks, outside any guard or RR view, until the existing 10-second
+native guard deadline fits. That same connection becomes the original guard;
+the worker then opens its normal second reader. No third session, host-wall
+clock, early view or later reconnection is used.
 
 `rememberstack.adapters.fsit_storage_capture_transport` owns the single closed
 canonical manifest/page/result-frame decoder and ordered group consumption.
@@ -92,6 +98,10 @@ bindings in `artifacts`, `corpus`, `forget`, `raw` role order. Load independentl
 accepted exact source/schema/image/clock documents and bounds; generating
 these models never establishes their qualification. No native witness or
 persistence fallback is manufactured inside the engine.
+`STORAGE_CAPTURE_PAGE_MEMBER_LIMIT` in
+`rememberstack.profiles.storage_capture_profile` is the current canonical
+member bound used by both encoding and checking; the runtime imports this
+actual value for its separately registered receiver profile.
 
 The typed current profile/source mapping is in
 `rememberstack.profiles.storage_capture_profile`; the supervising agent's exact

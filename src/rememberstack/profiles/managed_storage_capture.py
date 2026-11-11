@@ -62,6 +62,9 @@ from rememberstack.profiles.storage_capture_profile import build_managed_storage
 from rememberstack.profiles.storage_capture_profile import current_class_rules
 from rememberstack.profiles.storage_capture_profile import ManagedStorageCaptureProfile
 from rememberstack.profiles.storage_capture_profile import profile_bytes
+from rememberstack.profiles.storage_capture_profile import (
+    STORAGE_CAPTURE_PAGE_MEMBER_LIMIT,
+)
 from rememberstack.spine.storage_capture_catalog import NativeStoreReference
 from rememberstack.spine.storage_capture_view import NativeCapturedStorageView
 from rememberstack.spine.storage_capture_view import NativeStorageCaptureCatalog
@@ -865,7 +868,9 @@ class StorageCaptureCatalog:
             spool.db.execute("SELECT kind,count(*) FROM members GROUP BY kind")
         )
         for page in iter_capture_pages(
-            request=request, members=spool.members(), page_member_limit=1024
+            request=request,
+            members=spool.members(),
+            page_member_limit=STORAGE_CAPTURE_PAGE_MEMBER_LIMIT,
         ):
             self._evidence.persist_page(
                 capture_id=capture_id,
@@ -945,7 +950,11 @@ def _check_durable_pages(
                 )
             yield page
 
-    check_capture_encoding(manifest=manifest, pages=pages(), page_member_limit=1024)
+    check_capture_encoding(
+        manifest=manifest,
+        pages=pages(),
+        page_member_limit=STORAGE_CAPTURE_PAGE_MEMBER_LIMIT,
+    )
 
 
 def replay_completed_capture(
