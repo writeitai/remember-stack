@@ -4168,6 +4168,16 @@ projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
 
+> **Fact-writer concurrency amendment (2026-11-11).** Labeling and embedding
+> reserve only bounded batches of pending fact IDs, ordered consistently,
+> through provider I/O without an open database transaction. Overlapping jobs
+> recheck durable checkpoints after waiting; unrelated facts in one project
+> proceed concurrently. Conditional natural-row writes still reject changed
+> or deleted inputs. The project-wide label mutex is removed, with no reuse
+> generation or embedding rebuild. Contract and cutover:
+> [PostgreSQL P1 §7.1](plan/designs/postgres_p1_search_projection_design.md#71-concurrent-fact-labeling-and-embedding);
+> [analysis](plan/analysis/fact_label_concurrency_20261111.md).
+>
 > **D142 refinement (2026-10-21, proposed).** Ranking and authority
 > confirmation stay in PostgreSQL but run as index-cursor nomination plus
 > primary-key confirmation, continued until `k` eligible rows or a disclosed

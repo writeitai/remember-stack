@@ -225,6 +225,52 @@ does.
 
 No request path writes, repairs, builds indexes, or calls an LLM.
 
+### 7.1 Concurrent fact labeling and embedding
+
+Fact projection coordinates by the facts being changed, not by one mutex for
+the entire project. Different document/application jobs can share a fact, so
+conditional writes alone are insufficient to avoid paying for duplicate
+embedding calls. The handler first discovers only facts still needing a label
+or the configured vector, using its existing evidence/document, application
+receipt or single-fact scope. Already current shared facts are not reserved.
+
+It deduplicates and orders `(kind, fact_id)` and processes batches no larger
+than `P1Settings.embed_batch_size`. Each batch acquires session advisory locks
+keyed by project, kind and fact ID in a consistent order. Unrelated batches
+can call the provider concurrently. A waiter re-reads label/vector eligibility
+after acquisition and skips a fact another job already completed. It processes
+only those reserved IDs; a fact application arriving after discovery owns its
+own receipt-scoped repair wake, rather than expanding the current locked set.
+
+The bounded reservation covers both label stamping and embedding publication,
+including the provider wait. Its dedicated connection has no SQL transaction
+open during provider I/O; authority rows are not held locked for that wait.
+The label is conditionally checkpointed first. Each vector and its model,
+policy and input hash are then written together on the natural fact row,
+only while its label text and validity still match. Changed or deleted facts
+reject the stale output without recreating a forgotten row. A job releases
+its batch before reserving the next one. Partial acquisition and provider
+failure release all attempted keys; disconnect releases server session locks.
+
+This preserves incremental checkpoints: a retry selects missing work and
+reuses completed vectors. It does not promise exactly-once provider billing
+across crashes or uncertain responses. No text/model/input-policy/reuse
+generation changes, vector rebuild or document re-ingestion follows from
+changing coordination. Replace label workers together when changing lock
+namespaces; no old project-lock execution mode or rollout coordinator is
+retained. Existing completed work remains reusable.
+
+Entity-profile refresh still runs after fact reservations are released, for
+the original work scope even if no fact vector remains to embed. It keeps
+its own optimistic input/identity checks. This change does not remove that
+separate source of contention or guarantee linear speedup with worker count.
+
+Real PostgreSQL acceptance covers concurrent provider entry for disjoint facts
+in one project, one paid embedding for an overlap, stable lock ordering,
+failure cleanup, unchanged generation/reuse behavior and rejection of stale
+or deleted inputs. Source reasoning and alternatives are in the
+[fact-concurrency analysis](../analysis/fact_label_concurrency_20261111.md).
+
 ## 8. Query and filtering contract
 
 ### 8.1 What a ranked search must return

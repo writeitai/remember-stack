@@ -94,6 +94,14 @@ Plan for this. An agent that ingests a note and immediately asks about it
 will not find it. Write first, then wait for readiness before relying on the
 content.
 
+Fact labeling and embedding reserve only bounded batches of facts that still
+need processing. Jobs for unrelated facts can make embedding calls
+concurrently; jobs sharing a fact wait and then reuse a completed vector.
+The provider wait holds no SQL transaction. Writes still reject changed or
+deleted inputs, and successful batches remain checkpointed on retry. Worker
+count, overlapping facts, entity-profile refresh and provider latency still
+bound throughput; increasing concurrency does not guarantee a linear speedup.
+
 ## No model on the read path
 
 Once processing is done, reading is cheap and repeatable. The
