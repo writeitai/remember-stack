@@ -146,6 +146,28 @@ def test_answer_agent_prompt_contains_only_public_tools_trace_and_question() -> 
     assert '"ranking"' not in prompt
 
 
+def test_reader_catalog_keeps_inputs_and_contracts_without_output_schema() -> None:
+    """Repeated response schemas leave only the displayed tool catalog."""
+    import json
+
+    tool = ToolDescriptor(
+        name="read_note",
+        description="Read an attributed note",
+        input_schema={"type": "object", "properties": {"note": {"type": "string"}}},
+        result_schema={"type": "object", "properties": {"private_shape": {"type": "string"}}},
+        result_contract="envelope",
+        output_grain="evidence",
+        answer_intent="assertion_history",
+    )
+    prompt = render_answer_agent_prompt(question="What?", tools=(tool,), trace=())
+    catalog = prompt.split("PUBLIC TOOLS:\n", 1)[1].split("\n\nTOOL TRACE", 1)[0]
+    assert json.loads(catalog) == [
+        tool.model_dump(mode="json", exclude={"result_schema"})
+    ]
+    assert "private_shape" not in catalog
+    assert tool.result_schema["properties"] == {"private_shape": {"type": "string"}}
+
+
 def test_empty_answer_agent_trace_is_explicit_json_array() -> None:
     prompt = render_answer_agent_prompt(question="Unknown?", tools=(), trace=())
     assert "TOOL TRACE SO FAR:\n[]" in prompt
@@ -351,8 +373,8 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
 
 def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v44"
-    assert DEFAULT_PROTOCOL_KEY == "full-v44"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v45"
+    assert DEFAULT_PROTOCOL_KEY == "full-v45"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -486,10 +508,10 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v44",)
-    protocol = PROTOCOL_REGISTRY["full-v44"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v45",)
+    protocol = PROTOCOL_REGISTRY["full-v45"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v44"
+    assert protocol.name == "RS-LoCoMo-Full-v45"
     assert protocol.answer_agent_model == "openai/gpt-6-luna"
     assert protocol.answer_agent_reasoning_effort == "high"
     assert protocol.judge_reasoning_effort == "high"
@@ -504,6 +526,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
         "full-v41",
         "full-v42",
         "full-v43",
+        "full-v44",
     ):
         with pytest.raises(ValueError, match="retired or unknown protocol"):
             protocol_for_key(cast(ProtocolKey, retired_key))
@@ -539,7 +562,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v44"]
+    assert selected == ["full-v45"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -714,7 +737,7 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v44")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v45")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 

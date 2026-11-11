@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v44"
-DEFAULT_PROTOCOL_KEY: Final = "full-v44"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-evidence-completeness-v44"
-"""Current Full-v44: preserve complete constraints and compare candidate references."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v45"
+DEFAULT_PROTOCOL_KEY: Final = "full-v45"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-reader-catalog-v45"
+"""Current Full-v45: omit repeated output schemas from the reader catalog."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -588,7 +588,9 @@ def render_answer_agent_prompt(
             for tool in tools
         ]
         if mcp_tool_shape
-        else [tool.model_dump(mode="json") for tool in tools]
+        else [
+            tool.model_dump(mode="json", exclude={"result_schema"}) for tool in tools
+        ]
     )
     tool_payload = json.dumps(
         rendered_tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")

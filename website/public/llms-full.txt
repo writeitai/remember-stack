@@ -19688,7 +19688,7 @@ model.
 **Warning:**
 
 No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v44`. The numbers under [Recorded results](#recorded-results)
+`RS-LoCoMo-Full-v45`. The numbers under [Recorded results](#recorded-results)
 belong to earlier protocols and earlier engine builds. Do not compare them
 with other systems' published scores.
 
@@ -19776,7 +19776,7 @@ The summary reports:
 
 ### The current protocol
 
-Execution uses one profile, `RS-LoCoMo-Full-v44` (key `full-v44`). It selects
+Execution uses one profile, `RS-LoCoMo-Full-v45` (key `full-v45`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
 answering and judging. All these Luna seats prefer OpenAI Flex and permit
@@ -19831,7 +19831,7 @@ still stop preparation. Frozen run inputs are independent of ambient caches
 and are included by the ordinary GCS run archive. Changed image input requires
 a new run and fresh ingestion. Image restoration keeps retrieval budgets and
 core generations unchanged. Full-v42 additionally restores the historical
-branch's semantic judge template. Full-v44 extends the answer instructions
+branch's semantic judge template. Full-v45 extends the answer instructions
 without changing that judge or the models.
 
 The answerer checks question completeness, distinct events and participants,
@@ -19843,6 +19843,11 @@ asked what it is about. These are prompt instructions within the existing
 tool/model-call budgets, not a reranker or an accuracy guarantee. No score
 is established for this protocol by its offline tests. The partial historical
 campaign remains a separate result.
+
+The reader's displayed tool catalog retains input schemas and tool contracts,
+but omits repeated output JSON Schemas. Public tool schemas, runtime validation
+and retrieved evidence remain complete. Full-v45 records this prompt-rendering
+change; a smaller prompt alone does not establish a score or latency improvement.
 
 ### Independent Mem0-like grading of saved answers
 
@@ -19925,7 +19930,7 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-This results table contains no protocol after v18. The Full-v44 prompt
+This results table contains no protocol after v18. The Full-v45 prompt
 change establishes no score. Any additional published result must identify
 its protocol, revision, tier, cost and failure counts.
 
@@ -19970,7 +19975,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v44 \
+  --output .benchmark-runs/smoke --protocol full-v45 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -20003,7 +20008,7 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v44 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
+LOCOMO_PROTOCOL=full-v45 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
   LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```

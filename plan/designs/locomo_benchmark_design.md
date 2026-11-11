@@ -32,7 +32,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v44 (full-v44)
+protocol                 RS-LoCoMo-Full-v45 (full-v45)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -537,7 +537,7 @@ before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-Full-v44 requires the best-supported answer to each scored question, including
+Full-v45 requires the best-supported answer to each scored question, including
 an inference when the conclusion is not stated verbatim. Prefer direct statements,
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
@@ -597,7 +597,7 @@ relaxes a caller's explicit entity filter, and broader retrieval does not prove
 attribution. This conditional search uses the existing public tools and the
 same call budget; it adds no ranking model or ingestion work.
 
-Full-v44 records these prompt changes under a new identity; the restored
+Full-v45 records these prompt changes under a new identity; the restored
 Full-v42 judge, models, retrieval depth, eight-tool/nine-model-call cap and all
 ingestion/reuse generations stay unchanged. Missing context can require another
 public tool read and reader continuation within that same cap. Budget exhaustion
@@ -609,6 +609,17 @@ when several retrieved values each satisfy the requested action or
 relationship, include every one, while excluding adjacent facts that do not.
 The harness does not attempt semantic list-completeness classification and
 adds no retry; this remains answer-agent prompt discipline.
+
+The ordinary reader's displayed tool catalog omits each descriptor's complete
+`result_schema`, which otherwise repeats large response envelopes on every
+continuation. It retains the full input schema and descriptor contracts, grain,
+intent and descriptions. Public schemas, catalog hashing, runtime validation
+and durable tool records remain complete. MCP-shaped catalogs are unchanged.
+This rendering change receives the Full-v45 adapter identity; it changes no
+paid ingestion input or reuse generation. The reader observes actual typed
+response fields in its unfiltered trace. Omitting schemas establishes neither
+better answers nor faster inference; those need separate development evidence.
+See [the analysis](../analysis/locomo_reader_catalog_projection_20261111.md).
 
 The answer agent sees a compact projection of each trace response: all facts,
 claims, chunks, sources, timestamps, freshness, negatives, truncation, and
@@ -638,12 +649,12 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v44 \
+  --protocol full-v45 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Execution uses `full-v44`; later stages
+`--protocol` exists only on `prepare`. Execution uses `full-v45`; later stages
 read the immutable current choice from the saved run. Historical protocols are
 read-only and cannot be selected as an execution fallback.
 
