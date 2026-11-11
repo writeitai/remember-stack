@@ -121,13 +121,20 @@ provider callback/API is needed.
 
 ## 3. Provider boundary and complete matching
 
-The managed adapter consumes fsit D63's one native capture protocol for the
-exact four distinct raw/artifacts/corpus/forget filesystem IDs in one
-organisation and cell. Its request remains fsit-capture-v1 with the existing
+The provider capability captures one nonempty exact set of distinct filesystem
+IDs in one organisation and cell. Cardinality belongs to its qualified native
+transport/batch/work bounds, not a customer quota or an integration's role count.
+The managed adapter consumes that one fsit D63 protocol and independently
+requires its exact four distinct raw/artifacts/corpus/forget role filesystems.
+It rejects missing roles, extra requested scope and implicit sibling expansion;
+other provider consumers need not pad their own valid scope to four.
+Its request remains fsit-capture-v1 with the existing
 organisation UUID32, literal cell ID, sorted canonical filesystem IDs and
 cut_at_unix_us. Each filesystem is sixteen bytes encoded as 26 lowercase
 unpadded base32 characters; decode/re-encode exactly. Path and alias framing
 uses those decoded bytes, never a synthetic UUID alias.
+The same four-ID request retains exactly the same canonical bytes and hashes;
+there is one current protocol/decoder, not a four-ID compatibility path.
 
 The agreed item boundary has exactly filesystem_id, path_id, version_id,
 entry_kind, logical_bytes, inline_bytes, alias_group and storage_flags.
@@ -144,8 +151,9 @@ The provider owns the decoder and durable page/manifest wire implementation;
 the engine adapter validates that one versioned protocol, not a second
 decoder or substitute API. The complete manifest binds request/scope,
 qualified provider/filer/schema profile, actual writer/process lifecycle,
-both original views, clock/guard/release evidence, all four explicit scoped
-sets, counts and ordered page digests, completion and expiry. One empty set is
+both original views, clock/guard/release evidence, one explicit scoped set per
+requested filesystem (four under the managed binding), counts and ordered page
+digests, completion and expiry. One empty set is
 not a missing set. Page ordinals are contiguous and replay returns the exact
 same immutable result. The authenticated transport/current scoped grant
 proves origin/authority; a digest alone does not.
@@ -406,7 +414,8 @@ extraction; and fixed ordinary LOGIN authority without owner credentials.
 Retain two-version/provider-call D56 tests; no content or paid reuse key changes.
 
 Managed deployment requires the matching accepted UMC D55/D102 measurement and
-eligibility amendment before implementing/enabling that adapter. Its current
+eligibility amendment and the provider's matching accepted exact-set contract
+before implementing/enabling that adapter. Its current
 three-credit rate, usable-time quantity, exclusions, held-only/no-debt behavior,
 processing economics and 48-hour safety policy survive. UMC must replace the
 retired-journal/counter-sum/processing-watermark path atomically; this document
