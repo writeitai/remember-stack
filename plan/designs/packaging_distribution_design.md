@@ -94,6 +94,14 @@ published to PyPI (D108).
 
 ## 3. Task execution — one model, two delivery shells
 
+The read-only [D152 storage consumer](storage_capture_consumer_design.md)
+is an engine operational capability, not a new queue or service. Both
+maintained substrate families must meet the same qualified capture contract;
+an unsupported configured store refuses evidence rather than falling back to
+live listing. Existing unmetered memory semantics, processing admission and
+hard-forget authority remain. Shipping capture requires its native/profile
+tests and matching operator contract; design acceptance does not advertise it.
+
 **The unifying rule (this section's core, refining D61's queue-port row):**
 
 > **Work is Postgres rows; the queue port only delivers wake-ups.** `processing_state` (D12)

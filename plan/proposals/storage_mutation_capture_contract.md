@@ -1,6 +1,14 @@
 # Engine storage mutation and capture contract
 
 **Status: non-binding proposal; no implementation permission.**
+The read-only consumer is selected separately by
+[D152](../designs/storage_capture_consumer_design.md). This document retains
+the unchosen broader ResourceEnvelope/ResourceProfile financial permissions
+and all-writer intent/disposition alternative. It does not supersede D152 or
+define a second executable capture protocol. Extending D152's closed member
+set requires an explicit changed contract before implementation; the draft
+combined manifest/page/ACK shapes below cannot reuse the accepted version
+with different fields.
 [Analysis, object writers and source boundary](../analysis/storage_classification_and_admission.md).
 [Observed schema/fork inventory](../analysis/storage_inventory/README.md).
 **Binding-adoption trigger:** agree the full typed contracts and selected

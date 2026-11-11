@@ -117,3 +117,10 @@ For the non-binding retained-resource inventory and independent storage
 admission investigation, see [the analysis](analysis/storage_classification_and_admission.md)
 and [candidate contract](proposals/storage_mutation_capture_contract.md). Neither
 changes accepted billing policy or establishes a shipped capture capability.
+
+For engine-owned retained-resource classification, native/provider capture
+matching and exact storage evidence acknowledgement, see the
+[consumer contract](designs/storage_capture_consumer_design.md) and its
+[analysis](analysis/storage_capture_consumer_20261111.md). It extends D61's
+substrate evidence boundary without adopting the broader financial-permission
+proposal or claiming that capture is implemented or qualified.

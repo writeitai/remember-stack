@@ -2131,6 +2131,12 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
 
+> **D152 measurement extension.** Retained-resource evidence is a narrow
+> substrate capability. Its engine-owned classification/native capture and
+> exact ACK contract are defined in
+> [storage capture](plan/designs/storage_capture_consumer_design.md).
+> Provider facts do not author memory truth or customer charges.
+
 > **D98 amendment (2026-08-27).** D61's no-engine-abstraction principle
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
@@ -2150,6 +2156,7 @@ and the **reference adapter** (which is also what the cloud offering runs):
 | Telemetry export | OTLP / stdout | managed collection |
 | Auth perimeter | API keys (the D50 trust model) | swappable middleware (SSO lives outside the library) |
 | Hard-forget manifest + store purge capabilities (D74/D94) | dedicated append-only manifest root + LocalFS/local-Git erasure; PostgreSQL transaction scrubs P1 state | separately durable manifest store + reference object/mount/K erasure; PostgreSQL transaction scrubs P1 state |
+| Retained-resource evidence (D152; measurement only) | qualified native local/store capture capability | authenticated scoped native-provider capture capability |
 
 **Anti-goal — the engine is not abstracted.** PostgreSQL 19 with
 pgvector/pg_textsearch and the live relational/bounded-frontier graph (SQL/PGQ until the D98 RC 1 amendment), the E/K/P data model,
@@ -7756,7 +7763,8 @@ will read the file is known.
   datasets) is `doc-text`: the whitespace-normalized character count of the
   `document.md` it produced. These routes call no model provider, so counting their
   output still comes before every paid stage (structure models, embeddings,
-  extraction). `card` reads nothing and is free: no measurement. Any other route has no
+  extraction). `card` reads nothing and has no processing measurement or processing
+  charge; retained resources still follow D152 independently. Any other route has no
   managed cost class, and a metered deployment fails the version
   (`rate_class_unavailable`) rather than run provider work it cannot bill.
 - *Parking.* After recording the measurement the convert work parks with the defer
@@ -7835,3 +7843,42 @@ throughput require separate measurements.
 **Analysis:** [parallel identity resolution](plan/analysis/parallel_identity_resolution.md).
 **Amends:** D99 whole-snapshot equality and D102 in-flight binding invalidation;
 retains D95/D100 identity decisions, D21 reversible merges and D74/D135 deletion.
+
+## D152. Engine-owned storage capture consumes complete provider evidence
+
+**Status:** accepted on this PR's coordinated merge; not implemented.
+**Date:** 2026-11-11. **Extends:** D61's substrate evidence boundary.
+**Design:** [retained-storage consumer](plan/designs/storage_capture_consumer_design.md).
+**Analysis:** [source and scope](plan/analysis/storage_capture_consumer_20261111.md).
+
+**Context.** A provider's complete entry inventory does not know E/K/P purpose;
+a processing receipt does not describe every retained copy or actual native
+commit. A maximum processing sequence and four provider counters are therefore
+insufficient storage evidence. A read-only recovery observation must remain
+available when ordinary customer growth is parked.
+
+**Decision.** The complete OSS engine owns native allocation/reference capture,
+resource purpose, matching to qualified scoped provider evidence and exact
+immutable evidence/ACK membership. Adapter facts remain separate from customer
+funding and from memory truth. One bounded original native engine view and
+matching provider witness cover the requested instant; complete paged extraction
+follows release of the short guard. No live-listing or watermark fallback is
+retained. The provider boundary and closed content-free engine records are
+specified in the design, including native filesystem identity distinctions.
+The provider captures a nonempty exact same-organisation/cell filesystem set;
+the managed adapter independently keeps its four distinct role binding.
+
+**Alternatives.** Counter sums conflate canonical, staged and replicated data;
+processing sequence prefixes admit uncommitted holes; row-byte estimates change
+the allocated quantity; a cloud-side classifier moves memory correctness outside
+D60. Making this observation depend on a new all-writer financial permission
+system adds a different unchosen contract. That broader proposal remains explicit.
+
+**Consequences.** Current prices, usable-time quantity, no-debt/held-only
+settlement, processing terms and the operator's real 48-hour rule are unchanged.
+The managed adapter requires the matching accepted UMC measurement/eligibility
+amendment and genuine native/profile qualification. This accepts no new quota,
+waiver, public capability or running implementation. D56 source/reuse identities
+and D74 privacy authority survive unchanged; capture metadata never enters paid
+processing keys. Provider/native capability, classification and cost evidence
+must qualify before advertising chargeable evidence.
