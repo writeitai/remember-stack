@@ -97,7 +97,7 @@ coordinator. If a qualified current workload exposes a positive cost with no
 permitted funding source, that exact vector goes to an explicit operator
 decision; a guessed number is not evidence.
 
-This checkpoint changes analysis and navigation only. No implementation,
+This work changes the planning corpus only. No implementation,
 schema, credential, live resource, public documentation, paid reuse input or
 customer-facing claim has changed.
 
