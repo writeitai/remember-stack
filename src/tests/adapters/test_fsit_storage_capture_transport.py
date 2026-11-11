@@ -19,8 +19,13 @@ from pydantic import SecretStr
 import pytest
 
 from rememberstack.adapters.fsit_storage_capture import provider_canonical_bytes
+from rememberstack.adapters.fsit_storage_capture import provider_page_digest
 from rememberstack.adapters.fsit_storage_capture import provider_record_digest
+from rememberstack.adapters.fsit_storage_capture import ProviderItem
 from rememberstack.adapters.fsit_storage_capture import ProviderManifest
+from rememberstack.adapters.fsit_storage_capture import ProviderPage
+from rememberstack.adapters.fsit_storage_capture import ProviderPageReference
+from rememberstack.adapters.fsit_storage_capture import ProviderStorageFlags
 from rememberstack.adapters.fsit_storage_capture_transport import (
     open_provider_capture_batch,
 )
@@ -82,25 +87,96 @@ def _scope(*, manifest: ProviderManifest) -> ProviderCaptureScope:
     )
 
 
+def _one_page(*, manifest: ProviderManifest) -> tuple[ProviderManifest, ProviderPage]:
+    """Add one synthetic regular item to exercise a partially consumed group."""
+    item = ProviderItem(
+        alias_group=None,
+        entry_kind="regular",
+        filesystem_id=manifest.request.filesystem_ids[0],
+        inline_bytes="0",
+        logical_bytes="0",
+        path_id="a" * 64,
+        version_id="b" * 64,
+        storage_flags=ProviderStorageFlags(
+            chunk_backed=False,
+            chunk_manifest=False,
+            inline_content=False,
+            metadata_gzip=False,
+            remote_backed=False,
+        ),
+    )
+    page = ProviderPage(
+        capture_id=manifest.capture_id,
+        item_count="1",
+        items=(item,),
+        page_digest="0" * 64,
+        page_ordinal="0",
+        protocol="fsit-page-v1",
+    )
+    page = page.model_copy(update={"page_digest": provider_page_digest(page=page)})
+    manifest = manifest.model_copy(
+        update={
+            "item_count": "1",
+            "page_count": "1",
+            "pages": (
+                ProviderPageReference(
+                    item_count="1", page_digest=page.page_digest, page_ordinal="0"
+                ),
+            ),
+            "sets": (
+                manifest.sets[0].model_copy(
+                    update={"entry_count": "1", "root_materialized": True}
+                ),
+                *manifest.sets[1:],
+            ),
+        }
+    )
+    manifest = manifest.model_copy(
+        update={
+            "manifest_digest": provider_record_digest(
+                domain="fsit-manifest-v1", record=manifest, omit="manifest_digest"
+            )
+        }
+    )
+    return manifest, page
+
+
 class _RawTransport:
     """Finite in-test bytes, never an operational provider implementation."""
 
-    def __init__(self, *, manifests: tuple[ProviderManifest, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        manifests: tuple[ProviderManifest, ...],
+        pages: tuple[ProviderPage, ...] = (),
+    ) -> None:
         """Serialize the sole accepted fixed-host frame spelling."""
-        self.lines = iter(
-            json.dumps(
+        frames: list[dict[str, object]] = []
+        for manifest in manifests:
+            frames.append(
                 {
                     "capture_id": manifest.capture_id,
                     "manifest": manifest.model_dump(mode="json"),
                     "protocol": "fsit-capture-v1",
                     "type": "manifest",
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
+                }
+            )
+            for page in pages:
+                if page.capture_id == manifest.capture_id:
+                    frames.append(
+                        {
+                            "capture_id": manifest.capture_id,
+                            "page": page.model_dump(mode="json"),
+                            "protocol": "fsit-capture-v1",
+                            "type": "page",
+                        }
+                    )
+        self.lines = iter(
+            json.dumps(
+                frame, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode()
             + b"\n"
-            for manifest in manifests
+            for frame in frames
         )
         self.stdin = b""
         self.closed = False
@@ -198,14 +274,18 @@ def test_scope_failure_wakes_other_group_waiter_and_closes_transport() -> None:
 
 def test_local_scope_failure_drains_only_its_group_and_preserves_next() -> None:
     """One Project failure cannot discard the other original provider group."""
-    manifests = (_manifest(organisation="1" * 32), _manifest(organisation="2" * 32))
+    first, page = _one_page(manifest=_manifest(organisation="1" * 32))
+    manifests = (first, _manifest(organisation="2" * 32))
     scopes = tuple(_scope(manifest=manifest) for manifest in manifests)
-    transport = _RawTransport(manifests=manifests)
+    transport = _RawTransport(manifests=manifests, pages=(page,))
     with open_provider_capture_batch(
         transport=transport, scopes=scopes, max_scopes=2, maximum_frame_bytes=65536
     ) as source:
         with pytest.raises(RuntimeError, match="test_project_failure"):
-            with source.capture(request=scopes[0].request):
+            with source.capture(request=scopes[0].request) as pending:
+                manifest = pending.complete()
+                original = pending.iter_pages(manifest=manifest)
+                assert next(original) == page
                 raise RuntimeError("test_project_failure")
         with source.capture(request=scopes[1].request) as pending:
             manifest = pending.complete()

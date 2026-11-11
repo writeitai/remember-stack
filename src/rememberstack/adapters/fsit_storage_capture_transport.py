@@ -26,8 +26,8 @@ from pydantic import SecretStr
 from pydantic import TypeAdapter
 
 from rememberstack.adapters.fsit_storage_capture import check_provider_manifest
-from rememberstack.adapters.fsit_storage_capture import iter_provider_items
 from rememberstack.adapters.fsit_storage_capture import provider_canonical_bytes
+from rememberstack.adapters.fsit_storage_capture import provider_page_digest
 from rememberstack.adapters.fsit_storage_capture import ProviderManifest
 from rememberstack.adapters.fsit_storage_capture import ProviderPage
 from rememberstack.adapters.fsit_storage_capture import ProviderRecord
@@ -171,6 +171,7 @@ class _PendingProviderCapture:
         self._source = source
         self._index = index
         self._manifest: ProviderManifest | None = None
+        self._pages: Iterator[ProviderPage] | None = None
         self._streamed = False
 
     def complete(self) -> ProviderManifest:
@@ -205,9 +206,15 @@ class _PendingProviderCapture:
         return frame.manifest
 
     def iter_pages(self, *, manifest: ProviderManifest) -> Iterator[ProviderPage]:
-        """Stream this exact original group once, retaining no whole page set."""
+        """Return the one original group iterator, retaining no whole page set."""
         if self._manifest != manifest or self._streamed:
             raise ProviderCaptureUnavailable("provider_page_group_state")
+        if self._pages is None:
+            self._pages = self._read_pages(manifest=manifest)
+        return self._pages
+
+    def _read_pages(self, *, manifest: ProviderManifest) -> Iterator[ProviderPage]:
+        """Continue one original page cursor, including after a local failure."""
         source = self._source
         for ordinal in range(int(manifest.page_count)):
             with source._condition:
@@ -218,6 +225,10 @@ class _PendingProviderCapture:
                 or frame.capture_id != manifest.capture_id
                 or frame.page.capture_id != manifest.capture_id
                 or frame.page.page_ordinal != str(ordinal)
+                or frame.page.item_count != str(len(frame.page.items))
+                or frame.page.item_count != manifest.pages[ordinal].item_count
+                or frame.page.page_digest != manifest.pages[ordinal].page_digest
+                or frame.page.page_digest != provider_page_digest(page=frame.page)
             ):
                 raise ProviderCaptureUnavailable("provider_page_frame_context")
             yield frame.page
@@ -227,9 +238,13 @@ class _PendingProviderCapture:
         """Advance only a fully consumed group, checking the last original exit."""
         source = self._source
         if self._index + 1 == len(source._requests):
-            if source._process.read_line(maximum_bytes=source._maximum) is not None:
+            try:
+                trailing = source._process.read_line(maximum_bytes=source._maximum)
+                source._process.check_success()
+            except Exception:
+                raise ProviderCaptureUnavailable("provider_transport_lost") from None
+            if trailing is not None:
                 raise ProviderCaptureUnavailable("provider_stream_trailing_frame")
-            source._process.check_success()
         with source._condition:
             source._check_live()
             self._streamed = True
@@ -252,9 +267,7 @@ class _PendingProviderCapture:
             manifest = self.complete()
         except ProviderScopeUnavailable:
             return
-        for _ in iter_provider_items(
-            manifest=manifest, pages=self.iter_pages(manifest=manifest)
-        ):
+        for _ in self.iter_pages(manifest=manifest):
             pass
 
 
@@ -333,7 +346,10 @@ class FsitStorageCaptureSource:
 
     def _read_frame(self) -> _Frame:
         """Decode exact closed canonical bytes only, without exposing raw input."""
-        line = self._process.read_line(maximum_bytes=self._maximum)
+        try:
+            line = self._process.read_line(maximum_bytes=self._maximum)
+        except Exception:
+            raise ProviderCaptureUnavailable("provider_transport_lost") from None
         if (
             line is None
             or len(line) > self._maximum
