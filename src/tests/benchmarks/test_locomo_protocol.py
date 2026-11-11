@@ -497,7 +497,14 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
     assert protocol.tool_catalog_sha256 == tool_catalog_sha256()
-    for retired_key in ("full-v38", "full-v39", "full-v40", "full-v41", "full-v42"):
+    for retired_key in (
+        "full-v38",
+        "full-v39",
+        "full-v40",
+        "full-v41",
+        "full-v42",
+        "full-v43",
+    ):
         with pytest.raises(ValueError, match="retired or unknown protocol"):
             protocol_for_key(cast(ProtocolKey, retired_key))
         with pytest.raises(ValueError, match="historical protocol.*read-only"):
