@@ -180,3 +180,14 @@ These remaining qualifications are acceptance conditions, not permission to
 ship a partial meter or an invented new customer price/limit. The complete
 engine contract must work for all E/K/P writers and self-host adapters, with
 the operator's physical quantity and cost profile explicitly reconciled.
+
+
+## Resource enforcement and current managed funding
+
+The [resource/funding vectors](storage_resource_enforcement_vectors.md) extend
+this analysis with actual UMC and provider admission/cleanup source. They do
+not equate a temporary request spend lease, a processing growth hold, a
+filesystem quota, a supplier spending cap or cleanup scheduling with durable
+storage authority. Canonical retained raw data and excluded staged/failed
+copies must stay distinct even when processing fails. D55/D102 reconciliation
+and measurable pre-enable gates remain non-binding proposal work.

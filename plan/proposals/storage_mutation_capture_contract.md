@@ -219,8 +219,11 @@ necessary: committing the SHARE guard must not destroy the extraction view,
 and the long reader must not retain that short write-blocking lock. This
 captures allocation at T; it does not reconstruct old physical sizes later.
 
-For the proposed fsit adapter, [fsit #565 at c50b4cd9](https://github.com/writeitai/fsit/blob/c50b4cd9/design/designs/scoped-storage-capture.md)
-is an **unaccepted interface dependency**. Its fixed native batch closes the
+For the proposed fsit adapter, D63 was accepted by [fsit #565 at
+8b71c600](https://github.com/writeitai/fsit/blob/8b71c600/design/designs/scoped-storage-capture.md),
+without implementation or live qualification. Its filesystem-ID framing has a
+source mismatch; [correction checkpoint 666b9e1a](https://github.com/writeitai/fsit/blob/666b9e1a/design/designs/scoped-storage-capture.md)
+is an **unaccepted integration dependency** until coordinated review/merge. Its fixed native batch closes the
 metadata gate, drains/marks it and holds one original read-only owning-role
 `filemeta` SHARE guard across T, then keeps only its two existing extraction
 views for bounded materialisation. Engine processing, money and consumer ACK
@@ -230,7 +233,14 @@ One provider request/witness is matched to one engine capture, not to a later
 present-time filesystem list.
 
 The provider request digest binds protocol, organisation, cell, sorted exact
-four filesystem UUIDs and integer UTC microseconds. Its complete pages include
+four native filesystem IDs and integer UTC microseconds. Organisation and
+engine UUIDs remain 32 lowercase hexadecimal digits. A provider filesystem ID
+is instead sixteen bytes encoded as exactly 26 lowercase unpadded base32
+characters, as `fsit/api/fsit_api/routes_access.py::new_filesystem_id` actually
+creates it. Decode/re-encode exactly; reject alternate case, padding and
+noncanonical pad bits. Scope/ownership/namespace matching uses that literal
+26-character ID, never a synthetic UUID alias. Path/alias hashes frame its
+decoded sixteen bytes, not an ASCII UUID conversion. Its complete pages include
 roots/directories and opaque path/version/alias identities, entry kind, logical
 size and storage-format facts. The engine derives expected path IDs from its
 known keys under that same capture/filesystem scope and matches both ways.
@@ -294,7 +304,8 @@ row lock; revision one has null `previous_digest`. There is no global sequence
 whose allocation could stand in for commit.
 
 Canonical encoding uses UTF-8, sorted fixed ASCII field names, UUID32 lowercase
-hex, checked unsigned 64-bit integer decimal strings, explicit null where
+hex for actual UUID-valued fields (provider filesystem IDs retain their distinct
+canonical base32 type above), checked unsigned 64-bit integer decimal strings, explicit null where
 specified, and no insignificant whitespace. Digest fields use lowercase
 SHA-256 hex. Each record's digest is SHA-256 of its exact contract ASCII bytes,
 NUL, and canonical envelope bytes excluding that envelope's own digest field.
