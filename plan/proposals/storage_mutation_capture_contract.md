@@ -46,8 +46,8 @@ source bytes, connector `(source_kind, source_ref)`, dates, titles, chunk/header
 inputs, content hashes, Selection/Claimify keys or embedding policy/model keys.
 No D56 reuse boundary or generation changes.
 
-The typed intent contains deployment identity, operation kind, exact logical
-owner/reference identities, source/schema/classification/adapter profile,
+The typed intent contains an engine-assigned `authority_request_id`, deployment
+identity, operation kind, exact logical owner/reference identities, source/schema/classification/adapter profile,
 parent authority when applicable, and a conservative checked-integer resource
 envelope. The envelope covers retained allocation, staging/attempt copies and
 metadata/cleanup growth, with explicit validity and finite attempt/operation
@@ -58,11 +58,15 @@ do not substitute logical input length or invent a customer limit.
 
 The operator port authorises that exact intent/envelope before the engine
 starts the first costly write or issues an upload capability. The engine
-records the accepted authority and its digest before executing. Permission
+appends the returned immutable authority binding before executing. The request
+ID exists before admission; the provider-returned authority ID is not an input
+to its own pre-admission intent digest. Permission
 proves resource availability, not an E/K/P mutation. Authority cannot be spent
 by another intent, reused after exhaustion or silently enlarged. A request
-requiring more obtains a new explicit bounded extension before that growth;
-it does not mutate an old financial hold. Metadata used to make this record,
+requiring more creates a new explicitly bounded child intent/authority request
+for the remaining unstarted writes before that growth; it does not mutate the
+original intent or an old financial hold. Its parent link is resource metadata,
+never a new document/content/reuse identity. Metadata used to make this record,
 its indexes, audit and capture artifacts are separately provisioned operator
 resources with their own measured bound, not an infinite free bootstrap path.
 
@@ -250,15 +254,19 @@ Provider capture completion alone is insufficient for engine completion.
 The engine materialises the complete classified reference/catalog view and
 the following exact intent/disposition set visible in that same view: every
 intent with outstanding/cleanup resources, every intent without a disposition,
-and each disposition revision not acknowledged in that view. Already
+each immutable authority binding of those intents, and each disposition
+revision not acknowledged in that view. Every unacknowledged binding is also
+included even if its intent's resources have resolved. Already
 acknowledged resolved revisions need not be emitted again; retained canonical
 resources still appear in the complete reference catalog. Each included
 revision binds its predecessor, so missing history cannot be repaired by
 assuming a numeric prefix. A post-T ACK or new revision cannot retroactively
 change this manifest's membership. Stable pages use contiguous ordinals, explicit counts and
 item/page/set digests. Each disposition member is
-`(storage_mutation_id, disposition_revision, payload_digest)`; admitted intents
-without a disposition have an explicit intent member. Scope/source/schema and
+`(storage_mutation_id, disposition_revision, payload_digest)`; intents and
+authority bindings have their own explicit member kinds/identities/digests.
+An intent without an authority or disposition remains an explicit intent
+member, not a zero-size omission. Scope/source/schema and
 classification versions, native clock/continuity evidence, physical component
 records and the provider manifest digest are bound by the final manifest.
 Explicit empty sets are distinct from absent sets.
@@ -268,14 +276,15 @@ fields or processing-contract reuse:
 
 | Envelope | Required fields |
 | --- | --- |
-| Intent | `contract`, `deployment_id`, `storage_mutation_id`, `operation_kind`, `opaque_owner_ids`, `source_profile`, `schema_profile`, `classification_profile`, `adapter_profile`, `authority_id`, `resource_envelope`, `intent_digest` |
+| Intent | `contract`, `deployment_id`, `storage_mutation_id`, `operation_kind`, `opaque_owner_ids`, `source_profile`, `schema_profile`, `classification_profile`, `adapter_profile`, `authority_request_id`, `resource_envelope`, `intent_digest` |
+| Authority binding | `contract`, `deployment_id`, `storage_mutation_id`, `authority_request_id`, `intent_digest`, `authority_id`, `resource_envelope_digest`, `permission_digest`, `authority_digest` |
 | Disposition | `contract`, `deployment_id`, `storage_mutation_id`, `revision`, `previous_digest`, `intent_digest`, `canonical_effect`, `canonical_evidence_digest`, `resource_disposition`, `resource_evidence_digest`, `authority_id`, `payload_digest` |
 | Page | `contract`, `capture_id`, `page_ordinal`, `members`, `page_digest` |
-| Manifest | `contract`, `capture_id`, `deployment_id`, `cut_at_unix_us`, `clock_error_us`, `profile_digests`, `native_witness_digest`, `provider_manifest_digest`, `component_records`, `intent_count`, `disposition_count`, `page_digests`, `set_digest`, `manifest_digest` |
+| Manifest | `contract`, `capture_id`, `deployment_id`, `cut_at_unix_us`, `clock_error_us`, `profile_digests`, `native_witness_digest`, `provider_manifest_digest`, `component_records`, `intent_count`, `authority_count`, `disposition_count`, `page_digests`, `set_digest`, `manifest_digest` |
 | ACK | `contract`, `capture_id`, `manifest_digest`, `set_digest` |
 
 Contracts respectively use `rememberstack.storage_intent.v1`,
-`rememberstack.storage_disposition.v1`, `rememberstack.storage_page.v1`,
+`rememberstack.storage_authority.v1`, `rememberstack.storage_disposition.v1`, `rememberstack.storage_page.v1`,
 `rememberstack.storage_capture.v1` and `rememberstack.storage_ack.v1`.
 Operation kinds are `ingest`, `reference_change`, `metadata_change`,
 `process_stage`, `knowledge_publish`, `projection_build`, `maintenance`,
@@ -291,7 +300,9 @@ SHA-256 hex. Each record's digest is SHA-256 of its exact contract ASCII bytes,
 NUL, and canonical envelope bytes excluding that envelope's own digest field.
 The set digest uses ASCII `rememberstack.storage_set.v1`, NUL and the ordered
 raw 32-byte page digests. Pages are ordered by member kind, mutation UUID raw
-bytes and revision; member kind distinguishes intent from disposition. A
+bytes and revision (zero only for non-revisioned intent/authority members),
+then authority request UUID where relevant. Member kinds are the literal ASCII
+strings `authority`, `disposition` and `intent`. A
 page digest binds its capture ID and ordinal in its envelope. Counts, duplicate
 membership, contiguous page/revision coverage and every predecessor digest
 must validate relative to the exact prior ACK/predecessor records in the
