@@ -301,8 +301,11 @@ explicitly include zero. The manifest has four component records and an
 ordered page-digest list even for an empty logical store. A missing list is
 not an empty one.
 
-Canonical JSON uses fixed sorted ASCII keys, UTF-8, decimal integer strings,
-UUID32 for engine UUIDs, explicit required nulls and SHA256 lowercase digests.
+Canonical JSON is compact UTF-8 with no insignificant whitespace and
+lexicographically sorted ASCII keys. Contract/identity/enum string values use
+their declared ASCII vocabularies; booleans and required nulls are JSON values.
+Unsigned decimal strings match 0|[1-9][0-9]*, without signs or leading zeroes.
+Engine UUIDs use UUID32 and SHA256 digests use lowercase hexadecimal.
 Each record digest uses its contract's ASCII bytes, NUL and canonical bytes
 excluding its own digest field. Engine request/page/manifest/ACK contracts are
 rememberstack.storage_capture_request.v1, rememberstack.storage_capture_page.v1,
@@ -329,7 +332,9 @@ the document contains that contract and no digest of itself.
 
 Resource evidence points to the exact native allocated-byte record or the
 qualified immutable store item/version under its pinned witness schema, never
-a new live query. A zero component has an explicit empty resource list. The
+a new live query. A proven absent component has an explicit empty resource
+list. Actual zero-byte origins/forks remain resource members with zero amounts;
+they are not dropped merely because their component sums to zero. The
 consumer checks that its unique resource amounts sum to that component and
 that all four components match the manifest. Profile documents are immutable,
 versioned canonical JSON under their declared closed schemas; unknown schemas,
