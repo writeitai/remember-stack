@@ -84,3 +84,9 @@ shows why the actual native guard must qualify maintenance admission: a
 privileged spill grew an index while its heap SHARE lock remained held.
 It does not establish the permissions of ordinary deployed writer LOGINs or
 qualify a replacement capture profile.
+
+The [subsequent ordinary-role and native-index experiment](pg19_bm25_native_guard_20261111.md)
+shows why self-revoking EXECUTE is insufficient for the existing runtime owner,
+and qualifies a no-move SQL index lock plus a fixed, restricted collector
+operation on this disposable fixture. Its physical samples were taken while
+the guard held; it is not a full engine capture or deployed profile.
