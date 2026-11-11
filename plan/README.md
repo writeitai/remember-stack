@@ -94,6 +94,12 @@ and the separate full LoCoMo retrieval budget, start with
 [context operations](designs/open_query_space_design.md#31-platform-operations)
 and the [retrieval-depth analysis](analysis/configurable_context_retrieval_20261022.md).
 
+For the unpublished historical LoCoMo branch, its superseding PRs and the
+general dialogue/attachment instructions carried into Full-v43, see the
+[branch audit](analysis/locomo_unpublished_branch_audit_20261111.md). The
+[benchmark design](designs/locomo_benchmark_design.md) is the current contract;
+the old accumulated development score is not a result for the current profile.
+
 To switch the claims or facts layer off for a deployment, narrow a request to some layers, or
 understand how a layer switched on later is backfilled without re-paying for unchanged text,
 start with [D143's processing layers design](designs/processing_layers_design.md) and its

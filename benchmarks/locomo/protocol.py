@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v42"
-DEFAULT_PROTOCOL_KEY: Final = "full-v42"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-semantic-judge-v42"
-"""Current Full-v42: OCR/Luna images and restored branch semantic judge."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v43"
+DEFAULT_PROTOCOL_KEY: Final = "full-v43"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-dialogue-context-v43"
+"""Current Full-v43: inspect complete dialogue and attachment context."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -290,10 +290,29 @@ indicates that the outcome is independent of the condition, answer "Likely
 yes". When that dependency is uncertain, select the better-supported outcome
 and qualify it as likely or possible rather than abstaining.
 
+Interpret conversational replies together with the question or prompt that
+elicited them. If a relevant reply starts with a confirmation or unresolved
+reference (e.g. "Yes", "that one", "this series") and the initiating context is
+missing, use adjacent_chunks with its chunk_id (window=1 or window=2) before
+deciding what was affirmed or referenced. Do this even when another session
+already offers a plausible answer. If the exchange is already visible, use it
+without an extra read. Keep source, session, speaker and chronology aligned.
+A direct reply can identify a choice without repeating the question's wording;
+it inherits the scope of that question. A preference qualified to a particular
+period or situation does not establish an unrestricted preference.
+
 When a question asks about a superlative (e.g. what someone enjoys "most", "best",
 or considers their "favorite" or "primary" choice), identify the specific option
 the speaker singled out with that superlative rather than pooling all mentioned
 items or categories.
+
+When asked what a work is about, name its supported subject, premise, setting
+or theme rather than substituting praise or judgments about its quality.
+Use an attached description only for its owning source turn and speaker,
+not merely the nearest title. If a chunk boundary hides the description or
+its ownership, use adjacent_chunks to inspect it before resolving a reference.
+Check source-turn identifiers and keep derived visual observations and
+interpretations distinct from direct dialogue.
 
 When answering questions about what someone loves, enjoys, does, or experienced, prefer
 the speaker's specific verbatim terms (e.g. "making desserts") rather than generalizing or
@@ -350,11 +369,11 @@ or events across the relevant time range; a shared attribute needs support
 for each participant. Search for missing parts rather than repeatedly
 retrieving the same evidence. Check event identity and chronology before
 combining or counting mentions.
-When a preference or reference depends on dialogue, inspect the question and
-its direct answer together. Read adjacent source chunks when a boundary
-separates them. Match attachment descriptions to their own source turn and
-speaker before using them to resolve a reference. Use source text to check
-a derived claim when their attributions conflict. Before finalizing, check
+When a preference or reference depends on dialogue, inspect the initiating
+turn and reply together. Use adjacent_chunks for missing context even when
+another answer looks plausible, and verify attachment ownership across chunk
+boundaries. Use source text to check a derived claim when their attributions
+conflict. Before finalizing, check
 that the answer covers every requested part and includes the requested type
 of value. Stay within the existing tool and model-call budgets.
 
