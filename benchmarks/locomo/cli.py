@@ -15,6 +15,7 @@ from benchmarks.locomo.ablation import review_retrieval_ablation
 from benchmarks.locomo.ablation import run_retrieval_ablation
 from benchmarks.locomo.image_preparation import prepare_images_command
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
+from benchmarks.locomo.protocol import protocol_for_key
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
@@ -134,17 +135,31 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "retrieval-ablation":
             profile = cast(AblationProfile, args.profile)
+            full_policy = (
+                protocol_for_key(
+                    DEFAULT_PROTOCOL_KEY
+                ).execution_profile.chat_provider_only
+                if profile == "full"
+                else None
+            )
             answer_provider = (
                 None
                 if profile.startswith("codex-")
                 else _seat_provider(
-                    chat_provider_only=tuple(args.answer_provider), recorder=recorder
+                    chat_provider_only=(
+                        tuple(args.answer_provider)
+                        if args.answer_provider is not None
+                        else full_policy
+                    ),
+                    recorder=recorder,
                 )
-                if args.answer_provider is not None
+                if args.answer_provider is not None or profile == "full"
                 else _provider(run_dir=args.run, stage="answer", recorder=recorder)
             )
-            judge_provider = _provider(
-                run_dir=args.run, stage="judge", recorder=recorder
+            judge_provider = (
+                _seat_provider(chat_provider_only=full_policy, recorder=recorder)
+                if profile == "full"
+                else _provider(run_dir=args.run, stage="judge", recorder=recorder)
             )
             if profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}:
                 with MemoryClient(
@@ -159,6 +174,8 @@ def main(argv: list[str] | None = None) -> int:
                         answer_prompt=args.answer_prompt,
                         answer_model=args.answer_model,
                         answer_workers=args.answer_workers,
+                        judge_model=args.judge_model,
+                        item_ids=None if args.item is None else tuple(args.item),
                         answer_provider_only=None
                         if args.answer_provider is None
                         else tuple(args.answer_provider),
@@ -181,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
                     answer_prompt=args.answer_prompt,
                     answer_model=args.answer_model,
                     answer_workers=args.answer_workers,
+                    judge_model=args.judge_model,
+                    item_ids=None if args.item is None else tuple(args.item),
                     answer_provider_only=None
                     if args.answer_provider is None
                     else tuple(args.answer_provider),
@@ -433,6 +452,15 @@ def _parser() -> argparse.ArgumentParser:
     ablation.add_argument(
         "--answer-model",
         help="explicit answer model for the full profile; frozen into experiment identity",
+    )
+    ablation.add_argument(
+        "--judge-model",
+        help="explicit judge model for the full profile; frozen into experiment identity",
+    )
+    ablation.add_argument(
+        "--item",
+        action="append",
+        help="selected sample item ID; repeat for a development subset (default all items)",
     )
     ablation.add_argument(
         "--answer-workers",

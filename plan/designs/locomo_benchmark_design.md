@@ -686,6 +686,31 @@ uv run --extra benchmark python -m benchmarks.locomo judge \
 The limits are run-absolute across resumed sample commands. The harness never creates or destroys
 the deployment.
 
+### 8.1 Explicit development comparisons
+
+The `retrieval-ablation --profile full` comparison supports an explicit answer
+template/model, bounded answer workers, `--judge-model` and repeatable `--item`
+selection. Selected IDs must be unique and belong to the source sample; use
+canonical source order, and keep the full source corpus available to retrieval.
+Omission selects the entire sample. A subset is a development result rather
+than a full-conversation or held-out score. Retain all candidates and trials.
+
+The effective judge model and selected item IDs are part of the immutable
+experiment identity. A different model or selection requires a new output;
+resume never silently replaces answers or grades. Runtime judging uses the
+recorded model, effort and temperature. The override keeps the judge prompt,
+schema and provider policy; default canonical grading remains unchanged.
+
+An older source protocol name is metadata, not an alternate executable path.
+For a full comparison, first require all non-prompt source contracts to match
+the current protocol: processing profile/generations, provider policy, models,
+schemas, judge wording and loop settings. Use that matching current contract
+for checkpoint/live readiness checks, retaining exact source build revision,
+live ingests, query surface and P3 attestation. A different ingestion contract
+is rejected; no historical registry or source-identity rewrite is introduced.
+Canonical ingestion and answering still require their current protocol.
+These comparison controls change no ingestion or D56 paid-reuse boundary.
+
 ## 9. State and failure rules
 
 `run.json`, manifests, and rendered document hashes are immutable. `state.json` is atomically

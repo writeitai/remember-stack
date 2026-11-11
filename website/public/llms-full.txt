@@ -20045,6 +20045,15 @@ For a model served by another provider, supply `--answer-provider HOST`
 the judge keeps its canonical OpenAI policy. Model, provider policy and worker
 count are fingerprinted, so changing them requires a fresh output directory.
 
+Use `--judge-model MODEL` for an explicit full-profile grader comparison. It
+keeps the judge prompt, schema and HIGH reasoning effort; the effective model
+is frozen into the experiment and controls the actual grader request. Default
+judging remains unchanged. Repeat `--item ITEM_ID` to select a development
+subset from the sample. IDs must be distinct and belong to that sample; their
+canonical order is fingerprinted. Omit `--item` to test the entire sample.
+The reader still searches the complete ingested source. A passing subset is
+not a full-conversation score, and changing the selection rejects resume.
+
 ```bash
 uv run python -m benchmarks.locomo retrieval-ablation \
   --run .benchmark-runs/development --sample conv-47 --profile full \
@@ -20070,9 +20079,13 @@ unsupported denials. If resolved-entity filters leave required details missing,
 it searches claims and chunks without that semantic filter and verifies
 attribution from the source. Deployment, visibility and time boundaries remain
 in force. These rules do not change ingestion, ranking or the primary judge.
-A frozen older processed store can
-be tested with an explicitly saved answer-template override in the full-profile
-comparison runner that produced it; its source identity remains unchanged.
+The current full-profile comparison runner can read a source with an older
+prompt-only protocol name when its entire non-prompt contract still matches.
+It first verifies models, provider policy, stage generations, schemas and loop
+budgets, then checks current-contract readiness against the recorded source
+build, exact ingests, query surface and P3. A source with changed ingestion
+settings is rejected. This keeps one executable protocol; source configuration
+and fingerprints stay unchanged.
 
 ---
 
