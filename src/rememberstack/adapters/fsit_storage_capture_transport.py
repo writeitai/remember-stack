@@ -235,40 +235,52 @@ class _PendingProviderCapture:
         self._finish_group()
 
     def _finish_group(self) -> None:
-        """Advance only a fully consumed group, checking the last original exit."""
+        """Advance a fully consumed group without waiting under a native view."""
         source = self._source
-        if self._index + 1 == len(source._requests):
-            try:
-                trailing = source._process.read_line(maximum_bytes=source._maximum)
-                source._process.check_success()
-            except Exception:
-                raise ProviderCaptureUnavailable("provider_transport_lost") from None
-            if trailing is not None:
-                raise ProviderCaptureUnavailable("provider_stream_trailing_frame")
         with source._condition:
             source._check_live()
             self._streamed = True
             source._next += 1
-            source._finished = source._next == len(source._requests)
             source._condition.notify_all()
 
     def check_transport_complete(self) -> None:
         """Wait after native close for all original groups, EOF and process exit."""
         source = self._source
         with source._condition:
-            source._condition.wait_for(lambda: source._cancelled or source._finished)
+            source._native_closed.add(self._index)
+            source._condition.notify_all()
+            source._condition.wait_for(
+                lambda: (
+                    source._cancelled
+                    or (
+                        source._next == len(source._requests)
+                        and len(source._native_closed) == len(source._requests)
+                    )
+                )
+            )
             source._check_live()
+        source._complete_transport()
 
     def discard(self) -> None:
         """Drain one failed Project's original group without publishing evidence."""
         if self._streamed:
+            self._mark_native_closed()
             return
         try:
             manifest = self.complete()
         except ProviderScopeUnavailable:
+            self._mark_native_closed()
             return
         for _ in self.iter_pages(manifest=manifest):
             pass
+        self._mark_native_closed()
+
+    def _mark_native_closed(self) -> None:
+        """Record cleanup only after the failed worker's native context unwinds."""
+        source = self._source
+        with source._condition:
+            source._native_closed.add(self._index)
+            source._condition.notify_all()
 
 
 class FsitStorageCaptureSource:
@@ -290,6 +302,8 @@ class FsitStorageCaptureSource:
         self._claimed: set[int] = set()
         self._cancelled = False
         self._finished = False
+        self._native_closed: set[int] = set()
+        self._checking_exit = False
 
     @contextmanager
     def capture(self, *, request: ProviderRequest) -> Iterator[_PendingProviderCapture]:
@@ -311,6 +325,7 @@ class FsitStorageCaptureSource:
             if not pending._streamed:
                 raise ProviderCaptureUnavailable("provider_scope_incomplete")
         except ProviderScopeUnavailable:
+            pending._mark_native_closed()
             raise
         except ProviderCaptureUnavailable:
             self.cancel()
@@ -341,8 +356,39 @@ class FsitStorageCaptureSource:
         """Require every original group and successful EOF before batch exit."""
         with self._condition:
             self._check_live()
-            if not self._finished:
+            if self._next != len(self._requests) or len(self._native_closed) != len(
+                self._requests
+            ):
                 raise ProviderCaptureUnavailable("provider_batch_incomplete")
+        self._complete_transport()
+
+    def _complete_transport(self) -> None:
+        """Check EOF/exit once, only after every original native context closes."""
+        with self._condition:
+            self._check_live()
+            if self._checking_exit:
+                self._condition.wait_for(lambda: self._cancelled or self._finished)
+                self._check_live()
+                return
+            self._checking_exit = True
+        try:
+            try:
+                trailing = self._process.read_line(maximum_bytes=self._maximum)
+            except Exception:
+                raise ProviderCaptureUnavailable("provider_transport_lost") from None
+            if trailing is not None:
+                raise ProviderCaptureUnavailable("provider_stream_trailing_frame")
+            try:
+                self._process.check_success()
+            except Exception:
+                raise ProviderCaptureUnavailable("provider_transport_lost") from None
+            with self._condition:
+                self._check_live()
+                self._finished = True
+                self._condition.notify_all()
+        except BaseException:
+            self.cancel()
+            raise
 
     def _check_live(self) -> None:
         """Refuse all waiters after any shared original operation fails."""

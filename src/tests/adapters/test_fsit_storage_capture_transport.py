@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from threading import Barrier
 from threading import Event
+from unittest.mock import Mock
+from unittest.mock import patch
 
 from pydantic import SecretStr
 import pytest
@@ -36,6 +38,8 @@ from rememberstack.adapters.fsit_storage_capture_transport import (
 from rememberstack.adapters.fsit_storage_capture_transport import (
     RawProviderCaptureProcess,
 )
+from rememberstack.profiles.storage_capture_batch import _capture_project
+from rememberstack.profiles.storage_capture_batch import ManagedStorageCaptureInput
 
 
 def _manifest(*, organisation: str) -> ProviderManifest:
@@ -216,6 +220,8 @@ def test_two_scopes_claim_before_waiting_and_share_one_exact_stream() -> None:
                 barrier.wait(timeout=3)
                 manifest = pending.complete()
                 assert tuple(pending.iter_pages(manifest=manifest)) == ()
+                assert not transport.reaped
+                pending.check_transport_complete()
                 return manifest.capture_id
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -291,5 +297,38 @@ def test_local_scope_failure_drains_only_its_group_and_preserves_next() -> None:
             manifest = pending.complete()
             assert manifest.capture_id == manifests[1].capture_id
             assert tuple(pending.iter_pages(manifest=manifest)) == ()
+            pending.check_transport_complete()
+    assert transport.closed and transport.reaped
+
+
+def test_project_constructor_failure_is_claimed_and_drained_before_other_group() -> (
+    None
+):
+    """An early setup failure cannot leave an unclaimed ordered group behind."""
+    manifests = (_manifest(organisation="1" * 32), _manifest(organisation="2" * 32))
+    scopes = tuple(_scope(manifest=manifest) for manifest in manifests)
+    transport = _RawTransport(manifests=manifests)
+    item = Mock(spec=ManagedStorageCaptureInput)
+    item.collector_connect = Mock()
+    item.request = Mock()
+    item.profile = Mock()
+    item.stores = {}
+    item.evidence_store = Mock()
+    item.identity_key = SecretStr("unit-fixture-only")
+    with open_provider_capture_batch(
+        transport=transport, scopes=scopes, max_scopes=2, maximum_frame_bytes=65536
+    ) as source:
+        with patch(
+            "rememberstack.profiles.storage_capture_batch.StorageCaptureCatalog",
+            side_effect=OSError("unit_constructor_failure"),
+        ):
+            with pytest.raises(OSError, match="unit_constructor_failure"):
+                _capture_project(item=item, provider=source, scope=scopes[0])
+        item.collector_connect.assert_not_called()
+        with source.capture(request=scopes[1].request) as pending:
+            manifest = pending.complete()
+            assert manifest.capture_id == manifests[1].capture_id
+            assert tuple(pending.iter_pages(manifest=manifest)) == ()
+            assert not transport.reaped
             pending.check_transport_complete()
     assert transport.closed and transport.reaped

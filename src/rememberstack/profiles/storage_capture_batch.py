@@ -16,6 +16,9 @@ from pydantic import SecretStr
 
 from rememberstack.adapters.fsit_storage_capture import ProviderRequest
 from rememberstack.adapters.fsit_storage_capture_transport import (
+    FsitStorageCaptureSource,
+)
+from rememberstack.adapters.fsit_storage_capture_transport import (
     open_provider_capture_batch,
 )
 from rememberstack.adapters.fsit_storage_capture_transport import ProviderCaptureScope
@@ -129,6 +132,30 @@ class ManagedStorageCaptureResult:
     completed: CompletedStorageCapture | None
 
 
+def _capture_project(
+    *,
+    item: ManagedStorageCaptureInput,
+    provider: FsitStorageCaptureSource,
+    scope: ProviderCaptureScope,
+) -> CompletedStorageCapture:
+    """Claim the exact group before any Project setup can fail or allocate I/O."""
+    with provider.capture(request=scope.request) as pending:
+        catalog = StorageCaptureCatalog(
+            collector_connect=_prepared_collector(
+                connect=item.collector_connect,
+                request=item.request,
+                profile=item.profile.native,
+                check_active=provider.check_active,
+            ),
+            provider=pending,
+            stores=item.stores,
+            evidence_store=item.evidence_store,
+            profile=item.profile,
+            identity_key=item.identity_key,
+        )
+        return catalog.capture_once(request=item.request)
+
+
 def capture_storage_batch(
     *,
     inputs: tuple[ManagedStorageCaptureInput, ...],
@@ -202,29 +229,19 @@ def capture_storage_batch(
     )
     futures: dict[Future[CompletedStorageCapture], int] = {}
     try:
+        scopes = tuple(item.provider_scope() for _, item in pending)
         with open_provider_capture_batch(
             transport=provider_transport,
-            scopes=tuple(item.provider_scope() for _, item in pending),
+            scopes=scopes,
             max_scopes=max_scopes,
             maximum_frame_bytes=maximum_frame_bytes,
         ) as provider:
-            for index, item in pending:
-                catalog = StorageCaptureCatalog(
-                    collector_connect=_prepared_collector(
-                        connect=item.collector_connect,
-                        request=item.request,
-                        profile=item.profile.native,
-                        check_active=provider.check_active,
-                    ),
-                    provider=provider,
-                    stores=item.stores,
-                    evidence_store=item.evidence_store,
-                    profile=item.profile,
-                    identity_key=item.identity_key,
-                )
-                futures[executor.submit(catalog.capture_once, request=item.request)] = (
-                    index
-                )
+            for (index, item), scope in zip(pending, scopes, strict=True):
+                futures[
+                    executor.submit(
+                        _capture_project, item=item, provider=provider, scope=scope
+                    )
+                ] = index
             for future in as_completed(futures):
                 try:
                     results[futures[future]] = future.result()

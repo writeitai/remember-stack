@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
-from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from dataclasses import field
 import hashlib
@@ -105,16 +104,6 @@ class PendingProviderCapture(Protocol):
 
     def check_transport_complete(self) -> None:
         """Check the whole original stream/exit after this native view closes."""
-        ...
-
-
-class ProviderCapturePort(Protocol):
-    """Owned transport launch/close; no provider callback into the engine."""
-
-    def capture(
-        self, *, request: ProviderRequest
-    ) -> AbstractContextManager[PendingProviderCapture]:
-        """Launch before native acquisition and close/cancel on every exit."""
         ...
 
 
@@ -221,7 +210,7 @@ class StorageCaptureCatalog:
         self,
         *,
         collector_connect: Callable[[], psycopg.Connection],
-        provider: ProviderCapturePort,
+        provider: PendingProviderCapture,
         stores: Mapping[str, StorageCaptureObjectStore],
         evidence_store: StorageCaptureEvidenceStore,
         profile: ManagedStorageCaptureProfile,
@@ -232,7 +221,7 @@ class StorageCaptureCatalog:
         self._native = NativeStorageCaptureCatalog(
             connect=collector_connect, profile=profile.native
         )
-        self._provider = provider
+        self._pending = provider
         self._stores = dict(stores)
         self._evidence = evidence_store
         self._identity_key = identity_key
@@ -265,45 +254,43 @@ class StorageCaptureCatalog:
         with TemporaryDirectory(prefix="remember-storage-capture-") as temporary:
             spool = _Spool(path=Path(temporary) / "capture.sqlite")
             try:
-                with self._provider.capture(request=provider_request) as pending:
-                    with self._native.open_view(request=request) as native:
-                        # Entry already proved/released the short native guard.
-                        # No provider completion/list/read/delivery runs under it.
-                        provider = pending.complete()
-                        self._check_provider(
-                            provider=provider, expected=provider_request
-                        )
-                        native.check_continuity()
-                        self._stage_provider(
-                            spool=spool,
-                            pending=pending,
-                            provider=provider,
-                            capture_id=capture_id,
-                        )
-                        self._check_native_bindings(native=native)
-                        for seed in native.iter_store_references():
-                            self._stage_seed(spool=spool, seed=seed, provider=provider)
-                        for terminal in native.iter_terminal_members():
-                            spool.member(member=terminal)
-                        self._stage_native_allocations(
-                            spool=spool, native=native, capture_id=capture_id
-                        )
-                        self._classify_items(
-                            spool=spool,
-                            provider=provider,
-                            capture_id=capture_id,
-                            native=native,
-                        )
-                        native.check_continuity()
-                        witness = native.witness
-                        self._evidence.persist_native_evidence(
-                            capture_id=capture_id,
-                            witness=profile_bytes(record=witness),
-                            allocations=profile_bytes(record=native.allocation_sample),
-                            profile=profile_bytes(record=self._profile),
-                        )
-                        native.check_continuity()
-                    pending.check_transport_complete()
+                pending = self._pending
+                with self._native.open_view(request=request) as native:
+                    # Entry already proved/released the short native guard.
+                    # No provider completion/list/read/delivery runs under it.
+                    provider = pending.complete()
+                    self._check_provider(provider=provider, expected=provider_request)
+                    native.check_continuity()
+                    self._stage_provider(
+                        spool=spool,
+                        pending=pending,
+                        provider=provider,
+                        capture_id=capture_id,
+                    )
+                    self._check_native_bindings(native=native)
+                    for seed in native.iter_store_references():
+                        self._stage_seed(spool=spool, seed=seed, provider=provider)
+                    for terminal in native.iter_terminal_members():
+                        spool.member(member=terminal)
+                    self._stage_native_allocations(
+                        spool=spool, native=native, capture_id=capture_id
+                    )
+                    self._classify_items(
+                        spool=spool,
+                        provider=provider,
+                        capture_id=capture_id,
+                        native=native,
+                    )
+                    native.check_continuity()
+                    witness = native.witness
+                    self._evidence.persist_native_evidence(
+                        capture_id=capture_id,
+                        witness=profile_bytes(record=witness),
+                        allocations=profile_bytes(record=native.allocation_sample),
+                        profile=profile_bytes(record=self._profile),
+                    )
+                    native.check_continuity()
+                pending.check_transport_complete()
                 manifest = self._publish(
                     spool=spool, request=request, witness=witness, provider=provider
                 )
