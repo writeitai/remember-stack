@@ -581,11 +581,24 @@ make it compatible; examples illustrate that category rather than replacing it.
 For ambiguous preferences/references, independently search claims and sources
 for credible candidates across sessions before narrowing every follow-up to one
 name, then choose the supported referent or preserve a supported ambiguity.
-This does not require pooling casual mentions. Retain relevant limitations with
-the source's qualifiers; a related restriction does not establish a stronger
-category or diagnosis, and it does not establish the absence of another
-category. Negative claims require supporting evidence or a logically valid
-exclusion. These rules contain no benchmark-specific values.
+Use an unscoped claims/source query for this independent search, because an
+unnamed recommendation or attachment may have no resolved mention of its owner.
+Check the owning exchange, requested kind and medium; a preference for an
+adaptation does not establish a preference for the original work. A non-exclusive
+endorsement does not establish a unique favorite. Answer the requested attribute
+of the best-supported candidate first, with brief source-qualified alternatives
+only when needed; do not pool casual mentions or substitute another kind of object.
+
+Interpret informal personal-memory wording by its practical intent. Retain all
+relevant source-stated restrictions in that domain, even when their labels differ,
+and keep precise source categories parenthetically. This does not establish a
+stronger category or diagnosis, nor the absence of another category. Source
+qualifiers are affirmative labels, not unsolicited classification corrections.
+Negative claims require source support or valid exclusion. In an image-dependent
+question, retain concrete subjects and recurring motifs with a visual qualifier
+rather than replacing them with generic praise or inventing plot events. Give
+the requested values directly; omit search commentary before supported details.
+These rules contain no benchmark-specific values.
 
 Resolved entity IDs are a starting semantic filter, not a guarantee of complete
 context. A description of a related object may lack a resolved mention of its

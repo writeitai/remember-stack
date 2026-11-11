@@ -60,3 +60,34 @@ characters. This removes135833 repeated catalog characters while retaining
 more descriptor metadata than the MCP shape. All394 benchmark tests, Ruff,
 docs truth/generated-doc checks and targeted Pyright pass. These checks do not
 establish an accuracy gain; paid comparison is still pending.
+
+## Source-qualified answer template in the same draft
+
+Prompt-only trial05 (SHA256
+`065f61b33211537404a5fbc6bb0da3d25f0d8ba2bc397816f5d35ebc53e274d0`)
+scored1/2 with Pro HIGH for both roles. Its concrete restriction answer includes
+the related item under its precise source label and is graded CORRECT. The book
+answer includes the pictured subject and a competing recommendation but remains
+WRONG. This does not establish that the second answer lacks evidence or that
+the judge is necessarily incorrect. Cloud PR959 retains the unmodified result.
+
+The general template interprets short personal-memory questions by everyday
+intent, keeping neighboring source labels parenthetically instead of upgrading
+them or adding unsupported negative classifications. It checks object kind and
+medium before transferring a preference, treats an unnamed object's owning
+image as part of its description, and searches the object class without a
+resolved-person filter when that filter can hide attachment-derived evidence.
+Non-exclusive recommendations are not unique favorites; supported alternatives
+may be qualified, while casual mentions are excluded. Compact output must retain
+the requested concrete values, not explanations of search sufficiency.
+
+These replace overlapping earlier wording; they contain no named answer,
+person, condition or source label. The alternative of injecting a missing answer
+or suppressing a retrieved competing candidate would tune to the reference
+rather than improve general recall and is rejected. A broader answer can still
+include irrelevant material or lead with uncertainty; the complete regression
+must expose that. There is no postprocessing, manual grade override or new
+retrieval/extraction model. Trial06 holds this template fixed and changes only
+the catalog projection. Its outcome is pending, so the combined current-protocol
+candidate remains a draft. A fresh full20 arm is allowed only after both selected
+questions pass.

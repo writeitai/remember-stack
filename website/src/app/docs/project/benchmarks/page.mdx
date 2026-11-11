@@ -193,6 +193,13 @@ tool/model-call budgets, not a reranker or an accuracy guarantee. No score
 is established for this protocol by its offline tests. The partial historical
 campaign remains a separate result.
 
+The answer instructions preserve relevant items with their precise source labels
+when a short question uses informal wording. They check object kind and medium,
+compare unnamed preference candidates without requiring a resolved-person link,
+and include concrete subjects from the owning image. Answers keep brief source
+qualifications without invented categories or plots. These are general prompt
+instructions, with no accuracy guarantee or new ingestion work.
+
 The reader's displayed tool catalog retains input schemas and tool contracts,
 but omits repeated output JSON Schemas. Public tool schemas, runtime validation
 and retrieved evidence remain complete. Full-v45 records this prompt-rendering

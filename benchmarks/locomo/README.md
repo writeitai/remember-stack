@@ -15,6 +15,13 @@ subject or premise. These remain prompt instructions within the existing
 eight-tool/nine-model-call budget. Models, judge and ingestion generations
 are unchanged; prompt changes require a new immutable run identity.
 
+Full-v45 additionally preserves source-qualified restrictions under informal
+question wording, checks object kind/medium and unnamed references, and combines
+concrete subjects from owned images with source text. It prefers compact requested
+values with affirmative qualifiers. These instructions contain no named answers
+or source labels; the draft's targeted and full regression results are separate
+from the protocol's offline checks.
+
 Full-v45 also omits repeated output JSON Schemas from the reader's displayed
 tool catalog while retaining full inputs and result contracts. Public schemas,
 runtime validation and retrieved evidence remain complete. This is a prompt-size

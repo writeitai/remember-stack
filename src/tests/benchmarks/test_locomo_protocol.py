@@ -381,8 +381,8 @@ def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
-        "The final answer must be the shortest phrase that fully names the requested "
-        "entities/values, no explanations or reasoning." in normalized_prompt
+        "Return only a compact, direct answer to the requested attribute."
+        in normalized_prompt
     )
     rendered = render_answer_agent_prompt(question="What?", tools=(), trace=())
     assert "The final answer must contain at most" not in rendered
@@ -425,7 +425,7 @@ def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
         in normalized_prompt
     )
     assert "never be used as a fallback event date" in normalized_prompt.lower()
-    assert 'what someone enjoys "most", "best"' in normalized_prompt
+    assert "explicit singular preference statement" in normalized_prompt
     assert "complete union of all distinct matching values" in normalized_prompt
     assert "shared, mutual, or collective attributes" in normalized_prompt
     assert "unanswered question or reference directly relevant" in normalized_prompt
