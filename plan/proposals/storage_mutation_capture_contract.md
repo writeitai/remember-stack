@@ -96,6 +96,101 @@ A read that records audit/usage metadata uses its pre-provisioned operator
 metadata envelope; enabling the contract must not make ordinary reads depend
 on an unrelated customer storage top-up.
 
+## 2.1 Typed resource envelope and qualification profile
+
+This closes the payload shape; it does not claim the current adapters enforce
+it. The [source vectors and UMC amendment](../analysis/storage_resource_enforcement_vectors.md)
+separate existing numerical limits from the missing proof. Unknown values
+produce no approved profile/permission, rather than an executable untyped map.
+
+`ResourceEnvelope` has exactly `contract`, `profile_digest`, `deployment_id`,
+`store_binding_digest`, `action_plan_digest`, `parent_authority_id`,
+`valid_from_unix_us`, `valid_until_unix_us`, `resource_bounds`,
+`obligation_policy_digest` and `envelope_digest`. Its contract is
+`rememberstack.storage_resource_envelope.v1`; a root has null parent authority.
+The native validity window is finite and fits the original authority; extending
+it requires a new child intent. Expiry never releases an outstanding resource
+obligation. The action plan binds exact local logical owners and planned store
+operations without sending customer filenames/content to the operator.
+
+`resource_bounds` is an ordered array with each following dimension exactly
+once, each item containing only `dimension`, `maximum` and
+`enforcement_point_ids`. `maximum` is an unsigned checked 64-bit decimal integer.
+The fixed units are:
+
+| Dimensions | Unit and meaning |
+| --- | --- |
+| `pg_allocation_growth`, `canonical_object_growth`, `k_repository_growth`, `p3_origin_growth` | Bytes of retained allocation in that component; these are bounds, never measured customer quantity. PG preserves allocated heap/index/TOAST/fork semantics. |
+| `staging_stored`, `temporary_copies`, `operational_metadata` | Peak bytes of separately classified stage/rebuild/replica/evidence resources, including admitted overlap. |
+| `namespace_additions`, `chunk_assignments`, `part_put_attempts`, `native_mutation_attempts` | Counts of resource-creating or replacement operations, not just final visible objects. |
+| `read_transfer`, `write_transfer` | Bytes transmitted under the authority, including refused duplicates and admitted retries. |
+| `retained_resource_time` | Accounted byte-seconds over the obligation's qualified lifetime/transfer segment; supplier rounding and non-ledger physical costs remain in the profile's separate cost model. |
+| `capture_row_visits` | Native entries/rows that may be read/materialised under capture authority, including its bounded pages and snapshot-retention exposure. |
+
+Every item binds at least one profile enforcement point. Zero requires a proof
+that this action cannot create that dimension; absence, an expired witness or
+an unknown counter cannot become zero. The dimensions can overlap: never sum
+these maxima into customer bytes or blindly add overlapping cost components.
+The profile pins the disjoint supplier-cost attribution/overlap rules instead.
+A finite original resource-time segment needs an evidenced transfer to the
+next funded segment or verified terminal disposition; a clock/hold expiry is
+neither. A cleanup retry threshold is not that lifetime proof.
+
+`ResourceProfile` has exactly `contract`, `profile_id`, `source_pins`,
+`schema_manifest_digest`, `classification_digest`, `store_bindings`,
+`writer_mode_digest`, `enforcement_points`, `obligation_policy`,
+`capture_profile_digest`, `cost_evidence_digest`, `cost_scope_digest`,
+`qualification_vectors_digest`, `valid_until_unix_us` and `profile_digest`.
+Its contract is `rememberstack.storage_resource_profile.v1`. Canonical encoding
+and self-digest rules are those in §6. These fields mean:
+
+- `source_pins`: exact engine/native schema/index extensions/adapter/provider
+  builds and relevant configuration, not a broad package range.
+- `store_bindings`: sorted complete bindings of logical role to exact store
+  identity, adapter kind, admitted representation kinds, authoritative quota/
+  reservation configuration digest and custody identity. Managed raw/artifacts/
+  corpus/forget roles retain their exact four provider IDs; K/work/metadata
+  roots remain separately identified. No tenant/caller prefix repairs scope.
+- `writer_mode_digest`: the closed API/worker/maintenance/representation/K/P3/
+  forget modes the source and inventory qualify. A changed mode/profile must
+  qualify before creating more resources; no unguarded compatibility path.
+- `enforcement_points`: each record has `point_id`, `dimension`, `mechanism`,
+  `scope_digest`, `native_rule_digest` and `qualification_digest`. Mechanisms
+  are `engine_native_counter`, `provider_native_quota`,
+  `signed_request_bound`, `native_deadline`, `verified_cleanup`,
+  `native_relation_guard` or `operator_reserved_capacity`. Each has a tested
+  source/native action before the covered growth, atomic shared-scope debit
+  where concurrent authority could oversubscribe, and exact failure/unknown
+  behavior. A comment, sample maximum, permissive token or buffer count is not
+  a substitute. Operator capacity must already exist and have a finite measured
+  reservation; this mechanism does not authorise arbitrary unfunded cost.
+- `obligation_policy`: exact original validity/clock authority, current-
+  segment funding source, retained/staging ownership, verified cleanup or
+  forward transfer predicate, and finite failure/parked/deletion/backup exposure
+  model. Unknown physical retention or a failed transfer keeps the obligation
+  outstanding; it cannot be declared resolved by a timeout.
+- Capture, cost-scope and qualification digests bind the actual evidence sets.
+  Cost scope states which meter/operator budget covers each cost exactly once;
+  it cannot invent cross-meter revenue, a waiver or zero supplier cost.
+
+Before approval, the engine/operator verifies every required dimension has a
+current matching native enforcement proof and already reserved authority.
+The returned `permission_digest` binds the exact request/intent/envelope/profile
+and original segment. It grants finite substrate resources, never E/K/P truth
+or permission to debit an estimate as customer usage. Concurrent child intents
+cannot each spend the parent's full remaining capacity. Uncertain writes keep
+the conservative debit; only exact no-effect/cleanup/transfer evidence may
+release it. The existing ordinary work/replay path retries reconciliation.
+
+Current UMC signed-length URLs and provider chunk quotas can supply some of
+these proofs; they do not prove all attempt/churn/resource-time dimensions.
+A supported profile needs those proofs on both real object adapter paths and
+on API/worker/native growth, including privacy and evidence storage. This
+proposal does not choose new retry/file/time caps to fill missing fields.
+If the present admitted profile cannot populate/enforce a required field, that
+profile cannot enable new growth until a reviewed compatible mechanism or
+explicit operator policy resolves the exact gap.
+
 ## 3. Direct uploads, reuse and safety writes
 
 A direct/multipart capability is issued only after authority is recorded and
@@ -219,11 +314,10 @@ necessary: committing the SHARE guard must not destroy the extraction view,
 and the long reader must not retain that short write-blocking lock. This
 captures allocation at T; it does not reconstruct old physical sizes later.
 
-For the proposed fsit adapter, D63 was accepted by [fsit #565 at
-8b71c600](https://github.com/writeitai/fsit/blob/8b71c600/design/designs/scoped-storage-capture.md),
-without implementation or live qualification. Its filesystem-ID framing has a
-source mismatch; [correction checkpoint 666b9e1a](https://github.com/writeitai/fsit/blob/666b9e1a/design/designs/scoped-storage-capture.md)
-is an **unaccepted integration dependency** until coordinated review/merge. Its fixed native batch closes the
+For the proposed fsit adapter, D63 and its native-ID correction are accepted
+at [fsit 6f0fa797 / #565–566](https://github.com/writeitai/fsit/blob/6f0fa797/design/designs/scoped-storage-capture.md),
+without implementation or live qualification. That binding provider contract
+is the interface dependency; acceptance alone is not a runtime witness. Its fixed native batch closes the
 metadata gate, drains/marks it and holds one original read-only owning-role
 `filemeta` SHARE guard across T, then keeps only its two existing extraction
 views for bounded materialisation. Engine processing, money and consumer ACK
@@ -316,10 +410,9 @@ then authority request UUID where relevant. Member kinds are the literal ASCII
 strings `authority`, `disposition` and `intent`. A page digest binds its capture ID and ordinal in its envelope. Counts, duplicate
 membership, contiguous page/revision coverage and every predecessor digest
 must validate relative to the exact prior ACK/predecessor records in the
-captured view; a digest is not completeness by itself. The typed payloads of
-`resource_envelope`, native evidence and each adapter profile must be accepted
-with their qualification vectors before binding adoption; no untyped mapping
-is executable permission. This is not a protocol a running adapter advertises.
+captured view; a digest is not completeness by itself. The typed resource payload/profile in §2.1 and each adapter's native evidence
+must pass their qualification vectors before binding adoption; no untyped
+mapping or numerical estimate is executable permission. This is not a protocol a running adapter advertises.
 
 The collector persists completed evidence outside the measured footprint
 after the bounded views finish; the short guard has already released. It

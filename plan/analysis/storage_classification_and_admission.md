@@ -189,5 +189,7 @@ this analysis with actual UMC and provider admission/cleanup source. They do
 not equate a temporary request spend lease, a processing growth hold, a
 filesystem quota, a supplier spending cap or cleanup scheduling with durable
 storage authority. Canonical retained raw data and excluded staged/failed
-copies must stay distinct even when processing fails. D55/D102 reconciliation
-and measurable pre-enable gates remain non-binding proposal work.
+copies must stay distinct even when processing fails. D55/D102 reconciliation and measurable pre-enable gates are now specified as
+non-binding proposal work; binding acceptance and real qualification remain
+separate gates. The current 0104 chain, rather than the historical v4 seed,
+defines the inspected text/scan source and quantity maxima.
