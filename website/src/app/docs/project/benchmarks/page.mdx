@@ -35,7 +35,7 @@ model.
 <Callout type="warning">
 
 No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v42`. The numbers under [Recorded results](#recorded-results)
+`RS-LoCoMo-Full-v43`. The numbers under [Recorded results](#recorded-results)
 belong to earlier protocols and earlier engine builds. Do not compare them
 with other systems' published scores.
 
@@ -125,7 +125,7 @@ The summary reports:
 
 ### The current protocol
 
-Execution uses one profile, `RS-LoCoMo-Full-v42` (key `full-v42`). It selects
+Execution uses one profile, `RS-LoCoMo-Full-v43` (key `full-v43`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
 answering and judging. All these Luna seats prefer OpenAI Flex and permit
@@ -180,11 +180,18 @@ still stop preparation. Frozen run inputs are independent of ambient caches
 and are included by the ordinary GCS run archive. Changed image input requires
 a new run and fresh ingestion. Image restoration keeps retrieval budgets and
 core generations unchanged. Full-v42 additionally restores the historical
-branch's semantic judge template; the answer template is unchanged.
+branch's semantic judge template. Full-v43 extends the answer instructions
+without changing that judge or the models.
 
 The answerer checks question completeness, distinct events and participants,
-and adjacent dialogue. No score is established for this protocol by its
-offline tests. The partial historical campaign remains a separate result.
+and adjacent dialogue. If a relevant reply lacks the question that elicited
+it, the answerer is instructed to read adjacent chunks even when another
+candidate looks plausible. It checks which source turn and speaker own an
+attached description and names a work's supported subject or premise when
+asked what it is about. These are prompt instructions within the existing
+tool/model-call budgets, not a reranker or an accuracy guarantee. No score
+is established for this protocol by its offline tests. The partial historical
+campaign remains a separate result.
 
 ### Independent Mem0-like grading of saved answers
 
@@ -267,9 +274,9 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-No run of `RS-LoCoMo-Full-v42`, or of any protocol after v18, is recorded.
-When one is, it will appear here with its protocol, revision, tier, cost
-and failure counts.
+This results table contains no protocol after v18. The Full-v43 prompt
+change establishes no score. Any additional published result must identify
+its protocol, revision, tier, cost and failure counts.
 
 ## Reproduce a LoCoMo run
 
@@ -314,7 +321,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v42 \
+  --output .benchmark-runs/smoke --protocol full-v43 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -347,7 +354,7 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v42 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
+LOCOMO_PROTOCOL=full-v43 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
   LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```

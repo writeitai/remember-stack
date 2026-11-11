@@ -3074,11 +3074,16 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **Current protocol amendment, 2026-11-09.** Execution uses only
-> `RS-LoCoMo-Full-v40` (`full-v40`): the Luna/Flex and Jev profile with the
-> best-supported-answer policy recorded in the D104 amendment below. Its
-> unchanged judge still scores noncompliant abstentions wrong. See the
-> [current benchmark design](plan/designs/locomo_benchmark_design.md).
+> **Current protocol amendment, 2026-11-11.** Execution uses only
+> `RS-LoCoMo-Full-v43` (`full-v43`): the Luna/Flex and Jev profile with native
+> OCR/Luna image inputs, the restored historical semantic judge, and the
+> best-supported-answer policy. Relevant replies with missing initiating
+> context require an adjacent-chunk read even when another candidate seems
+> plausible; attachment ownership and concrete subject matter are checked.
+> Existing models, ingestion generations and eight-tool/nine-model-call budgets
+> remain. This is a new evaluation identity, not a claim of improved accuracy.
+> See the [current benchmark design](plan/designs/locomo_benchmark_design.md)
+> and [branch audit](plan/analysis/locomo_unpublished_branch_audit_20261111.md).
 
 > **Historical D106 amendment.** The D106 protocol was `RS-LoCoMo-Full-v21`. It retains
 > v20's dataset, rendered documents, models, tools, budgets, prompts, and
