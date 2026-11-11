@@ -151,6 +151,12 @@ and self-digest rules are those in §6. These fields mean:
 
 - `source_pins`: exact engine/native schema/index extensions/adapter/provider
   builds and relevant configuration, not a broad package range.
+- `schema_manifest_digest`: structural root/ownership, columns, constraints,
+  index definitions/access methods and approved partition templates/bounds.
+  It excludes current fork sizes, observation times and generated internal
+  TOAST/OID spellings. Actual names/ownership/allocation still appear in each
+  complete capture. This keeps changing allocation separate from the
+  qualification's structural identity; it permits no name-prefix exception.
 - `store_bindings`: sorted complete bindings of logical role to exact store
   identity, adapter kind, admitted representation kinds, authoritative quota/
   reservation configuration digest and custody identity. Managed raw/artifacts/
@@ -475,7 +481,13 @@ Adoption must reconcile `e0_files_design.md`, `postgres_schema_design.md`,
 entries, rather than append a contradictory standalone rule. In particular
 replace the old managed two-hold/processing-sequence coupling with the accepted
 operator amendment; leave processing success/failure economics explicit.
-D60/D61, D74 and D56 survive. Public docs continue to describe only shipped
+Delete the superseded measurement-owned storage admission/eligibility path,
+its old storage-approval fields and processing-watermark consumers with their
+replacement. Retain a sequence/field only if an independently documented
+current processing consumer actually needs it, never as a storage fallback.
+Version the changed meter/adapter contract explicitly; do not bump paid
+content/converter/extraction/embedding identities to deliver it. D60/D61, D74
+and D56 survive. Public docs continue to describe only shipped
 behavior; this proposal adds no advertised route or command.
 
 Required complete vectors: every writer and adapter; card/no-op/reference edit;

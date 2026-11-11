@@ -39,8 +39,10 @@ allocation experiment; it is not a live Project footprint.
 ## 2. Current bounds: what they enforce and what they do not
 
 **UMC measurement bundle.** Migration 0104 selects `storage-bound-d94-v4` and
-`engine_release = remember>=0.19.0`. It admits source size up to 5 GiB and
-standard/claims/sources profiles for text and scan. Text keeps
+`engine_release = remember>=0.19.0`. It defines storage-policy rows for
+sources up to 5 GiB and standard/claims/sources profiles for text and scan.
+Actual processing-rate availability remains a separate gate; defining a
+storage-policy row does not activate a draft claims/sources rate. Text keeps
 `16 MiB + 4*source_bytes + 64*native_characters`, with maximum native characters
 5 GiB. Scan uses `16 MiB + 4*source_bytes + 262144*pages`, maximum one million
 pages. The maxima are 365,088,997,376 and 283,635,613,696 bytes respectively.
