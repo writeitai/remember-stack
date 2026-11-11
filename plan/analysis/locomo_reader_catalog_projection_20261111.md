@@ -159,3 +159,36 @@ match. No expected state name or benchmark-specific value was added. Native GCS
 verification is pending at this snapshot, then a fresh complete20 regression
 must regenerate every answer and grade. Adopt08's class-scoped instruction in
 the draft current template, without retaining07's broader failed paragraph.
+
+## Retained general template and one scaling replication
+
+Full08 completed19/20 with20 fresh Pro HIGH answers/grades,61 successful tools,
+no negative/budget-timeout results, no abstentions and no technical failures.
+The attitude is now explicit and graded CORRECT. The book-content question is
+WRONG again: the answer includes the pictured clue but the requested referent
+and thematic conclusion remain unstable. Both native and independent GCS
+readback passed. The source contains an explicitly named non-exclusive favorite
+and a separately loved unnamed collection; it does not identify a unique
+unrestricted favorite. This makes reference selection partly under-specified.
+Do not claim that the reference is demonstrably wrong or that a unique answer
+has been established.
+
+09 tried general qualified-theme inference and scored0/1 even though both
+relevant image chunks arrived. It is not adopted. More topic-specific steering
+would not be justified by a missing retrieval result. The retained current
+prompt is08, SHA3b9591e5d13763488098ee313e1bbf4153f95f1c6fa0606895c066b3e25670f2.
+
+One final predeclared scaling replication uses this exact prompt, source,
+models and judge policy, with16 answer workers already supported by the runner.
+It generates all20 answers afresh, copying none. Report full06's19/20, full08's
+19/20 and the replication together. A better draw would not establish a causal
+quality improvement from concurrency or stable100% accuracy. This snapshot
+records the replication running; its final result/cost and native archive proofs
+belong to cloud PR959, `trials/full08-w16/`. No further semantic candidate is
+selected in this attempt, and the full10-conversation campaign is not launched.
+
+The standalone09 auditor needed a technical correction because current serial
+identities omit their default worker count1. The corrected check respects that
+default and still validates all raw fingerprints/model roles/archive bytes.
+The failed log and subsequent auditor hash/proof are preserved in PR959. No
+answer, grade or paid source processing was repeated to recover verification.
