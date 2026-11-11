@@ -1,8 +1,11 @@
 # Engine-owned retained-storage captures
 
-**Status: accepted on coordinated merge of this PR; not implemented.**
-This is the complete consumer contract, not an implemented producer,
-qualified adapter or permission to change commercial terms.
+**Status: accepted; the managed reference consumer is implemented.**
+This is the complete consumer contract. The current integration and its
+functional validation limits are recorded in
+[the implementation documentation](../../docs/development/storage-capture-managed-assembly.md).
+Operators independently qualify deployed source, stores, clocks and costs
+and accept the commercial mapping.
 [Analysis and source boundary](../analysis/storage_capture_consumer_20261111.md).
 The broader growth-permission proposal remains unchosen
 ([scope boundary](#8-what-this-decision-does-not-adopt)).

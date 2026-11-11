@@ -82,6 +82,7 @@ class NativeStoreReference(_NativeRecord):
     locator_kind: Literal["object", "tree", "repository_path", "journal_intent"]
     recorded_bytes: UnsignedDecimal | None
     native_state: str | None
+    recorded_digest: SecretStr | None = Field(repr=False)
 
 
 class NativeReferencePage(_NativeRecord):
@@ -167,11 +168,14 @@ BEGIN
       SELECT 'content_objects.raw_uri'::text AS native_class,
         content_hash AS native_id,'raw'::text AS store_role,raw_uri AS locator,
         'object'::text AS locator_kind,byte_size::text AS recorded_bytes,
-        NULL::text AS native_state FROM public.content_objects
+        NULL::text AS native_state,content_hash AS recorded_digest FROM public.content_objects
         WHERE deployment_id=native_scope
       UNION ALL
       SELECT 'document_representations.'||u.field,r.representation_id::text,
-        'artifacts',u.locator,'object',NULL,r.status
+        'artifacts',u.locator,'object',NULL,r.status,
+        CASE u.field WHEN 'conversion_uri' THEN r.manifest_hash
+          WHEN 'markdown_uri' THEN r.markdown_hash
+          WHEN 'pageindex_uri' THEN r.pageindex_hash ELSE NULL END
         FROM public.document_representations r
         CROSS JOIN LATERAL (VALUES ('markdown_uri',r.markdown_uri),
           ('pageindex_uri',r.pageindex_uri),('conversion_uri',r.conversion_uri),
@@ -179,37 +183,39 @@ BEGIN
         WHERE r.deployment_id=native_scope AND u.locator IS NOT NULL
       UNION ALL
       SELECT 'document_structure_generations.pageindex_uri',
-        structure_generation_id::text,'artifacts',pageindex_uri,'object',NULL,NULL
+        structure_generation_id::text,'artifacts',pageindex_uri,'object',NULL,NULL,NULL
         FROM public.document_structure_generations
         WHERE deployment_id=native_scope AND pageindex_uri IS NOT NULL
       UNION ALL
       SELECT 'document_reference_generations.artifact_uri',generation_id::text,
-        'artifacts',artifact_uri,'object',NULL,status
+        'artifacts',artifact_uri,'object',NULL,status,NULL
         FROM public.document_reference_generations
         WHERE deployment_id=native_scope AND artifact_uri IS NOT NULL
       UNION ALL
-      SELECT 'projection_snapshots.gcs_uri',snapshot_id::text,'corpus',gcs_uri,
-        'tree',NULL,status::text FROM public.projection_snapshots
+      SELECT CASE WHEN plane::text='P3_corpusfs' THEN 'projection_snapshots.gcs_uri'
+          ELSE 'projection_snapshots.unsupported_origin' END,
+        snapshot_id::text,'corpus',gcs_uri,
+        'tree',NULL,status::text,NULL FROM public.projection_snapshots
         WHERE deployment_id=native_scope
       UNION ALL
       SELECT 'knowledge_artifacts.'||u.field,k.artifact_id::text,'knowledge',
-        u.locator,'repository_path',NULL,k.status::text
+        u.locator,'repository_path',NULL,k.status::text,NULL
         FROM public.knowledge_artifacts k
         CROSS JOIN LATERAL (VALUES ('git_path',k.git_path),
           ('curation_path',k.curation_path)) u(field,locator)
         WHERE k.deployment_id=native_scope AND u.locator IS NOT NULL
       UNION ALL
       SELECT 'knowledge_compilations.session_transcript_uri',compilation_id::text,
-        'artifacts',session_transcript_uri,'object',NULL,NULL
+        'artifacts',session_transcript_uri,'object',NULL,NULL,NULL
         FROM public.knowledge_compilations
         WHERE deployment_id=native_scope AND session_transcript_uri IS NOT NULL
       UNION ALL
       SELECT 'knowledge_plan_runs.session_transcript_uri',run_id::text,
-        'artifacts',session_transcript_uri,'object',NULL,status
+        'artifacts',session_transcript_uri,'object',NULL,status,NULL
         FROM public.knowledge_plan_runs WHERE deployment_id=native_scope
       UNION ALL
       SELECT 'forget_manifests.portable_intent',forget_id::text,'forget',
-        forget_id::text,'journal_intent',NULL,status::text
+        forget_id::text,'journal_intent',NULL,status::text,NULL
         FROM public.forget_manifests
         WHERE deployment_id=native_scope
     ), bounded AS (

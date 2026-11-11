@@ -274,6 +274,31 @@ class MinIOObjectStore:
         """Every key at or below ``prefix`` (prefix-boundary safe)."""
         return self._keys_under(prefix=_validated_key(key=prefix))
 
+    def capture_store_identity(self) -> str:
+        """Identify the actual store bound by this ordinary S3 reader."""
+        return self._bucket
+
+    def iter_capture_key_candidates(self) -> Iterator[str]:
+        """Stream names only; D63 original provider evidence owns membership/T.
+
+        A current listing never proves historical absence, bytes or versions.
+        The engine matches candidate hashes to the qualified provider-at-T set;
+        missing original items make capture unavailable, never zero.
+        """
+        token = ""
+        while True:
+            page = self._client.list_objects_v2(
+                Bucket=self._bucket, Prefix="", ContinuationToken=token
+            )
+            for item in page.get("Contents", ()):
+                yield item["Key"]
+            if not page.get("IsTruncated", False):
+                return
+            next_token = page.get("NextContinuationToken", "")
+            if not next_token or next_token == token:
+                raise RuntimeError("storage_capture_candidate_page_incomplete")
+            token = next_token
+
     def _exists(self, *, normalized: str) -> bool:
         """Return whether one exact object exists, propagating non-absence errors."""
         try:
