@@ -55,6 +55,13 @@ spool. The full inventory is not held in a Python collection. Exact D152 page
 bytes use compact sorted-key JSON, `ensure_ascii=True`, including required
 defaults/nulls. Failure exits the raw provider context before joining workers,
 so cancellation closes blocking I/O and then waits for native session cleanup.
+The fixed return shape is a tuple of `ManagedStorageCaptureResult` values in
+input order: each has `request` and `completed`, with explicit `None` for an
+unavailable Project. A Project failure closes its native sessions and drains
+only its original provider group; other scopes keep their original evidence.
+Transport/protocol loss cancels the shared stream. A successful worker closes
+its native view, then waits for the full original provider EOF and process exit
+before publishing durable completion. No retry or substitute cut is created.
 
 `rememberstack.adapters.fsit_storage_capture_transport` owns the single closed
 canonical manifest/page/result-frame decoder and ordered group consumption.
@@ -107,8 +114,8 @@ provider orchestration and durable completion/replay code are written and
 scoped static checks pass. The changed native seed projection passed the same
 five normal original-view cases against actual migrations and an ordinary
 collector on an owned cached PostgreSQL 19rc1 scratch database (8.07 seconds);
-39 focused encoding/resource/provider-vector/store tests also pass, including
-two-scope byte ordering and cancellation. These synthetic protocol cases
+40 focused encoding/resource/provider-vector/store tests also pass, including
+two-scope byte ordering, local scope failure and protocol-loss cancellation. These synthetic protocol cases
 establish no native scope or cut. These
 checks do not execute a combined provider/native capture. That real execution, current
 qualified source/configuration/pins, targeted source review and current-head CI

@@ -26,6 +26,7 @@ from pydantic import SecretStr
 from pydantic import TypeAdapter
 
 from rememberstack.adapters.fsit_storage_capture import check_provider_manifest
+from rememberstack.adapters.fsit_storage_capture import iter_provider_items
 from rememberstack.adapters.fsit_storage_capture import provider_canonical_bytes
 from rememberstack.adapters.fsit_storage_capture import ProviderManifest
 from rememberstack.adapters.fsit_storage_capture import ProviderPage
@@ -36,6 +37,10 @@ from rememberstack.model.storage_capture import Digest
 
 class ProviderCaptureUnavailable(RuntimeError):
     """A non-secret refused/lost original provider operation."""
+
+
+class ProviderScopeUnavailable(ProviderCaptureUnavailable):
+    """One matched non-complete scope result; other original groups survive."""
 
 
 class RawProviderCaptureProcess(Protocol):
@@ -180,6 +185,11 @@ class _PendingProviderCapture:
             source._check_live()
         frame = source._read_frame()
         expected = source._requests[self._index]
+        if isinstance(frame, _ResultFrame) and frame.capture_id == _capture_id(
+            request=expected
+        ):
+            self._finish_group()
+            raise ProviderScopeUnavailable("provider_scope_unavailable")
         if (
             not isinstance(frame, _ManifestFrame)
             or frame.capture_id != _capture_id(request=expected)
@@ -187,7 +197,10 @@ class _PendingProviderCapture:
             or frame.manifest.request != expected
         ):
             raise ProviderCaptureUnavailable("provider_capture_refused")
-        check_provider_manifest(manifest=frame.manifest)
+        try:
+            check_provider_manifest(manifest=frame.manifest)
+        except ValueError:
+            raise ProviderCaptureUnavailable("provider_manifest_invalid") from None
         self._manifest = frame.manifest
         return frame.manifest
 
@@ -208,6 +221,11 @@ class _PendingProviderCapture:
             ):
                 raise ProviderCaptureUnavailable("provider_page_frame_context")
             yield frame.page
+        self._finish_group()
+
+    def _finish_group(self) -> None:
+        """Advance only a fully consumed group, checking the last original exit."""
+        source = self._source
         if self._index + 1 == len(source._requests):
             if source._process.read_line(maximum_bytes=source._maximum) is not None:
                 raise ProviderCaptureUnavailable("provider_stream_trailing_frame")
@@ -216,7 +234,28 @@ class _PendingProviderCapture:
             source._check_live()
             self._streamed = True
             source._next += 1
+            source._finished = source._next == len(source._requests)
             source._condition.notify_all()
+
+    def check_transport_complete(self) -> None:
+        """Wait after native close for all original groups, EOF and process exit."""
+        source = self._source
+        with source._condition:
+            source._condition.wait_for(lambda: source._cancelled or source._finished)
+            source._check_live()
+
+    def discard(self) -> None:
+        """Drain one failed Project's original group without publishing evidence."""
+        if self._streamed:
+            return
+        try:
+            manifest = self.complete()
+        except ProviderScopeUnavailable:
+            return
+        for _ in iter_provider_items(
+            manifest=manifest, pages=self.iter_pages(manifest=manifest)
+        ):
+            pass
 
 
 class FsitStorageCaptureSource:
@@ -237,6 +276,7 @@ class FsitStorageCaptureSource:
         self._next = 0
         self._claimed: set[int] = set()
         self._cancelled = False
+        self._finished = False
 
     @contextmanager
     def capture(self, *, request: ProviderRequest) -> Iterator[_PendingProviderCapture]:
@@ -252,11 +292,23 @@ class FsitStorageCaptureSource:
             if index in self._claimed:
                 raise ProviderCaptureUnavailable("provider_scope_already_claimed")
             self._claimed.add(index)
+        pending = _PendingProviderCapture(source=self, index=index)
         try:
-            pending = _PendingProviderCapture(source=self, index=index)
             yield pending
             if not pending._streamed:
                 raise ProviderCaptureUnavailable("provider_scope_incomplete")
+        except ProviderScopeUnavailable:
+            raise
+        except ProviderCaptureUnavailable:
+            self.cancel()
+            raise
+        except Exception:
+            try:
+                pending.discard()
+            except BaseException:
+                self.cancel()
+                raise
+            raise
         except BaseException:
             self.cancel()
             raise
@@ -271,7 +323,7 @@ class FsitStorageCaptureSource:
         """Require every original group and successful EOF before batch exit."""
         with self._condition:
             self._check_live()
-            if self._next != len(self._requests):
+            if not self._finished:
                 raise ProviderCaptureUnavailable("provider_batch_incomplete")
 
     def _check_live(self) -> None:
@@ -289,7 +341,10 @@ class FsitStorageCaptureSource:
             or b"\n" in line[:-1]
         ):
             raise ProviderCaptureUnavailable("provider_frame_bound_or_eof")
-        frame = _FRAME.validate_json(line[:-1])
+        try:
+            frame = _FRAME.validate_json(line[:-1])
+        except ValueError:
+            raise ProviderCaptureUnavailable("provider_frame_invalid") from None
         if provider_canonical_bytes(record=frame) + b"\n" != line:
             raise ProviderCaptureUnavailable("provider_frame_not_canonical")
         return frame

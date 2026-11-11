@@ -157,10 +157,10 @@ def test_two_scopes_claim_before_waiting_and_share_one_exact_stream() -> None:
 
 
 def test_scope_failure_wakes_other_group_waiter_and_closes_transport() -> None:
-    """No failed scope leaves an ordered wait task alive after source exit."""
+    """Protocol loss wakes ordered waiters and closes the original transport."""
     manifests = (_manifest(organisation="1" * 32), _manifest(organisation="2" * 32))
     scopes = tuple(_scope(manifest=manifest) for manifest in manifests)
-    transport = _RawTransport(manifests=manifests)
+    transport = _RawTransport(manifests=())
     claimed = Event()
     executor = ThreadPoolExecutor(max_workers=1)
     try:
@@ -182,9 +182,11 @@ def test_scope_failure_wakes_other_group_waiter_and_closes_transport() -> None:
 
                 future = executor.submit(wait_second)
                 assert claimed.wait(timeout=3)
-                with pytest.raises(RuntimeError, match="test_scope_failure"):
-                    with source.capture(request=scopes[0].request):
-                        raise RuntimeError("test_scope_failure")
+                with pytest.raises(
+                    ProviderCaptureUnavailable, match="provider_frame_bound_or_eof"
+                ):
+                    with source.capture(request=scopes[0].request) as pending:
+                        pending.complete()
                 with pytest.raises(
                     ProviderCaptureUnavailable, match="provider_batch_cancelled"
                 ):
@@ -192,3 +194,22 @@ def test_scope_failure_wakes_other_group_waiter_and_closes_transport() -> None:
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
     assert transport.closed
+
+
+def test_local_scope_failure_drains_only_its_group_and_preserves_next() -> None:
+    """One Project failure cannot discard the other original provider group."""
+    manifests = (_manifest(organisation="1" * 32), _manifest(organisation="2" * 32))
+    scopes = tuple(_scope(manifest=manifest) for manifest in manifests)
+    transport = _RawTransport(manifests=manifests)
+    with open_provider_capture_batch(
+        transport=transport, scopes=scopes, max_scopes=2, maximum_frame_bytes=65536
+    ) as source:
+        with pytest.raises(RuntimeError, match="test_project_failure"):
+            with source.capture(request=scopes[0].request):
+                raise RuntimeError("test_project_failure")
+        with source.capture(request=scopes[1].request) as pending:
+            manifest = pending.complete()
+            assert manifest.capture_id == manifests[1].capture_id
+            assert tuple(pending.iter_pages(manifest=manifest)) == ()
+            pending.check_transport_complete()
+    assert transport.closed and transport.reaped

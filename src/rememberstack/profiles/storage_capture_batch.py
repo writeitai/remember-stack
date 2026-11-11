@@ -61,13 +61,21 @@ class ManagedStorageCaptureInput:
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class ManagedStorageCaptureResult:
+    """One selected Project's completed evidence or explicit unavailability."""
+
+    request: StorageCaptureRequest
+    completed: CompletedStorageCapture | None
+
+
 def capture_storage_batch(
     *,
     inputs: tuple[ManagedStorageCaptureInput, ...],
     provider_transport: RawProviderCaptureTransport,
     max_scopes: int,
     maximum_frame_bytes: int,
-) -> tuple[CompletedStorageCapture, ...]:
+) -> tuple[ManagedStorageCaptureResult, ...]:
     """Arm admitted original Project views concurrently around one provider cut.
 
     Use the SAME required ``max_scopes`` from the qualified job run profile as
@@ -100,26 +108,34 @@ def capture_storage_batch(
             raise ValueError("capture_batch_exact_scope")
         seen.add(item.request.deployment_id)
 
-    results: dict[int, CompletedStorageCapture] = {}
+    results: dict[int, CompletedStorageCapture | None] = {}
     pending: list[tuple[int, ManagedStorageCaptureInput]] = []
     for index, item in enumerate(inputs):
-        previous = item.evidence_store.read_manifest(
-            capture_id=capture_request_id(request=item.request)
-        )
-        if previous is not None:
-            results[index] = replay_completed_capture(
-                evidence_store=item.evidence_store, request=item.request, body=previous
+        try:
+            previous = item.evidence_store.read_manifest(
+                capture_id=capture_request_id(request=item.request)
             )
-        else:
-            check_capture_configuration(
-                request=item.request,
-                profile=item.profile,
-                stores=item.stores,
-                identity_key=item.identity_key,
-            )
-            pending.append((index, item))
+            if previous is not None:
+                results[index] = replay_completed_capture(
+                    evidence_store=item.evidence_store,
+                    request=item.request,
+                    body=previous,
+                )
+            else:
+                check_capture_configuration(
+                    request=item.request,
+                    profile=item.profile,
+                    stores=item.stores,
+                    identity_key=item.identity_key,
+                )
+                pending.append((index, item))
+        except Exception:
+            results[index] = None
     if not pending:
-        return tuple(results[index] for index in range(len(inputs)))
+        return tuple(
+            ManagedStorageCaptureResult(request=item.request, completed=results[index])
+            for index, item in enumerate(inputs)
+        )
 
     executor = ThreadPoolExecutor(
         max_workers=len(pending), thread_name_prefix="remember-storage-capture"
@@ -145,11 +161,22 @@ def capture_storage_batch(
                     index
                 )
             for future in as_completed(futures):
-                results[futures[future]] = future.result()
+                try:
+                    results[futures[future]] = future.result()
+                except Exception:
+                    results[futures[future]] = None
+    except Exception:
+        # A broken original stream/context cannot qualify an incomplete scope.
+        # Already completed replay stays independent of this new invocation.
+        for index, _ in pending:
+            results[index] = None
     finally:
         # Exiting the source first closes blocking I/O; workers then unwind
         # their native contexts before shutdown returns to the caller.
         for future in futures:
             future.cancel()
         executor.shutdown(wait=True, cancel_futures=True)
-    return tuple(results[index] for index in range(len(inputs)))
+    return tuple(
+        ManagedStorageCaptureResult(request=item.request, completed=results[index])
+        for index, item in enumerate(inputs)
+    )

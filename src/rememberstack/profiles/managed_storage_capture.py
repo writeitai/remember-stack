@@ -100,6 +100,10 @@ class PendingProviderCapture(Protocol):
         """Read exact stored pages using current equivalent scoped authority."""
         ...
 
+    def check_transport_complete(self) -> None:
+        """Check the whole original stream/exit after this native view closes."""
+        ...
+
 
 class ProviderCapturePort(Protocol):
     """Owned transport launch/close; no provider callback into the engine."""
@@ -296,6 +300,7 @@ class StorageCaptureCatalog:
                             profile=profile_bytes(record=self._profile),
                         )
                         native.check_continuity()
+                    pending.check_transport_complete()
                 manifest = self._publish(
                     spool=spool, request=request, witness=witness, provider=provider
                 )
