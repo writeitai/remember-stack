@@ -429,3 +429,55 @@ def test_reinstallation_removes_superseded_execute_grants(native_scope: _Scope) 
         with pytest.raises(psycopg.Error) as wrong_login:
             _sample(collector=admin)
         assert wrong_login.value.sqlstate == "42501"
+
+
+def test_collector_temporary_catalog_cannot_execute_as_definer(
+    native_scope: _Scope,
+) -> None:
+    """Resolve native catalogs before a collector-owned temporary view."""
+    with native_scope.connect(role=native_scope.admin_role) as admin:
+        assert admin.execute(
+            "SELECT has_database_privilege(%s,current_database(),'TEMP')",
+            (native_scope.collector_role,),
+        ).fetchone() == (False,)
+        admin.execute(
+            sql.SQL("GRANT TEMP ON DATABASE {} TO {}").format(
+                sql.Identifier(admin.info.dbname),
+                sql.Identifier(native_scope.collector_role),
+            )
+        )
+        try:
+            with native_scope.connect(role=native_scope.collector_role) as collector:
+                collector.execute(
+                    "CREATE TEMP TABLE capture_temp_namespace(value integer)"
+                )
+                collector.execute(
+                    "CREATE FUNCTION pg_temp.poison_catalog() RETURNS boolean "
+                    "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='P0001',"
+                    "MESSAGE='native_guard_temp_catalog_poison',DETAIL=current_user; END $$"
+                )
+                collector.execute(
+                    "CREATE TEMP VIEW pg_database AS SELECT * FROM pg_catalog.pg_database "
+                    "WHERE pg_temp.poison_catalog()"
+                )
+                collector.execute(
+                    sql.SQL("GRANT SELECT ON pg_temp.pg_database TO {}").format(
+                        sql.Identifier(native_scope.definer_role)
+                    )
+                )
+                collector.execute("BEGIN")
+                try:
+                    sample = _sample(collector=collector)
+                    assert sample.session_login == native_scope.collector_role
+                    assert (
+                        sample.allocated_fork_bytes == sample.physical_table_total_bytes
+                    )
+                finally:
+                    collector.execute("ROLLBACK")
+        finally:
+            admin.execute(
+                sql.SQL("REVOKE TEMP ON DATABASE {} FROM {}").format(
+                    sql.Identifier(admin.info.dbname),
+                    sql.Identifier(native_scope.collector_role),
+                )
+            )

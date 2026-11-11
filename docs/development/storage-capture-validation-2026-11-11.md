@@ -49,7 +49,7 @@ The new full-engine native regression suite uses only
 does not start `capture_guard_`, and requires that scratch database to start
 empty. It never reads the normal application database setting or resets an
 existing schema. An external disposable-container harness owns removal.
-The fixed function now passed **eight native cases in 4.60 seconds** on the
+The fixed function now passed **nine native cases in 4.55 seconds** on the
 cached PostgreSQL 19rc1 image after applying the actual engine migrations and
 normal deployment bootstrap. The
 [sanitised component receipt](../../plan/analysis/storage_inventory/pg19_relation_guard_native_validation_20261111.json)
@@ -99,3 +99,18 @@ not an assertion that hosted skipped cases ran. Existing current-head CI is
 still required. This is not a completed D152 T/clock/view witness, a classified
 or chargeable capture, or a qualified populated profile. No role or function
 has been installed live.
+
+The function's installed search path is explicitly `pg_catalog, pg_temp`.
+PostgreSQL searches temporary schemas for relations and types, not functions
+or operators ([lookup rules](https://www.postgresql.org/docs/19/runtime-config-client.html#GUC-SEARCH-PATH),
+retrieved 2026-11-11). Its
+[SECURITY DEFINER guidance](https://www.postgresql.org/docs/19/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY)
+puts the temporary schema last. The existing
+`p9_02_0023_query_space_roles.py` migration already revokes PUBLIC database
+privileges, and the normal migrated collector cannot create temporary objects.
+The one focused regression deliberately grants TEMP only within its owned
+scratch case, then restores it. A collector-owned temporary `pg_database`
+view, with SELECT granted to the definer, invoked its marker function as that
+definer before the path correction (`P0001`). With the corrected path, the
+same case returns a real reconciled sample and never runs that marker.
+The fix changes no production permission or ordinary collector interface.

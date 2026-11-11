@@ -358,7 +358,7 @@ def install_native_relation_guard(
         connection.execute(
             sql.SQL(
                 "CREATE OR REPLACE FUNCTION {}(deadline_unix_us bigint) RETURNS jsonb "
-                "LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS {}"
+                "LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS {}"
             ).format(function, sql.Literal(body))
         )
         connection.execute(
