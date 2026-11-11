@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from rememberstack.core.storage_capture import member_payload_digest
+from rememberstack.model.storage_capture import StorageReferenceMember
 from rememberstack.profiles.managed_storage_capture import _resource_set
 from rememberstack.profiles.managed_storage_capture import _Spool
 from rememberstack.profiles.managed_storage_capture import (
@@ -39,6 +41,30 @@ def test_resource_set_matches_independent_document_and_keeps_zero(
             evidence="d" * 64,
             measured_bytes="17",
         )
+        excluded = StorageReferenceMember(
+            opaque_id="f" * 64,
+            payload_digest="0" * 64,
+            component="canonical_object",
+            purpose="privacy_control",
+            store_binding_id="forget",
+            resource_identity="a" * 64,
+            version_identity="c" * 64,
+            logical_bytes="9999",
+            alias_group=None,
+        )
+        excluded = excluded.model_copy(
+            update={"payload_digest": member_payload_digest(member=excluded)}
+        )
+        spool.member(member=excluded)
+        spool.resource(
+            component=None,
+            store="forget",
+            identity=excluded.resource_identity,
+            version=excluded.version_identity,
+            evidence="d" * 64,
+            measured_bytes=excluded.logical_bytes,
+        )
+        assert tuple(spool.members()) == (excluded,)
         actual, measured = _resource_set(
             spool=spool, capture_id="e" * 64, component="canonical_object"
         )

@@ -458,7 +458,7 @@ class StorageCaptureCatalog:
             seed.locator.get_secret_value(),
             seed.native_id.get_secret_value(),
         )
-        if role == "knowledge" or seed.native_class.startswith("knowledge_"):
+        if role == "knowledge":
             raise ManagedStorageCaptureUnavailable(
                 "capture_managed_k_profile_unsupported"
             )
