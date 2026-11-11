@@ -94,6 +94,10 @@ and the separate full LoCoMo retrieval budget, start with
 [context operations](designs/open_query_space_design.md#31-platform-operations)
 and the [retrieval-depth analysis](analysis/configurable_context_retrieval_20261022.md).
 
+For concurrent fact projection without a project-wide embedding mutex, see
+[PostgreSQL P1 §7.1](designs/postgres_p1_search_projection_design.md#71-concurrent-fact-labeling-and-embedding)
+and the [coordination/reuse analysis](analysis/fact_label_concurrency_20261111.md).
+
 For the unpublished historical LoCoMo branch, its superseding PRs and the
 general dialogue/attachment instructions carried into Full-v43, see the
 [branch audit](analysis/locomo_unpublished_branch_audit_20261111.md). The
