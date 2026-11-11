@@ -642,7 +642,7 @@ def _guard_local_execution(
     max_questions: int,
     execute: bool,
 ) -> None:
-    """Reject accidental, partial, dirty, or source-overwriting runs."""
+    """Reject unacknowledged, dirty, or source-overwriting runs."""
     if not execute:
         raise runner.ExecutionGuardError("retrieval ablation requires --execute")
     configuration = context.configuration
@@ -1486,7 +1486,7 @@ def _run_judges(
     max_judge_calls: int,
     max_evaluator_cost_usd: Decimal,
 ) -> None:
-    """Resume canonical judging after every answer is durable."""
+    """Resume the recorded judging contract after every answer is durable."""
     if set(configuration.item_ids) - set(state.run_state.answers):
         raise runner.ExecutionGuardError("answer stage is incomplete")
     remaining_calls = sum(
