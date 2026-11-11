@@ -1,11 +1,15 @@
 """Retrieval-access profile, MCP boundary, state, and scoring proofs."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
 import json
 from pathlib import Path
+from threading import Barrier
+from threading import Event
+from threading import Lock
 from types import SimpleNamespace
 from typing import cast
 
@@ -13,6 +17,7 @@ from benchmarks.locomo import ablation
 from benchmarks.locomo import cli
 from benchmarks.locomo import runner
 from benchmarks.locomo.cli import _parser
+from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
 from benchmarks.locomo.model import JudgeRecord
 from benchmarks.locomo.model import LoCoMoQuestion
@@ -43,7 +48,12 @@ from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
 from rememberstack.adapters import CodexSubscriptionAccessError
 from rememberstack.adapters import OpenRouterSettings
+from rememberstack.adapters.openrouter import OpenRouterProviderError
+from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.model import GeneratedResponse
+from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
+from rememberstack.model import StructuredResponseModel
 from rememberstack.ports import ModelProviderPort
 
 
@@ -78,6 +88,294 @@ class _SyntheticContext:
 
     configuration: RunConfiguration
     state: RunState
+
+
+class _ChargedProvider(FakeModelProvider):
+    """Return real typed native-loop steps with concurrent deterministic charges."""
+
+    def __init__(
+        self, *, callback: Callable[[ModelRequest], None] | None = None
+    ) -> None:
+        """Count concurrent requests without holding a mutex over a blocking callback."""
+        super().__init__(generate_payload={"action": "answer", "answer": "Prague"})
+        self._callback = callback
+        self._mutex = Lock()
+        self.received: list[ModelRequest] = []
+        self.active = 0
+        self.max_active = 0
+
+    def generate[ResponseT: StructuredResponseModel](
+        self, *, request: ModelRequest, response_type: type[ResponseT]
+    ) -> GeneratedResponse[ResponseT]:
+        """Simulate independent RPCs, including an optional accounted failure."""
+        with self._mutex:
+            self.received.append(request)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            if self._callback is not None:
+                self._callback(request)
+            with self._mutex:
+                response = super().generate(
+                    request=request, response_type=response_type
+                )
+            return response.model_copy(update={"usage": _usage(model=request.model)})
+        finally:
+            with self._mutex:
+                self.active -= 1
+
+
+def _full_arm(
+    *, output: Path, question_count: int, workers: int
+) -> tuple[
+    _SyntheticContext,
+    tuple[LoCoMoQuestion, ...],
+    ablation.AblationConfiguration,
+    ablation.AblationState,
+]:
+    """Prepare one immutable full-profile arm over synthetic source questions."""
+    context = _SyntheticContext(
+        configuration=_configuration(),
+        state=RunState(protocol_name=PROTOCOL_NAME, protocol_fingerprint="source"),
+    )
+    questions = tuple(
+        _question().model_copy(
+            update={
+                "item_id": f"conv-test/qa/{index:04d}",
+                "question": f"Which city for case {index}?",
+            }
+        )
+        for index in range(question_count)
+    )
+    configuration, state = ablation._load_or_create_output(  # noqa: SLF001
+        output=output,
+        context=context,
+        questions=questions,
+        sample_id="conv-test",
+        profile="full",
+        p3_version="p3-v1",
+        mcp_tools=answer_tool_catalog(),
+        answer_workers=workers,
+        answer_model="test/alternative-model",
+        prompt_template=protocol_for_key(DEFAULT_PROTOCOL_KEY).answer_prompt_template,
+    )
+    return context, questions, configuration, state
+
+
+def _run_full_arm(
+    *,
+    output: Path,
+    context: _SyntheticContext,
+    questions: tuple[LoCoMoQuestion, ...],
+    configuration: ablation.AblationConfiguration,
+    state: ablation.AblationState,
+    provider: ModelProviderPort,
+    ceiling: Decimal = Decimal("2"),
+) -> None:
+    """Exercise the actual native answer loop; no source/API calls are needed."""
+    ablation._run_answers(  # noqa: SLF001
+        output=output,
+        configuration=configuration,
+        state=state,
+        questions=questions,
+        context=context,
+        profile="full",
+        mount=cast(P3Mount, object()),
+        server=None,
+        mcp_tools=answer_tool_catalog(),
+        prompt_template=protocol_for_key(DEFAULT_PROTOCOL_KEY).answer_prompt_template,
+        client=cast(MemoryClient, object()),
+        answer_provider=provider,
+        max_agent_calls=100,
+        max_evaluator_cost_usd=ceiling,
+    )
+
+
+def test_parallel_questions_overlap_and_resume_without_repeating_completed_work(
+    tmp_path: Path,
+) -> None:
+    """Four independent native loops preserve exact usage and immutable source state."""
+    output = tmp_path / "parallel"
+    context, questions, configuration, state = _full_arm(
+        output=output, question_count=8, workers=4
+    )
+    barrier = Barrier(parties=4, timeout=5)
+
+    def together(request: ModelRequest) -> None:
+        """Require four model calls to be active before any may complete."""
+        del request
+        barrier.wait()
+
+    provider = _ChargedProvider(callback=together)
+    _run_full_arm(
+        output=output,
+        context=context,
+        questions=questions,
+        configuration=configuration,
+        state=state,
+        provider=provider,
+    )
+    assert provider.max_active == 4 and len(provider.received) == 8
+    assert all(
+        r.model == configuration.answer_model and r.reasoning_effort == "high"
+        for r in provider.received
+    )
+    assert len(state.run_state.answers) == len(state.action_usage) == 8
+    assert state.run_state.evaluator_cost_usd == Decimal("0.08")
+    assert len({id(record) for record in state.run_state.answers.values()}) == 8
+    assert context.state.answers == {} and context.state.evaluator_cost_usd == 0
+    saved_configuration, saved_state = ablation._load_or_create_output(  # noqa: SLF001
+        output=output,
+        context=context,
+        questions=questions,
+        sample_id="conv-test",
+        profile="full",
+        p3_version="p3-v1",
+        mcp_tools=answer_tool_catalog(),
+        answer_workers=4,
+        answer_model="test/alternative-model",
+        prompt_template=protocol_for_key(DEFAULT_PROTOCOL_KEY).answer_prompt_template,
+    )
+    _run_full_arm(
+        output=output,
+        context=context,
+        questions=questions,
+        configuration=saved_configuration,
+        state=saved_state,
+        provider=provider,
+    )
+    assert len(provider.received) == 8
+
+
+def test_parallel_infrastructure_failure_drains_successes_and_keeps_interrupted_charges(
+    tmp_path: Path,
+) -> None:
+    """An accounted provider failure does not discard another in-flight completion."""
+    output = tmp_path / "parallel-failure"
+    context, questions, configuration, state = _full_arm(
+        output=output, question_count=3, workers=2
+    )
+    barrier = Barrier(parties=2, timeout=5)
+    stopped = Event()
+    original_stop = ablation._SharedAnswerBudget.stop  # noqa: SLF001
+
+    def stop_and_signal(
+        self: ablation._SharedAnswerBudget, *, error: Exception | None = None
+    ) -> None:
+        """Observe production stop admission before releasing the other RPC."""
+        original_stop(self, error=error)
+        stopped.set()
+
+    def fail_one(request: ModelRequest) -> None:
+        """Admit two calls together; interrupt only one with known provider usage."""
+        barrier.wait()
+        if "Which city for case 0?" in request.prompt:
+            raise OpenRouterProviderError(
+                "OpenRouter returned 402: credits unavailable",
+                usage=_usage(model=request.model),
+            )
+        assert stopped.wait(timeout=5)
+
+    provider = _ChargedProvider(callback=fail_one)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ablation._SharedAnswerBudget, "stop", stop_and_signal)  # noqa: SLF001
+        with pytest.raises(
+            runner.ProviderInfrastructureError, match="credits unavailable"
+        ):
+            _run_full_arm(
+                output=output,
+                context=context,
+                questions=questions,
+                configuration=configuration,
+                state=state,
+                provider=provider,
+            )
+    assert len(provider.received) == 2
+    assert tuple(state.run_state.answers) == (questions[1].item_id,)
+    assert state.run_state.interrupted_answer_calls == 1
+    assert len(state.run_state.interrupted_usages) == 1
+    assert state.run_state.evaluator_cost_usd == Decimal("0.02")
+    saved = ablation.AblationState.model_validate_json(
+        (output / "state.json").read_bytes()
+    )
+    ablation._validate_state(
+        state=saved, questions=questions, configuration=configuration
+    )  # noqa: SLF001
+    retry = _ChargedProvider()
+    _run_full_arm(
+        output=output,
+        context=context,
+        questions=questions,
+        configuration=configuration,
+        state=saved,
+        provider=retry,
+    )
+    assert len(retry.received) == 2
+    assert len(saved.run_state.answers) == 3
+    assert saved.run_state.evaluator_cost_usd == Decimal("0.04")
+
+
+def test_single_worker_preserves_native_post_call_budget_failure(
+    tmp_path: Path,
+) -> None:
+    """Prior run charges still participate in the native final-answer cost check."""
+    output = tmp_path / "serial-budget"
+    context, questions, configuration, state = _full_arm(
+        output=output, question_count=1, workers=1
+    )
+    state.run_state.preflight_usages.append(
+        _usage(model="probe").model_copy(update={"cost_usd": Decimal("0.99")})
+    )
+    state.run_state.evaluator_cost_usd = Decimal("0.99")
+    with pytest.raises(runner.ExecutionGuardError):
+        _run_full_arm(
+            output=output,
+            context=context,
+            questions=questions,
+            configuration=configuration,
+            state=state,
+            provider=_ChargedProvider(),
+            ceiling=Decimal("0.995"),
+        )
+    record = state.run_state.answers[questions[0].item_id]
+    assert record.failure is not None and record.failure.kind == "accounting"
+    assert state.run_state.evaluator_cost_usd == Decimal("1.00")
+
+
+def test_shared_budget_stops_new_calls_after_known_concurrent_charges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Already admitted calls finish; the next RPC cannot pass the shared ceiling."""
+    output = tmp_path / "budget"
+    context, questions, configuration, state = _full_arm(
+        output=output, question_count=3, workers=2
+    )
+    barrier = Barrier(parties=2, timeout=5)
+    original = ablation._SharedAnswerBudget.charge  # noqa: SLF001
+
+    def charge_together(
+        self: ablation._SharedAnswerBudget, *, usage: ProviderCallUsage
+    ) -> None:
+        """Make both costs known before either first-wave answer can complete."""
+        original(self, usage=usage)
+        barrier.wait()
+
+    monkeypatch.setattr(ablation._SharedAnswerBudget, "charge", charge_together)  # noqa: SLF001
+    provider = _ChargedProvider()
+    with pytest.raises(runner.ExecutionGuardError):
+        _run_full_arm(
+            output=output,
+            context=context,
+            questions=questions,
+            configuration=configuration,
+            state=state,
+            provider=provider,
+            ceiling=Decimal("0.015"),
+        )
+    assert len(provider.received) == 2
+    assert state.run_state.evaluator_cost_usd == Decimal("0.02")
+    assert len(state.run_state.answers) == 2
+    assert state.run_state.interrupted_answer_calls == 0
 
 
 def test_mcp_catalog_is_read_only_input_schema_only() -> None:
@@ -376,8 +674,9 @@ def test_cli_exposes_the_declared_profiles(
     assert (profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}) == needs_mcp
 
 
+@pytest.mark.parametrize("answer_model", (None, "test/alternative-model"))
 def test_full_prompt_is_frozen_and_resume_rejects_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer_model: str | None
 ) -> None:
     """Prompt trials bind exact bytes and never mutate the original answers."""
     monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
@@ -395,25 +694,37 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         "p3_version": "p3-v1",
         "mcp_tools": answer_tool_catalog(),
         "prompt_template": "Question: {question}\r\n",
+        "answer_model": answer_model,
     }
     configuration, _state = ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
-    assert configuration.answer_model == ANSWER_AGENT_MODEL
+    assert configuration.answer_model == (answer_model or ANSWER_AGENT_MODEL)
     assert configuration.source_processing_revision == "a" * 40
     assert configuration.ablation_runner_revision == "b" * 40
     assert (output / "answer-prompt.txt").read_bytes() == b"Question: {question}\r\n"
     ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
     with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
         ablation._load_or_create_output(**{**values, "prompt_template": "Changed"})  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(
+            **{**values, "answer_model": "test/different-model"}
+        )  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(**{**values, "answer_workers": 4})  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(
+            **{**values, "answer_provider_only": ("test-host",)}
+        )  # type: ignore[arg-type]  # noqa: SLF001
     (output / "answer-prompt.txt").write_text("corrupt", encoding="utf-8")
     with pytest.raises(runner.BenchmarkRunError, match="frozen answer prompt changed"):
         ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
     assert context.state.answers == {}
 
 
+@pytest.mark.parametrize("answer_model", (None, "test/alternative-model"))
 def test_full_profile_calls_the_native_loop_with_source_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer_model: str | None
 ) -> None:
-    """The experiment changes only the template, not access, models or depth."""
+    """The native loop receives the frozen model while other settings stay fixed."""
     monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
     question = _question()
     context = _SyntheticContext(
@@ -431,13 +742,23 @@ def test_full_profile_calls_the_native_loop_with_source_settings(
         p3_version="p3-v1",
         mcp_tools=tools,
         prompt_template="General candidate: {question}",
+        answer_model=answer_model,
     )
     observed: dict[str, object] = {}
 
     def capture_answer(**values: object) -> AnswerRecord:
         """Capture the native call without any paid provider requests."""
         observed.update(values)
-        return _answer(question=question)
+        journal = cast(ModelProviderPort, values["provider"])
+        reply = journal.generate(
+            request=ModelRequest(
+                model=str(values["answer_agent_model"]), prompt="test"
+            ),
+            response_type=AnswerAgentStep,
+        )
+        return _answer(question=question).model_copy(
+            update={"reader_usage": reply.usage}
+        )
 
     monkeypatch.setattr(runner, "_answer_one", capture_answer)
     client = cast(MemoryClient, object())
@@ -454,14 +775,16 @@ def test_full_profile_calls_the_native_loop_with_source_settings(
         mcp_tools=tools,
         prompt_template="General candidate: {question}",
         client=client,
-        answer_provider=cast(ModelProviderPort, object()),
+        answer_provider=_ChargedProvider(),
         max_agent_calls=9,
         max_evaluator_cost_usd=Decimal("1"),
     )
     assert observed["client"] is client
     assert observed["p3"] is mount
     assert observed["tools"] == tools and len(tools) == 22
-    assert observed["answer_agent_model"] == context.configuration.answer_agent_model
+    assert observed["answer_agent_model"] == (
+        answer_model or context.configuration.answer_agent_model
+    )
     assert observed["answer_agent_reasoning_effort"] == "high"
     assert observed["retrieval_budget"] == context.configuration.retrieval_budget
     assert observed["max_tool_calls_per_question"] == 8
@@ -472,6 +795,71 @@ def test_full_profile_calls_the_native_loop_with_source_settings(
     assert "require_content_before_answer" not in observed
     assert tuple(state.run_state.answers) == (question.item_id,)
     assert context.state.answers == {}
+
+
+@pytest.mark.parametrize(
+    ("profile", "answer_model", "message"),
+    (
+        ("mcp", "test/model", "requires --profile full"),
+        ("codex-p3", "test/model", "requires --profile full"),
+        ("full", "", "nonempty identifier"),
+        ("full", "test/model ", "without whitespace"),
+        ("full", "test/\nmodel", "without whitespace"),
+    ),
+)
+def test_model_option_rejects_invalid_comparisons_before_source_access(
+    tmp_path: Path, profile: ablation.AblationProfile, answer_model: str, message: str
+) -> None:
+    """Invalid options fail before reading a source or making paid calls."""
+    with pytest.raises(runner.ExecutionGuardError, match=message):
+        ablation.run_retrieval_ablation(
+            run_dir=tmp_path / "missing-source",
+            sample_id="conv-test",
+            profile=profile,
+            output=tmp_path / "output",
+            p3_root=None,
+            max_questions=20,
+            max_agent_calls=180,
+            max_judge_calls=20,
+            max_evaluator_cost_usd=Decimal("2"),
+            execute=True,
+            answer_provider=None,
+            judge_provider=cast(ModelProviderPort, object()),
+            client=None,
+            answer_model=answer_model,
+        )
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    (
+        ({"answer_workers": 0}, "between 1 and 16"),
+        ({"answer_workers": 17}, "between 1 and 16"),
+        ({"answer_provider_only": ()}, "nonempty tags"),
+        ({"answer_provider_only": ("bad tag",)}, "without whitespace"),
+    ),
+)
+def test_parallel_and_provider_options_fail_before_source_access(
+    tmp_path: Path, options: dict[str, object], message: str
+) -> None:
+    """Invalid execution knobs cannot begin source reads or paid calls."""
+    with pytest.raises(runner.ExecutionGuardError, match=message):
+        ablation.run_retrieval_ablation(
+            run_dir=tmp_path / "missing",
+            sample_id="conv-test",
+            profile="full",
+            output=tmp_path / "output",
+            p3_root=None,
+            max_questions=20,
+            max_agent_calls=180,
+            max_judge_calls=20,
+            max_evaluator_cost_usd=Decimal("2"),
+            execute=True,
+            answer_provider=None,
+            judge_provider=cast(ModelProviderPort, object()),
+            client=None,
+            **options,  # type: ignore[arg-type]
+        )
 
 
 def test_full_profile_rejects_judge_drift_and_incomplete_prompts() -> None:
