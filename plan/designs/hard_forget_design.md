@@ -19,6 +19,14 @@
 
 ## 1. Contract and boundary
 
+[D152 storage capture](storage_capture_consumer_design.md) observes the
+separately durable privacy-control root and its bounded operational exposure;
+it never grants authority to forget or restore data. Privacy work may wait
+only for the qualified short metadata guard, not paged extraction, funding
+or ACK. Capture artifacts contain no source payloads and follow accepted
+restricted metadata retention/current-authority rules; capture completion
+cannot authorise serving or resurrecting forgotten content.
+
 Hard-forget removes one document lineage's contribution and source-bearing payloads from every
 library-controlled active store. After completion, semantic, verbatim, graph, K, and browse reads
 cannot surface content unique to that lineage, and their public negative is the same as for content

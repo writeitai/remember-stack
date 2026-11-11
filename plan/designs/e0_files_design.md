@@ -38,6 +38,15 @@ complexity is handled by *decomposition into sub-workers*, each separately idemp
 
 ## 2. Storage layout — GCS holds bodies, Postgres holds the index
 
+Retained-resource evidence follows
+[D152's engine capture contract](storage_capture_consumer_design.md).
+Committed E0/representation references identify canonical resources; an
+unregistered or failed copy remains separately classified exposure. Hot/cold
+placement does not classify retention purpose. Capture introduces no source,
+lineage, converter, chunk, Selection/Claimify or embedding identity change.
+Existing processing admission and truth commits remain authoritative; a
+storage observation cannot create either.
+
 Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
 
 - **raw** — `gs://rememberstack-<dep>-raw/<doc_id>/<content_hash>/original.<ext>` — immutable source-of-truth

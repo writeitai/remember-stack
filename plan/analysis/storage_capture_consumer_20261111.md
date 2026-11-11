@@ -17,7 +17,7 @@ captured-set reasoning is reusable analysis. Merging that proposal did not make
 its protocol binding or establish a running producer.
 
 The provider authority is fsit D63,
-[scoped-storage-capture.md](https://github.com/writeitai/fsit/blob/d4b26f292864e010475bfafb8b731369ab604583/design/designs/scoped-storage-capture.md).
+[scoped-storage-capture.md](https://github.com/writeitai/fsit/blob/585aa227bedade9bec1308f2adb41757ff4b7bed/design/designs/scoped-storage-capture.md).
 Source was read on 2026-11-11. Its accepted four-set scope is exactly the
 Project's raw, artifacts, corpus and forget filesystems, not a new filesystem
 count or customer quota. Each native filesystem ID is canonical 26-character
@@ -26,8 +26,9 @@ Organisation and engine UUIDs keep their separate UUID32 representation.
 No working public capture caller or manifest store follows from acceptance.
 
 Private provider components are being assembled at fsit draft
-[#575](https://github.com/writeitai/fsit/pull/575), source
-51dd1e79cd36736d13c301b8c73d05efc3c45348. The provider owner is implementing
+[#576](https://github.com/writeitai/fsit/pull/576), source
+1a37448c, on accepted main585aa227 after the namespace-reader merge.
+The provider owner is implementing
 materialisation and then durable publication. The engine must agree the one
 typed boundary with that work rather than invent an alternate files API,
 live-listing collector or duplicate decoder.
@@ -99,3 +100,51 @@ decision; a guessed number is not evidence.
 This checkpoint changes analysis and navigation only. No implementation,
 schema, credential, live resource, public documentation, paid reuse input or
 customer-facing claim has changed.
+
+## Selected boundary and rejected scope expansion
+
+The [consumer design](../designs/storage_capture_consumer_design.md) selects
+read-only evidence, classification and exact membership. It does not adopt
+the proposal's all-writer pre-growth financial-permission system as a
+prerequisite for observing resources. A parked deployment must still be able
+to produce recovery/privacy evidence. Existing funded-growth and no-debt
+invariants remain; positive excluded/unfunded exposure stays visible.
+
+Native successful processing outcomes are actual members of the captured
+engine view, not an inferred sequence prefix. Independently stored card,
+failed, no-op and in-flight resources are still classified from reference
+and provider facts. That is sufficient to separate observation from money;
+it does not authorise an unheld charge or declare existing admission's
+uncovered cost vectors solved.
+
+The provider owner agreed the fixed item fields and five independent flags,
+explicit null alias on non-links and regular/directory/symlink vocabulary.
+Hard links keep their resolved supported kind and an alias group. Source
+state strings are pending/uploading/sealed for chunks and
+open/completing/committing/aborting for multipart. Retained includes uploading
+and sealed; sealed is a subset. Original view-acquisition brackets remain
+distinct from later enumeration times. This is coordinated wire intent,
+not a currently served API or proof of current writer/profile qualification.
+
+The decision leaves the measured physical quantity allocated, preserves
+separate P3 origin and extra serving-replica evidence, and refuses an
+unqualified mixed-purpose physical mapping. It chooses no row fraction,
+free retained bytes, price or arbitrary product limit. The operator's
+matching D55/D102 measurement/eligibility amendment remains required before
+managed adapter implementation/use. First-enable populated/profile and
+current-terms cost proof is distinct from this technical contract.
+
+The provider's fixed invocation can finish materialising long after its short
+metadata fence releases. Waiting for that final response while holding the
+engine's short guard would violate the bounded-cut contract. The selected
+consumer therefore proves and releases its own guard after its own T bracket,
+materialises its original view independently, and validates the completed
+provider bracket/release before publishing anything. Failed provider evidence
+means no completed engine result, not a longer engine pause. This requires
+neither an early provider callback nor another coordination service.
+
+The first engine repeatable-read snapshot is acquired under that native guard.
+Earlier authority/configuration queries must end their transaction before it
+starts. A later table lock cannot refresh an already fixed view; this is an
+implementation constraint on the original view, not a new historical repair
+mechanism.

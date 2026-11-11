@@ -75,6 +75,13 @@ It does not:
 
 ## 4. Storage topology
 
+[D152's capture contract](storage_capture_consumer_design.md) includes each
+qualified physical search index/fork once through its owning relation. Native
+maintenance and extension/background allocation must obey the qualified
+boundary; MVCC alone does not freeze physical bytes. Rebuild/serving replicas
+stay separately classified. This observation contract changes no search,
+embedding/reuse, graph correctness or readiness semantics.
+
 | Target | Canonical searchable text | Derived semantic state | Lexical state |
 | --- | --- | --- | --- |
 | Chunk | `chunk_search.search_text` (derived from object-store source slice) | `chunk_search.embedding` | BM25 on `chunk_search.search_text` |

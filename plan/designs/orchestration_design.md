@@ -25,6 +25,14 @@ Numbers here are starting points to measure, not committed constants (CLAUDE.md)
 
 ## 1. No workflow engine — the chain is the orchestrator (scope boundary)
 
+[D152 storage capture](storage_capture_consumer_design.md) uses the existing
+deployment operational entry point and ordinary exact replay. Its bounded
+native boundary never waits for a model job, financial transaction or ACK.
+A missed historical cut stays missing; a forward cut cannot backdate bytes.
+No new queue, daemon, release recovery coordinator or processing-identity
+generation is introduced. Capture and its delivery do not replace work rows
+or processing admission.
+
 There is deliberately **no Airflow / Temporal / Step Functions layer**. The orchestrator is the
 composition of three things that already exist:
 

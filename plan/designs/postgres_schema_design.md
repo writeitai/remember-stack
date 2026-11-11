@@ -63,6 +63,13 @@ It is the binding companion to `overall_design.md` (§3 core data model, §9 lis
 
 ## 0. Conventions
 
+For retained-storage capture, [D152](storage_capture_consumer_design.md) owns
+the closed schema/purpose inventory, qualified allocated relation/index/TOAST/
+fork evidence and original bounded native view. Catalog ancestry and approved
+partition templates replace name-prefix guesses. Capture operational evidence
+is separately classified; it does not become customer data or memory truth.
+Mixed-purpose physical storage cannot be split by a fictional row-byte ratio.
+
 These rules apply to every table unless a module overrides them with a stated reason.
 
 - **Migrations & DDL ordering.** Structural schema shape is owned by **Alembic**
