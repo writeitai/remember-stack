@@ -237,12 +237,14 @@ class StorageCaptureCatalog:
     def capture_once(
         self, *, request: StorageCaptureRequest
     ) -> CompletedStorageCapture:
-        """Capture once at T or replay already completed exact immutable evidence."""
+        """Execute the batch-admitted live cut; the batch entry owns replay."""
         capture_id = capture_request_id(request=request)
-        previous = self._evidence.read_manifest(capture_id=capture_id)
-        if previous is not None:
-            return self._replay(request=request, body=previous)
-        self._check_configuration(request=request)
+        check_capture_configuration(
+            request=request,
+            profile=self._profile,
+            stores=self._stores,
+            identity_key=self._identity_key,
+        )
         binding = self._profile.bindings
         provider_request = ProviderRequest(
             cell_id=binding.provider_cell_id,
@@ -305,30 +307,6 @@ class StorageCaptureCatalog:
                 )
             finally:
                 spool.close()
-
-    def _check_configuration(self, *, request: StorageCaptureRequest) -> None:
-        """Require exact current rules/documents and actual distinct store bindings."""
-        profile = self._profile
-        expected = build_managed_storage_profile(
-            native=profile.native,
-            bindings=profile.bindings,
-            managed_runtime_source_digest=profile.managed_runtime_source_digest,
-            provider_profile_digest=profile.provider_profile_digest,
-            provider_clock_profile_digest=profile.provider_clock_profile_digest,
-        )
-        if profile != expected or request != profile.request(
-            cut_at_unix_us=request.cut_at_unix_us
-        ):
-            raise ManagedStorageCaptureUnavailable("capture_profile_document_mismatch")
-        if set(self._stores) != {"raw", "artifacts", "corpus", "forget"}:
-            raise ManagedStorageCaptureUnavailable("capture_store_scope")
-        for role, store in self._stores.items():
-            if store.capture_store_identity() != profile.bindings.filesystem_for(
-                role=role
-            ):
-                raise ManagedStorageCaptureUnavailable("capture_store_binding_mismatch")
-        if not self._identity_key.get_secret_value():
-            raise ManagedStorageCaptureUnavailable("capture_identity_key_missing")
 
     def _check_native_bindings(self, *, native: NativeCapturedStorageView) -> None:
         """Compare actual original-view configuration, not a caller display name."""
@@ -907,72 +885,101 @@ class StorageCaptureCatalog:
         manifest = manifest.model_copy(
             update={"manifest_digest": manifest_payload_digest(manifest=manifest)}
         )
-        self._check_durable_pages(manifest=manifest)
+        _check_durable_pages(evidence_store=self._evidence, manifest=manifest)
         self._evidence.complete(
             capture_id=capture_id, manifest=profile_bytes(record=manifest)
         )
         return manifest
 
-    def _check_durable_pages(self, *, manifest: StorageCaptureManifest) -> None:
-        """Refuse missing/changed persisted membership before completing/replaying."""
 
-        def pages() -> Iterator[StorageCapturePage]:
-            """Read one exact canonical page, with no whole-set RAM retention."""
-            for ordinal in range(int(manifest.page_count)):
-                body = self._evidence.read_page(
-                    capture_id=manifest.capture_id, page_ordinal=str(ordinal)
+def check_capture_configuration(
+    *,
+    request: StorageCaptureRequest,
+    profile: ManagedStorageCaptureProfile,
+    stores: Mapping[str, StorageCaptureObjectStore],
+    identity_key: SecretStr,
+) -> None:
+    """Require exact current rules/documents and actual distinct store bindings."""
+    expected = build_managed_storage_profile(
+        native=profile.native,
+        bindings=profile.bindings,
+        managed_runtime_source_digest=profile.managed_runtime_source_digest,
+        provider_profile_digest=profile.provider_profile_digest,
+        provider_clock_profile_digest=profile.provider_clock_profile_digest,
+    )
+    if profile != expected or request != profile.request(
+        cut_at_unix_us=request.cut_at_unix_us
+    ):
+        raise ManagedStorageCaptureUnavailable("capture_profile_document_mismatch")
+    if set(stores) != {"raw", "artifacts", "corpus", "forget"}:
+        raise ManagedStorageCaptureUnavailable("capture_store_scope")
+    for role, store in stores.items():
+        if store.capture_store_identity() != profile.bindings.filesystem_for(role=role):
+            raise ManagedStorageCaptureUnavailable("capture_store_binding_mismatch")
+    if not identity_key.get_secret_value():
+        raise ManagedStorageCaptureUnavailable("capture_identity_key_missing")
+
+
+def _check_durable_pages(
+    *, evidence_store: StorageCaptureEvidenceStore, manifest: StorageCaptureManifest
+) -> None:
+    """Refuse missing/changed persisted membership before completing/replaying."""
+
+    def pages() -> Iterator[StorageCapturePage]:
+        """Read one exact canonical page, with no whole-set RAM retention."""
+        for ordinal in range(int(manifest.page_count)):
+            body = evidence_store.read_page(
+                capture_id=manifest.capture_id, page_ordinal=str(ordinal)
+            )
+            if body is None:
+                raise ManagedStorageCaptureUnavailable("capture_durable_page_missing")
+            page = StorageCapturePage.model_validate_json(body)
+            if body != profile_bytes(record=page):
+                raise ManagedStorageCaptureUnavailable(
+                    "capture_durable_page_not_canonical"
                 )
-                if body is None:
-                    raise ManagedStorageCaptureUnavailable(
-                        "capture_durable_page_missing"
-                    )
-                page = StorageCapturePage.model_validate_json(body)
-                if body != profile_bytes(record=page):
-                    raise ManagedStorageCaptureUnavailable(
-                        "capture_durable_page_not_canonical"
-                    )
-                yield page
+            yield page
 
-        check_capture_encoding(manifest=manifest, pages=pages(), page_member_limit=1024)
+    check_capture_encoding(manifest=manifest, pages=pages(), page_member_limit=1024)
 
-    def _replay(
-        self, *, request: StorageCaptureRequest, body: bytes
-    ) -> CompletedStorageCapture:
-        """Replay only durably completed identical bytes; never reopen native state."""
-        manifest = StorageCaptureManifest.model_validate_json(body)
-        if manifest.request != request or body != profile_bytes(record=manifest):
-            raise ManagedStorageCaptureUnavailable(
-                "capture_completed_identity_conflict"
-            )
-        native_body = self._evidence.read_native_witness(capture_id=manifest.capture_id)
-        provider_body = self._evidence.read_provider_manifest(
-            capture_id=manifest.capture_id
-        )
-        if native_body is None or provider_body is None:
-            raise ManagedStorageCaptureUnavailable("capture_completed_evidence_missing")
-        witness = StorageNativeWitness.model_validate_json(native_body)
-        provider = ProviderManifest.model_validate_json(provider_body)
-        if (
-            native_witness_digest(witness=witness) != manifest.native_witness_digest
-            or provider.manifest_digest != manifest.provider_manifest_digest
-            or witness.capture_id != manifest.capture_id
-            or witness.deployment_id != request.deployment_id
-            or witness.profile_digest != request.native_capture_profile_digest
-            or provider.request.cut_at_unix_us != request.cut_at_unix_us
-            or native_body != profile_bytes(record=witness)
-            or provider_body != provider_canonical_bytes(record=provider)
-        ):
-            raise ManagedStorageCaptureUnavailable(
-                "capture_completed_evidence_conflict"
-            )
-        check_provider_manifest(manifest=provider)
-        self._check_durable_pages(manifest=manifest)
-        return CompletedStorageCapture(
-            manifest=manifest,
-            native_witness=witness,
-            provider_manifest=provider,
-            _store=self._evidence,
-        )
+
+def replay_completed_capture(
+    *,
+    evidence_store: StorageCaptureEvidenceStore,
+    request: StorageCaptureRequest,
+    body: bytes,
+) -> CompletedStorageCapture:
+    """Replay only durably completed identical bytes; never reopen native state."""
+    manifest = StorageCaptureManifest.model_validate_json(body)
+    if manifest.request != request or body != profile_bytes(record=manifest):
+        raise ManagedStorageCaptureUnavailable("capture_completed_identity_conflict")
+    native_body = evidence_store.read_native_witness(capture_id=manifest.capture_id)
+    provider_body = evidence_store.read_provider_manifest(
+        capture_id=manifest.capture_id
+    )
+    if native_body is None or provider_body is None:
+        raise ManagedStorageCaptureUnavailable("capture_completed_evidence_missing")
+    witness = StorageNativeWitness.model_validate_json(native_body)
+    provider = ProviderManifest.model_validate_json(provider_body)
+    if (
+        native_witness_digest(witness=witness) != manifest.native_witness_digest
+        or provider.manifest_digest != manifest.provider_manifest_digest
+        or witness.capture_id != manifest.capture_id
+        or witness.deployment_id != request.deployment_id
+        or witness.profile_digest != request.native_capture_profile_digest
+        or provider.request.cut_at_unix_us != request.cut_at_unix_us
+        or native_body != profile_bytes(record=witness)
+        or provider_body != provider_canonical_bytes(record=provider)
+    ):
+        raise ManagedStorageCaptureUnavailable("capture_completed_evidence_conflict")
+    check_provider_manifest(manifest=provider)
+    _check_durable_pages(evidence_store=evidence_store, manifest=manifest)
+    return CompletedStorageCapture(
+        manifest=manifest,
+        native_witness=witness,
+        provider_manifest=provider,
+        _store=evidence_store,
+    )
 
 
 class _ComponentEvidence(BaseModel):
