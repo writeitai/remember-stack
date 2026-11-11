@@ -148,3 +148,8 @@ Earlier authority/configuration queries must end their transaction before it
 starts. A later table lock cannot refresh an already fixed view; this is an
 implementation constraint on the original view, not a new historical repair
 mechanism.
+PostgreSQL's [LOCK description](https://www.postgresql.org/docs/18/sql-lock.html)
+(retrieved 2026-11-11) explains why a later lock does not refresh an already
+acquired repeatable-read snapshot. The implemented engine profile must still
+qualify its actual pinned PostgreSQL/extension build; this source is not a
+populated capture test.
