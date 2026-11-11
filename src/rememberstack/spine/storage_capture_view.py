@@ -102,8 +102,11 @@ class NativeCapturedStorageView:
         witness: StorageNativeWitness,
     ) -> None:
         """Bind only the original native connection and completed boundary."""
+        if acquisition.storage is None or acquisition.deployment_id is None:
+            raise NativeStorageCaptureRefused("native_view_not_bound")
         self._connection = connection
         self._identity = acquisition.identity
+        self._deployment_id = acquisition.deployment_id
         self.storage: NativeStorageConfiguration = acquisition.storage
         self.allocation_sample = allocation_sample
         self.witness = witness
@@ -121,7 +124,9 @@ class NativeCapturedStorageView:
             page = NativeReferencePage.model_validate_json(
                 self._page(section="references", after=after)
             )
-            self._check_identity(identity=page.identity)
+            self._check_identity(
+                identity=page.identity, deployment_id=page.deployment_id
+            )
             if not page.rows:
                 return
             for row in page.rows:
@@ -138,7 +143,9 @@ class NativeCapturedStorageView:
             page = NativeTerminalPage.model_validate_json(
                 self._page(section="terminals", after=after)
             )
-            self._check_identity(identity=page.identity)
+            self._check_identity(
+                identity=page.identity, deployment_id=page.deployment_id
+            )
             if not page.rows:
                 return
             for outcome in page.rows:
@@ -162,6 +169,13 @@ class NativeCapturedStorageView:
         self._closed = True
         self._connection.close()
 
+    def check_continuity(self) -> None:
+        """Prove this original reader still lives without resampling allocation."""
+        page = NativeReferencePage.model_validate_json(
+            self._page(section="identity", after=("", ""))
+        )
+        self._check_identity(identity=page.identity, deployment_id=page.deployment_id)
+
     def _page(self, *, section: str, after: tuple[str, str]) -> str:
         """Read one bounded page through the only fixed catalog operation."""
         if (
@@ -178,9 +192,11 @@ class NativeCapturedStorageView:
             raise NativeStorageCaptureRefused("native_page_missing")
         return json.dumps(row[0])
 
-    def _check_identity(self, *, identity: NativeCatalogIdentity) -> None:
+    def _check_identity(
+        self, *, identity: NativeCatalogIdentity, deployment_id: UUID
+    ) -> None:
         """Refuse any new backend, transaction, scope or snapshot between pages."""
-        if identity != self._identity:
+        if identity != self._identity or deployment_id != self._deployment_id:
             raise NativeStorageCaptureRefused("native_view_identity_changed")
 
 
@@ -300,6 +316,19 @@ class NativeStorageCaptureCatalog:
                 or released.unix_us >= deadline
             ):
                 raise NativeStorageCaptureRefused("native_release_unproved")
+            row = reader.execute(
+                f"SELECT {CATALOG_FUNCTION}('bind','','',%s)", (CATALOG_PAGE_LIMIT,)
+            ).fetchone()
+            if row is None:
+                raise NativeStorageCaptureRefused("native_binding_missing")
+            bound = NativeCatalogAcquisition.model_validate_json(json.dumps(row[0]))
+            if (
+                bound.identity != acquisition.identity
+                or bound.deployment_id is None
+                or bound.deployment_id.hex != request.deployment_id
+                or bound.storage is None
+            ):
+                raise NativeStorageCaptureRefused("native_binding_scope_mismatch")
             identity = acquisition.identity
             witness = StorageNativeWitness(
                 capture_id=capture_request_id(request=request),
@@ -307,7 +336,7 @@ class NativeStorageCaptureCatalog:
                 profile_digest=profile.profile_digest,
                 source_digest=profile.source_digest,
                 schema_digest=profile.schema_digest,
-                backend_identity=f"pid:{identity.backend_pid}:start:{identity.backend_started_unix_us}",
+                backend_identity=f"pid:{identity.backend_pid}:postmaster:{identity.postmaster_started_unix_us}",
                 transaction_identity="virtual:"
                 + identity.virtual_transaction_id.replace("/", ":"),
                 view_identity="snapshot:"
@@ -327,11 +356,12 @@ class NativeStorageCaptureCatalog:
             )
             captured = NativeCapturedStorageView(
                 connection=reader,
-                acquisition=acquisition,
+                acquisition=bound,
                 allocation_sample=allocation,
                 witness=witness,
             )
             guard.close()
+            captured.check_continuity()
             yield captured
         finally:
             if captured is not None:
@@ -439,7 +469,9 @@ def _check_acquisition(
     """Require the same actual deployment, collector and database server."""
     identity = acquisition.identity
     if (
-        identity.deployment_id.hex != deployment_id
+        acquisition.deployment_id is not None
+        or acquisition.storage is not None
+        or UUID(allocation.deployment_id).hex != deployment_id
         or identity.session_login != allocation.session_login
         or identity.backend_pid == allocation.backend_pid
         or identity.database_oid != clock.database_oid

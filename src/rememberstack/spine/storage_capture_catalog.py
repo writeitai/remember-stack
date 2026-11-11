@@ -39,13 +39,11 @@ class _NativeRecord(BaseModel):
 class NativeCatalogIdentity(_NativeRecord):
     """Actual session, virtual transaction and MVCC snapshot, without handoff."""
 
-    deployment_id: UUID
     session_login: str
     database_name: str
     database_oid: UnsignedDecimal
     postmaster_started_unix_us: UnsignedDecimal
     backend_pid: int = Field(gt=0)
-    backend_started_unix_us: UnsignedDecimal
     virtual_transaction_id: str
     snapshot_identity: str
 
@@ -60,10 +58,11 @@ class NativeStorageConfiguration(_NativeRecord):
 
 
 class NativeCatalogAcquisition(_NativeRecord):
-    """The first catalog SELECT's identity and deployment's actual roots."""
+    """Original session plus native scope materialised only after release."""
 
     identity: NativeCatalogIdentity
-    storage: NativeStorageConfiguration
+    deployment_id: UUID | None
+    storage: NativeStorageConfiguration | None
 
 
 class NativeStoreReference(_NativeRecord):
@@ -87,6 +86,7 @@ class NativeReferencePage(_NativeRecord):
     """A bounded, strictly ordered page from the same retained view."""
 
     identity: NativeCatalogIdentity
+    deployment_id: UUID
     rows: tuple[NativeStoreReference, ...]
 
 
@@ -94,6 +94,7 @@ class NativeTerminalPage(_NativeRecord):
     """Existing v3 terminal bodies, with no processing-delivery filter."""
 
     identity: NativeCatalogIdentity
+    deployment_id: UUID
     rows: tuple[ManagedDocumentVersionOutcome, ...]
 
 
@@ -114,12 +115,6 @@ BEGIN
      OR after_class IS NULL OR after_id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_page';
   END IF;
-  IF (SELECT count(*) FROM public.deployments) <> 1
-     OR (SELECT count(*) FROM public.alembic_version) <> 1
-     OR (SELECT version_num FROM public.alembic_version) <> 'p9_46_0067' THEN
-    RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_catalog_scope';
-  END IF;
-  SELECT deployment_id INTO STRICT native_scope FROM public.deployments;
   IF section = 'acquire' THEN
     IF after_class <> '' OR after_id <> '' THEN
       RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_cursor';
@@ -131,26 +126,34 @@ BEGIN
       public.knowledge_compilations, public.knowledge_plan_runs,
       public.forget_manifests, public.managed_ingest_measurements,
       public.managed_ingest_outcomes IN ACCESS SHARE MODE NOWAIT;
+  ELSE
+    IF (SELECT count(*) FROM public.deployments) <> 1
+       OR (SELECT count(*) FROM public.alembic_version) <> 1
+       OR (SELECT version_num FROM public.alembic_version) <> 'p9_46_0067' THEN
+      RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_catalog_scope';
+    END IF;
+    SELECT deployment_id INTO STRICT native_scope FROM public.deployments;
   END IF;
   SELECT jsonb_build_object(
-    'deployment_id', native_scope::text, 'session_login', session_user,
+    'session_login', session_user,
     'database_name', current_database(),
     'database_oid', (SELECT oid::text FROM pg_database WHERE datname=current_database()),
     'postmaster_started_unix_us',
       floor(extract(epoch FROM pg_postmaster_start_time())*1000000)::text,
     'backend_pid', pg_backend_pid(),
-    'backend_started_unix_us',
-      (SELECT floor(extract(epoch FROM backend_start)*1000000)::text
-       FROM pg_stat_activity WHERE pid=pg_backend_pid()),
     'virtual_transaction_id',
       (SELECT virtualtransaction FROM pg_locks WHERE pid=pg_backend_pid()
        AND locktype='virtualxid' AND mode='ExclusiveLock'),
     'snapshot_identity', pg_current_snapshot()::text) INTO native_identity;
   IF section = 'acquire' THEN
-    RETURN jsonb_build_object('identity',native_identity,'storage',
+    RETURN jsonb_build_object('identity',native_identity,'deployment_id',NULL,'storage',NULL);
+  ELSIF section = 'bind' THEN
+    RETURN jsonb_build_object('identity',native_identity,'deployment_id',native_scope::text,'storage',
       (SELECT jsonb_build_object('raw_bucket',raw_bucket,
         'artifacts_bucket',artifacts_bucket,'corpusfs_bucket',corpusfs_bucket,
         'knowledge_repo_uri',knowledge_repo_uri) FROM public.deployments));
+  ELSIF section = 'identity' THEN
+    page := '[]'::jsonb;
   ELSIF section = 'references' THEN
     WITH native_references AS (
       SELECT 'content_objects.raw_uri'::text AS native_class,
@@ -225,7 +228,8 @@ BEGIN
   ELSE
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_section';
   END IF;
-  RETURN jsonb_build_object('identity',native_identity,'rows',page);
+  RETURN jsonb_build_object('identity',native_identity,
+    'deployment_id',native_scope::text,'rows',page);
 END
 """
 

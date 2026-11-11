@@ -41,7 +41,7 @@ Entry opens both sessions before acquiring locks, finishes configuration
 transactions, acquires the fixed guard and immutable relation/fork sample,
 then brackets the reader's **first data SELECT** with the original guard's
 native clock reads. The reader pins every extraction relation with AccessShare.
-Its actual backend start, virtual transaction and `pg_current_snapshot()`
+Its actual backend PID/server start, virtual transaction and `pg_current_snapshot()`
 identity remain attached to every bounded page. A virtual transaction is used
 because a read-only transaction need not have an assigned permanent XID. The
 wire witness retains the native virtual identity and a SHA256 identity of the
@@ -85,10 +85,51 @@ receipt digest. Post-cut rows and ACK changes cannot alter this original view.
 Both iterators use fixed keyset pages of at most 1,024 rows, with no later
 pool or caller-supplied SQL.
 
-The first checkpoint passed scoped Ruff and Pyright. Native execution,
-snapshot/cut behavior and focused source regressions remain pending at this
-checkpoint; no production function was installed. The existing optional
-permissions exercise is outside this leaf and is not rerun or expanded.
+The first native run exposed a real integration boundary: the guard's native
+index exclusions hold AccessExclusive on `deployments_pkey`. Reading public
+deployment/configuration rows under that guard tried to read the locked index
+and refused with `55P03`. The current path acquires the first snapshot and
+extraction pins using native session metadata only. It materialises the native
+deployment and store roots **after release through that same snapshot**, then
+checks deployment and unchanged session/transaction/snapshot identities before
+yielding. It neither disables indexes nor weakens the existing guard. Backend
+identity uses the actual PID/server-start pair; it requires no extra stats
+privilege for a definer to inspect the collector's session.
+
+The [native component receipt](storage-capture-original-view-validation-20261111.json)
+pins exact source/test blobs. Five native cases passed in **7.41 seconds** on
+the cached PostgreSQL 19rc1 image with real migrations and deployment bootstrap.
+They observed 1,030 original references across bounded pages and 1,900 immutable
+allocated-relation records. The original-view acquisition bracket was 5,217
+microseconds in this synthetic fixture, not a populated-load pause bound.
+Post-cut DML grew current table allocation while captured bytes/references
+remained unchanged, and extraction DDL refused with `55P03`. Failed
+representation references remained visible. Actual committed terminal rows
+survived post-cut ACK/deletion changes; a lower sequence committed afterward
+did not enter the original set. Their digests matched the existing v3 bodies.
+A native reader timeout refused with `25P04`; context cancellation closed both
+sessions; past cuts and previously acquired views refused.
+
+Ruff/format, Pyright and test-inventory checks pass. The 22 existing pure
+encoding cases also pass. Hosted lanes do not configure the separate native
+scratch URL, so skipped tests there do not establish these native facts.
+Independent review and current-head CI remain required before merge. No
+production function was installed. The existing optional permissions exercise
+is outside this leaf and was not rerun or expanded.
+
+To rerun only this leaf, use an owned cached-image disposable container and an
+initially empty database named `capture_guard_...`, following the normal
+[guard fixture setup](storage-capture-validation-2026-11-11.md). Set only the
+separate `REMEMBERSTACK_STORAGE_GUARD_TEST_DATABASE_URL` to that explicit
+scratch target and run:
+
+```bash
+python -m pytest src/tests/spine/test_storage_capture_view_pg.py -q
+```
+
+The fixture owns that fresh database for this file. Use a fresh target for a
+separate guard-suite run; this command does not collect or execute its optional
+permissions case. Remove only the owned scratch container afterward.
 
 PostgreSQL's [repeatable-read semantics](https://www.postgresql.org/docs/19/transaction-iso.html#XACT-REPEATABLE-READ)
 define the first non-transaction-control statement as the view boundary;
