@@ -315,6 +315,33 @@ def test_parallel_infrastructure_failure_drains_successes_and_keeps_interrupted_
     assert saved.run_state.evaluator_cost_usd == Decimal("0.04")
 
 
+def test_single_worker_preserves_native_post_call_budget_failure(
+    tmp_path: Path,
+) -> None:
+    """Prior run charges still participate in the native final-answer cost check."""
+    output = tmp_path / "serial-budget"
+    context, questions, configuration, state = _full_arm(
+        output=output, question_count=1, workers=1
+    )
+    state.run_state.preflight_usages.append(
+        _usage(model="probe").model_copy(update={"cost_usd": Decimal("0.99")})
+    )
+    state.run_state.evaluator_cost_usd = Decimal("0.99")
+    with pytest.raises(runner.ExecutionGuardError):
+        _run_full_arm(
+            output=output,
+            context=context,
+            questions=questions,
+            configuration=configuration,
+            state=state,
+            provider=_ChargedProvider(),
+            ceiling=Decimal("0.995"),
+        )
+    record = state.run_state.answers[questions[0].item_id]
+    assert record.failure is not None and record.failure.kind == "accounting"
+    assert state.run_state.evaluator_cost_usd == Decimal("1.00")
+
+
 def test_shared_budget_stops_new_calls_after_known_concurrent_charges(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

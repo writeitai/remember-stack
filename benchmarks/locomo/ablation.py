@@ -961,6 +961,11 @@ class _SharedAnswerBudget:
         with self._lock:
             self.spent += usage.cost_usd
 
+    def snapshot_spend(self) -> Decimal:
+        """Give a new native question its already-known run spend."""
+        with self._lock:
+            return self.spent
+
     def stop(self, *, error: Exception | None = None) -> None:
         """Stop new calls while already admitted calls finish and are checkpointed."""
         with self._lock:
@@ -1053,6 +1058,7 @@ def _run_full_answers(
         local = RunState(
             protocol_name=state.run_state.protocol_name,
             protocol_fingerprint=state.run_state.protocol_fingerprint,
+            evaluator_cost_usd=budget.snapshot_spend(),
         )
         try:
             record = runner._answer_one(  # noqa: SLF001
