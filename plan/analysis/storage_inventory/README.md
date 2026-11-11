@@ -95,3 +95,10 @@ The [TOAST follow-up](pg19_toast_guard_counterexample_20261111.md) proves that
 this SQL-only index primitive remains incomplete: native TOAST vacuum changed
 allocation under the parent/public-index locks. The native operation must
 also lock the actual owned TOAST and index relations.
+
+The [native relation-guard component receipt](pg19_relation_guard_native_validation_20261111.json)
+records the full migrated-schema eight-case qualification of the existing-SQL
+replacement, including the unchanged-value TOAST option lock, 1,900 unique
+physical relation records, exact fork/total reconciliation, ordinary LOGIN
+boundary and real native timeout release. Completed capture, populated pause,
+clock, provider, classification and financial qualification remain separate.

@@ -113,6 +113,9 @@ DECLARE
   fork_total numeric;
   table_total numeric;
 BEGIN
+  IF session_user <> __COLLECTOR__ THEN
+    RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='native_guard_login';
+  END IF;
   IF current_setting('transaction_isolation') <> 'read committed'
      OR current_setting('transaction_read_only') <> 'off' THEN
     RAISE EXCEPTION USING ERRCODE='25001', MESSAGE='native_guard_transaction';
@@ -142,7 +145,7 @@ BEGIN
      OR (SELECT version_num FROM public.alembic_version) <> 'p9_46_0067' THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_schema';
   END IF;
-  SELECT array_agg(extname||'='||extversion ORDER BY extname)
+  SELECT array_agg(extname||'='||extversion ORDER BY extname COLLATE "C")
     INTO actual_extensions FROM pg_extension;
   IF actual_extensions IS DISTINCT FROM expected_extensions THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_extensions';
@@ -152,7 +155,7 @@ BEGIN
        WHERE btrim(name) NOT IN ('', 'pg_textsearch', 'pg_partman_bgw')) THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_background';
   END IF;
-  SELECT array_agg(c.relname::text ORDER BY c.relname::text)
+  SELECT array_agg(c.relname::text ORDER BY c.relname::text COLLATE "C")
     INTO actual_roots FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND c.relkind IN ('r','p','m')
       AND NOT EXISTS(SELECT 1 FROM pg_inherits h WHERE h.inhrelid=c.oid);
@@ -248,9 +251,9 @@ BEGIN
     UNION ALL SELECT i.indexrelid,h.root,'toast_index' FROM heaps h
       JOIN pg_index i ON i.indrelid=h.reltoastrelid WHERE h.reltoastrelid<>0
   ), sizes AS (
-    SELECT r.*,pg_relation_size(oid,'main') AS main,
+    SELECT observed_resource.*,pg_relation_size(oid,'main') AS main,
            pg_relation_size(oid,'fsm') AS fsm,pg_relation_size(oid,'vm') AS vm,
-           pg_relation_size(oid,'init') AS init FROM resources r
+           pg_relation_size(oid,'init') AS init FROM resources observed_resource
   )
   SELECT jsonb_agg(jsonb_build_object('resource_kind',kind,'root_relation',root,
            'relation_oid',oid::text,'main_bytes',main::text,'fsm_bytes',fsm::text,
@@ -283,7 +286,8 @@ def install_native_relation_guard(
     """Install the fixed operation using existing, explicitly provisioned roles.
 
     No LOGIN, membership or secret is created. The definer must already inherit
-    the actual engine owner's authority; the ordinary collector must not. This
+    the actual engine owner's authority and pg_read_all_settings, used only for
+    the fixed preload-profile check; the ordinary collector must not. This
     installer is never called by capture, API requests or normal engine setup.
     """
     if connection.info.transaction_status != TransactionStatus.IDLE:
@@ -303,11 +307,20 @@ def install_native_relation_guard(
             raise NativeRelationGuardRefused("native_guard_collector_authority")
         authority = connection.execute(
             "SELECT pg_has_role(%s,c.relowner,'USAGE'),"
-            "pg_has_role(%s,c.relowner,'MEMBER'),pg_has_role(%s,%s,'MEMBER') "
+            "pg_has_role(%s,c.relowner,'MEMBER'),pg_has_role(%s,%s,'MEMBER'),"
+            "pg_has_role(%s,'pg_read_all_settings','USAGE'),"
+            "pg_has_role(%s,'pg_read_all_settings','MEMBER') "
             "FROM pg_class c WHERE c.oid='public.deployments'::regclass",
-            (definer_role, collector_role, collector_role, definer_role),
+            (
+                definer_role,
+                collector_role,
+                collector_role,
+                definer_role,
+                definer_role,
+                collector_role,
+            ),
         ).fetchone()
-        if authority != (True, False, False):
+        if authority != (True, False, False, True, False):
             raise NativeRelationGuardRefused("native_guard_role_boundary")
         existing = connection.execute(
             "SELECT nspowner=(SELECT oid FROM pg_roles WHERE rolname=%s) "
@@ -334,10 +347,12 @@ def install_native_relation_guard(
                 sql.Identifier(definer_role),
             )
         )
-        body = _BODY.replace(
-            "__ROOTS__", sql.Literal(list(_ROOTS)).as_string(connection)
-        ).replace(
-            "__EXTENSIONS__", sql.Literal(list(_EXTENSIONS)).as_string(connection)
+        body = (
+            _BODY.replace("__ROOTS__", sql.Literal(list(_ROOTS)).as_string(connection))
+            .replace(
+                "__EXTENSIONS__", sql.Literal(list(_EXTENSIONS)).as_string(connection)
+            )
+            .replace("__COLLECTOR__", sql.Literal(collector_role).as_string(connection))
         )
         function = sql.Identifier(_SCHEMA, _FUNCTION)
         connection.execute(
@@ -354,6 +369,19 @@ def install_native_relation_guard(
         connection.execute(
             sql.SQL("REVOKE ALL ON FUNCTION {}(bigint) FROM PUBLIC").format(function)
         )
+        old_grantees = connection.execute(
+            "SELECT DISTINCT r.rolname FROM pg_proc p "
+            "CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,"
+            "acldefault('f',p.proowner))) a JOIN pg_roles r ON r.oid=a.grantee "
+            "WHERE p.oid=to_regprocedure(%s) AND a.grantee<>p.proowner",
+            (f"{_SCHEMA}.{_FUNCTION}(bigint)",),
+        ).fetchall()
+        for (old_grantee,) in old_grantees:
+            connection.execute(
+                sql.SQL("REVOKE ALL ON FUNCTION {}(bigint) FROM {}").format(
+                    function, sql.Identifier(old_grantee)
+                )
+            )
         connection.execute(
             sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
                 sql.Identifier(_SCHEMA), sql.Identifier(collector_role)

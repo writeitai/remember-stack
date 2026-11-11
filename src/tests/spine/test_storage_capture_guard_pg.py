@@ -7,6 +7,7 @@ creates and destroys. There is no production default or recovery/reset helper.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Iterator
 from dataclasses import dataclass
 from dataclasses import field
@@ -74,6 +75,9 @@ def native_scope() -> Iterator[_Scope]:
     parsed = make_url(url)
     if parsed.database is None or not parsed.database.startswith("capture_guard_"):
         pytest.fail("storage guard tests require a capture_guard_* scratch database")
+    database_name = parsed.database
+    suffix = uuid4().hex[:12]
+    migration_role = f"capture_migrator_{suffix}"
     conninfo = parsed.set(drivername="postgresql").render_as_string(hide_password=False)
     with psycopg.connect(conninfo, autocommit=True) as admin:
         if admin.execute(
@@ -81,9 +85,22 @@ def native_scope() -> Iterator[_Scope]:
             "ON n.oid=c.relnamespace WHERE n.nspname='public')"
         ).fetchone() != (False,):
             pytest.fail("storage guard scratch database must start empty")
-        admin_row = admin.execute("SELECT session_user").fetchone()
-        assert admin_row is not None
-        admin_role = str(admin_row[0])
+        # A separate app migrator owns only this scratch database's objects.
+        # The cluster bootstrap role owns protected system objects and cannot
+        # legitimately be the source of REASSIGN OWNED.
+        admin.execute(
+            sql.SQL("CREATE ROLE {} LOGIN SUPERUSER PASSWORD {}").format(
+                sql.Identifier(migration_role), sql.Literal(parsed.password)
+            )
+        )
+        admin.execute(
+            sql.SQL("ALTER DATABASE {} OWNER TO {}").format(
+                sql.Identifier(database_name), sql.Identifier(migration_role)
+            )
+        )
+    parsed = parsed.set(username=migration_role)
+    url = parsed.render_as_string(hide_password=False)
+    conninfo = parsed.set(drivername="postgresql").render_as_string(hide_password=False)
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
     command.upgrade(config=config, revision="head")
@@ -103,19 +120,18 @@ def native_scope() -> Iterator[_Scope]:
         )
     finally:
         engine.dispose()
-    suffix = uuid4().hex[:12]
     scope = _Scope(
         conninfo=conninfo,
-        admin_role=admin_role,
+        admin_role=migration_role,
         runtime_role=f"capture_runtime_{suffix}",
         definer_role=f"capture_definer_{suffix}",
         collector_role=f"capture_collector_{suffix}",
     )
     with scope.connect(role=scope.admin_role) as admin:
         admin.execute(
-            sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE").format(
-                sql.Identifier(scope.runtime_role)
-            )
+            sql.SQL(
+                "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD {}"
+            ).format(sql.Identifier(scope.runtime_role), sql.Literal(parsed.password))
         )
         admin.execute(
             sql.SQL("REASSIGN OWNED BY {} TO {}").format(
@@ -124,7 +140,7 @@ def native_scope() -> Iterator[_Scope]:
         )
         admin.execute(
             sql.SQL("ALTER DATABASE {} OWNER TO {}").format(
-                sql.Identifier(parsed.database), sql.Identifier(scope.admin_role)
+                sql.Identifier(database_name), sql.Identifier(scope.admin_role)
             )
         )
         admin.execute(
@@ -134,12 +150,30 @@ def native_scope() -> Iterator[_Scope]:
         )
         admin.execute(
             sql.SQL(
-                "CREATE ROLE {} LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE"
-            ).format(sql.Identifier(scope.collector_role))
+                "CREATE ROLE {} LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                "PASSWORD {}"
+            ).format(sql.Identifier(scope.collector_role), sql.Literal(parsed.password))
         )
         admin.execute(
             sql.SQL("GRANT {} TO {} WITH INHERIT TRUE, SET FALSE").format(
                 sql.Identifier(scope.runtime_role), sql.Identifier(scope.definer_role)
+            )
+        )
+        admin.execute(
+            sql.SQL(
+                "GRANT pg_read_all_settings TO {} WITH INHERIT TRUE, SET FALSE"
+            ).format(sql.Identifier(scope.definer_role))
+        )
+        admin.execute(
+            sql.SQL("GRANT CONNECT ON DATABASE {} TO {},{}").format(
+                sql.Identifier(database_name),
+                sql.Identifier(scope.runtime_role),
+                sql.Identifier(scope.collector_role),
+            )
+        )
+        admin.execute(
+            sql.SQL("GRANT USAGE,CREATE ON SCHEMA public TO {}").format(
+                sql.Identifier(scope.runtime_role)
             )
         )
         install_native_relation_guard(
@@ -172,7 +206,7 @@ def _toast_metadata(*, admin: psycopg.Connection) -> tuple:
 
 
 def test_actual_collector_samples_complete_relation_forks_and_blocks_maintenance(
-    native_scope: _Scope,
+    native_scope: _Scope, record_property: Callable[[str, object], None]
 ) -> None:
     """Fence both public BM25 and owned TOAST with the same fixed operation."""
     with (
@@ -201,19 +235,35 @@ def test_actual_collector_samples_complete_relation_forks_and_blocks_maintenance
                 sample.sample_before_unix_us
             )
             assert int(sample.sample_before_unix_us) <= int(sample.sample_after_unix_us)
+            record_property("native_relation_count", len(sample.relations))
+            record_property("native_allocated_fork_bytes", sample.allocated_fork_bytes)
+            record_property(
+                "native_guard_through_sample_us",
+                int(sample.sample_after_unix_us) - int(sample.guard_started_unix_us),
+            )
+            for kind in ("table", "index", "toast", "toast_index"):
+                record_property(
+                    f"native_{kind}_count",
+                    sum(row.resource_kind == kind for row in sample.relations),
+                )
             with pytest.raises(psycopg.Error) as bm25:
                 runtime.execute(
                     "SELECT bm25_spill_index('public.ix_document_names_bm25')"
                 )
             assert bm25.value.sqlstate == "55P03"
             toast_row = admin.execute(
-                "SELECT reltoastrelid::regclass::text FROM pg_class "
-                "WHERE oid='public.deployments'::regclass"
+                "SELECT n.nspname,t.relname FROM pg_class p "
+                "JOIN pg_class t ON t.oid=p.reltoastrelid "
+                "JOIN pg_namespace n ON n.oid=t.relnamespace "
+                "WHERE p.oid='public.deployments'::regclass"
             ).fetchone()
             assert toast_row is not None
-            toast = str(toast_row[0])
             with pytest.raises(psycopg.Error) as vacuum:
-                admin.execute(sql.SQL("VACUUM {}").format(sql.SQL(toast)))
+                admin.execute(
+                    sql.SQL("VACUUM {}").format(
+                        sql.Identifier(str(toast_row[0]), str(toast_row[1]))
+                    )
+                )
             assert vacuum.value.sqlstate == "55P03"
             runtime.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             runtime.execute("LOCK TABLE public.deployments IN ACCESS SHARE MODE")
@@ -335,3 +385,47 @@ def test_installer_refuses_a_collector_with_owner_membership(
                 definer_role=native_scope.definer_role,
                 collector_role=native_scope.runtime_role,
             )
+
+
+def test_actual_native_timeout_releases_guard_and_restores_catalog(
+    native_scope: _Scope,
+) -> None:
+    """Native transaction timeout terminates the holder and rolls its writes back."""
+    with native_scope.connect(role=native_scope.admin_role) as admin:
+        before = _toast_metadata(admin=admin)
+        with native_scope.connect(role=native_scope.collector_role) as collector:
+            collector.execute("SET transaction_timeout='500ms'")
+            collector.execute("BEGIN")
+            _sample(collector=collector)
+            with pytest.raises(psycopg.Error) as native_timeout:
+                collector.execute("SELECT pg_sleep(2)")
+            assert native_timeout.value.sqlstate == "25P04"
+        assert _toast_metadata(admin=admin) == before
+        admin.execute("SET lock_timeout='250ms'")
+        admin.execute("SELECT bm25_spill_index('public.ix_document_names_bm25')")
+
+
+def test_reinstallation_removes_superseded_execute_grants(native_scope: _Scope) -> None:
+    """Keep one current caller even if an earlier install granted another role."""
+    with native_scope.connect(role=native_scope.admin_role) as admin:
+        admin.execute(
+            sql.SQL("GRANT EXECUTE ON FUNCTION {}(bigint) TO {}").format(
+                sql.Identifier(
+                    "rememberstack_capture_internal", "guard_relation_allocation"
+                ),
+                sql.Identifier(native_scope.runtime_role),
+            )
+        )
+        install_native_relation_guard(
+            connection=admin,
+            definer_role=native_scope.definer_role,
+            collector_role=native_scope.collector_role,
+        )
+        privilege = admin.execute(
+            "SELECT has_function_privilege(%s,%s,'EXECUTE')",
+            (native_scope.runtime_role, f"{_FUNCTION}(bigint)"),
+        ).fetchone()
+        assert privilege == (False,)
+        with pytest.raises(psycopg.Error) as wrong_login:
+            _sample(collector=admin)
+        assert wrong_login.value.sqlstate == "42501"
