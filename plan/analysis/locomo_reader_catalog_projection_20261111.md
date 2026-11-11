@@ -160,35 +160,77 @@ verification is pending at this snapshot, then a fresh complete20 regression
 must regenerate every answer and grade. Adopt08's class-scoped instruction in
 the draft current template, without retaining07's broader failed paragraph.
 
-## Retained general template and one scaling replication
+## Final development results and selected template
 
-Full08 completed19/20 with20 fresh Pro HIGH answers/grades,61 successful tools,
-no negative/budget-timeout results, no abstentions and no technical failures.
-The attitude is now explicit and graded CORRECT. The book-content question is
-WRONG again: the answer includes the pictured clue but the requested referent
-and thematic conclusion remain unstable. Both native and independent GCS
-readback passed. The source contains an explicitly named non-exclusive favorite
-and a separately loved unnamed collection; it does not identify a unique
-unrestricted favorite. This makes reference selection partly under-specified.
-Do not claim that the reference is demonstrably wrong or that a unique answer
-has been established.
+The selected current template is08, SHA256
+`3b9591e5d13763488098ee313e1bbf4153f95f1c6fa0606895c066b3e25670f2`.
+The targeted cohort passed3/3, including the two original questions and the
+additional emotional-recall omission. No expected condition, emotion, theme,
+person, title or reference ID was added to the new instructions.
 
-09 tried general qualified-theme inference and scored0/1 even though both
-relevant image chunks arrived. It is not adopted. More topic-specific steering
-would not be justified by a missing retrieval result. The retained current
-prompt is08, SHA3b9591e5d13763488098ee313e1bbf4153f95f1c6fa0606895c066b3e25670f2.
+| Complete arm | Answer workers | Correct | Technical failures | Evaluator USD |
+| --- | --- | --- | --- | --- |
+| full06 |8|19/20|0|0.4355390650|
+| full08 |8|19/20|0|0.3363898325|
+| full08-w16 |16|17/20|1|0.3549198300|
 
-One final predeclared scaling replication uses this exact prompt, source,
-models and judge policy, with16 answer workers already supported by the runner.
-It generates all20 answers afresh, copying none. Report full06's19/20, full08's
-19/20 and the replication together. A better draw would not establish a causal
-quality improvement from concurrency or stable100% accuracy. This snapshot
-records the replication running; its final result/cost and native archive proofs
-belong to cloud PR959, `trials/full08-w16/`. No further semantic candidate is
-selected in this attempt, and the full10-conversation campaign is not launched.
+Every complete arm generated fresh attempts for all20 questions with Pro HIGH
+reader and judge. No targeted or earlier answers were copied. All outcomes are
+retained in cloud PR959; native six-archive backup receipts and independent
+readback proofs are recorded there. This is development evidence, not held-out
+accuracy or stable100% coverage. Both clean eight-worker runs scored19/20;
+the16-worker scaling hypothesis is not adopted.
 
-The standalone09 auditor needed a technical correction because current serial
-identities omit their default worker count1. The corrected check respects that
-default and still validates all raw fingerprints/model roles/archive bytes.
-The failed log and subsequent auditor hash/proof are preserved in PR959. No
-answer, grade or paid source processing was repeated to recover verification.
+The emotional attitude is now expressed and graded CORRECT. The visual-content
+answer remains unstable despite both owning image/dialogue chunks arriving.
+The source contains a named non-exclusive favorite and a separately loved
+unnamed collection, without establishing a unique unrestricted favorite. Some
+answers describe pictured clues without making the requested thematic
+conclusion. This is a synthesis/reference-selection issue and grading
+sensitivity, not proof that the annotation is wrong or evidence of a retrieval
+loss in those audited runs.09's general qualified-theme rule scored0/1 despite
+complete retrieved context; it is rejected. No more specific steering is added.
+
+The final restriction answer names a source-qualified condition without naming
+its affected concrete item and is graded WRONG. Earlier complete answers named
+both. This supports checking answer coverage and grade variation together,
+rather than declaring the problem universally solved from a targeted pass.
+The final17/20 therefore contains two answer/grade misses and one technical
+failure. Do not merge those results with targeted successes into a new20/20.
+
+## Observed parallel read admission limit
+
+The16-worker replication encountered one HTTP500 from `adjacent_chunks` and
+three typed empty boundary results. The API had a dedicated read pool and
+concurrency limit of4, a one-second admission wait, and a distinct120-second
+query deadline. The traceback reaches `BoundedPostgresReadPool` through
+`adjacent_chunks -> _confirm_chunks -> chunk_texts` and ends with
+`PostgreSQL read concurrency limit reached before admission`. The boundary
+calls also returned after about1.015seconds. This is admission pressure, not
+proof that their SQL ran for120seconds or that stored evidence disappeared.
+
+An identical adjacent-chunk GET at low load returned200 with two chunks in87ms,
+without a model call, settings change, ingestion or replacement answer. The
+sanitized settings, traceback path and probe receipt are retained in
+`trials/full08-w16/capacity-observation.json` in cloud PR959 and the native run
+archive. The earlier eight-worker comparisons had no failed or boundary tool
+results; retain that operational setting for this source. Do not assume the
+harness's supported worker maximum is the serving API's admitted capacity.
+
+Two general follow-ups are justified by this observation, but are not shipped
+by this reader-only PR: size bounded server admission and wait configuration
+alongside client concurrency; and make adjacent-chunk admission exhaustion a
+retryable typed boundary instead of an uncaught HTTP500. Keep resource limits
+explicit rather than removing admission controls. Do not expand this prompt
+change into a new serving implementation without its own tests and design check.
+
+The standalone09 auditor also required a technical correction because current
+serial identities omit default worker count1. The corrected effective-default
+check still validates all fingerprints, model roles and archived bytes. Its
+failed log and successful retry remain in cloud PR959. No model, answer, grade
+or ingestion was repeated for that audit repair.
+
+No further semantic candidate or unchanged replication is selected in this
+attempt. The full10-conversation campaign is not launched. The retained store,
+all unsuccessful trials, actual costs and complete answer/tool/judge states
+remain available for a separately justified next experiment.
