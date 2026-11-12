@@ -81,13 +81,20 @@ These rules apply to every table unless a module overrides them with a stated re
   exactly this reason. Extensions (below) are created before that. Alembic creates no D68
   deployment identity row and no deployment-scoped registry data: after `upgrade head`, D69's
   library-owned typed bootstrap operation creates or verifies those rows (§2).
-- **Identifiers.** All surrogate primary keys are **`uuid`**, generated as **UUIDv7**
-  (time-ordered) by the application/worker, *not* the database — Cloud Run workers write
-  concurrently and a central sequence would be a hotspot, while UUIDv7's leading timestamp gives
-  index/heap locality on append-only tables and lets a reader derive the row's creation month from
-  the id alone (used for partition pruning, §12). UUIDv7 also satisfies "`entity_id` is **never
-  reused**" (D17/§4) for free. IDs are worker-minted so the row's identity is known before the
-  INSERT (needed for idempotency and for deterministic-id dedup, §9).
+  D153's native migration runner holds one database-scoped session advisory
+  lock before reading revision state and across concurrent-index autocommit
+  phases. Its populated mention-index migration builds/attaches leaf indexes
+  before publishing the new view/head; offline SQL emission refuses that
+  catalog-driven revision. The detailed build/failure contract lives in
+  [D153](shared_retrieval_eligibility_design.md).
+- **Identifiers (D153).** Surrogate primary keys are opaque **`uuid`** values
+  minted by the application/worker before INSERT. Current writers use UUIDv4;
+  no sequential allocator, ID rewrite or paid-product identity change is
+  introduced. Readers must not derive a creation month from a UUID or guess it
+  from another object's timestamp. The former UUIDv7-derived pruning promise
+  was not implemented and is superseded by D153's explicit partition fanout
+  contract (§12). Exact recorded partition timestamps may be bound as exact
+  coordinates; an inferred time bound may never hide evidence.
 - **Time vocabulary.** Every timestamp is **`timestamptz`** (UTC). Distinct *kinds* of time recur
   and must not be conflated (`concepts.md` §5):
   - **valid-time** — when a fact held *in the world*. On **relations** this is the revisable,
@@ -917,8 +924,8 @@ COMMENT ON TABLE resolver_versions IS
 -- ─────────────────────────────────────────────────────────────────────────
 -- mentions — the immutable transcript: every entity mention as extracted (D17). ~10⁸ rows ⇒
 -- monthly RANGE partition by created_at; btree-only; logical FKs (D23). Queried by id/claim_id/
--- doc_id, never fuzzy-scanned (the fuzzy index lives on aliases). Partition pruning for id lookups:
--- §12.
+-- doc_id, never fuzzy-scanned (the fuzzy index lives on aliases). ID lookups follow
+-- D153's explicit partition fanout (§12); no inferred UUID timestamp filters authority.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE mentions (
   mention_id      uuid NOT NULL,               -- PK component (with created_at)
@@ -940,6 +947,8 @@ COMMENT ON TABLE mentions IS
   'Immutable transcript of entity mentions (D17). Evidence for resolution verdicts; never edited. Monthly-partitioned, btree-only, logical FKs (D23). canonical_name_form is the LLM nominative form feeding T0 (registries §5).';
 CREATE INDEX ix_mentions_claim ON mentions (claim_id);
 CREATE INDEX ix_mentions_doc   ON mentions (deployment_id, doc_id);
+-- D153: final index shape; populated upgrades use concurrent leaf builds/attachment.
+CREATE INDEX ix_mentions_deployment_chunk ON mentions (deployment_id, chunk_id);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- resolution_decisions — append-only verdict (D17). A better resolver SUPERSEDES (superseded_by),
@@ -2718,17 +2727,15 @@ documents make a single text-bearing primary-key tree avoidable. Every hot
 lookup, normal delete, and D74 purge supplies exact `doc_id`, pruning to one of
 64 children; the primary-key prefix then bounds work to one document/name.
 
-**Partition pruning on ID lookups.** Hot queries over the remaining partitioned
-families often select by id/parent (`mention_id → resolution_decisions`,
-`doc_id → chunks`, `relation_id → relation_evidence`), which do *not* mention the
-partition key, so a naive query scans every monthly partition's local index. The mitigation, applied
-by the data-access layer: **UUIDv7 ids embed their creation timestamp**, and a child row's creation
-time is closely correlated with its parent's ingest time, so the application derives a time bound
-from the id (or from the parent's `ingested_at`) and adds it as a predicate (e.g.
-`AND ingested_at BETWEEN $lo AND $hi`), pruning to 1–2 partitions. This works for the
-ingest-time-correlated RANGE families (`mentions`, `chunks`, `chunk_claims`,
-`claim_extraction_decisions`, `testimony_currency_events`, and — for the first-resolution pass —
-`resolution_decisions`).
+**Partition pruning on ID lookups (D153).** Monthly-partitioned UUID probes
+without their exact partition timestamp may visit every retained partition.
+Current random UUIDs do not encode a usable partition coordinate. The accepted
+read contract permits this linear planning/point-probe overhead, measures it
+at 120 monthly partitions plus default, and forbids multiplication by unrelated
+rows inside those partitions. Bind an exact recorded partition timestamp when
+available; do not infer one from UUID bits or a related object's creation time.
+No new routing registry or ID migration is part of this contract. Operation
+deadlines remain explicit when partition/provenance work cannot complete.
 
 **`relation_evidence` is the exception, and is the reason it is hash-partitioned:** evidence for a
 popular fact accrues over the fact's whole life, so an id-derived time bound would *not* prune a
@@ -2740,7 +2747,7 @@ it is the cold path. `observation_evidence` applies the same policy to `observat
 
 **Partition-key consequences in the DDL:** a partitioned table's PRIMARY KEY/UNIQUE must include the
 partition key, so all six RANGE parents include their time key and the three HASH parents include
-their fact identifier. The application treats each UUIDv7 alone as row identity (globally unique by
+their fact identifier. The application treats each opaque UUID alone as row identity (globally unique by
 construction); the wider RANGE keys are the Postgres mechanical requirement. The evidence joins'
 pair keys are also the intended evidence-once identity.
 

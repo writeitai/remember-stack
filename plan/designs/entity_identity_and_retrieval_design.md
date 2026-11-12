@@ -818,6 +818,27 @@ untyped.
 
 ---
 
+### 7.1 Shared source eligibility and physical provenance (D153)
+
+[D153](shared_retrieval_eligibility_design.md) constrains entity membership to
+indexed reverse members and their actual decision → mention → chunk → version
+→ ready-reading coordinates. It changes physical work, not visibility:
+older/replaced readings that remain ready still qualify in a live lineage;
+latest resolution is selected across all unsuperseded decisions of the mention;
+a live document-entity bridge qualifies independently. Current-content counts
+are separate and can be zero for a visible entity. Identity-only lookups do not
+compute unrequested count aggregates.
+
+Scope nomination and hydration use one canonical mention contract in opposite
+directions, sharing visible entities per statement. Full fact eligibility uses
+one private source projection plus the tested subject/object endpoint rule.
+Deployment, source, reading, current/history identity, D140 and D54 semantics
+survive. The initial request's snapshot/deadline is reused, without persistent
+proofs or cross-request caches. UUIDs are opaque; monthly partition probes can
+fan out linearly, as specified in PostgreSQL schema §12. Source work must not
+multiply by unrelated rows. Acceptance and implementation status are separate
+from this accepted design.
+
 ## 8. Golden set (D22)
 
 Same-name and dual-role cases are first-class. Measure **false merge**

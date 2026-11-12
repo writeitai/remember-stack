@@ -1,0 +1,14 @@
+{
+  "sample": "conv-26",
+  "answer_state_sha256_before": "8ecff74bbbbc66d5d5e1c85411bcf85ddbe632593a164f530e26adca4e84e113",
+  "source_commit": "f0ab7db79",
+  "started_at": 1794489344.4205766,
+  "provider_calls": 0,
+  "native_sql_changed": false,
+  "prototype_sql_only": true,
+  "materialized_exit_code": 0,
+  "unscoped_exit_code": 0,
+  "finished_at": 1794489396.680826,
+  "answer_state_sha256_after": "8ecff74bbbbc66d5d5e1c85411bcf85ddbe632593a164f530e26adca4e84e113",
+  "postgres_restored_stopped": true
+}

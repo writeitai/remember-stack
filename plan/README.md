@@ -85,6 +85,14 @@ its [analysis](analysis/index_driven_ranked_search.md), the unchosen
 [distinct-text index proposal](proposals/distinct_text_search_index.md) and the
 [delivery plan](plans/index_driven_ranked_search.md).
 
+For measured SQL-plan amplification during the full LoCoMo campaign, why the
+affected scoped searches bypass continuation, and a non-binding comparison of
+filter-first ranking with indexed broad search, see the
+[reliability investigation](analysis/retrieval_filtering_reliability_20261112.md).
+The [D153 shared-eligibility design](designs/shared_retrieval_eligibility_design.md)
+was approved by Claude Opus; its [delivery plan](plans/shared_retrieval_eligibility.md)
+tracks implementation and qualification separately.
+
 For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
 and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.

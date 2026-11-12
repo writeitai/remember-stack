@@ -430,18 +430,19 @@ the index is used and eligibility stays exact. For each target and channel:
    filtered alike. Above 20,000 eligible rows the plain loop runs. Claim
    searches with a document filter use the plain loop (their filter is per
    occurrence).
-3. **Confirm the batch.** A confirmation query applies the target's complete
-   eligibility predicates — the same predicate builders the adapter already
-   uses for every filter, scope and gate — to each candidate of the batch. It
-   is a primary-key probe per candidate: the batch is unnested and each ID is
-   checked by a `LATERAL` existence subquery. (A set predicate
-   `item_id = ANY(:batch_ids)` lets the planner start from the eligibility
-   joins instead, so confirmation grows with the corpus; the scaling sweep
-   measured 17 s for one 4,000-ID batch at 30k chunks, against 0.13 s for
-   the same batch probed per candidate.) It should return, per rejected ID,
-   the first failed rule class (authority, scope, entity, document, fact
-   time, evidence gate) for the counters; the first implementation counts
-   rejections without the class.
+3. **Confirm the batch.** Apply the complete target eligibility rules before
+   a candidate counts toward top-k. D153 constrains source/coordinate lookups
+   to the materialized candidate IDs, while sharing entity visibility across
+   distinct endpoints within the statement. Facts use the canonical private
+   source-qualified helper plus the endpoint conjunction proven equivalent to
+   the public full authority; testimony uses the canonical mention relation.
+   Do not execute full entity provenance anew for each candidate sharing an
+   endpoint. Candidate source lookups remain correlated primary-key probes;
+   a free set join that starts from unrestricted eligibility views is forbidden.
+   The same predicate builders preserve model, scope, document, time and
+   per-fact evidence gates. Rejections remain counted; first-failed-rule-class
+   diagnostics do not permit dropping a guard. See
+   [D153 §4](shared_retrieval_eligibility_design.md#4-one-maintained-source-of-eligibility).
 4. **Stop** under exactly one termination reason (§8.6):
    - `k_filled` — `k` rows are confirmed **and** the stream has moved past the
      `k`-th confirmed score (the next fetched score is strictly worse), so a
@@ -547,8 +548,15 @@ defined per target:
   graph-expanded neighbourhood) and the ranking anchors stay distinct, as
   today.
 
-No text index produces this order, but mentions and fact endpoints are
-indexed by entity:
+No text index produces this order. D153's entity-driven testimony relation
+starts from visible requested survivors and reverse members, uses indexed live
+resolution decisions, checks the latest decision across all mention decisions,
+and probes only those mentions' current-content coordinates. Budget counting
+and coverage consume that same relation, before grouping; a deployment-wide
+resolved-ID filter is not an indexed scope. Candidate-driven claim/chunk
+hydration uses the same semantics in reverse, with one visible-entity set and
+set-based coverage per statement. Chunk lookup uses the D153 mention index.
+Fact endpoint scope and distinct ranking anchors retain their existing meanings:
 
 1. Coverage for every scoped item is computed from those tables (counts, no
    scoring) within an **entity work budget** on the number of mention or
@@ -579,9 +587,11 @@ gate counts as a failure (rising truncation).
 ### 8.5 Facts
 
 Fact search runs one §8.3 loop per fact table (relations, observations), each
-on its own HNSW index, in the operation's context, with the fact authority
-view, fact-time and entity predicates and the D140 evidence gate in
-confirmation. Without entity anchors the branches merge by
+on its own HNSW index, in the operation's context, with complete fact authority,
+fact-time and entity predicates and the per-fact D140 evidence gate in
+confirmation. D153 composes that authority from one canonical source-qualified
+projection and a shared, distinct-endpoint visibility relation; it must match
+the public fact view in every returned row and count. Without entity anchors the branches merge by
 `(distance, fact_kind, fact_id)`. With anchors, the whole result — both
 branches — is ordered by `(coverage DESC, distance, fact_kind, fact_id)`
 using the §8.4 fact coverage, and any per-branch depth is applied only after
@@ -658,6 +668,25 @@ nominations:
 - The D140 `scope_pending` probe reports `complete: false` when any replayed
   nomination did not end `k_filled` or `exhausted`; its `count` is then a
   lower bound.
+
+### 8.7 Shared eligibility and constrained provenance (D153)
+
+[D153](shared_retrieval_eligibility_design.md) is the complete contract for
+statement-local entity sharing, both directions of testimony scope, fact
+source/endpoint factoring, private-helper ACLs and independent qualification.
+It does not change the index cursor, scoring generation, canonical ranks,
+thresholds or early-stop reasons above. All reads retain the same snapshot,
+evaluation instant and absolute deadline. An incomplete physical search remains
+an explicit boundary, never proof of absence.
+
+Entity provenance follows actual recorded decision/mention/chunk/version/
+ready-reading coordinates; any ready historical reading may establish entity
+visibility even with zero current mention counts. UUID-only monthly-partition
+probes retain explicit linear partition fanout. No guessed time bound, global
+visibility cache, persisted activity flag or unbounded exact fallback is used.
+Private facts retain the actual D140 carried-claim evidence and D54 lineage
+counts. Source/presentation authority is authored once; the runtime endpoint
+conjunction is pinned against the migrated independent reference.
 
 ## 9. Index and planner contract
 

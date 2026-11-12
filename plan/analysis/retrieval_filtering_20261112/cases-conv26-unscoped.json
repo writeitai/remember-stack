@@ -1,0 +1,20 @@
+[
+  {
+    "name": "unscoped-facts_context",
+    "operation": "facts_context",
+    "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+    "entity_ids": [],
+    "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+    "k": 50,
+    "candidate_k": 200
+  },
+  {
+    "name": "unscoped-claims_and_sources_context",
+    "operation": "claims_and_sources_context",
+    "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+    "entity_ids": [],
+    "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+    "k": 50,
+    "candidate_k": 200
+  }
+]

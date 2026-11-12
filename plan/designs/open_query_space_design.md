@@ -536,6 +536,17 @@ published compatibility window.
 
 ### 3.3 Invariant compilation
 
+**D153 shared eligibility.** The
+[shared read contract](shared_retrieval_eligibility_design.md) permits equivalent
+private source-qualified projections plus one tested endpoint-visibility rule
+inside an admitted read snapshot. Every full public row retains the same
+source, coordinate, entity and time membership. Sharing a proof does not waive
+it. The fact source helper contains actual D140 carried-claim semantics and
+D54 presentation/counts; native batches qualify distinct endpoints once.
+Current and reconstructed historical identity regimes never share a proof.
+The source-qualified helper is private, owned by `rememberstack_view_owner`,
+revoked from PUBLIC/query roles and unreachable through the sandbox.
+
 **D48 template.** Every lineage path includes an inner authorization chain of
 this form, specialized to its coordinates:
 
@@ -1232,6 +1243,15 @@ Corpus deletion never requires rewriting a saved query: live execution observes
 the invariant views and no result cache exists.
 
 ## 6. Discovery, manifest, and benchmark identity
+
+D153 registers the source-qualified fact helper, carried-periodised-claim
+helper and actual widened fact-claim authority as hashed dependencies. The
+former pre-D140 helper hash is superseded; identical public column types are
+not proof of identical body/dependency identity. Changed authored definitions
+roll the canonical manifest and normal saved-query revalidation. Historical
+run identities remain immutable; current benchmark pins must match the
+qualified schema. Current physical catalog/index and D152 schema-head/capture
+guards are requalified together. These checks preserve private reachability.
 
 Every public view, column, and SQL function has manifest-owned comments stating
 its grain/type, key or identity meaning, current/history meaning, null-clock
