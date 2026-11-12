@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from benchmarks.locomo import runner
 from benchmarks.locomo.model import RetainedIngestionOrigin
 from benchmarks.locomo.model import RunConfiguration
@@ -24,15 +26,20 @@ def validate_origin(*, run_dir: Path, configuration: RunConfiguration) -> None:
     if origin is None:
         return
     root = run_dir / _ORIGIN
-    original_config = (root / "run.json").read_bytes()
-    original_state = (root / "state.json").read_bytes()
+    try:
+        original_config = (root / "run.json").read_bytes()
+        original_state = (root / "state.json").read_bytes()
+        source = RunConfiguration.model_validate_json(original_config)
+        state = RunState.model_validate_json(original_state)
+    except (OSError, ValidationError) as error:
+        raise runner.BenchmarkRunError(
+            "retained ingestion provenance is missing or invalid"
+        ) from error
     if (
         hashlib.sha256(original_config).hexdigest() != origin.configuration_sha256
         or hashlib.sha256(original_state).hexdigest() != origin.state_sha256
     ):
         raise runner.BenchmarkRunError("retained ingestion provenance bytes changed")
-    source = RunConfiguration.model_validate_json(original_config)
-    state = RunState.model_validate_json(original_state)
     if (
         source.retained_ingestion is not None
         or source.repository_revision != origin.processing_revision
@@ -80,6 +87,8 @@ def prepare_reused_run(
         raise runner.ExecutionGuardError(
             "retained output must be outside its original run"
         )
+    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+        raise runner.ExecutionGuardError("retained output must be an empty directory")
     original_files = {
         name: (source_run / name).read_bytes() for name in ("run.json", "state.json")
     }
