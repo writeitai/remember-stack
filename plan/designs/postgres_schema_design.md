@@ -81,6 +81,12 @@ These rules apply to every table unless a module overrides them with a stated re
   exactly this reason. Extensions (below) are created before that. Alembic creates no D68
   deployment identity row and no deployment-scoped registry data: after `upgrade head`, D69's
   library-owned typed bootstrap operation creates or verifies those rows (§2).
+  D153's native migration runner holds one database-scoped session advisory
+  lock before reading revision state and across concurrent-index autocommit
+  phases. Its populated mention-index migration builds/attaches leaf indexes
+  before publishing the new view/head; offline SQL emission refuses that
+  catalog-driven revision. The detailed build/failure contract lives in
+  [D153](shared_retrieval_eligibility_design.md).
 - **Identifiers (D153).** Surrogate primary keys are opaque **`uuid`** values
   minted by the application/worker before INSERT. Current writers use UUIDv4;
   no sequential allocator, ID rewrite or paid-product identity change is
@@ -941,6 +947,8 @@ COMMENT ON TABLE mentions IS
   'Immutable transcript of entity mentions (D17). Evidence for resolution verdicts; never edited. Monthly-partitioned, btree-only, logical FKs (D23). canonical_name_form is the LLM nominative form feeding T0 (registries §5).';
 CREATE INDEX ix_mentions_claim ON mentions (claim_id);
 CREATE INDEX ix_mentions_doc   ON mentions (deployment_id, doc_id);
+-- D153: final index shape; populated upgrades use concurrent leaf builds/attachment.
+CREATE INDEX ix_mentions_deployment_chunk ON mentions (deployment_id, chunk_id);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- resolution_decisions — append-only verdict (D17). A better resolver SUPERSEDES (superseded_by),
