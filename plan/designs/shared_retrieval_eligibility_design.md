@@ -1,9 +1,11 @@
 # Shared retrieval eligibility and candidate-driven provenance
 
-Status: proposed design, awaiting the owner's requested Claude Opus review.
-No runtime change is authorized by this document alone. The owner authorized
-implementation after that review approves the design. This is a candidate
-amendment to D142/D149, not a replacement of their eligibility or ranking rules.
+Status: accepted design on this PR's merge (D153); implementation and
+qualification are pending. Claude Opus 5.5 HIGH approved the contract at
+`431900b1d` with zero remaining blockers; [review and execution identity](../analysis/retrieval_eligibility_reviews_20261112/opus-r3-review.md).
+The owner authorized implementation after this review. This amends D142/D149's
+physical execution and D23's unsupported UUID-derived pruning assumption;
+eligibility, ranking, finite budgets and D56 reuse semantics remain intact.
 
 ## 1. Problem, evidence and intended result
 
@@ -165,7 +167,10 @@ filter turns the nullable join into the corresponding positive membership.
 Unresolved mentions and mentions of another entity still do not give coverage.
 Duplicated mentions, redirect members and repeated requested IDs do not inflate
 coverage. The claims and chunks paths share this definition, including D140's
-scoped statement builder. Unscoped queries do not pay for this CTE.
+scoped statement builder. Explicit claim `entity_id` equality filters use the
+same visible-entity/mention contract; equality predicates stay conjunctive,
+and only requested ranking anchors contribute to coverage. Unscoped queries
+without an entity filter do not pay for this CTE.
 
 The existing current-content projection remains the source-coordinate
 authority. Do not copy its deleted-source/reading predicates into a second
@@ -378,7 +383,9 @@ thresholds or adding a new public exact-search mode is outside this change.
   hashes the pre-D140 fact helper instead of the widened deployed definition,
   and omits `v_memory_claim_carried_periodised`. Register that carried-claim
   helper and the actual widened `v_memory_fact_claim_live`/fact authority text
-  as hashed dependencies, with private ACLs/ownership. Do not claim a complete
+  as hashed dependencies, with private ACLs/ownership. Re-emit the widened
+  `v_memory_fact_claim_live` body as literal current migration DDL, unchanged
+  semantically; hash that literal, not a stale pre-D140 definition. Do not claim a complete
   dependency hash while leaving that gap unresolved.
 - Register changed authored DDL in query-space source definitions, regenerate
   the canonical manifest/deletion matrix where affected and exercise normal
@@ -445,9 +452,9 @@ Rejected alternatives:
 
 ## 9. Acceptance and approval gates
 
-Before runtime implementation, Claude Opus must approve this concrete design
-or its reviewed revision. Store review input/output and findings in the PR.
-Implementation must then satisfy all of these gates before merge:
+The required Claude Opus design approval is recorded in the linked round-3
+review; prior blocking reviews and inputs are retained alongside it. Runtime
+implementation must satisfy all of these gates before its merge:
 
 1. **Independent complete oracle:** build a dedicated database by migrating
    the repository to **`p9_46_0067`**, including D140's real widened helper
@@ -509,34 +516,18 @@ the retained stores and original model/prompt policy, with separately saved
 answers and verified GCS backups. It cannot be used in place of eligibility
 or concurrency qualification.
 
-## 10. Adoption and current binding corpus
+## 10. Binding authority and delivery record
 
-The proposal becomes binding only after the requested Opus review approves
-its revision. Before runtime work, move this file to
-`plan/designs/shared_retrieval_eligibility_design.md`, update all inbound links,
-and record D153 (accepted design, implementation qualification still pending).
-In that same checkpoint reconcile:
-
-- `postgres_p1_search_projection_design.md` §8.3–8.5 and a shared-eligibility
-  subsection: full authority may be assembled from the canonical private source
-  and tested endpoint rule, with current ranking/continuation semantics intact;
-- `entity_identity_and_retrieval_design.md` §7: current entity provenance probe
-  semantics, any-ready-reading rule, set-based coverage and explicit partition
-  costs;
-- `open_query_space_design.md` §3.3 and §6: private helper authority/ACL,
-  full public row parity and manifest/saved-query identity consequences;
-- `postgres_schema_design.md` §12 and its UUID/pruning assertions: IDs remain
-  opaque; current `uuid4` writers do not supply UUIDv7-derived time pruning.
-  State the retained linear partition-probe overhead and forbid guessed time
-  bounds rather than relying on an unimplemented routing mechanism;
-- an amendment inside D149 identifying its changed physical execution contract
-  and linking D153; its snapshot, embedding reuse and eligibility rules survive.
-  D153 also amends D23's unsupported UUID-derived pruning assumption and records
-  the schema-head/capture and source-manifest consequences.
+D153 adopts this design after the owner's requested Opus approval. It amends
+D149's physical provenance/confirmation work and D23's UUID-derived pruning
+assumption, while preserving their other rules. The corresponding current
+contracts are reconciled in P1 search §8.3–8.5, entity identity §7, query space
+§3.3/§6, and PostgreSQL schema identifiers/§12. Both earlier decision entries
+carry the amendment. The superseded proposal is removed rather than kept as
+an alternative runtime or architecture path.
 
 Accepted design is not evidence that implementation ships. Delivery sequencing
-and measured completion belong in `plan/plans/` and PR validation, not promises
-of unqualified runtime behavior in the binding design. Absolute throughput,
-eight-reader resource measurements and temporary spill usage are recorded
-observations; semantic, structural-work, cancellation/isolation, native-query
-completion and integration gates are mandatory.
+and qualification are tracked in [the delivery plan](../plans/shared_retrieval_eligibility.md)
+and PR evidence. Absolute throughput, eight-reader resources and temporary spill
+usage are recorded observations; semantic, structural-work, cancellation,
+isolation, native-query completion and integration gates are mandatory.

@@ -1,6 +1,10 @@
 # Reliable retrieval: SQL filtering, ranked indexes, and continuation
 
 Date: 2026-11-12. Status: non-binding analysis; SQL prototypes only.
+The chosen contract is now [D153](../designs/shared_retrieval_eligibility_design.md),
+approved by Claude Opus in [round 3](retrieval_eligibility_reviews_20261112/opus-r3-review.md).
+This analysis preserves the original measured evidence; it does not claim the
+runtime implementation is complete.
 
 This analysis investigates retrieval failures in the full LoCoMo run based on
 `13ce4a5224709b3e3cda65c429d5915d47e95e89`.

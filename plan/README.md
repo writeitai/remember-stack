@@ -89,8 +89,9 @@ For measured SQL-plan amplification during the full LoCoMo campaign, why the
 affected scoped searches bypass continuation, and a non-binding comparison of
 filter-first ranking with indexed broad search, see the
 [reliability investigation](analysis/retrieval_filtering_reliability_20261112.md).
-Its [candidate shared-eligibility design](proposals/shared_retrieval_eligibility.md)
-is awaiting the owner's requested Claude Opus review before implementation.
+The [D153 shared-eligibility design](designs/shared_retrieval_eligibility_design.md)
+was approved by Claude Opus; its [delivery plan](plans/shared_retrieval_eligibility.md)
+tracks implementation and qualification separately.
 
 For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)

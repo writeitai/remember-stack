@@ -603,6 +603,14 @@ claim-verifiability golden set (D25 — junk-control moved to in-call Selection,
 
 ## D23. Registry scale & schema
 
+**D153 amendment (2026-11-12).** UUIDs are opaque read coordinates; current
+writers mint UUIDv4 and supply no ID-derived partition timestamp. The UUIDv7
+pruning promise in PostgreSQL schema §12 is replaced by explicit linear
+partition probing unless an exact recorded partition coordinate is available.
+No ID/key migration, guessed time bound or routing registry is introduced.
+Partition families, keys and their remaining policies below survive.
+See [D153](#d153-shared-eligibility-and-candidate-constrained-provenance).
+
 **Decision.** D94 amends the partition estate to exactly eight parents. Six large append-only tables use
 monthly RANGE partitions managed by `pg_partman`: `mentions(created_at)`,
 `resolution_decisions(decided_at)`, `chunks(created_at)`, `chunk_claims(created_at)`,
@@ -7715,6 +7723,14 @@ lists the attributes; the observability docs describe them.
 
 ## D149. Reuse query embeddings within a request; prune unrequested fact statistics
 
+**D153 amendment (2026-11-12).** Shared statement-local coverage/endpoint
+eligibility and constrained decision/mention/chunk provenance replace repeated
+per-candidate entity-authority expansion. D153 specifies both entity-driven
+nomination and candidate-driven hydration, canonical fact-source factoring,
+and actual-plan qualification. This amends physical execution; request embedding
+reuse, one snapshot/deadline, source/time eligibility, demand-pruned counts
+and paid-product reuse remain unchanged.
+
 **Status:** accepted. **Date:** 2026-11-06.
 
 Entity membership starts from candidate IDs and indexed provenance; scoped
@@ -7882,3 +7898,42 @@ waiver, public capability or running implementation. D56 source/reuse identities
 and D74 privacy authority survive unchanged; capture metadata never enters paid
 processing keys. Provider/native capability, classification and cost evidence
 must qualify before advertising chargeable evidence.
+
+
+## D153. Shared eligibility and candidate-constrained provenance
+
+**Status:** accepted design on this PR's merge; implementation not yet qualified.
+**Date:** 2026-11-12. **Authority:** owner requested Claude Opus approval before
+implementation; Opus 5.5 HIGH approved revision `431900b1d` after three reviews.
+[Approval](plan/analysis/retrieval_eligibility_reviews_20261112/opus-r3-review.md).
+
+**Decision.** Retain D142's scoped exact/broad indexed ranking. Evaluate shared
+entity visibility once per distinct endpoint within a statement, using materialized
+ID sets under the existing repeatable-read snapshot. Constrain entity provenance
+in its actual decision → mention → chunk → version → any-ready-reading order;
+keep document bridges indexed per member. Claim/chunk scope uses the same
+canonical mention relation in entity-driven and candidate-driven directions.
+A private source-qualified fact helper owns actual D140 carried-claim membership
+and presentation/counts; the only runtime-composed fact authority is the tested
+subject/object visibility conjunction. Full eligibility precedes each cut.
+
+**Tradeoffs and consequences.** Add a mention chunk-lookup B-tree with native
+concurrent leaf construction and a session-scoped migration lock. UUIDs remain
+opaque, with measured linear partition-point-probe overhead and no guessed time
+filter. Correct stale/missing D140 manifest dependencies and roll actual schema,
+catalog, saved-query and D152 guard pins through their normal contracts.
+No ranking thresholds, public row shapes, ingestion generations, ID minting,
+model calls or paid reuse keys change. No cache, persisted visibility flag,
+legacy fallback, reranker or automatic DLQ repair is introduced.
+
+**Qualification.** The pre-change oracle is a real `p9_46_0067` database, not
+hand-picked old DDL. Complete row/count, deletion/merge/time, 120-partition,
+large unrelated-data, concurrency/cancellation, manifest/ACL and native completion
+gates are mandatory before merging runtime changes. Single-reader prototypes
+are evidence for the design, not proof of a shipped speedup.
+
+**Design:** [shared retrieval eligibility](plan/designs/shared_retrieval_eligibility_design.md).
+**Analysis:** [measured SQL amplification](plan/analysis/retrieval_filtering_reliability_20261112.md).
+**Delivery:** [implementation and qualification](plan/plans/shared_retrieval_eligibility.md).
+**Amends:** D142/D149 physical read execution and D23 UUID-derived pruning;
+retains D54, D56, D67, D74, D140 and D152 correctness boundaries.
