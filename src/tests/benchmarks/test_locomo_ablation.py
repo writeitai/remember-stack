@@ -676,11 +676,13 @@ def test_cli_exposes_the_declared_profiles(
 
 @pytest.mark.parametrize("answer_model", (None, "test/alternative-model"))
 @pytest.mark.parametrize("judge_model", (None, "test/alternative-judge"))
+@pytest.mark.parametrize("api_timeout_seconds", (None, 600.0))
 def test_full_prompt_is_frozen_and_resume_rejects_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     answer_model: str | None,
     judge_model: str | None,
+    api_timeout_seconds: float | None,
 ) -> None:
     """Prompt trials bind exact bytes and never mutate the original answers."""
     monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
@@ -700,10 +702,14 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         "prompt_template": "Question: {question}\r\n",
         "answer_model": answer_model,
         "judge_model": judge_model,
+        "api_timeout_seconds": api_timeout_seconds,
     }
     configuration, _state = ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
     assert configuration.answer_model == (answer_model or ANSWER_AGENT_MODEL)
     assert configuration.judge_model == (judge_model or JUDGE_MODEL)
+    assert configuration.api_timeout_seconds == api_timeout_seconds
+    if api_timeout_seconds is None:
+        assert "api_timeout_seconds" not in configuration.model_dump()
     assert "use_current_judge_prompt" not in configuration.model_dump()
     assert configuration.source_processing_revision == "a" * 40
     assert configuration.ablation_runner_revision == "b" * 40
@@ -717,6 +723,8 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         )  # type: ignore[arg-type]  # noqa: SLF001
     with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
         ablation._load_or_create_output(**{**values, "answer_workers": 4})  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(**{**values, "api_timeout_seconds": 900.0})  # type: ignore[arg-type]  # noqa: SLF001
     with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
         ablation._load_or_create_output(
             **{**values, "judge_model": "test/different-judge"}
@@ -852,6 +860,10 @@ def test_model_option_rejects_invalid_comparisons_before_source_access(
     (
         ({"answer_workers": 0}, "between 1 and 16"),
         ({"answer_workers": 17}, "between 1 and 16"),
+        ({"api_timeout_seconds": 0}, "finite and positive"),
+        ({"api_timeout_seconds": -1}, "finite and positive"),
+        ({"api_timeout_seconds": float("inf")}, "finite and positive"),
+        ({"api_timeout_seconds": float("nan")}, "finite and positive"),
         ({"answer_provider_only": ()}, "nonempty tags"),
         ({"answer_provider_only": ("bad tag",)}, "without whitespace"),
     ),
@@ -984,8 +996,9 @@ def test_full_historical_name_requires_the_exact_current_nonprompt_contract(
         ablation._guard_live_source(**values)  # type: ignore[arg-type]  # noqa: SLF001
 
 
+@pytest.mark.parametrize("api_timeout_seconds", (None, 600.0))
 def test_full_cli_pins_flex_routing_and_saved_http_timeout(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, api_timeout_seconds: float | None
 ) -> None:
     """Standalone trials enforce canonical provider routing without ambient exports."""
     protocol = protocol_for_key(DEFAULT_PROTOCOL_KEY)
@@ -1055,6 +1068,11 @@ def test_full_cli_pins_flex_routing_and_saved_http_timeout(
                 "--max-evaluator-cost-usd",
                 "2",
                 "--execute",
+                *(
+                    []
+                    if api_timeout_seconds is None
+                    else ["--api-timeout-seconds", str(api_timeout_seconds)]
+                ),
             ]
         )
         == 0
@@ -1063,7 +1081,8 @@ def test_full_cli_pins_flex_routing_and_saved_http_timeout(
     for settings in settings_seen:
         assert settings.chat_provider_only == ["openai/flex", "openai"]
         assert settings.chat_provider_order == ["openai/flex", "openai"]
-    assert timeouts == [321.0]
+    assert timeouts == [api_timeout_seconds or 321.0]
+    assert forwarded[0]["api_timeout_seconds"] == api_timeout_seconds
     assert forwarded[0]["judge_model"] == "test/alternative-judge"
     assert forwarded[0]["item_ids"] == ("conv-test/qa/0000",)
 

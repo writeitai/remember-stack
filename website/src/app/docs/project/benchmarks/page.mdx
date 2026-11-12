@@ -422,6 +422,17 @@ canonical order is fingerprinted. Omit `--item` to test the entire sample.
 The reader still searches the complete ingested source. A passing subset is
 not a full-conversation score, and changing the selection rejects resume.
 
+For a timeout-only replay, `--api-timeout-seconds 600` explicitly gives each
+full-profile SDK request a longer timeout. The override is recorded in the
+configuration, fingerprint and summary; changing it requires a new output
+directory. Omission keeps the source run's saved timeout (currently300 seconds)
+and existing experiment identities. This does not extend the server's separate
+PostgreSQL retrieval budget: configure that deployment through
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S` (default120 seconds).
+Record server tuning alongside the replay, retain the original results, and
+select timeout-affected items without using their judge labels. No ingestion
+is repeated.
+
 ```bash
 uv run python -m benchmarks.locomo retrieval-ablation \
   --run .benchmark-runs/development --sample conv-47 --profile full \
