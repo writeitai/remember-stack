@@ -230,7 +230,10 @@ def test_complete_old_head_parity_across_visibility_mutations(pair: _Pair) -> No
         for identifier in corpus.version.values()
     )
     changes.extend(
-        ("UPDATE entities SET status='retired' WHERE entity_id=:id", {"id": identifier})
+        (
+            "UPDATE entities SET status='retired',merged_into=NULL WHERE entity_id=:id",
+            {"id": identifier},
+        )
         for identifier in corpus.entity.values()
     )
     changes.append(("UPDATE entities SET merged_into=NULL,status='active'", {}))
@@ -239,7 +242,7 @@ def test_complete_old_head_parity_across_visibility_mutations(pair: _Pair) -> No
     for _ in range(12):
         changes.append(
             (
-                "UPDATE entities SET merged_into=:target WHERE entity_id=:id",
+                "UPDATE entities SET status='merged',merged_into=:target WHERE entity_id=:id",
                 {"target": rng.choice(entity_ids), "id": rng.choice(entity_ids)},
             )
         )
@@ -282,3 +285,29 @@ def test_private_current_definitions_match_actual_widened_old_source(
             ).scalar_one()
             == 0
         )
+
+
+def test_scoped_context_statements_execute_with_canonical_coverage(pair: _Pair) -> None:
+    """Execute actual hydration SQL, including the periodised/current scope builder."""
+    from rememberstack.core.text_scope import TextScope
+    from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
+    from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
+    from rememberstack.surfaces.query_engine import _confirm_claims_in_scope_statement
+
+    parameters: dict[str, Any] = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "entity_ids": list(pair.corpus.entity.values()),
+        "claim_ids": list(pair.corpus.claim.values()),
+        "chunk_ids": list(pair.corpus.chunk.values()),
+        **TextScope.of(time=None, evaluated_at=datetime.now(UTC)).parameters(),
+    }
+    with pair.target.connect() as connection:
+        for statement in (
+            _CONFIRM_CLAIMS_CURRENT_SCOPED,
+            _CONFIRM_CHUNKS_SCOPED,
+            _confirm_claims_in_scope_statement(current_only=True, entity_scoped=True),
+            _confirm_claims_in_scope_statement(current_only=False, entity_scoped=True),
+        ):
+            rows = connection.execute(statement, parameters).mappings().all()
+            assert rows
+            assert all(row["coverage"] > 0 for row in rows)

@@ -5844,7 +5844,7 @@ def _confirm_claims_in_scope_statement(
         else ""
     )
     coverage_join = (
-        "JOIN scope_coverage AS scope ON scope.item_id = c.claim_id"
+        " JOIN scope_coverage AS scope ON scope.item_id = c.claim_id"
         if entity_scoped
         else ""
     )

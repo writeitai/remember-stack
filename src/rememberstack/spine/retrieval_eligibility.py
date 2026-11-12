@@ -168,7 +168,7 @@ def fact_eligibility_ctes(*, candidates_sql: str) -> str:
             SELECT 1 FROM fact_visible_endpoints object
             WHERE object.entity_id = source.object_entity_id
         )
-    ), eligible_facts AS (
+    ), eligible_facts AS NOT MATERIALIZED (
         SELECT presentation.* FROM fact_eligible_keys eligible
         CROSS JOIN LATERAL (
             SELECT fact.* FROM public.v_memory_fact_source_qualified fact
