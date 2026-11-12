@@ -1,0 +1,16 @@
+{
+  "kind": "sql_analysis_archive_not_a_store_snapshot",
+  "verified_at": "2026-11-12T13:25:20.701823+00:00",
+  "source_commit": "c813c9230",
+  "remote_path": "gs://remember-stack-locomo-backups/experiments/retrieval-filtering-20261112/c813c9230/analysis.tar.gz",
+  "byte_size": 525844,
+  "sha256": "93f211a28dafbccbea20bd668efff8f4c3434080cc3bb0c927355d350244bed9",
+  "generation": 1794489920498512,
+  "crc32c": "0mXQUQ==",
+  "independent_complete_download": true,
+  "all_108_manifest_artifacts_verified": true,
+  "provider_calls": 0,
+  "original_answer_states_changed": false,
+  "processed_stores_changed": false,
+  "engine_pr": "https://github.com/writeitai/remember-stack/pull/586"
+}
