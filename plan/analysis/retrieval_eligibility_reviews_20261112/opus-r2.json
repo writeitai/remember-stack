@@ -1,0 +1,27 @@
+{
+  "reviewed_commit": "085b06869",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "command": [
+    "claude",
+    "--dangerously-skip-permissions",
+    "--model",
+    "claude-opus-5-5",
+    "--effort",
+    "high",
+    "-p",
+    "<prompt file contents>"
+  ],
+  "exit_code": 0,
+  "verdict": "CHANGES REQUIRED",
+  "runtime_implementation_started": false,
+  "partition_fanout_tradeoff": "explicitly accepted",
+  "blocking_findings": [
+    "use actual head D140-widened fact authority and independent oracle; fix manifest dependency gap",
+    "cover indexed entity-driven nomination/budget scope as well as candidate hydration",
+    "reconcile unimplemented UUIDv7 pruning design with opaque uuid4 runtime",
+    "schema/index/helper catalog pins and D152 guard qualification at new head"
+  ],
+  "opus-r2-prompt.txt_sha256": "2e4547fb079e6a7591cdba3eca9a7bbce2c445288eb306e70565fa1799ec23c5",
+  "opus-r2-review.md_sha256": "859791016e89fe5e68af8c11e921f62cb4d925feff50f17bd5132e04187ae836"
+}

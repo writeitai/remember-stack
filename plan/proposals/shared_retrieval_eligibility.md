@@ -130,6 +130,11 @@ can visit each retained partition. This design intentionally **accepts linear
 partition-probe overhead** and does not introduce a new global UUID locator,
 writer-maintained routing state or partition/reuse-key migration to eliminate
 it. It must not be described as constant work independent of partition count.
+D23 §12's UUIDv7-derived time-bound pruning is not implemented: current writers
+mint opaque `uuid4` values. This design does not rely on that promised routing
+mechanism and amends the binding schema design accordingly. Never add a guessed
+or correlated timestamp bound to an opaque-ID authority lookup: it can silently
+exclude valid evidence. There is no ID-minting or timestamp-column change.
 
 The forbidden amplification is scanning unrelated rows inside those partitions
 or multiplying candidate decisions by unrelated versions/documents/chunks.
@@ -167,6 +172,37 @@ authority. Do not copy its deleted-source/reading predicates into a second
 approximate query. Historical-identity reconstruction continues to use its
 own existing authority; a current-entity CTE cannot substitute for it.
 
+#### Entity-driven mode: nomination and its budget use the same relation
+
+Coverage hydration begins from candidate claim/chunk IDs. Scoped search and
+nomination also need the inverse direction: begin from requested entities,
+without evaluating every current mention in the deployment. Its relation is:
+
+1. Requested visible survivor IDs under the operation's current-identity scope.
+2. Their reverse merge members through the existing `_SURVIVOR_SCOPE_BODY`.
+3. Candidate decisions through `ix_resdec_entity_live`.
+4. Latest unsuperseded decision across **all** decisions of each mention through
+   `ix_resdec_live`, including decisions moved to another entity.
+5. The decision's own mention by its partition primary-key prefix.
+6. That mention's current-content coordinate via a correlated, mention-ID-bound
+   lookup of the existing canonical current-content projection: correct chunk,
+   document/version and current ready reading, with its nullable visible-claim
+   gate preserved. This is distinct from §4.1's any-ready-reading entity gate.
+7. Group by the claim or chunk coordinate and count distinct requested survivors.
+
+`_run_testimony`, `nominate_testimony_scored`, `_entity_tiers` and the scope
+budget helper must consume this same entity-driven relation. The budget counts
+its qualifying mention rows, before grouping, not a different approximation.
+A `LIMIT budget+1` on a deployment-wide `mentions_live` filter is insufficient.
+The inverse relation must equal that public filter in the independent oracle.
+
+Filtering early decisions/current coordinates may still examine substantial
+**requested-entity provenance**, including invisible early decisions. The row
+budget is not a bound on every physical access; the existing deadline remains
+explicit. Unrelated current mentions must not multiply work. Claim-ID hydration
+still excludes nullable claim coordinates; chunk coverage retains a qualifying
+mention even if its claim coordinate is null, matching today's semantics.
+
 #### Access paths and the missing chunk index
 
 Claim coverage starts through `ix_mentions_claim (claim_id)`, filtered by
@@ -191,8 +227,13 @@ DDL and the revision update run normally after index qualification. Under the
 same native migration lock, an interrupted own-named invalid leaf index is
 dropped concurrently and rebuilt; an existing valid index is reused only if
 its table/key/definition matches exactly. A foreign or mismatched object fails
-setup. Re-enumerate partitions before declaring the parent valid and serialize
-the final attachment metadata step with native DDL locking. Do not start
+setup. Re-enumerate partitions before completing attachment and serialize
+the final metadata step with native DDL locking. PostgreSQL marks the parent
+valid when every partition has a matching attached index; verify this via
+`pg_index.indisvalid` and the complete leaf inventory, rather than setting a
+flag ourselves. Refuse offline `--sql` mode for this revision because its
+catalog-driven concurrent leaf work cannot be emitted as a truthful offline
+upgrade. Do not start
 serving a new schema revision while this migration remains incomplete. This
 is forward completion of one index build, not a release recovery framework.
 
@@ -217,8 +258,15 @@ valid_precision
 ```
 
 Its per-kind `UNION ALL` arms retain the current raw relation/observation
-fields, **inner joins** to `v_memory_entity_survivor`, and the existing exact
-historical claim-coordinate evidence predicate. Cyclic/dangling survivor chains
+fields and **inner joins** to `v_memory_entity_survivor`. Each evidence predicate
+is the actual `p9_46_0067` head predicate, written as a literal in the new
+migration: `relation_evidence`/`observation_evidence` joins to
+(`claims_visible_history` **UNION ALL** `v_memory_claim_carried_periodised`),
+with the existing deployment, claim and document-coordinate equalities.
+It must never be copied only from pre-D140 `p9_04_0025` or derived by runtime
+string replacement. Keep `v_memory_fact_claim_live`'s widened `p9_38_0059`
+definition; it supplies the matching current-lineage/count authority.
+Cyclic/dangling survivor chains
 therefore do not create source-qualified rows. Precision is the same raw fact
 precision cast to text. The existing D54 count expressions consume only
 `v_memory_evidence_lineage_live` through a demand-prunable left lateral aggregate;
@@ -326,9 +374,22 @@ thresholds or adding a new public exact-search mode is outside this change.
 - Keep private helper ACLs/ownership consistent with the existing query-space
   design: not part of `memory_v1`, no grant to PUBLIC or the query role, and no
   new route around the public SQL sandbox's reachability checks.
+- Correct the existing source-manifest gap: `source_definitions.py` currently
+  hashes the pre-D140 fact helper instead of the widened deployed definition,
+  and omits `v_memory_claim_carried_periodised`. Register that carried-claim
+  helper and the actual widened `v_memory_fact_claim_live`/fact authority text
+  as hashed dependencies, with private ACLs/ownership. Do not claim a complete
+  dependency hash while leaving that gap unresolved.
 - Register changed authored DDL in query-space source definitions, regenerate
   the canonical manifest/deletion matrix where affected and exercise normal
-  saved-query revalidation. Public columns/types remain stable, but a changed
+  saved-query revalidation. Published view and every column comment remain
+  explicit literal migration output, including `facts_visible_history`.
+- Update `catalog_contract.py`'s `EXPECTED_INDEXES` and `EXPECTED_VIEWS` for
+  the new index/helper. Move the single current schema-head pins in
+  `storage_capture_guard.py` and `storage_capture_catalog.py` from
+  `p9_46_0067` to the actual new head; do not add an old-head fallback. Qualify
+  D152 capture guards, resource classification/inventory and index allocation
+  at that head. The new index changes retained physical allocation. Public columns/types remain stable, but a changed
   public view AST is a real query-space identity change, not an unchanged pin.
 - Update current LoCoMo surface pins if their qualified manifest changes;
   preserve frozen historical profiles and results. New validation/answer runs
@@ -388,16 +449,19 @@ Before runtime implementation, Claude Opus must approve this concrete design
 or its reviewed revision. Store review input/output and findings in the PR.
 Implementation must then satisfy all of these gates before merge:
 
-1. **Independent complete oracle:** retain pre-change definitions from
-   `p9_45_0066`, `p9_04_0025` and `p9_14_0035`, plus copies of pre-change native
-   statements, **in test code only**. Install them in an isolated test-only
-   schema or a dedicated pre-migration database with equivalent names and
-   complete dependency closure, using identical seeded/cloned data. Never
-   compare a new view against itself or keep an old runtime fallback. Compare
-   all columns/counts on deterministic randomized fixtures and complete
-   retained-store candidate sets on isolated copies. The protected original
-   stores remain read-only. A long reference may use a separately recorded
-   longer bound or stable batches; a truncated oracle proves no full equality.
+1. **Independent complete oracle:** build a dedicated database by migrating
+   the repository to **`p9_46_0067`**, including D140's real widened helper
+   definitions, and use identical seeded/cloned data. A test-schema copy is
+   allowed only if mechanically generated from that database's `pg_get_viewdef`
+   output with complete dependency closure, never hand-picked migration
+   constants. Keep pre-change native statements in test code only. Include
+   facts whose only visible evidence is a carried periodised claim after
+   origin-version deletion. Never compare a new view against itself or keep
+   an old runtime fallback. Compare all columns/counts on deterministic
+   randomized fixtures and complete retained-store candidate sets on isolated
+   copies. Protected original stores remain read-only. A long reference may
+   use a separately recorded longer bound or stable batches; a truncated
+   oracle proves no full equality.
 2. **Visibility/time matrix:** current and superseded testimony, selected dated
    occurrences, changed readings, deleted lineages, forgotten/merged identities,
    older-version-only provenance, document-entity bridges, duplicate mentions,
@@ -414,8 +478,10 @@ Implementation must then satisfy all of these gates before merge:
    candidate sharing an entity; coordinate lookups stay tied to their input
    IDs. Add a large document with many mentions in other chunks, large
    unrelated entity/chunk/version sets, millions-of-document bridge strata,
-   many partitions, and entities whose early decisions reference invisible
-   versions. Unrelated row counts must not multiply probe work. Report the
+   at least 120 monthly partitions plus the default, and entities whose early
+   decisions reference invisible versions. Add many current mentions unrelated
+   to the requested entities to cover entity-driven nomination as well as
+   candidate hydration. Unrelated row counts must not multiply probe work. Report the
    accepted linear partition-probe/planning overhead separately; do not claim
    partition-independent work. Verify unrequested counts are absent from
    identity/ID plans. Assert work/cardinality bounds, not a planner node name.
@@ -433,7 +499,10 @@ Implementation must then satisfy all of these gates before merge:
    required CI, zero provider calls during SQL qualification and no ingestion.
    Qualify the migration session lock across autocommit, populated leaf-index
    build/attach, invalid own-index interruption, mismatched-object rejection
-   and new-partition index inheritance. Publish actual limits and risks.
+   and new-partition index inheritance. Verify updated physical catalog/head
+   pins and D152 capture guards/resource allocation at the new head. Verify
+   the widened D140 dependency ASTs and carried-claim helper are actually hashed.
+   Publish actual limits and risks.
 
 A full LoCoMo answer/judge replay can follow the merged, qualified fix using
 the retained stores and original model/prompt policy, with separately saved
@@ -456,8 +525,14 @@ In that same checkpoint reconcile:
   costs;
 - `open_query_space_design.md` §3.3 and §6: private helper authority/ACL,
   full public row parity and manifest/saved-query identity consequences;
+- `postgres_schema_design.md` §12 and its UUID/pruning assertions: IDs remain
+  opaque; current `uuid4` writers do not supply UUIDv7-derived time pruning.
+  State the retained linear partition-probe overhead and forbid guessed time
+  bounds rather than relying on an unimplemented routing mechanism;
 - an amendment inside D149 identifying its changed physical execution contract
   and linking D153; its snapshot, embedding reuse and eligibility rules survive.
+  D153 also amends D23's unsupported UUID-derived pruning assumption and records
+  the schema-head/capture and source-manifest consequences.
 
 Accepted design is not evidence that implementation ships. Delivery sequencing
 and measured completion belong in `plan/plans/` and PR validation, not promises
