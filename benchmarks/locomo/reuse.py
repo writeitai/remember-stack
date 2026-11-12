@@ -49,6 +49,7 @@ def validate_origin(*, run_dir: Path, configuration: RunConfiguration) -> None:
     ):
         raise runner.BenchmarkRunError("retained ingestion origin identity changed")
     for field in (
+        "protocol_name",
         "adapter_version",
         "dataset_commit",
         "dataset_sha256",

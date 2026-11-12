@@ -527,6 +527,9 @@ class RunSummary(FrozenModel):
     ] = "deployment cost ledger; not available through benchmark SDK"
     merged_run_count: int = Field(default=1, ge=1)
     missing_sample_ids: list[NonEmpty] = Field(default_factory=list)
+    retained_ingestion_origins: tuple[RetainedIngestionOrigin, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @model_serializer(mode="wrap")
     def omit_single_run_merge_fields(

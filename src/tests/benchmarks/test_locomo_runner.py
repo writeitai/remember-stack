@@ -4033,3 +4033,75 @@ def test_retained_fork_rejects_incompatible_live_data_before_upload(
             )
         assert uploads == 1
         assert (source / "state.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("variant", ("same", "different-origin", "ordinary"))
+def test_retained_summary_merges_only_common_processing_and_serving_identity(
+    variant: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-sample retained provenance survives a validated whole-manifest merge."""
+    from benchmarks.locomo.model import RetainedIngestionOrigin
+
+    from rememberstack.model import PipelineReadinessReport
+
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    original = tmp_path / "original"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=original)
+    context = runner.load_recorded_run(run_dir=original)
+    context.state.readiness = {
+        sample: PipelineReadinessReport.model_validate(_complete_readiness_payload())
+        for sample in ("conv-a", "conv-b")
+    }
+    runner._save_state(run_dir=original, state=context.state)
+    original_files = {
+        name: (original / name).read_bytes() for name in ("run.json", "state.json")
+    }
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+    outputs = []
+    for index, question in enumerate(questions):
+        output = tmp_path / str(index)
+        origin = RetainedIngestionOrigin(
+            sample_id=question.sample_id,
+            processing_revision="c" * 40
+            if index and variant == "different-origin"
+            else "a" * 40,
+            protocol_fingerprint=context.configuration.protocol_fingerprint,
+            configuration_sha256=hashlib.sha256(original_files["run.json"]).hexdigest(),
+            state_sha256=hashlib.sha256(original_files["state.json"]).hexdigest(),
+        )
+        # Different origin is represented by another fully valid original configuration.
+        files = original_files.copy()
+        if index and variant == "different-origin":
+            config = json.loads(files["run.json"])
+            config["repository_revision"] = "c" * 40
+            files["run.json"] = json.dumps(config).encode()
+            origin = origin.model_copy(
+                update={
+                    "configuration_sha256": hashlib.sha256(
+                        files["run.json"]
+                    ).hexdigest()
+                }
+            )
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json",
+            tier="smoke",
+            output=output,
+            retained_ingestion=None if index and variant == "ordinary" else origin,
+        )
+        provenance = output / "provenance/retained-ingestion"
+        provenance.mkdir(parents=True)
+        for name, data in files.items():
+            (provenance / name).write_bytes(data)
+        _write_terminal_records(run_dir=output, questions=(question,))
+        outputs.append(output)
+    if variant == "same":
+        summary = summarize_runs(run_dirs=tuple(outputs))
+        assert summary.questions == 2 and summary.judge_correct == 1
+        assert summary.missing_sample_ids == []
+        assert {row.sample_id for row in summary.retained_ingestion_origins} == {
+            "conv-a",
+            "conv-b",
+        }
+    else:
+        with pytest.raises(BenchmarkRunError, match="retained"):
+            summarize_runs(run_dirs=tuple(outputs))

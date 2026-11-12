@@ -147,6 +147,9 @@ and hashes of the original configuration and state; their exact bytes are saved
 under `provenance/retained-ingestion/`. Original files and results stay unchanged.
 New answer/judge state starts empty. Ingestion is refused for the derived run.
 Always derive from the original processing run, rather than another scoring fork.
+Normal `summarize --run ... --run ...` can combine disjoint retained forks only
+when their serving identities and original processing revision/fingerprint match.
+Its summary retains all per-sample origins; mixing ordinary and retained runs fails.
 
 Keep the matching P3 mount root and frozen dataset available to the new run;
 this command does not republish or copy the mount. Use normal answer/judge or
