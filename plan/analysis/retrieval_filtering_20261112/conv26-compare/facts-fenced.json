@@ -1,0 +1,39 @@
+{
+  "name": "facts-fenced",
+  "timeout_seconds": 20.0,
+  "parameters": {
+    "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+    "entity_ids": [
+      "ebaecaaf-e869-473c-b770-93bb3a850e68"
+    ],
+    "ranking_entity_ids": [
+      "ebaecaaf-e869-473c-b770-93bb3a850e68"
+    ],
+    "query_vector": "[VECTOR_REDACTED]",
+    "embedding_model": "qwen/qwen3-embedding-8b",
+    "input_policy": "fact-label-v2:chosen-window",
+    "evaluated_at": "2026-11-12 13:08:12.458476+00:00",
+    "scope_lower": "2026-11-12 13:08:12.458476+00:00",
+    "scope_upper": "2026-11-12 13:08:12.458476+00:00",
+    "branch_limit": 201,
+    "limit": 201
+  },
+  "read_only": true,
+  "controls": "normal planner; jit off; parallel workers 0; transaction_timeout 0",
+  "execute": {
+    "error": {
+      "type": "OperationalError",
+      "sqlstate": "57014",
+      "message": "canceling statement due to statement timeout"
+    },
+    "elapsed_seconds": 20.005216920748353
+  },
+  "plan": {
+    "error": {
+      "type": "OperationalError",
+      "sqlstate": "57014",
+      "message": "canceling statement due to statement timeout"
+    },
+    "elapsed_seconds": 20.00569637492299
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "statement_ordinal": 132,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Unique",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 1.44,
+        "Total Cost": 1.44,
+        "Plan Rows": 1,
+        "Plan Width": 16,
+        "Disabled": false,
+        "Plans": [
+          {
+            "Node Type": "Sort",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 1.44,
+            "Total Cost": 1.44,
+            "Plan Rows": 1,
+            "Plan Width": 16,
+            "Disabled": false,
+            "Sort Key": [
+              "doc_id"
+            ],
+            "Plans": [
+              {
+                "Node Type": "Seq Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Relation Name": "document_version_scope",
+                "Alias": "s",
+                "Startup Cost": 0.05,
+                "Total Cost": 1.43,
+                "Plan Rows": 1,
+                "Plan Width": 16,
+                "Disabled": false,
+                "Filter": "((NOT selectable) AND (in_force && '[\"2026-11-12 13:16:35.060464+00\",\"2026-11-12 13:16:35.060464+00\"]'::tstzrange) AND (deployment_id = '01712365-15ca-444c-96a1-860665b04673'::uuid) AND (doc_id = ANY ('{916f4481-07b6-540d-8da8-f1fa7d2a0fde,7687219d-10f5-529d-8639-f47eeacc700e,62f6b19b-5d3d-52d9-b028-859cef9f55dc,7af8fcf9-7cd7-5224-8fbe-68bce7d27186,cb6ec9cf-2cab-5848-b010-6c9eede654d4,bd108280-adeb-5922-a86a-98405c5f42c6,3e18768b-ac3c-56e5-97ba-83a7e968a574,c4ff6f8c-1264-584f-a15e-5687212b551b,efa2c3e1-ea18-5d83-bb0a-0b070fe12973,0f55e3a3-4847-51e0-828e-7b4564d337d4,9e9f149c-c3fd-5f58-8aeb-eb2b5f42cf14,531540e8-bdf3-5c94-8dd0-87335a4c5e79,8bb85ecc-f22d-56ec-8044-45bfb386055d,cdbf070e-6b1b-57b4-afe8-13e6925e7512,f8452e81-0816-52b0-8d3e-a1216a371477,a5e40405-e9fe-5a35-b155-a631003a9ee0,ee88fa9a-aa66-540f-9fb7-e049b4aa009e,3605a6bc-b0f7-5456-96e2-181849c1135c,1faff96f-ab5e-546c-890d-c5c357ca32d9}'::uuid[])))"
+              }
+            ]
+          }
+        ]
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.0017936211079359055
+}

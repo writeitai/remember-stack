@@ -1,0 +1,44 @@
+{
+  "statement_ordinal": 115,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 0.01,
+        "Total Cost": 971.49,
+        "Plan Rows": 168,
+        "Plan Width": 48,
+        "Disabled": false,
+        "Plans": [
+          {
+            "Node Type": "Index Scan",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Scan Direction": "Forward",
+            "Index Name": "ix_chunk_search_bm25",
+            "Relation Name": "chunk_search",
+            "Alias": "chunk_search",
+            "Startup Cost": 0.01,
+            "Total Cost": 971.49,
+            "Plan Rows": 168,
+            "Plan Width": 48,
+            "Disabled": false,
+            "Order By": "(search_text <@> 'ix_chunk_search_bm25:What pet does Caroline have? Identify Caroline''s pet or pets.'::bm25query)",
+            "Filter": "(deployment_id = '01712365-15ca-444c-96a1-860665b04673'::uuid)"
+          }
+        ]
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.0016889628022909164
+}

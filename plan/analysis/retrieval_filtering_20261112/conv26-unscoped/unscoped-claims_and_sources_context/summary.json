@@ -1,0 +1,113 @@
+{
+  "case": {
+    "name": "unscoped-claims_and_sources_context",
+    "operation": "claims_and_sources_context",
+    "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+    "entity_ids": [],
+    "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+    "k": 50,
+    "candidate_k": 200,
+    "embedding_model": "qwen/qwen3-embedding-8b"
+  },
+  "observed_at": "2026-11-12T13:16:35.057476+00:00",
+  "operation_budget_seconds": 20.0,
+  "embedding_mode": "stored vector; NOT question embedding; no provider calls",
+  "continuation_calls": [
+    {
+      "k": 200,
+      "channel": "semantic",
+      "statement": "SELECT claim_id::text AS item_id, embedding <=> CAST(:query_vector AS vector) AS distance FROM claims WHERE deployment_id = :deployment_id AND embedding IS NOT NULL AND embedding_model = :embedding_model AND embedding_input_policy_version = :input_policy AND is_current_testimony ORDER BY embedding <=> CAST(:query_vector AS vector)",
+      "account": {
+        "termination": "exhausted",
+        "fetched": 711,
+        "confirmed": 711,
+        "rejected": 0,
+        "fetch_rounds": 1,
+        "coverage_rows": 0,
+        "limits": {
+          "k": 200.0,
+          "work_budget": 40000.0,
+          "initial_fetch": 800.0,
+          "hnsw_max_scan_tuples": 160000.0,
+          "hnsw_ef_search": 200.0
+        }
+      },
+      "elapsed_seconds": 0.19281972758471966
+    },
+    {
+      "k": 200,
+      "channel": "bm25",
+      "statement": "SELECT claim_id::text AS item_id, -(claim_text <@> to_bm25query(:query, 'ix_claims_current_bm25'))::double precision AS score FROM claims WHERE deployment_id = :deployment_id AND is_current_testimony ORDER BY claim_text <@> to_bm25query(:query, 'ix_claims_current_bm25')",
+      "account": {
+        "termination": "exhausted",
+        "fetched": 404,
+        "confirmed": 404,
+        "rejected": 0,
+        "fetch_rounds": 1,
+        "coverage_rows": 0,
+        "limits": {
+          "k": 200.0,
+          "work_budget": 40000.0,
+          "initial_fetch": 800.0
+        }
+      },
+      "elapsed_seconds": 0.1171965803951025
+    },
+    {
+      "k": 200,
+      "channel": "semantic",
+      "statement": "SELECT chunk_id::text AS item_id, embedding <=> CAST(:query_vector AS vector) AS distance FROM chunk_search WHERE deployment_id = :deployment_id AND embedding IS NOT NULL AND embedding_model = :embedding_model AND embedding_input_policy_version = :input_policy ORDER BY embedding <=> CAST(:query_vector AS vector)",
+      "account": {
+        "termination": "exhausted",
+        "fetched": 163,
+        "confirmed": 163,
+        "rejected": 0,
+        "fetch_rounds": 1,
+        "coverage_rows": 0,
+        "limits": {
+          "k": 200.0,
+          "work_budget": 40000.0,
+          "initial_fetch": 800.0,
+          "hnsw_max_scan_tuples": 160000.0,
+          "hnsw_ef_search": 200.0
+        }
+      },
+      "elapsed_seconds": 0.1990013476461172
+    },
+    {
+      "k": 200,
+      "channel": "bm25",
+      "statement": "SELECT chunk_id::text AS item_id, -(search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25'))::double precision AS score FROM chunk_search WHERE deployment_id = :deployment_id ORDER BY search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25')",
+      "account": {
+        "termination": "exhausted",
+        "fetched": 130,
+        "confirmed": 130,
+        "rejected": 0,
+        "fetch_rounds": 1,
+        "coverage_rows": 0,
+        "limits": {
+          "k": 200.0,
+          "work_budget": 40000.0,
+          "initial_fetch": 800.0
+        }
+      },
+      "elapsed_seconds": 0.1921698208898306
+    }
+  ],
+  "result": {
+    "facts": 0,
+    "evidence": 50,
+    "chunks": 50,
+    "sources": 0,
+    "negative": null,
+    "truncation": {
+      "truncated": true,
+      "returned": 100,
+      "estimated_total": 507,
+      "total_is_exact": false,
+      "continuation": null,
+      "reason": null
+    }
+  },
+  "elapsed_seconds": 1.00204954482615
+}

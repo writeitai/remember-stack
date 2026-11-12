@@ -1,0 +1,27 @@
+{
+  "case": {
+    "name": "scoped-claims_and_sources_context",
+    "operation": "claims_and_sources_context",
+    "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+    "entity_ids": [
+      "ebaecaaf-e869-473c-b770-93bb3a850e68"
+    ],
+    "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+    "k": 50,
+    "candidate_k": 200,
+    "embedding_model": "qwen/qwen3-embedding-8b"
+  },
+  "observed_at": "2026-11-12T13:08:34.251578+00:00",
+  "operation_budget_seconds": 20.0,
+  "embedding_mode": "stored vector; NOT question embedding; no provider calls",
+  "continuation_calls": [],
+  "result": {
+    "facts": 0,
+    "evidence": 0,
+    "chunks": 0,
+    "sources": 0,
+    "negative": "kind=<NegativeKind.BOUNDARY: 'boundary'> explanation='the operation could not finish inside its database budget' workaround='narrow the query or add filters, then retry'",
+    "truncation": "truncated=True returned=0 estimated_total=0 total_is_exact=False continuation=None reason='p1_deadline'"
+  },
+  "elapsed_seconds": 20.018505850806832
+}
