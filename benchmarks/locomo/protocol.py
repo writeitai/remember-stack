@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v44"
-DEFAULT_PROTOCOL_KEY: Final = "full-v44"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-evidence-completeness-v44"
-"""Current Full-v44: preserve complete constraints and compare candidate references."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v45"
+DEFAULT_PROTOCOL_KEY: Final = "full-v45"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-reader-catalog-v45"
+"""Current Full-v45: preserve qualified values and trim repeated reader output schemas."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -273,8 +273,13 @@ Answer policy for this evaluation:
   question's entity and time constraints; a clue from another date is not proof of the
   requested state. General knowledge may connect clues, but must not override source details.
 
-The final answer must be the shortest phrase that fully names the requested entities/values,
-no explanations or reasoning.{answer_word_cap_instruction}
+Return only a compact, direct answer to the requested attribute. For a list,
+use short noun phrases; keep a necessary source qualification in parentheses.
+Put the concrete subjects, entities or values first, rather than leading with a
+discussion of ambiguity, source wording or what could not be established. Give
+related qualifying information affirmatively, without an unsolicited correction
+of the question's terminology. Do not include your retrieval process, taxonomy
+lesson or evidence limitations in the final answer.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
 resolve it with resolve_entity first. Use returned entity IDs to make follow-up
@@ -308,27 +313,47 @@ A direct reply can identify a choice without repeating the question's wording;
 it inherits the scope of that question. A preference qualified to a particular
 period or situation does not establish an unrestricted preference.
 
-When a question asks about a superlative (e.g. what someone enjoys "most", "best",
-or considers their "favorite" or "primary" choice), identify the specific option
-the speaker singled out with that superlative rather than pooling all mentioned
-items or categories.
+Use an explicit singular preference statement or a direct answer to a singular
+preference question as the primary choice. Otherwise, a non-exclusive endorsement
+such as "one of my favorites" does not identify a unique favorite. Candidate
+discovery must include independently enthusiastic recommendations and unnamed
+objects from preference exchanges, even without an exact superlative word or a
+formal title. When no exclusive choice is established, answer the requested attribute of the
+best-matching candidate first and add another strongly supported candidate only
+as a brief qualified alternative. Answer the attribute rather than debating
+whether the question uses the ideal preference wording. Keep the candidates
+tied to the requested person, kind and time;
+casual mentions and unrelated objects are not additional preferences.
 Before committing to a preference or resolving an ambiguous reference, perform
 an independent claims/source search for other credible candidates in the requested
-class across sessions. Do not narrow every follow-up query to the first candidate's
+class across sessions. Run this independent claims/source query without
+entity_ids; resolved-person scope can hide unnamed or attachment-derived
+candidates. Verify ownership in the source. Do not narrow every follow-up query to the first candidate's
 title or name. Compare the candidates against the question and source context,
 then give the best-supported referent or preserve a supported ambiguity. Casual
 mentions alone do not establish additional answers.
 
-When asked what a work is about, name its supported subject, premise, setting
-or theme rather than substituting praise or judgments about its quality.
+When asked what a work or depicted object is about, combine the relevant
+spoken or written description with its owning attachment. Name concrete
+subjects shown or discussed, alongside supported themes; broad genre labels
+or positive adjectives do not replace those subjects. When a depicted series
+or collection is unnamed and no synopsis is supplied, describe the concrete
+subject pictured across it with a brief visual qualifier. Do not invent a title
+or plot, or substitute a better-named recommendation merely because it has a title.
+If a relevant attachment continuation is retrieved without the utterance that
+introduced it, read adjacent chunks before deciding how it relates to the question.
 Use an attached description only for its owning source turn and speaker,
 not merely the nearest title. If a chunk boundary hides the description or
 its ownership, use adjacent_chunks to inspect it before resolving a reference.
 Check source-turn identifiers and keep derived visual observations and
-interpretations distinct from direct dialogue.
+interpretations distinct from direct dialogue. Check the requested object kind
+and medium in that same exchange; a preference for an adaptation does not establish
+a preference for the original work. For a depicted collection, a recurring concrete
+motif across its items is relevant subject matter. Keep that subject in the answer
+with a brief visual qualifier, without inventing plot events.
 
-When answering questions about what someone loves, enjoys, does, or experienced, prefer
-the speaker's specific verbatim terms (e.g. "making desserts") rather than generalizing or
+When the requested answer is an activity, choice, action or experience itself,
+prefer the speaker's specific verbatim terms (e.g. "making desserts") rather than generalizing or
 abstracting to a broader umbrella category (e.g. "baking" or "cooking"), unless the question explicitly
 asks for a broader category or the broader category was explicitly used by the speaker.
 
@@ -342,14 +367,26 @@ examine all retrieved passages covering that topic and return the complete union
 of all distinct matching values across all of them. Do not stop after the first
 or highest-ranked match. Exclude merely related facts that do not satisfy the
 question's requested action or relationship.
-Retain relevant limitations or restrictions when the source describes them using
-a related but different category. Preserve the source's qualification rather than
-silently dropping the limitation or relabeling it as a stronger claim. Include it
-only when relevant to the requested property or decision; a related restriction
-does not by itself establish a stricter category or diagnosis. Evidence for one
-category also does not rule out another. Do not add a denial merely because the
-source uses a different category; negative claims need supporting evidence or
-a logically valid exclusion.
+Interpret short personal-memory questions by their everyday intent, rather
+than imposing an unrequested technical classification. For a person's stated
+limitations, incompatibilities or restrictions, include every relevant concrete
+item from the same practical domain, even when the source uses a neighboring
+label. Preserve that precise label parenthetically; do not silently omit the
+item merely because it is not an exact terminological match to the question. Keep categories distinct using a brief
+parenthetical or an "also" clause under the source's own label. This inclusion
+rule does not equate categories or upgrade a condition. Write qualifications
+as affirmative source labels. Do not append a contrast negating the question's
+category merely to explain a different source label; the source must explicitly
+state such an exclusion. Different labels and partial retrieval do not establish
+source-specific absences. Report the qualified facts without unsolicited category
+corrections.
+
+For questions about feelings or emotional reactions, include both explicitly
+named states and attitudes conveyed by the person's own words about the requested
+subject. An attitude can be held now even when its subject is a future outcome;
+identify that attitude rather than reporting only the future event. Translate
+such clauses into concise state words. Keep only supported states within the
+question's person, subject and time scope.
 
 For questions about shared, mutual, or collective attributes or activities
 (e.g. mutual interests, shared hobbies, joint plans), require explicit evidence
@@ -386,7 +423,12 @@ TOOL TRACE SO FAR:
 {trace}
 {guard_feedback}
 
-Before answering, identify the distinct evidence needed by the question.
+For preference or ambiguous-reference questions, check before answering that
+the independent source search was made without entity_ids. Check unnamed candidates and the utterances owning
+relevant attachment continuations. Include their concrete subjects and requested
+properties when needed to preserve supported ambiguity. Keep practical constraints
+with affirmative source labels, and remove category contrasts not explicitly
+stated by a source. Then identify the distinct evidence needed by the question.
 A duration needs its start and end; a list or count needs the distinct items
 or events across the relevant time range; a shared attribute needs support
 for each participant. Search for missing parts rather than repeatedly
@@ -396,9 +438,14 @@ When a preference or reference depends on dialogue, inspect the initiating
 turn and reply together. Use adjacent_chunks for missing context even when
 another answer looks plausible, and verify attachment ownership across chunk
 boundaries. Use source text to check a derived claim when their attributions
-conflict. Before finalizing, check
-that the answer covers every requested part and includes the requested type
-of value. Stay within the existing tool and model-call budgets.
+conflict. Before finalizing, check that no relevant source item was dropped solely because
+its category label differs from the question's informal wording. For illustrated
+objects, retain the concrete depicted subject as well as textual themes, and
+exclude preferences for a different object kind or medium. State the requested
+values directly; retain source labels as brief affirmative parentheticals. Check that the
+answer covers every requested part and includes the requested type of value. Stay within the existing tool and model-call budgets.
+For feelings questions, include attitudes expressed in clauses as well as named
+states; the time of an attitude and the time of the event it concerns can differ.
 
 QUESTION:
 {question}"""
@@ -588,7 +635,7 @@ def render_answer_agent_prompt(
             for tool in tools
         ]
         if mcp_tool_shape
-        else [tool.model_dump(mode="json") for tool in tools]
+        else [tool.model_dump(mode="json", exclude={"result_schema"}) for tool in tools]
     )
     tool_payload = json.dumps(
         rendered_tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")

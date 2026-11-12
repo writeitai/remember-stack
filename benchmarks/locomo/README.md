@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v44 setup
+# RS-LoCoMo-Full-v45 setup
 
 One current execution profile uses Luna 6 for ingestion and vision at low
 reasoning, Luna 6 for answering and judging at high reasoning, and Jev
@@ -7,13 +7,30 @@ Luna as the only fallback; actual provider usage records the higher price when
 standard processing serves a call. Historical protocols are retained in saved run artifacts
 and Git, not as runnable branches. No new benchmark score is claimed.
 
-Full-v44 strengthens conversational context instructions: when a relevant
+Full-v45 strengthens conversational context instructions: when a relevant
 reply lacks its initiating question, the answerer reads adjacent chunks even
 if another candidate looks plausible. It checks which turn owns an attached
 description and answers questions about a work's content with its supported
 subject or premise. These remain prompt instructions within the existing
 eight-tool/nine-model-call budget. Models, judge and ingestion generations
 are unchanged; prompt changes require a new immutable run identity.
+
+Full-v45 additionally preserves source-qualified restrictions under informal
+question wording, checks object kind/medium and unnamed references, and combines
+concrete subjects from owned images with source text. It prefers compact requested
+values with affirmative qualifiers. These instructions contain no named answers
+or source labels; the draft's targeted and full regression results are separate
+from the protocol's offline checks.
+
+For emotional recall it includes attitudes conveyed by a person's own clauses
+and distinguishes the time of the attitude from a future event it concerns,
+while preserving identity, subject and time scope. No expected state names are
+provided. The broader failed completeness candidate is not retained.
+
+Full-v45 also omits repeated output JSON Schemas from the reader's displayed
+tool catalog while retaining full inputs and result contracts. Public schemas,
+runtime validation and retrieved evidence remain complete. This is a prompt-size
+change, with no score or latency improvement established by offline checks.
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -63,13 +80,13 @@ Once a bundle exists, preparation is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v44 \
+  --protocol full-v45 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v44` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v45` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -93,7 +110,7 @@ missing/Unknown answer is wrong. Equivalent calendar and relative dates are
 accepted without a fixed date-error tolerance. Luna high still judges; old
 Sol grades are not relabeled. This is a new protocol identity, not a new score.
 
-Full-v44 asks the answerer to give its best-supported answer to every scored
+Full-v45 asks the answerer to give its best-supported answer to every scored
 question, including a qualified inference when evidence is indirect. It forbids
 terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
 `possibly` attached to an actual answer. The prompt still forbids invented source
@@ -253,7 +270,7 @@ from readiness.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v44 sample and
+The additive D124 runner reuses one completely processed Full-v45 sample and
 compares answer routes or full-surface prompt variants without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -264,11 +281,20 @@ compares answer routes or full-surface prompt variants without re-ingesting it:
 | `mcp-p3` | OpenRouter Luna | read-only OSS MCP plus bounded P3-like tools |
 | `full` | source-pinned canonical Luna | all 22 SDK/P3 tools, optional frozen `--answer-prompt` template |
 
-The `full` profile keeps source models, retrieval budgets, judge and call limits;
+The `full` profile keeps source models, retrieval budgets, judge and call limits
+unless an explicit evaluation override is recorded;
 it saves exact prompt bytes plus independent answers/traces/grades. Use a new
 output for each template; identical inputs resume missing work. Provider routing
 uses the canonical Flex-to-normal OpenAI allowlist, and HTTP timeout comes from
 the saved source. Keep all trials and report them as development results.
+
+For a retained source with older judge wording, explicitly pass
+`--use-current-judge-prompt` to grade with the current canonical prompt. The
+choice and effective prompt hash are frozen in the new identity; changing it
+rejects resume. The source, golds, prior grades, ingestion contracts and all
+other readiness/schema/provider guards remain unchanged. Without this option,
+judge-wording drift remains an error. This is evaluation-only and requires no
+re-ingestion. `--judge-model` separately selects the grader model.
 
 This starts with OSS artifacts only. P3 is already an ordinary published
 directory, so copy it from the benchmark host or restore it with the existing
@@ -331,7 +357,7 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v44 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v45 protocol and
 its source state are never modified by this command.
 
 ## Sharded runs

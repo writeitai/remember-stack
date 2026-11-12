@@ -32,7 +32,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v44 (full-v44)
+protocol                 RS-LoCoMo-Full-v45 (full-v45)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -537,7 +537,7 @@ before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-Full-v44 requires the best-supported answer to each scored question, including
+Full-v45 requires the best-supported answer to each scored question, including
 an inference when the conclusion is not stated verbatim. Prefer direct statements,
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
@@ -581,11 +581,32 @@ make it compatible; examples illustrate that category rather than replacing it.
 For ambiguous preferences/references, independently search claims and sources
 for credible candidates across sessions before narrowing every follow-up to one
 name, then choose the supported referent or preserve a supported ambiguity.
-This does not require pooling casual mentions. Retain relevant limitations with
-the source's qualifiers; a related restriction does not establish a stronger
-category or diagnosis, and it does not establish the absence of another
-category. Negative claims require supporting evidence or a logically valid
-exclusion. These rules contain no benchmark-specific values.
+Use an unscoped claims/source query for this independent search, because an
+unnamed recommendation or attachment may have no resolved mention of its owner.
+Check the owning exchange, requested kind and medium; a preference for an
+adaptation does not establish a preference for the original work. A non-exclusive
+endorsement does not establish a unique favorite. Answer the requested attribute
+of the best-supported candidate first, with brief source-qualified alternatives
+only when needed; do not pool casual mentions or substitute another kind of object.
+
+Interpret informal personal-memory wording by its practical intent. Retain all
+relevant source-stated restrictions in that domain, even when their labels differ,
+and keep precise source categories parenthetically. This does not establish a
+stronger category or diagnosis, nor the absence of another category. Source
+qualifiers are affirmative labels, not unsolicited classification corrections.
+Negative claims require source support or valid exclusion. In an image-dependent
+question, retain concrete subjects and recurring motifs with a visual qualifier
+rather than replacing them with generic praise or inventing plot events. Give
+the requested values directly; omit search commentary before supported details.
+These rules contain no benchmark-specific values.
+
+For emotional-recall questions, include attitudes conveyed by the person's own
+clauses as well as explicitly named states. Distinguish when the attitude is held
+from the date of an event it concerns: a future object does not alone put the
+attitude in the future. Translate supported clauses into concise requested state
+values, preserving person, subject and time scope. This does not authorize later
+changed reactions or an attitude invented from an event alone. It is a general
+meaning/coverage instruction and contains no expected state names.
 
 Resolved entity IDs are a starting semantic filter, not a guarantee of complete
 context. A description of a related object may lack a resolved mention of its
@@ -597,7 +618,7 @@ relaxes a caller's explicit entity filter, and broader retrieval does not prove
 attribution. This conditional search uses the existing public tools and the
 same call budget; it adds no ranking model or ingestion work.
 
-Full-v44 records these prompt changes under a new identity; the restored
+Full-v45 records these prompt changes under a new identity; the restored
 Full-v42 judge, models, retrieval depth, eight-tool/nine-model-call cap and all
 ingestion/reuse generations stay unchanged. Missing context can require another
 public tool read and reader continuation within that same cap. Budget exhaustion
@@ -609,6 +630,17 @@ when several retrieved values each satisfy the requested action or
 relationship, include every one, while excluding adjacent facts that do not.
 The harness does not attempt semantic list-completeness classification and
 adds no retry; this remains answer-agent prompt discipline.
+
+The ordinary reader's displayed tool catalog omits each descriptor's complete
+`result_schema`, which otherwise repeats large response envelopes on every
+continuation. It retains the full input schema and descriptor contracts, grain,
+intent and descriptions. Public schemas, catalog hashing, runtime validation
+and durable tool records remain complete. MCP-shaped catalogs are unchanged.
+This rendering change receives the Full-v45 adapter identity; it changes no
+paid ingestion input or reuse generation. The reader observes actual typed
+response fields in its unfiltered trace. Omitting schemas establishes neither
+better answers nor faster inference; those need separate development evidence.
+See [the analysis](../analysis/locomo_reader_catalog_projection_20261111.md).
 
 The answer agent sees a compact projection of each trace response: all facts,
 claims, chunks, sources, timestamps, freshness, negatives, truncation, and
@@ -638,12 +670,12 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v44 \
+  --protocol full-v45 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Execution uses `full-v44`; later stages
+`--protocol` exists only on `prepare`. Execution uses `full-v45`; later stages
 read the immutable current choice from the saved run. Historical protocols are
 read-only and cannot be selected as an execution fallback.
 
@@ -689,7 +721,8 @@ the deployment.
 ### 8.1 Explicit development comparisons
 
 The `retrieval-ablation --profile full` comparison supports an explicit answer
-template/model, bounded answer workers, `--judge-model` and repeatable `--item`
+template/model, bounded answer workers, `--judge-model`, explicit
+`--use-current-judge-prompt` and repeatable `--item`
 selection. Selected IDs must be unique and belong to the source sample; use
 canonical source order, and keep the full source corpus available to retrieval.
 Omission selects the entire sample. A subset is a development result rather
@@ -704,7 +737,13 @@ schema and provider policy; default canonical grading remains unchanged.
 An older source protocol name is metadata, not an alternate executable path.
 For a full comparison, first require all non-prompt source contracts to match
 the current protocol: processing profile/generations, provider policy, models,
-schemas, judge wording and loop settings. Use that matching current contract
+schemas, judge wording and loop settings. The explicit
+`--use-current-judge-prompt` option permits only the saved judge-wording hash
+to differ: judging uses the current canonical prompt, and both the opt-in and
+effective prompt hash are frozen into the new evaluation identity. Default
+commands still reject that difference. The source identity, old grades and
+reference answers remain unchanged; switching the choice on resume fails.
+All other source contracts remain required. Use that matching current contract
 for checkpoint/live readiness checks, retaining exact source build revision,
 live ingests, query surface and P3 attestation. A different ingestion contract
 is rejected; no historical registry or source-identity rewrite is introduced.

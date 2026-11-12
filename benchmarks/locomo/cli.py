@@ -175,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                         answer_model=args.answer_model,
                         answer_workers=args.answer_workers,
                         judge_model=args.judge_model,
+                        use_current_judge_prompt=args.use_current_judge_prompt,
                         item_ids=None if args.item is None else tuple(args.item),
                         answer_provider_only=None
                         if args.answer_provider is None
@@ -199,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
                     answer_model=args.answer_model,
                     answer_workers=args.answer_workers,
                     judge_model=args.judge_model,
+                    use_current_judge_prompt=args.use_current_judge_prompt,
                     item_ids=None if args.item is None else tuple(args.item),
                     answer_provider_only=None
                     if args.answer_provider is None
@@ -456,6 +458,11 @@ def _parser() -> argparse.ArgumentParser:
     ablation.add_argument(
         "--judge-model",
         help="explicit judge model for the full profile; frozen into experiment identity",
+    )
+    ablation.add_argument(
+        "--use-current-judge-prompt",
+        action="store_true",
+        help="explicitly re-score a compatible source with the current judge prompt; recorded in identity",
     )
     ablation.add_argument(
         "--item",
