@@ -856,3 +856,121 @@ def test_cancelled_shared_fact_read_releases_connection_and_admission(
             )
     assert isinstance(pair.target.pool, QueuePool)
     assert pair.target.pool.checkedout() == 0
+
+
+@pytest.mark.parametrize("winner_superseded", (False, True))
+def test_latest_decision_ties_are_global_across_reverse_members(
+    pair: _Pair, winner_superseded: bool
+) -> None:
+    """A same-time higher-ID decision moving out of a member wins everywhere."""
+    parameters = {
+        "deployment": _DEPLOYMENT_ID,
+        "mention": pair.corpus.mention["alice"],
+        "member": pair.corpus.entity["alice_dup"],
+        "other": pair.corpus.entity["acme"],
+        "older": UUID("ffffffff-ffff-ffff-ffff-fffffffffffe"),
+        "newer": UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        "at": datetime(2025, 1, 1, tzinfo=UTC),
+    }
+    with pair.reference.connect() as old, pair.target.connect() as new:
+        for connection in (old, new):
+            connection.execute(
+                text(
+                    "INSERT INTO resolution_decisions(decision_id,deployment_id,mention_id,entity_id,method,confidence,is_new_entity,resolver_version,decided_at)"
+                    " VALUES (:older,:deployment,:mention,:member,'T0',0.9,false,'d153-tie',:at),"
+                    " (:newer,:deployment,:mention,:other,'T0',0.9,false,'d153-tie',:at)"
+                ),
+                parameters,
+            )
+            if winner_superseded:
+                connection.execute(
+                    text(
+                        "UPDATE resolution_decisions SET superseded_by=:older WHERE decision_id=:newer"
+                    ),
+                    parameters,
+                )
+        assert _snapshot(connection=old) == _snapshot(connection=new)
+        _assert_coverage(old=old, new=new, entities=list(pair.corpus.entity.values()))
+        _assert_facts(old=old, new=new)
+
+
+@pytest.mark.parametrize("corruption", ("nullable_claim", "wrong_document"))
+def test_scope_preserves_nullable_claim_and_own_document_rules(
+    pair: _Pair, corruption: str
+) -> None:
+    """A hidden claim can retain chunk coverage; a borrowed document cannot."""
+    with pair.reference.connect() as old, pair.target.connect() as new:
+        for connection in (old, new):
+            if corruption == "nullable_claim":
+                connection.execute(
+                    text(
+                        "UPDATE mentions SET claim_id=:claim WHERE mention_id=:mention"
+                    ),
+                    {
+                        "claim": pair.corpus.claim["c"],
+                        "mention": pair.corpus.mention["alice"],
+                    },
+                )
+            else:
+                connection.execute(
+                    text("UPDATE mentions SET doc_id=:doc WHERE mention_id=:mention"),
+                    {
+                        "doc": pair.corpus.doc["second"],
+                        "mention": pair.corpus.mention["alice"],
+                    },
+                )
+        assert _snapshot(connection=old) == _snapshot(connection=new)
+        _assert_coverage(old=old, new=new, entities=list(pair.corpus.entity.values()))
+        _assert_facts(old=old, new=new)
+
+
+@pytest.mark.parametrize("dangling", (False, True))
+def test_legacy_invalid_redirects_cannot_borrow_foreign_provenance(
+    pair: _Pair, dangling: bool
+) -> None:
+    """Privileged corrupt legacy rows still fail closed across deployment adapters."""
+    foreign_deployment, foreign_entity, foreign_doc = uuid4(), uuid4(), uuid4()
+    parameters = {
+        "deployment": foreign_deployment,
+        "entity": foreign_entity,
+        "doc": foreign_doc,
+        "at": datetime(2024, 1, 1, tzinfo=UTC),
+        "root": pair.corpus.entity["alice"],
+        "target": uuid4() if dangling else foreign_entity,
+    }
+    with pair.reference.connect() as old, pair.target.connect() as new:
+        for connection in (old, new):
+            connection.execute(
+                text(
+                    "INSERT INTO deployments(deployment_id,slug,name,raw_bucket,artifacts_bucket,corpusfs_bucket) VALUES(:deployment,'d153-foreign','Foreign','mem://r','mem://a','mem://c')"
+                ),
+                parameters,
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO entities(entity_id,deployment_id,canonical_name,normalized_name,created_at,updated_at) VALUES(:entity,:deployment,'Foreign','foreign',:at,:at)"
+                ),
+                parameters,
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents(doc_id,deployment_id,source_kind,source_ref,title,document_entity_id,first_seen_at,last_observed_at) VALUES(:doc,:deployment,'upload','d153-foreign','Foreign source',:entity,:at,:at)"
+                ),
+                parameters,
+            )
+            # Normal writes are constrained by the composite FK. Only this
+            # disposable legacy-corruption fixture bypasses it, restoring the
+            # normal trigger regime before exercising any authority query.
+            connection.exec_driver_sql("SET LOCAL session_replication_role=replica")
+            connection.execute(
+                text(
+                    "UPDATE entities SET status='merged',merged_into=:target WHERE entity_id=:root"
+                ),
+                parameters,
+            )
+            connection.exec_driver_sql("SET LOCAL session_replication_role=origin")
+        assert _snapshot(connection=old) == _snapshot(connection=new)
+        _assert_coverage(
+            old=old, new=new, entities=[*pair.corpus.entity.values(), foreign_entity]
+        )
+        _assert_facts(old=old, new=new)
