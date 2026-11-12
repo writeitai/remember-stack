@@ -14,11 +14,11 @@ import json
 import pytest
 
 from rememberstack.spine import CANONICAL_OPERATIONS
-from rememberstack.spine.migrations.versions.p9_45_0066_fact_counts_demand import (
-    ENTITIES_BOUNDED_PROVENANCE_DDL,
+from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility import (
+    ENTITIES_CONSTRAINED_PROVENANCE_DDL,
 )
-from rememberstack.spine.migrations.versions.p9_45_0066_fact_counts_demand import (
-    FACTS_DEMAND_COUNTS_DDL,
+from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility import (
+    FACTS_PUBLIC_DDL,
 )
 from rememberstack.spine.query_space import AUTHORED_AUTHORIZATION_HELPERS
 from rememberstack.spine.query_space import AUTHORED_VIEWS
@@ -394,6 +394,8 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
         "public.v_memory_evidence_lineage_live",
         "public.v_memory_fact_claim_live",
         "public.v_memory_fact_visible",
+        "public.v_memory_fact_source_qualified",
+        "public.v_memory_claim_carried_periodised",
         "public.v_memory_mention_current_content",
         "public.v_memory_page_citation_visible",
     }
@@ -402,11 +404,11 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
         for surface in surfaces
         if isinstance(surface, dict) and not surface["caller_reachable"]
     ]
-    # All seven helpers are unreachable to a caller; five of them additionally
+    # All nine helpers are unreachable to a caller; seven of them additionally
     # compile a deletion rule, so their cells execute rather than resting on
     # non-reachability alone.
-    assert len(private) == 7
-    assert sum(1 for surface in private if surface["compiles_deletion"]) == 5
+    assert len(private) == 9
+    assert sum(1 for surface in private if surface["compiles_deletion"]) == 7
 
     deferred = [target for target in DELETION_TARGETS if target.deferred]
     assert {target.target_id for target in deferred} == {"p1_candidate", "corpus_body"}
@@ -417,9 +419,9 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
 
 def test_latest_entity_view_definition_is_part_of_the_surface_identity() -> None:
     """A migration's actual view definition must match the published fingerprint."""
-    statement = ENTITIES_BOUNDED_PROVENANCE_DDL.split("COMMENT ON VIEW", maxsplit=1)[
-        0
-    ].strip()
+    statement = ENTITIES_CONSTRAINED_PROVENANCE_DDL.split(
+        "COMMENT ON VIEW", maxsplit=1
+    )[0].strip()
     assert AUTHORED_VIEWS["entities_current"].definition_ast == serialize_definition(
         authored_definition=statement
     )
@@ -430,7 +432,7 @@ def test_latest_fact_view_definition_is_part_of_the_surface_identity() -> None:
     assert AUTHORED_VIEWS[
         "facts_visible_history"
     ].definition_ast == serialize_definition(
-        authored_definition=FACTS_DEMAND_COUNTS_DDL.split(
-            "COMMENT ON VIEW", maxsplit=1
-        )[0].strip()
+        authored_definition=FACTS_PUBLIC_DDL.split("COMMENT ON VIEW", maxsplit=1)[
+            0
+        ].strip()
     )

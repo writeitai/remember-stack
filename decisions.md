@@ -7911,7 +7911,9 @@ implementation; Opus 5.5 HIGH approved revision `431900b1d` after three reviews.
 entity visibility once per distinct endpoint within a statement, using materialized
 ID sets under the existing repeatable-read snapshot. Constrain entity provenance
 in its actual decision → mention → chunk → version → any-ready-reading order;
-keep document bridges indexed per member. Claim/chunk scope uses the same
+keep document bridges indexed per member and deployment using a fixed C-collated
+UUID-text order that avoids competing UUID-key scans under skew. Opus approved
+this measured physical amendment at `68e156154` ([review](https://github.com/writeitai/remember-stack/pull/587#issuecomment-6830637190)). Claim/chunk scope uses the same
 canonical mention relation in entity-driven and candidate-driven directions.
 A private source-qualified fact helper owns actual D140 carried-claim membership
 and presentation/counts; the only runtime-composed fact authority is the tested

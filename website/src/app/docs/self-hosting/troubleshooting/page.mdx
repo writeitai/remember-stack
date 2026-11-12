@@ -435,17 +435,23 @@ workers do not start.
 
 `docker compose logs setup` shows the message. To continue:
 
-1. If you may want to go back, take a backup of the old volumes first, as
-   described in [Back up](/docs/self-hosting/upgrades#back-up), while the old release is
-   still checked out.
+1. Keep the backup taken **before** the upgrade, as described in
+   [Back up](/docs/self-hosting/upgrades#back-up). If you did not take one,
+   preserve the current volumes before deleting anything; that copy preserves
+   the failed attempt's state and cannot undo migrations already committed.
 2. Remove the old data: `docker compose down -v`. This deletes the memory.
 3. Start the new release: `docker compose up -d --wait`.
 4. Send your source documents again.
 
-To stay on the earlier release instead, check out its tag again and start
-it with `docker compose up -d`. `setup` applies all pending migrations in
-one database transaction, so the failure rolled back the ones before it
-too. See [Upgrades and migrations](/docs/self-hosting/upgrades).
+Migrations commit one revision at a time. Revisions completed before the
+refusing one stay applied; concurrent index phases can also commit before
+that revision finishes. Switching back to the earlier code does not undo
+those changes, and its setup may not recognize the newer database revision.
+To return to an earlier release, restore the backup taken before the upgrade
+and use that release's tag. See [Upgrades and migrations](/docs/self-hosting/upgrades).
+For an interrupted online index build on a supported schema, resolve the
+reported cause and rerun the same release's setup; it checks its own index
+objects before completing the revision.
 
 ## Before you report a problem
 

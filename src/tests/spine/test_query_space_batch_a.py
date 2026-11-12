@@ -1951,6 +1951,64 @@ def _matrix_cells() -> Mapping[tuple[str, str], Mapping[str, Any]]:
     return indexed
 
 
+def _seed_carried_matrix_claim(*, connection: Connection, corpus: _Corpus) -> None:
+    """Make D140 carried-source deletion a non-vacuous lineage matrix cell."""
+    representation, origin_chunk, claim = uuid4(), uuid4(), uuid4()
+    parameters = {
+        "representation": representation,
+        "origin_chunk": origin_chunk,
+        "claim": claim,
+        "version": corpus.version["forgotten.v1"],
+        "chunk": corpus.chunk["forgotten.v1"],
+        "template_claim": corpus.claim["forgotten"],
+        "deployment": _DEPLOYMENT_ID,
+    }
+    connection.execute(
+        text(
+            "INSERT INTO document_effective_time_events(deployment_id,doc_id,event_at,event)"
+            " VALUES (:deployment,:doc,:at,'declared')"
+        ),
+        {"deployment": _DEPLOYMENT_ID, "doc": corpus.doc["forgotten"], "at": _PAST},
+    )
+    connection.execute(
+        text("SELECT refresh_document_version_scope(:deployment,:doc)"),
+        {"deployment": _DEPLOYMENT_ID, "doc": corpus.doc["forgotten"]},
+    )
+    connection.execute(
+        text(
+            "INSERT INTO document_representations(representation_id,deployment_id,version_id,route,status)"
+            " VALUES (:representation,:deployment,:version,'passthrough','failed')"
+        ),
+        parameters,
+    )
+    connection.execute(
+        text(
+            "INSERT INTO chunks SELECT copy.* FROM chunks original CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::chunks,to_jsonb(original)||jsonb_build_object("
+            " 'chunk_id',CAST(:origin_chunk AS uuid),'representation_id',CAST(:representation AS uuid),"
+            " 'section_id',NULL)) copy WHERE original.chunk_id=:chunk"
+        ),
+        parameters,
+    )
+    connection.execute(
+        text(
+            "INSERT INTO claims SELECT copy.* FROM claims original CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::claims,to_jsonb(original)||jsonb_build_object("
+            " 'claim_id',CAST(:claim AS uuid),'chunk_id',CAST(:origin_chunk AS uuid))) copy"
+            " WHERE original.claim_id=:template_claim"
+        ),
+        parameters,
+    )
+    connection.execute(
+        text(
+            "INSERT INTO chunk_claims SELECT copy.* FROM chunk_claims original CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::chunk_claims,to_jsonb(original)||jsonb_build_object("
+            " 'claim_id',CAST(:claim AS uuid))) copy WHERE original.claim_id=:template_claim"
+        ),
+        parameters,
+    )
+
+
 def test_d48_deletion_matrix_proves_every_executed_cell(corpus: _Corpus) -> None:
     """Every executed cell proves its own status: no target, no cell, is vacuous.
 
@@ -1967,6 +2025,8 @@ def test_d48_deletion_matrix_proves_every_executed_cell(corpus: _Corpus) -> None
         forbidden = _forbidden_identifiers(corpus=corpus, target_id=target.target_id)
         assert forbidden, target.target_id
         with corpus.engine.begin() as connection:
+            if target.target_id == "lineage":
+                _seed_carried_matrix_claim(connection=connection, corpus=corpus)
             before = {
                 surface.name: _reachable_values(
                     connection=connection, relation=surface.name, forbidden=forbidden

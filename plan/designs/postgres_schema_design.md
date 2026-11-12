@@ -84,7 +84,9 @@ These rules apply to every table unless a module overrides them with a stated re
   D153's native migration runner holds one database-scoped session advisory
   lock before reading revision state and across concurrent-index autocommit
   phases. Its populated mention-index migration builds/attaches leaf indexes
-  before publishing the new view/head; offline SQL emission refuses that
+  and replaces the existing document-bridge index concurrently with D153's
+  deployment-aware, fixed-C UUID-text ordered shape before publishing the new
+  view/head; offline SQL emission refuses that
   catalog-driven revision. The detailed build/failure contract lives in
   [D153](shared_retrieval_eligibility_design.md).
 - **Identifiers (D153).** Surrogate primary keys are opaque **`uuid`** values

@@ -262,6 +262,7 @@ EXPECTED_INDEXES: Final = (
     "ix_krule_keys_lookup",
     "ix_kwatch_watched",
     "ix_mentions_claim",
+    "ix_mentions_deployment_chunk",
     "ix_mentions_doc",
     "ix_merge_absorbed",
     "ix_merge_survivor",
@@ -357,6 +358,8 @@ EXPECTED_VIEWS: Final = (
     "v_memory_entity_survivor",
     "v_memory_evidence_lineage_live",
     "v_memory_fact_claim_live",
+    "v_memory_claim_carried_periodised",
+    "v_memory_fact_source_qualified",
     "v_memory_fact_visible",
     "v_memory_mention_current_content",
     "v_memory_page_citation_visible",
@@ -495,6 +498,50 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         ),
         names=EXPECTED_INDEXES,
     )
+    mention_lookup_ready = connection.execute(
+        text("""
+        SELECT coalesce((SELECT parent.indisvalid AND NOT EXISTS (
+            SELECT 1 FROM pg_inherits part
+            WHERE part.inhparent='public.mentions'::regclass
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_inherits attached
+                JOIN pg_index leaf ON leaf.indexrelid=attached.inhrelid
+                WHERE attached.inhparent=parent.indexrelid
+                  AND leaf.indrelid=part.inhrelid AND leaf.indisvalid
+              )
+        ) FROM pg_index parent
+          WHERE parent.indexrelid=to_regclass('public.ix_mentions_deployment_chunk')),false)
+    """)
+    ).scalar_one()
+    if not mention_lookup_ready:
+        problems.append(
+            "mention chunk index must be valid with every partition attached"
+        )
+    document_bridge_ready = connection.execute(
+        text("""
+        SELECT coalesce((SELECT idx.indisvalid AND idx.indisready AND idx.indislive
+          AND idx.indrelid='public.documents'::regclass
+          AND pg_get_indexdef(idx.indexrelid)=
+            'CREATE INDEX ix_documents_entity ON public.documents USING btree (document_entity_id, deployment_id, ((doc_id)::text) COLLATE "C") WHERE (document_entity_id IS NOT NULL)'
+          AND ARRAY(SELECT ns.nspname||'.'||opclass.opcname
+              FROM unnest(idx.indclass::oid[]) WITH ORDINALITY key(class_oid,n)
+              JOIN pg_opclass opclass ON opclass.oid=key.class_oid
+              JOIN pg_namespace ns ON ns.oid=opclass.opcnamespace ORDER BY key.n)
+            = ARRAY['pg_catalog.uuid_ops','pg_catalog.uuid_ops','pg_catalog.text_ops']
+          AND ARRAY(SELECT CASE WHEN key.collation_oid=0 THEN ''
+              ELSE ns.nspname||'.'||coll.collname END
+              FROM unnest(idx.indcollation::oid[]) WITH ORDINALITY key(collation_oid,n)
+              LEFT JOIN pg_collation coll ON coll.oid=key.collation_oid
+              LEFT JOIN pg_namespace ns ON ns.oid=coll.collnamespace ORDER BY key.n)
+            = ARRAY['','','pg_catalog.C']
+          FROM pg_index idx WHERE idx.indexrelid=to_regclass('public.ix_documents_entity')),false)
+          AND to_regclass('public.ix_documents_entity_d153') IS NULL
+    """)
+    ).scalar_one()
+    if not document_bridge_ready:
+        problems.append(
+            "document bridge index must have the valid D153 ordered shape with no staging object"
+        )
     views = _named_relations(connection=connection, names=EXPECTED_VIEWS, kinds=("v",))
     query_space_views = _string_values(
         connection=connection,

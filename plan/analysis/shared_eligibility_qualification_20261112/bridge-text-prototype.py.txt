@@ -1,0 +1,45 @@
+"""Analysis-only ordered bridge strata; populate each deployment correctly at INSERT."""
+import gzip,json,time
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+from sqlalchemy import URL,text
+import tests.spine.test_d153_eligibility_pg as checks
+from rememberstack.spine.migrations._helpers import _split_sql
+from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility import ENTITIES_CONSTRAINED_PROVENANCE_DDL
+p=json.loads(Path('/tmp/rememberstack-d153-qualification-private.json').read_text())
+u=URL.create('postgresql+psycopg',username=p['username'],password=p['password'],host=p['host'],port=p['port'],database='rs_d153_tests')
+checks.load_database_settings=lambda:SimpleNamespace(sqlalchemy_url=lambda:u.render_as_string(hide_password=False))
+output=Path('/tmp/d153-bridge-text-order');output.mkdir(exist_ok=True)
+for total,tombstones in ((1,False),(2,False),(16,False),(16,True)):
+ name=f'deployments-{total}-tombstones-{tombstones}'
+ generator=checks.pair.__wrapped__();pair=next(generator)
+ report={'kind':'analysis_prototype_not_runtime','documents':1000000,'deployments':total,'all_queried_bridges_tombstoned':tombstones,'provider_calls':0,'foreign_keys_enforced':True}
+ try:
+  with pair.target.connect() as c:
+   deployments=[checks._DEPLOYMENT_ID]+[uuid4() for _ in range(total-1)]
+   entities=[pair.corpus.entity['ghost']]+[uuid4() for _ in range(total-1)]
+   for number in range(1,total):
+    c.execute(text("INSERT INTO deployments(deployment_id,slug,name,raw_bucket,artifacts_bucket,corpusfs_bucket) VALUES(:d,:slug,'D153 synthetic','mem://r','mem://a','mem://c')"),{'d':deployments[number],'slug':'bridge-'+str(number)})
+    c.execute(text("INSERT INTO entities(entity_id,deployment_id,canonical_name,normalized_name) VALUES(:e,:d,'Bridge owner','bridge owner')"),{'e':entities[number],'d':deployments[number]})
+   started=time.monotonic()
+   c.execute(text("INSERT INTO documents SELECT copy.* FROM documents original CROSS JOIN generate_series(1,1000000) series(n) CROSS JOIN LATERAL jsonb_populate_record(NULL::documents,to_jsonb(original)||jsonb_build_object('doc_id',md5('d153-bridge-'||n)::uuid,'source_ref','d153-bridge-'||n,'current_version_id',NULL,'deployment_id',(CAST(:deployments AS uuid[]))[1+mod(n,:total)],'document_entity_id',(CAST(:entities AS uuid[]))[1+mod(n,:total)],'deleted_at',CASE WHEN CAST(:tombstones AS boolean) AND mod(n,:total)=0 THEN '2025-01-01'::timestamptz ELSE NULL END)) copy WHERE original.doc_id=:doc"),{'deployments':deployments,'entities':entities,'total':total,'tombstones':tombstones,'doc':pair.corpus.doc['primary']})
+   report['fixture_insert_seconds']=time.monotonic()-started
+   c.exec_driver_sql('ANALYZE documents');c.exec_driver_sql('SET LOCAL jit=off')
+   report['old_index_bytes']=c.exec_driver_sql("SELECT pg_relation_size('ix_documents_entity')").scalar_one()
+   started=time.monotonic();c.exec_driver_sql('CREATE INDEX d153_bridge_ordered_prototype ON documents(document_entity_id,deployment_id,((doc_id::text) COLLATE "C")) WHERE document_entity_id IS NOT NULL');report['index_build_seconds']=time.monotonic()-started
+   report['new_index_bytes']=c.exec_driver_sql("SELECT pg_relation_size('d153_bridge_ordered_prototype')").scalar_one()
+   c.exec_driver_sql('DROP INDEX ix_documents_entity')
+   pattern="        AND document.deleted_at IS NULL\n      OFFSET 0";assert pattern in ENTITIES_CONSTRAINED_PROVENANCE_DDL
+   proposed=ENTITIES_CONSTRAINED_PROVENANCE_DDL.replace(pattern,"        AND document.deleted_at IS NULL\n      ORDER BY document.doc_id::text COLLATE \"C\" LIMIT 1 OFFSET 0")
+   for statement in _split_sql(sql=proposed):c.exec_driver_sql(statement)
+   sql="EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) SELECT entity_id FROM memory_v1.entities_current WHERE deployment_id=:deployment_id AND entity_id=ANY(CAST(:entities AS uuid[]))"
+   report['plan']=c.execute(text(sql),{'deployment_id':checks._DEPLOYMENT_ID,'entities':[pair.corpus.entity['alice'],pair.corpus.entity['ghost']]}).scalar_one()
+   nodes=[n for n in checks._plan_nodes(node=report['plan'][0]['Plan']) if n.get('Alias')=='document']
+   report['bridge_tuple_work']=sum((n.get('Actual Rows',0)+n.get('Rows Removed by Filter',0))*n.get('Actual Loops',0) for n in nodes)
+   report['bridge_nodes']=[{k:n.get(k) for k in ('Node Type','Index Name','Index Cond','Actual Rows','Actual Loops','Rows Removed by Filter','Shared Hit Blocks','Shared Read Blocks')} for n in nodes]
+   (output/(name+'.json')).write_text(json.dumps(report,indent=2,default=str))
+   print(name,report['bridge_tuple_work'],report['plan'][0]['Execution Time'],report['new_index_bytes'],flush=True)
+ finally:
+  try:next(generator)
+  except StopIteration:pass

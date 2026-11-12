@@ -37,7 +37,7 @@ a caller reads, but the mention, fact/evidence, and K citation helpers are where
 deletion rules are actually *defined* — the public relations project them — so their
 cells are executed exactly like a public relation's:
 reachable before the mutation, absent after. Non-reachability is proven for
-all seven helpers on top of that, by the gate that reads their grants.
+all helpers on top of that, by the gate that reads their grants.
 - ``deferred`` — the target names an object class this batch does not build (a
   P1 nomination candidate, a live graph edge, a corpus body). The cell is
   recorded rather than omitted, with the batch that will execute it, so the
@@ -78,10 +78,9 @@ MATRIX_PATH: Final = Path(__file__).with_name("d48_deletion_matrix.json")
 #: entity whose provenance is gone.
 SURVIVOR_HELPERS: Final = ("public.v_graph_survivor", "public.v_memory_entity_survivor")
 
-#: The private helpers that *do* compile a deletion rule — they are where the
-#: rule is defined and the public relations project it — so their cells are
-#: executed like a public relation's, before and after the mutation.
 GATED_HELPERS: Final = (
+    "public.v_memory_claim_carried_periodised",
+    "public.v_memory_fact_source_qualified",
     "public.v_memory_evidence_lineage_live",
     "public.v_memory_fact_claim_live",
     "public.v_memory_fact_visible",
@@ -119,8 +118,8 @@ class MatrixSurface(BaseModel):
     compiles_deletion: bool = True
     """True when this surface itself drops rows on a deletion, and its cells are
     therefore executed before and after the mutation. False only for the
-    merge-redirect helper, which must keep resolving an entity whose provenance
-    is gone because `entities_current` computes that provenance from it."""
+    survivor redirect helpers, whose consumer owns the remaining
+    membership rule. Non-reachability plus consumer parity discharges its gate."""
 
 
 class DeletionTarget(BaseModel):
@@ -242,6 +241,8 @@ DELETION_TARGETS: Final = (
             "public.v_memory_fact_claim_live",
             "public.v_memory_mention_current_content",
             "public.v_memory_fact_visible",
+            "public.v_memory_fact_source_qualified",
+            "public.v_memory_claim_carried_periodised",
             "public.v_memory_page_citation_visible",
         ),
     ),
@@ -349,6 +350,7 @@ DELETION_TARGETS: Final = (
             "public.v_memory_evidence_lineage_live",
             "public.v_memory_fact_claim_live",
             "public.v_memory_fact_visible",
+            "public.v_memory_fact_source_qualified",
             "public.v_memory_page_citation_visible",
         ),
     ),
@@ -423,6 +425,7 @@ DELETION_TARGETS: Final = (
             "public.v_memory_evidence_lineage_live",
             "public.v_memory_fact_claim_live",
             "public.v_memory_fact_visible",
+            "public.v_memory_fact_source_qualified",
             "public.v_memory_page_citation_visible",
         ),
     ),

@@ -1,0 +1,75 @@
+{
+  "source_commit": "fab0a9bda",
+  "provider_calls": 0,
+  "ingestion": false,
+  "source_container": "locomov45full26-postgres-1",
+  "target_container": "d153-final-conv26-20261112-target",
+  "original_cleanly_stopped": true,
+  "surface_manifest_hash": "6a5b81486cba3daccb109b3d1d936e048a6557afa7dd4eac1dbd6f9fde33578c",
+  "parity": {
+    "entities_current": {
+      "rows": 122,
+      "sha256": "e25de16d05fc47c70d64d80ee30dbb0f1157dddbd3333ce25295969c5be96a1d",
+      "equal": true,
+      "seconds": 30.764940375462174
+    },
+    "facts_visible_history": {
+      "rows": 584,
+      "sha256": "87858bc1ce419cbac2b61d33d350c4f815d92fdfef70df134598f06564afa137",
+      "equal": true,
+      "seconds": 73.1687995865941
+    },
+    "mentions_live": {
+      "rows": 951,
+      "sha256": "b58146cdfc5c888e8e5323437383eb7ca7d6657cb98b029100cb4cc8e734b505",
+      "equal": true,
+      "seconds": 0.15774220786988735
+    },
+    "evidence_lineage": {
+      "rows": 585,
+      "sha256": "ab838126dc73ceb22edc23e0836dd913a37e7d477050c0b8ad2eee6fca1b33ac",
+      "equal": true,
+      "seconds": 0.7846058681607246
+    },
+    "fact_claim_evidence_live": {
+      "rows": 587,
+      "sha256": "9ada57a2758414e37faa235cb7d263a434c1d0897b053e809fdcd861e731d749",
+      "equal": true,
+      "seconds": 0.884868124499917
+    }
+  },
+  "coverage": {
+    "claim-candidate": {
+      "equal": true,
+      "items": 526,
+      "seconds": 0.11580462753772736
+    },
+    "claim-entity": {
+      "equal": true,
+      "items": 526,
+      "seconds": 0.46542934514582157
+    },
+    "chunk-candidate": {
+      "equal": true,
+      "items": 119,
+      "seconds": 0.44397678785026073
+    },
+    "chunk-entity": {
+      "equal": true,
+      "items": 119,
+      "seconds": 0.4405411668121815
+    }
+  },
+  "old_document_index_bytes": 8192,
+  "migration_seconds": 0.32357037626206875,
+  "new_document_index_bytes": 8192,
+  "migration_wal_bytes": "883640",
+  "head": "p9_48_0069",
+  "shared_fact_builder": {
+    "equal": true,
+    "rows": 584,
+    "sha256": "87858bc1ce419cbac2b61d33d350c4f815d92fdfef70df134598f06564afa137",
+    "seconds": 73.19211205281317
+  },
+  "complete": true
+}

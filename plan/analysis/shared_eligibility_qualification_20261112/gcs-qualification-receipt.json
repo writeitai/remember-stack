@@ -1,0 +1,16 @@
+{
+  "kind": "SQL qualification evidence, not a native store snapshot",
+  "verified_at": "2026-11-12T17:32:34.163048+00:00",
+  "runtime_source_commit": "fab0a9bda",
+  "qualification_source_commit": "2078bddf8",
+  "remote_path": "gs://remember-stack-locomo-backups/experiments/retrieval-eligibility-20261112/2078bddf8/qualification.tar.gz",
+  "bytes": 6250095,
+  "sha256": "c4bf781e620f5871b995ec5ce84dd0587a5db24086c34a182c3dfbf3dda6c987",
+  "generation": 1794504753478729,
+  "crc32c": "cO8oog==",
+  "independent_complete_download": true,
+  "all_manifest_artifacts_verified": 412,
+  "provider_calls": 0,
+  "original_stores_and_answers_changed": false,
+  "engine_pr": "https://github.com/writeitai/remember-stack/pull/587"
+}

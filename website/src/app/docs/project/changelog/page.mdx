@@ -24,6 +24,36 @@ runs today, and what that means for you, is on
 
 </Cloud>
 
+## Unreleased — retrieval SQL and online schema upgrade
+
+Native fact and entity-scoped claim/chunk retrieval share visibility work inside
+each database statement. Source, version, deletion, identity and time rules still
+apply before a result counts toward top-k. Existing stored content and vectors
+are reused; this upgrade does not run ingestion or change model settings.
+
+**Action needed (operators).** Run the native online migration to
+`p9_48_0069`. Its preceding revision, `p9_47_0068`, adds a mention-to-chunk
+B-tree on existing data: it builds partition indexes concurrently, then attaches
+them. It also replaces the existing document-entity index online with a
+deployment-aware ordered shape, preventing absent-member bridge checks from
+scanning unrelated documents under skew. Allow disk space and I/O/WAL for the
+new mention index and temporary coexistence of both document-index shapes.
+An interrupted own index
+build is checked and completed on rerun; a colliding index with a different
+definition causes setup to fail. Offline `alembic upgrade --sql` is unsupported
+for this catalog-driven revision.
+
+Concurrent migration processes wait on one database-scoped session lock before
+reading revision state. It survives concurrent-index commits; ordinary reads and
+ingestion do not acquire it. Each revision commits separately, so index-attachment
+locks are released before the view update. A later migration failure leaves
+earlier revisions committed; returning to an earlier release requires its
+pre-upgrade backup. The acquisition wait defaults to
+60 seconds and is configurable through `migration_lock_timeout_seconds` in
+`alembic.ini`; an expired wait fails setup explicitly. The new view definitions
+also change the query-space manifest identity, so saved-query revalidation uses
+that new identity.
+
 ## 0.19.1 (November 2026)
 
 Database migrations and the processing receipt contract stay at 0.19.0.

@@ -1,6 +1,7 @@
 """Alembic runtime configured through the typed spine settings boundary."""
 
 from logging.config import fileConfig
+import math
 import re
 
 from alembic import context
@@ -69,10 +70,39 @@ def run_migrations_online() -> None:
                 " (not starting with a digit); otherwise its per-database roles"
                 " could be shared with another database"
             )
-        context.configure(connection=connection, target_metadata=target_metadata)
-
-        with context.begin_transaction():
-            context.run_migrations()
+        # A session lock survives the commits Alembic must perform for
+        # CREATE INDEX CONCURRENTLY. Acquire it BEFORE Alembic reads revision
+        # state, so a second upgrader cannot act on that same old revision.
+        # Advisory locks are database-local; the first key namespaces ours.
+        lock_seconds = float(
+            config.get_main_option("migration_lock_timeout_seconds", "60")
+        )
+        if not math.isfinite(lock_seconds) or lock_seconds <= 0:
+            raise ValueError(
+                "migration_lock_timeout_seconds must be finite and positive"
+            )
+        connection.exec_driver_sql(
+            f"SET LOCAL lock_timeout = '{max(1, int(lock_seconds * 1000))}ms'"
+        )
+        connection.exec_driver_sql("SELECT pg_advisory_lock(1919251316, 153)")
+        connection.rollback()
+        try:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                transaction_per_migration=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+        except BaseException:
+            # Close an interrupted session instead of hiding its original
+            # failure with an unlock attempted on a broken connection.
+            connection.invalidate()
+            raise
+        else:
+            connection.rollback()
+            connection.exec_driver_sql("SELECT pg_advisory_unlock(1919251316, 153)")
+            connection.commit()
 
 
 if context.is_offline_mode():

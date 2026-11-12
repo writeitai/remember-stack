@@ -40,8 +40,10 @@ The API and the workers start only after `setup` exits successfully. If a
 migration fails, `setup` exits with an error, nothing else starts, and
 `docker compose logs setup` shows why.
 
-Migrations only go forward. Some refuse to convert data in a way that would
-lose it, and there is no supported downgrade. To go back to an earlier
+Each migration revision commits separately; online index phases can also
+commit inside a revision. If a later revision fails, completed revisions stay
+applied. Migrations only go forward. Some refuse to convert data in a way that
+would lose it, and there is no supported downgrade. To go back to an earlier
 release, restore a backup taken before the upgrade.
 
 Upgrading does not reprocess documents already in the memory. They keep

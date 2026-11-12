@@ -132,6 +132,8 @@ from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.processing_layers import admit_layers_on
+from rememberstack.spine.retrieval_eligibility import candidate_mention_coverage_ctes
+from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
 from rememberstack.spine.surface_cost import current_surface_scope
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
@@ -5498,13 +5500,18 @@ def _confirm_facts_context_statement(
     *, fact_kind: Literal["relation", "observation"]
 ) -> TextClause:
     """Build one fixed-kind public-authority confirmation statement."""
+    eligibility = fact_eligibility_ctes(
+        candidates_sql=(
+            f"SELECT '{fact_kind}'::text AS fact_kind, fact_id FROM requested"
+        )
+    )
     return text(
         f"""
     WITH requested AS MATERIALIZED (
         SELECT fact_id, nomination_rank
         FROM unnest(CAST(:fact_ids AS uuid[]))
              WITH ORDINALITY AS nominated(fact_id, nomination_rank)
-    )
+    ), {eligibility}
     SELECT requested.nomination_rank, '{fact_kind}'::text AS kind, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
@@ -5513,14 +5520,7 @@ def _confirm_facts_context_statement(
            fact.support_state_current AS support_state,
            {_FACTS_CONTEXT_COVERAGE} AS coverage
     FROM requested
-    CROSS JOIN LATERAL (
-        SELECT visible.*
-        FROM memory_v1.facts_visible_history AS visible
-        WHERE visible.deployment_id = :deployment_id
-          AND visible.fact_kind = '{fact_kind}'
-          AND visible.fact_id = requested.fact_id
-        OFFSET 0
-    ) AS fact
+    JOIN eligible_facts AS fact ON fact.fact_id = requested.fact_id
     WHERE (CAST(:predicate AS text) IS NULL
            OR (fact.fact_kind = 'relation' AND fact.predicate = :predicate))
       {_FACTS_CONTEXT_TIME_PREDICATE} {_FACTS_CONTEXT_ENTITY_PREDICATE}
@@ -5535,14 +5535,26 @@ _CONFIRM_FACTS_CONTEXT_BY_KIND: dict[Literal["relation", "observation"], TextCla
     for fact_kind in ("relation", "observation")
 }
 
+_CONTRADICTION_CANDIDATES = " UNION ALL ".join(
+    f"SELECT '{kind}'::text AS fact_kind, indexed.{identifier} AS fact_id"
+    f" FROM {table} indexed WHERE indexed.deployment_id = :deployment_id"
+    " AND indexed.contradiction_group = ANY(CAST(:groups AS uuid[]))"
+    + _FACTS_CONTEXT_TIME_PREDICATE.replace("fact.", "indexed.")
+    for table, kind, identifier in (
+        ("relations", "relation", "relation_id"),
+        ("observations", "observation", "observation_id"),
+    )
+)
+
 _FACTS_CONTEXT_CONTRADICTION_MEMBERS = text(
     f"""
+    WITH {fact_eligibility_ctes(candidates_sql=_CONTRADICTION_CANDIDATES)}
     SELECT fact.fact_kind AS kind, fact.contradiction_group, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
            fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
            fact.invalidated_at, fact.support_state_current AS support_state
-    FROM memory_v1.facts_visible_history AS fact
+    FROM eligible_facts AS fact
     WHERE fact.deployment_id = :deployment_id
       AND fact.contradiction_group = ANY(CAST(:groups AS uuid[]))
       {_FACTS_CONTEXT_TIME_PREDICATE}
@@ -5683,7 +5695,8 @@ _CONFIRM_CLAIMS_CURRENT = text(
 )
 
 _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
-    """
+    f"""
+    WITH RECURSIVE {candidate_mention_coverage_ctes(grain="claim", candidate_parameter="claim_ids")}
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
            c.char_start, c.char_end,
            COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
@@ -5704,16 +5717,10 @@ _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
         ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
         LIMIT 1
     ) AS occ ON true
-    JOIN LATERAL (
-        SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        WHERE mention.deployment_id = c.deployment_id
-          AND mention.claim_id = c.claim_id
-          AND mention.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-    ) AS scope ON scope.coverage > 0
+    JOIN scope_coverage AS scope ON scope.item_id = c.claim_id
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
-    """
+    """  # noqa: S608 -- internal eligibility builder
 )
 
 _CONFIRM_CLAIMS_HISTORY = text(
@@ -5772,14 +5779,9 @@ _CONFIRM_CHUNKS = text(
 )
 
 _CONFIRM_CHUNKS_SCOPED = text(
-    f"""{_CONFIRM_CHUNK_COLUMNS}, scope.coverage{_CONFIRM_CHUNK_SOURCES}
-    JOIN LATERAL (
-        SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        WHERE mention.deployment_id = ch.deployment_id
-          AND mention.chunk_id = ch.chunk_id
-          AND mention.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-    ) AS scope ON scope.coverage > 0
+    f"""WITH RECURSIVE {candidate_mention_coverage_ctes(grain="chunk", candidate_parameter="chunk_ids")}
+    {_CONFIRM_CHUNK_COLUMNS}, scope.coverage{_CONFIRM_CHUNK_SOURCES}
+    JOIN scope_coverage AS scope ON scope.item_id = ch.chunk_id
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
     """  # noqa: S608 -- interpolated fragments are module constants
@@ -5833,20 +5835,22 @@ def _confirm_claims_in_scope_statement(
         ),
     )
     coverage_column = ", scope.coverage" if entity_scoped else ""
+    coverage_ctes = (
+        "WITH RECURSIVE "
+        + candidate_mention_coverage_ctes(
+            grain="claim", candidate_parameter="claim_ids"
+        )
+        if entity_scoped
+        else ""
+    )
     coverage_join = (
-        """
-    JOIN LATERAL (
-        SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        WHERE mention.deployment_id = c.deployment_id
-          AND mention.claim_id = c.claim_id
-          AND mention.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-    ) AS scope ON scope.coverage > 0"""
+        " JOIN scope_coverage AS scope ON scope.item_id = c.claim_id"
         if entity_scoped
         else ""
     )
     return text(
         f"""
+    {coverage_ctes}
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
            c.char_start, c.char_end,
            COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
