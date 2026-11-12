@@ -777,3 +777,82 @@ def test_document_bridge_work_ignores_unrelated_lineages(
                 "SELECT pg_total_relation_size('documents')"
             ).scalar_one(),
         )
+
+
+def test_statement_proofs_do_not_outlive_their_repeatable_read_snapshot(
+    pair: _Pair,
+) -> None:
+    """A held reader keeps its source snapshot; a subsequent reader sees deletion."""
+    candidates = "SELECT 'relation'::text AS fact_kind,relation_id AS fact_id FROM relations WHERE deployment_id=:deployment_id"
+    sql = text(
+        "WITH "
+        + fact_eligibility_ctes(candidates_sql=candidates, presentation="keys")
+        + " SELECT fact_id FROM eligible_facts ORDER BY fact_id"
+    )
+    parameters = {"deployment_id": _DEPLOYMENT_ID}
+    doc = pair.corpus.doc["forgotten"]
+    try:
+        with pair.target.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as reader:
+            reader.exec_driver_sql("SET TRANSACTION READ ONLY")
+            before = list(reader.execute(sql, parameters).scalars())
+            assert pair.corpus.fact["lonely"] in before
+            with pair.target.begin() as writer:
+                writer.execute(
+                    text("UPDATE documents SET deleted_at=now() WHERE doc_id=:doc"),
+                    {"doc": doc},
+                )
+            assert list(reader.execute(sql, parameters).scalars()) == before
+            with pair.target.connect() as fresh:
+                after = list(fresh.execute(sql, parameters).scalars())
+            assert pair.corpus.fact["lonely"] not in after
+    finally:
+        with pair.target.begin() as writer:
+            writer.execute(
+                text("UPDATE documents SET deleted_at=NULL WHERE doc_id=:doc"),
+                {"doc": doc},
+            )
+
+
+def test_cancelled_shared_fact_read_releases_connection_and_admission(
+    pair: _Pair,
+) -> None:
+    """A blocked SQL read cancels and the same bounded pool admits its next request."""
+    from time import monotonic
+
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.pool import QueuePool
+
+    from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
+
+    pool = BoundedPostgresReadPool(
+        engine=pair.target, max_concurrency=1, pool_wait_seconds=1
+    )
+    sql = text(
+        "WITH "
+        + fact_eligibility_ctes(
+            candidates_sql="SELECT 'relation'::text AS fact_kind,CAST(:fact AS uuid) AS fact_id",
+            presentation="keys",
+        )
+        + " SELECT fact_id FROM eligible_facts"
+    )
+    parameters = {"deployment_id": _DEPLOYMENT_ID, "fact": pair.corpus.fact["current"]}
+    with pair.target.connect() as writer:
+        writer.exec_driver_sql("LOCK TABLE relations IN ACCESS EXCLUSIVE MODE")
+        try:
+            with pytest.raises(DBAPIError):
+                with pool.snapshot(deadline=monotonic() + 0.5):
+                    with pool.connect(deadline=monotonic() + 0.5) as reader:
+                        reader.exec_driver_sql("SET LOCAL statement_timeout='100ms'")
+                        reader.execute(sql, parameters).all()
+        finally:
+            writer.rollback()
+    with pool.snapshot(deadline=monotonic() + 5):
+        with pool.connect(deadline=monotonic() + 5) as reader:
+            assert (
+                reader.execute(sql, parameters).scalar_one()
+                == pair.corpus.fact["current"]
+            )
+    assert isinstance(pair.target.pool, QueuePool)
+    assert pair.target.pool.checkedout() == 0

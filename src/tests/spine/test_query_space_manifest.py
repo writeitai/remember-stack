@@ -419,9 +419,9 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
 
 def test_latest_entity_view_definition_is_part_of_the_surface_identity() -> None:
     """A migration's actual view definition must match the published fingerprint."""
-    statement = ENTITIES_CONSTRAINED_PROVENANCE_DDL.split("COMMENT ON VIEW", maxsplit=1)[
-        0
-    ].strip()
+    statement = ENTITIES_CONSTRAINED_PROVENANCE_DDL.split(
+        "COMMENT ON VIEW", maxsplit=1
+    )[0].strip()
     assert AUTHORED_VIEWS["entities_current"].definition_ast == serialize_definition(
         authored_definition=statement
     )
@@ -432,7 +432,7 @@ def test_latest_fact_view_definition_is_part_of_the_surface_identity() -> None:
     assert AUTHORED_VIEWS[
         "facts_visible_history"
     ].definition_ast == serialize_definition(
-        authored_definition=FACTS_PUBLIC_DDL.split(
-            "COMMENT ON VIEW", maxsplit=1
-        )[0].strip()
+        authored_definition=FACTS_PUBLIC_DDL.split("COMMENT ON VIEW", maxsplit=1)[
+            0
+        ].strip()
     )
