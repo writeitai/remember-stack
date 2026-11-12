@@ -1,0 +1,37 @@
+"""Analysis only: compare ordered document bridge on a disposable million-row clone."""
+import json,time
+from pathlib import Path
+from types import SimpleNamespace
+from sqlalchemy import URL,text
+import tests.spine.test_d153_eligibility_pg as checks
+from rememberstack.spine.migrations._helpers import _split_sql
+from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility import ENTITIES_CONSTRAINED_PROVENANCE_DDL
+p=json.loads(Path('/tmp/rememberstack-d153-qualification-private.json').read_text())
+u=URL.create('postgresql+psycopg',username=p['username'],password=p['password'],host=p['host'],port=p['port'],database='rs_d153_tests')
+checks.load_database_settings=lambda:SimpleNamespace(sqlalchemy_url=lambda:u.render_as_string(hide_password=False))
+generator=checks.pair.__wrapped__();pair=next(generator)
+report={'kind':'analysis_prototype_not_runtime_qualification','documents':1000000,'provider_calls':0,'variants':{}}
+try:
+ with pair.target.connect() as c:
+  c.execute(text("INSERT INTO documents SELECT copy.* FROM documents original CROSS JOIN generate_series(1,1000000) series(n) CROSS JOIN LATERAL jsonb_populate_record(NULL::documents,to_jsonb(original)||jsonb_build_object('doc_id',md5('d153-bridge-'||n)::uuid,'source_ref','d153-bridge-'||n,'current_version_id',NULL,'document_entity_id',CAST(:entity AS uuid))) copy WHERE original.doc_id=:doc"),{'entity':pair.corpus.entity['ghost'],'doc':pair.corpus.doc['primary']})
+  c.exec_driver_sql('ANALYZE documents');c.exec_driver_sql('SET LOCAL jit=off')
+  params={'deployment_id':checks._DEPLOYMENT_ID,'entities':[pair.corpus.entity['alice'],pair.corpus.entity['ghost']]}
+  sql="EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) SELECT entity_id FROM memory_v1.entities_current WHERE deployment_id=:deployment_id AND entity_id=ANY(CAST(:entities AS uuid[]))"
+  report['variants']['implemented']=c.execute(text(sql),params).scalar_one()
+  start=time.monotonic();c.exec_driver_sql('CREATE INDEX d153_bridge_ordered_prototype ON documents(document_entity_id,doc_id) WHERE document_entity_id IS NOT NULL')
+  report['index_build_seconds']=time.monotonic()-start
+  report['existing_index_bytes']=c.exec_driver_sql("SELECT pg_relation_size('ix_documents_entity')").scalar_one()
+  report['ordered_index_bytes']=c.exec_driver_sql("SELECT pg_relation_size('d153_bridge_ordered_prototype')").scalar_one()
+  pattern="        AND document.deleted_at IS NULL\n      OFFSET 0"
+  assert pattern in ENTITIES_CONSTRAINED_PROVENANCE_DDL
+  proposed=ENTITIES_CONSTRAINED_PROVENANCE_DDL.replace(pattern,"        AND document.deleted_at IS NULL\n      ORDER BY document.doc_id LIMIT 1 OFFSET 0")
+  for statement in _split_sql(sql=proposed):c.exec_driver_sql(statement)
+  report['variants']['ordered_index']=c.execute(text(sql),params).scalar_one()
+  Path('/tmp/d153-bridge-prototype.json').write_text(json.dumps(report,indent=2,default=str))
+  for name,plan in report['variants'].items():
+   nodes=[n for n in checks._plan_nodes(node=plan[0]['Plan']) if n.get('Alias')=='document']
+   print(name,plan[0]['Execution Time'],sum((n.get('Actual Rows',0)+n.get('Rows Removed by Filter',0))*n.get('Actual Loops',0) for n in nodes),flush=True)
+  print('index bytes',report['existing_index_bytes'],report['ordered_index_bytes'],flush=True)
+finally:
+ try:next(generator)
+ except StopIteration:pass

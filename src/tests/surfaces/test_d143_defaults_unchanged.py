@@ -7,7 +7,7 @@ base (fbcd489bd). It holds the serialized ``GET /operations`` list, the
 the ``remember-mcp`` engine-mode tool lists (names and input schemas), the
 readiness expected stages with their component versions, and the
 query-surface manifest hash. The three manifest identity fields were updated
-for the independently accepted p9_42/p9_45 view optimization; all other captured
+for the independently accepted p9_42/p9_45/D153 view optimization; all other captured
 values remain from the pre-D143 baseline. The current branch, composed the way the
 self-host profile composes it (layers port included, reporting no
 configuration), must reproduce every byte.

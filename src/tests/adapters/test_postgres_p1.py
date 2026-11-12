@@ -281,7 +281,8 @@ def test_scoped_fact_nomination_uses_indexed_reverse_survivor_expansion() -> Non
     parameters = connection.execute.call_args_list[-1].args[1]
     assert "redirect.merged_into = scoped.entity_id" in ranked_sql
     assert "AND merged_into IS NULL" in ranked_sql
-    assert "memory_v1.facts_visible_history" in ranked_sql
+    assert "public.v_memory_fact_source_qualified" in ranked_sql
+    assert "memory_v1.entities_current" in ranked_sql
     assert "AS coverage" in ranked_sql
     executed = [str(call.args[0]) for call in connection.execute.call_args_list]
     assert any("LIMIT :entity_budget" in sql for sql in executed[:-1])
@@ -294,10 +295,10 @@ def test_scoped_fact_nomination_uses_indexed_reverse_survivor_expansion() -> Non
 @pytest.mark.parametrize(
     ("grain", "channel"), (("claim", "semantic"), ("chunk", "bm25"))
 )
-def test_scoped_testimony_nomination_defers_visibility_to_hydration(
+def test_scoped_testimony_nomination_uses_canonical_current_coverage(
     grain: Literal["claim", "chunk"], channel: Literal["semantic", "bm25"]
 ) -> None:
-    """Scoped testimony candidates use only base rows and survivor mapping."""
+    """Scoped nomination and its budget use canonical current coverage."""
     engine = MagicMock(spec=Engine)
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.scalar_one.return_value = True
@@ -328,15 +329,15 @@ def test_scoped_testimony_nomination_defers_visibility_to_hydration(
         for name, call in ((c[0], c) for c in engine.mock_calls)
         if name.endswith("execute") and call.args
     ]
-    coverage_sql = next(sql for sql in executed if sql.endswith("FROM coverage"))
-    assert "redirect.merged_into = scoped.entity_id" in coverage_sql
-    assert "AND merged_into IS NULL" in coverage_sql
+    coverage_sql = next(sql for sql in executed if sql.endswith("FROM scope_coverage"))
+    assert "redirect.merged_into = member.entity_id" in coverage_sql
+    assert "memory_v1.entities_current" in coverage_sql
     assert "resolution_decisions" in coverage_sql
-    assert "JOIN mentions" in coverage_sql
-    assert "memory_v1" not in coverage_sql
+    assert "FROM mentions" in coverage_sql
+    assert "public.v_memory_mention_current_content" in coverage_sql
     # review r1 P1-6: the budget counts mention rows before coverage is read
     budget_sql = next(sql for sql in executed if "LIMIT :entity_budget" in sql)
-    assert "SELECT 1 FROM scoped_items" in budget_sql
+    assert "SELECT 1 FROM scope_mentions" in budget_sql
     assert executed.index(budget_sql) < executed.index(coverage_sql)
 
 

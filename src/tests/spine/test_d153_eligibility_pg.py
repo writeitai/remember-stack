@@ -710,3 +710,70 @@ def test_duplicate_fact_nomination_keeps_original_multiplicity(pair: _Pair) -> N
         )
         assert len(rows) == 2
         assert [row["nomination_rank"] for row in rows] == [1, 2]
+
+
+def test_document_bridge_work_ignores_unrelated_lineages(
+    pair: _Pair, record_property: Any
+) -> None:
+    """Qualify point/short-circuit bridge work at configurable synthetic corpus scale."""
+    from pydantic import Field
+    from pydantic_settings import BaseSettings
+    from pydantic_settings import SettingsConfigDict
+
+    class Scale(BaseSettings):
+        """Opt in to million-document qualification only on a disposable DB."""
+
+        model_config = SettingsConfigDict(
+            env_prefix="REMEMBERSTACK_D153_QUALIFICATION_"
+        )
+        documents: int = Field(default=1000, ge=1000, le=2000000)
+
+    count = Scale().documents
+    with pair.target.connect() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO documents SELECT copy.* FROM documents original CROSS JOIN generate_series(1,:count) series(n)"
+                " CROSS JOIN LATERAL jsonb_populate_record(NULL::documents,to_jsonb(original)||jsonb_build_object("
+                " 'doc_id',md5('d153-bridge-'||n)::uuid,'source_ref','d153-bridge-'||n,"
+                " 'current_version_id',NULL,'document_entity_id',CAST(:entity AS uuid))) copy"
+                " WHERE original.doc_id=:doc"
+            ),
+            {
+                "count": count,
+                "entity": pair.corpus.entity["ghost"],
+                "doc": pair.corpus.doc["primary"],
+            },
+        )
+        connection.exec_driver_sql("ANALYZE documents")
+        connection.exec_driver_sql("SET LOCAL jit=off")
+        parameters = {
+            "deployment_id": _DEPLOYMENT_ID,
+            "entities": [pair.corpus.entity["alice"], pair.corpus.entity["ghost"]],
+        }
+        sql = "SELECT entity_id FROM memory_v1.entities_current WHERE deployment_id=:deployment_id AND entity_id=ANY(CAST(:entities AS uuid[]))"
+        plan = connection.execute(
+            text("EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) " + sql), parameters
+        ).scalar_one()[0]
+        assert plan["Plan"]["Actual Rows"] == 2
+        document_work = [
+            node
+            for node in _plan_nodes(node=plan["Plan"])
+            if node.get("Alias") == "document"
+        ]
+        assert document_work
+        work = sum(
+            (node.get("Actual Rows", 0) + node.get("Rows Removed by Filter", 0))
+            * node.get("Actual Loops", 0)
+            for node in document_work
+        )
+        assert work < 100
+        record_property("synthetic_bridge_documents", count)
+        record_property("bridge_tuple_work", work)
+        record_property("query_execution_ms", plan["Execution Time"])
+        record_property("query_planning_ms", plan["Planning Time"])
+        record_property(
+            "documents_allocated_bytes",
+            connection.exec_driver_sql(
+                "SELECT pg_total_relation_size('documents')"
+            ).scalar_one(),
+        )

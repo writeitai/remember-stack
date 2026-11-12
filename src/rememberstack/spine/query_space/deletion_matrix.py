@@ -23,11 +23,10 @@ obligation:
   reachable set really is empty, before *and* after, so a wrong declaration
   fails loudly instead of hiding a leak.
 - ``not_applicable`` with basis ``not_caller_reachable`` — the surface is a
-  merge-redirect or partial-composition helper, which deliberately does
+  merge-redirect helper, which deliberately does
   *not* drop rows on a deletion: `entities_current` computes surviving
   provenance *from* it, so it must keep resolving an entity whose provenance is
-  gone. Partial source projections defer endpoint membership to their consumers.
-  An "absent afterwards" obligation would be false of those helpers. Their D48
+  gone, and an "absent afterwards" obligation would be false of it. Its D48
   obligation is discharged the other way, by non-reachability — outside
   `memory_v1`, no grant, and (Batch B) never on a query role's `search_path` —
   which the gate asserts from `pg_class.relacl` and `information_schema`, while
@@ -79,18 +78,9 @@ MATRIX_PATH: Final = Path(__file__).with_name("d48_deletion_matrix.json")
 #: entity whose provenance is gone.
 SURVIVOR_HELPERS: Final = ("public.v_graph_survivor", "public.v_memory_entity_survivor")
 
-# These partial projections deliberately defer endpoint membership to their
-# consumers. They must stay unreachable; periodised-source/endpoint parity is
-# additionally qualified by the D140/D153 PostgreSQL suites.
-COMPOSITION_HELPERS: Final = (
+GATED_HELPERS: Final = (
     "public.v_memory_claim_carried_periodised",
     "public.v_memory_fact_source_qualified",
-)
-
-#: The private helpers that *do* compile a deletion rule — they are where the
-#: rule is defined and the public relations project it — so their cells are
-#: executed like a public relation's, before and after the mutation.
-GATED_HELPERS: Final = (
     "public.v_memory_evidence_lineage_live",
     "public.v_memory_fact_claim_live",
     "public.v_memory_fact_visible",
@@ -169,7 +159,7 @@ _PUBLIC_SURFACES: Final = tuple(
 _HELPER_SURFACES: Final = (
     *(
         MatrixSurface(name=helper, caller_reachable=False, compiles_deletion=False)
-        for helper in sorted((*SURVIVOR_HELPERS, *COMPOSITION_HELPERS))
+        for helper in sorted(SURVIVOR_HELPERS)
     ),
     *(
         MatrixSurface(name=helper, caller_reachable=False)
@@ -251,6 +241,8 @@ DELETION_TARGETS: Final = (
             "public.v_memory_fact_claim_live",
             "public.v_memory_mention_current_content",
             "public.v_memory_fact_visible",
+            "public.v_memory_fact_source_qualified",
+            "public.v_memory_claim_carried_periodised",
             "public.v_memory_page_citation_visible",
         ),
     ),
@@ -358,6 +350,7 @@ DELETION_TARGETS: Final = (
             "public.v_memory_evidence_lineage_live",
             "public.v_memory_fact_claim_live",
             "public.v_memory_fact_visible",
+            "public.v_memory_fact_source_qualified",
             "public.v_memory_page_citation_visible",
         ),
     ),
@@ -432,6 +425,7 @@ DELETION_TARGETS: Final = (
             "public.v_memory_evidence_lineage_live",
             "public.v_memory_fact_claim_live",
             "public.v_memory_fact_visible",
+            "public.v_memory_fact_source_qualified",
             "public.v_memory_page_citation_visible",
         ),
     ),
