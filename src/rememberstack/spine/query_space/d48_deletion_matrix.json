@@ -1,5 +1,5 @@
 {
-  "cell_count": 306,
+  "cell_count": 324,
   "cells": [
     {
       "basis": null,
@@ -199,9 +199,23 @@
     },
     {
       "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_claim_carried_periodised is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "lineage"
+    },
+    {
+      "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "lineage"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_fact_source_qualified is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "lineage"
     },
     {
@@ -437,9 +451,23 @@
     },
     {
       "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_claim_carried_periodised is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "version"
+    },
+    {
+      "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "version"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_fact_source_qualified is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "version"
     },
     {
@@ -675,9 +703,23 @@
     },
     {
       "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_claim_carried_periodised is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "representation"
+    },
+    {
+      "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "representation"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_fact_source_qualified is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "representation"
     },
     {
@@ -913,9 +955,23 @@
     },
     {
       "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_claim_carried_periodised is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "claim"
+    },
+    {
+      "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "claim"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_fact_source_qualified is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "claim"
     },
     {
@@ -1151,9 +1207,23 @@
     },
     {
       "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_claim_carried_periodised is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "fact_provenance"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_fact_source_qualified is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "fact_provenance"
     },
     {
@@ -1389,9 +1459,23 @@
     },
     {
       "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_claim_carried_periodised is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "k_target"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_fact_source_qualified is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "k_target"
     },
     {
@@ -1629,7 +1713,21 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "p1_candidate"
     },
     {
@@ -1865,9 +1963,23 @@
     },
     {
       "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_claim_carried_periodised is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "graph_edge"
+    },
+    {
+      "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "graph_edge"
+    },
+    {
+      "basis": "not_caller_reachable",
+      "expectation": "public.v_memory_fact_source_qualified is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "graph_edge"
     },
     {
@@ -2105,7 +2217,21 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "public.v_memory_entity_survivor",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
+      "surface": "public.v_memory_fact_source_qualified",
       "target_id": "corpus_body"
     },
     {
@@ -2148,10 +2274,10 @@
   "schema": "memory_v1",
   "status_counts": {
     "applicable": 90,
-    "deferred": 68,
-    "not_applicable": 148
+    "deferred": 72,
+    "not_applicable": 162
   },
-  "surface_count": 34,
+  "surface_count": 36,
   "surfaces": [
     {
       "caller_reachable": true,
@@ -2296,7 +2422,17 @@
     {
       "caller_reachable": false,
       "compiles_deletion": false,
+      "name": "public.v_memory_claim_carried_periodised"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": false,
       "name": "public.v_memory_entity_survivor"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": false,
+      "name": "public.v_memory_fact_source_qualified"
     },
     {
       "caller_reachable": false,

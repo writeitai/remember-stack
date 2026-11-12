@@ -37,7 +37,7 @@ a caller reads, but the mention, fact/evidence, and K citation helpers are where
 deletion rules are actually *defined* — the public relations project them — so their
 cells are executed exactly like a public relation's:
 reachable before the mutation, absent after. Non-reachability is proven for
-all seven helpers on top of that, by the gate that reads their grants.
+all helpers on top of that, by the gate that reads their grants.
 - ``deferred`` — the target names an object class this batch does not build (a
   P1 nomination candidate, a live graph edge, a corpus body). The cell is
   recorded rather than omitted, with the batch that will execute it, so the
@@ -81,6 +81,14 @@ SURVIVOR_HELPERS: Final = ("public.v_graph_survivor", "public.v_memory_entity_su
 #: The private helpers that *do* compile a deletion rule — they are where the
 #: rule is defined and the public relations project it — so their cells are
 #: executed like a public relation's, before and after the mutation.
+# These partial projections deliberately defer endpoint membership to their
+# consumers. They must stay unreachable; periodised-source/endpoint parity is
+# additionally qualified by the D140/D153 PostgreSQL suites.
+COMPOSITION_HELPERS: Final = (
+    "public.v_memory_claim_carried_periodised",
+    "public.v_memory_fact_source_qualified",
+)
+
 GATED_HELPERS: Final = (
     "public.v_memory_evidence_lineage_live",
     "public.v_memory_fact_claim_live",
@@ -160,7 +168,7 @@ _PUBLIC_SURFACES: Final = tuple(
 _HELPER_SURFACES: Final = (
     *(
         MatrixSurface(name=helper, caller_reachable=False, compiles_deletion=False)
-        for helper in sorted(SURVIVOR_HELPERS)
+        for helper in sorted((*SURVIVOR_HELPERS, *COMPOSITION_HELPERS))
     ),
     *(
         MatrixSurface(name=helper, caller_reachable=False)

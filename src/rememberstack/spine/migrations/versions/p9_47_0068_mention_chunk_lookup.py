@@ -1,12 +1,11 @@
 """Build the D153 mention-to-chunk access path on existing data, online."""
 
-from collections.abc import Mapping
 from collections.abc import Sequence
-from typing import Any
 
 from alembic import op
 from sqlalchemy import Connection
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 
 revision: str = "p9_47_0068"
 down_revision: str | None = "p9_46_0067"
@@ -16,7 +15,7 @@ depends_on: str | Sequence[str] | None = None
 _PARENT = "ix_mentions_deployment_chunk"
 
 
-def _index(*, connection: Connection, name: str) -> Mapping[str, Any] | None:
+def _index(*, connection: Connection, name: str) -> RowMapping | None:
     """Read an exact public object, including every relevant index property."""
     return (
         connection.execute(
@@ -40,7 +39,7 @@ def _index(*, connection: Connection, name: str) -> Mapping[str, Any] | None:
     )
 
 
-def _check(*, row: Mapping[str, Any], table_oid: int, partitioned: bool) -> None:
+def _check(*, row: RowMapping, table_oid: int, partitioned: bool) -> None:
     """Refuse a colliding object instead of adopting a different access path."""
     if not (
         row["relkind"] == ("I" if partitioned else "i")
@@ -57,7 +56,7 @@ def _check(*, row: Mapping[str, Any], table_oid: int, partitioned: bool) -> None
         raise RuntimeError("D153 mention index name collides with a different object")
 
 
-def _leaves(*, connection: Connection) -> Sequence[Mapping[str, Any]]:
+def _leaves(*, connection: Connection) -> Sequence[RowMapping]:
     """Enumerate the engine's direct monthly partitions, including default."""
     rows = (
         connection.execute(

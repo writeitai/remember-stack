@@ -54,6 +54,8 @@ from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import require_p1_vector
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
+from rememberstack.spine.retrieval_eligibility import entity_mentions_ctes
+from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
 
 P1_HNSW_MAX_SCAN_TUPLES = 20_000
 """Reference-profile ceiling for one filtered iterative HNSW scan (D94)."""
@@ -843,17 +845,13 @@ class PostgresP1Index:
         mentions_sql = None
         if entity_ids:
             parameters["entity_ids"] = _uuid_strings(entity_ids)
-            mentions_from = (
-                " FROM memory_v1.mentions_live AS scope"
-                " WHERE scope.deployment_id = :deployment_id"
-                "   AND scope.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
-                f"   AND scope.{id_column} IS NOT NULL"
+            scope_ctes = "WITH RECURSIVE " + entity_mentions_ctes(
+                grain="claim" if id_column == "claim_id" else "chunk"
             )
-            mentions_sql = "SELECT 1" + mentions_from
+            mentions_sql = scope_ctes + " SELECT 1 FROM scope_mentions"
             coverage_sql = (
-                "SELECT scope." + id_column + "::text AS item_id,"
-                " count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
-                f"{mentions_from} GROUP BY scope.{id_column}"
+                scope_ctes
+                + " SELECT item_id::text AS item_id, coverage FROM scope_coverage"
             )
         if channel == "semantic":
             assert vector is not None and model is not None and policy is not None
@@ -1098,7 +1096,6 @@ class PostgresP1Index:
             raise ValueError("scoped testimony nomination requires entity_ids")
         if grain == "claim":
             table = "claims"
-            mention_column = "claim_id"
             target = "claims"
             policy = CLAIM_INPUT_POLICY
             model = self._embedding_model
@@ -1123,7 +1120,6 @@ class PostgresP1Index:
             current_predicate = "AND indexed.is_current_testimony AND " + selected
         elif grain == "chunk":
             table = "chunk_search"
-            mention_column = "chunk_id"
             target = "chunks"
             policy = policy_generation or self._chunk_input_policy
             model = embedder_generation or self._embedding_model
@@ -1194,26 +1190,7 @@ class PostgresP1Index:
         else:
             raise ValueError(f"unknown testimony channel {channel!r}")
 
-        scope_ctes = f"""
-            {_SURVIVOR_SCOPE_CTE}, scoped_items AS MATERIALIZED (
-                SELECT mention.{mention_column} AS item_id,
-                       scoped.survivor_entity_id
-                FROM scoped_entities AS scoped
-                JOIN resolution_decisions AS decision
-                  ON decision.deployment_id = :deployment_id
-                 AND decision.entity_id = scoped.entity_id
-                 AND decision.superseded_by IS NULL
-                JOIN mentions AS mention
-                  ON mention.deployment_id = decision.deployment_id
-                 AND mention.mention_id = decision.mention_id
-                WHERE mention.{mention_column} IS NOT NULL
-            ), coverage AS (
-                SELECT item_id,
-                       count(DISTINCT survivor_entity_id)::integer AS coverage
-                FROM scoped_items
-                GROUP BY item_id
-            )
-        """
+        scope_ctes = "WITH RECURSIVE " + entity_mentions_ctes(grain=grain)
         # D142 §8.4 and review r1 P1-6: the same coverage-tier execution as
         # every entity-scoped search — the mention-row budget first, exact
         # scoring for small tiers, the index loop within large ones.
@@ -1241,9 +1218,9 @@ class PostgresP1Index:
             ),
             parameters={**base.parameters, **parameters},
             coverage_sql=(
-                f"{scope_ctes} SELECT item_id::text AS item_id, coverage FROM coverage"
+                f"{scope_ctes} SELECT item_id::text AS item_id, coverage FROM scope_coverage"
             ),
-            mentions_sql=f"{scope_ctes} SELECT 1 FROM scoped_items",
+            mentions_sql=f"{scope_ctes} SELECT 1 FROM scope_mentions",
             versions_sql=None,
         )
         deadline = self._deadline()
@@ -1411,7 +1388,6 @@ class PostgresP1Index:
             return self._fact_loop(
                 required=required,
                 parameters=parameters,
-                relation=_FACT_AUTHORITY_JOIN,
                 predicates=f"{time_sql} {filter_sql} {supporting_sql}",
                 k=k,
                 deadline=deadline,
@@ -1441,10 +1417,7 @@ class PostgresP1Index:
                         {coverage_select}
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
                  FROM {table} AS indexed
-                 JOIN memory_v1.facts_visible_history AS fact
-                   ON fact.deployment_id = indexed.deployment_id
-                  AND fact.fact_kind = '{fact_kind}'
-                  AND fact.fact_id = indexed.{id_column}
+                 {_FACT_AUTHORITY_JOIN.format(fact_kind=fact_kind, id_column=id_column)}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
                    AND vector_norm(indexed.embedding) > 0
@@ -1456,8 +1429,16 @@ class PostgresP1Index:
                  LIMIT :branch_limit)
                 """
             )
+        eligibility = fact_eligibility_ctes(
+            candidates_sql=_fact_candidates_sql(
+                required=required,
+                entity_scoped=bool(entity_ids),
+                keyed=candidate_keys is not None,
+            )
+        )
+        scope = _SURVIVOR_SCOPE_BODY + "," if entity_ids else ""
         statement = f"""
-            WITH candidates AS ({" UNION ALL ".join(branches)})
+            WITH RECURSIVE {scope} {eligibility}, candidates AS ({" UNION ALL ".join(branches)})
             SELECT item_id, qualifier, 1.0 - distance AS score
             FROM candidates
             ORDER BY {result_order} LIMIT :limit
@@ -1515,7 +1496,6 @@ class PostgresP1Index:
         *,
         required: tuple[str, ...],
         parameters: Mapping[str, Any],
-        relation: str,
         predicates: str,
         k: int,
         deadline: float | None,
@@ -1534,15 +1514,22 @@ class PostgresP1Index:
             ):
                 if table not in required:
                     continue
-                join = relation.format(fact_kind=fact_kind, id_column=id_column)
                 gate = fact_in_scope(
                     fact_kind=fact_kind, fact_id=f"indexed.{id_column}"
                 )
-                confirm_sql = _confirm_by_candidate(
-                    f"FROM {table} AS indexed{join}"
-                    " WHERE indexed.deployment_id = :deployment_id"
-                    f" {predicates} AND {gate}",
-                    f"indexed.{id_column}",
+                eligibility = fact_eligibility_ctes(
+                    candidates_sql=(
+                        f"SELECT '{fact_kind}'::text AS fact_kind,"
+                        " unnest(CAST(:batch_ids AS uuid[])) AS fact_id"
+                    )
+                )
+                confirm_sql = (
+                    f"WITH {eligibility} SELECT indexed.{id_column}::text AS item_id"
+                    f" FROM eligible_facts AS fact JOIN {table} AS indexed"
+                    f" ON indexed.deployment_id = fact.deployment_id"
+                    f" AND indexed.{id_column} = fact.fact_id"
+                    f" WHERE indexed.deployment_id = :deployment_id"
+                    f" {predicates} AND {gate}"
                 )
 
                 def confirm(
@@ -1671,7 +1658,6 @@ class PostgresP1Index:
             return self._fact_loop(
                 required=required,
                 parameters=parameters,
-                relation=_FACT_AUTHORITY_JOIN,
                 predicates=time_sql,
                 k=k,
                 deadline=deadline,
@@ -1754,8 +1740,13 @@ class PostgresP1Index:
                  LIMIT :branch_limit)
                 """
             )
+        eligibility = fact_eligibility_ctes(
+            candidates_sql=_fact_candidates_sql(
+                required=required, entity_scoped=True, keyed=False
+            )
+        )
         statement = f"""
-            WITH RECURSIVE {scope_cte} candidates AS ({" UNION ALL ".join(branches)})
+            WITH RECURSIVE {scope_cte} {eligibility}, candidates AS ({" UNION ALL ".join(branches)})
             SELECT item_id, qualifier, 1.0 - distance AS score
             FROM candidates
             ORDER BY {result_order} LIMIT :limit
@@ -2105,13 +2096,15 @@ def _claim_filters(
             clauses.append("document.source_kind = :filter_source_kind")
             parameters["filter_source_kind"] = value
         elif key == "entity_id":
-            clauses.append(
-                "EXISTS (SELECT 1 FROM memory_v1.mentions_live AS mention"
-                " WHERE mention.deployment_id = indexed.deployment_id"
-                " AND mention.claim_id = indexed.claim_id"
-                " AND mention.resolved_entity_id = :filter_entity_id)"
+            scope = entity_mentions_ctes(
+                grain="claim", entity_parameter="filter_entity_ids"
             )
-            parameters["filter_entity_id"] = UUID(value)
+            clauses.append(
+                "indexed.claim_id IN (WITH RECURSIVE "
+                + scope
+                + " SELECT item_id FROM scope_coverage)"
+            )
+            parameters["filter_entity_ids"] = [UUID(value)]
         elif key == "asserted_from":
             clauses.append("indexed.asserted_at >= :filter_asserted_from")
             parameters["filter_asserted_from"] = datetime.fromisoformat(value)
@@ -2461,12 +2454,50 @@ _SURVIVOR_SCOPE_CTE = "WITH RECURSIVE " + _SURVIVOR_SCOPE_BODY
 """The bounded reverse merge scope, shared by counting and ranked retrieval."""
 
 _FACT_AUTHORITY_JOIN = (
-    " JOIN memory_v1.facts_visible_history AS fact"
+    " JOIN eligible_facts AS fact"
     "   ON fact.deployment_id = indexed.deployment_id"
     "  AND fact.fact_kind = '{fact_kind}'"
     "  AND fact.fact_id = indexed.{id_column}"
 )
-"""Full fact authority (survivors, claim-coordinate visibility; D87, D142 §8.5)."""
+"""D153 bounded full fact authority with shared endpoint membership."""
+
+
+def _fact_candidates_sql(
+    *, required: tuple[str, ...], entity_scoped: bool, keyed: bool
+) -> str:
+    """Enumerate bounded raw fact IDs before sharing endpoint qualification."""
+    if not entity_scoped:
+        if not keyed:
+            raise ValueError("fact candidates require a scope or explicit IDs")
+        return (
+            "SELECT fact_kind, fact_id FROM unnest(CAST(:candidate_kinds AS text[]),"
+            " CAST(:candidate_ids AS uuid[])) requested(fact_kind, fact_id)"
+        )
+    branches: list[str] = []
+    for table, kind, identifier in (
+        ("relations", "relation", "relation_id"),
+        ("observations", "observation", "observation_id"),
+    ):
+        if table not in required:
+            continue
+        endpoints = ["subject_entity_id"] + (
+            ["object_entity_id"] if kind == "relation" else []
+        )
+        for endpoint in endpoints:
+            key_filter = (
+                f" AND ('{kind}'::text, indexed.{identifier}) IN ("
+                "SELECT key_kind, key_id FROM unnest(CAST(:candidate_kinds AS text[]),"
+                " CAST(:candidate_ids AS uuid[])) requested(key_kind, key_id))"
+                if keyed
+                else ""
+            )
+            branches.append(
+                f"SELECT '{kind}'::text AS fact_kind, indexed.{identifier} AS fact_id"
+                f" FROM {table} indexed WHERE indexed.deployment_id = :deployment_id"
+                f" AND indexed.{endpoint} IN (SELECT entity_id FROM scoped_entities)"
+                + key_filter
+            )
+    return " UNION ".join(branches)
 
 
 def _require_entity_budget(
