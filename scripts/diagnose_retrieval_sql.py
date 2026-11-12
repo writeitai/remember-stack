@@ -22,6 +22,8 @@ from typing import Any
 from unittest.mock import patch
 from uuid import UUID
 
+from pydantic import BaseModel
+from pydantic import Field
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -49,7 +51,7 @@ class DiagnosticSettings(BaseSettings):
     """Read the private diagnostic URL without printing it in an artifact."""
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_DIAGNOSTIC_")
-    database_url: SecretStr
+    database_url: SecretStr = Field(default=SecretStr(""), min_length=1)
 
 
 def _dump(*, path: Path, value: object) -> None:
@@ -61,6 +63,8 @@ def _dump(*, path: Path, value: object) -> None:
 
 def _clean(value: Any) -> Any:
     """Remove large vector literals while retaining plan structure and counts."""
+    if isinstance(value, BaseModel):
+        return _clean(value.model_dump(mode="json"))
     if isinstance(value, str):
         return re.sub(r"\[-?\d[\d.eE+ ,\-]{500,}\]", "[VECTOR_REDACTED]", value)
     if isinstance(value, Mapping):
@@ -190,7 +194,12 @@ def _plans(
     """Explain unique captured reads, with separately bounded actual execution."""
     seen: set[str] = set()
     analyzed = 0
-    for row, (statement, parameters) in zip(capture.rows, capture.native, strict=True):
+    entries = sorted(
+        zip(capture.rows, capture.native, strict=True),
+        key=lambda item: item[0].get("execute_seconds", 0),
+        reverse=True,
+    )
+    for row, (statement, parameters) in entries:
         upper = statement.lstrip().upper()
         if not upper.startswith(("SELECT", "WITH")) or upper.startswith(
             "SELECT SET_CONFIG"
