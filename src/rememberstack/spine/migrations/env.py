@@ -69,10 +69,22 @@ def run_migrations_online() -> None:
                 " (not starting with a digit); otherwise its per-database roles"
                 " could be shared with another database"
             )
-        context.configure(connection=connection, target_metadata=target_metadata)
-
-        with context.begin_transaction():
-            context.run_migrations()
+        # A session lock survives the commits Alembic must perform for
+        # CREATE INDEX CONCURRENTLY. Acquire it BEFORE Alembic reads revision
+        # state, so a second upgrader cannot act on that same old revision.
+        # Advisory locks are database-local; the first key namespaces ours.
+        connection.exec_driver_sql("SELECT pg_advisory_lock(1919251316, 153)")
+        connection.rollback()
+        try:
+            context.configure(connection=connection, target_metadata=target_metadata)
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            # NullPool also physically closes this session if an interrupted
+            # connection cannot execute the explicit unlock.
+            connection.rollback()
+            connection.exec_driver_sql("SELECT pg_advisory_unlock(1919251316, 153)")
+            connection.commit()
 
 
 if context.is_offline_mode():
