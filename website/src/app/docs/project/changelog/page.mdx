@@ -46,7 +46,9 @@ for this catalog-driven revision.
 Concurrent migration processes wait on one database-scoped session lock before
 reading revision state. It survives concurrent-index commits; ordinary reads and
 ingestion do not acquire it. Each revision commits separately, so index-attachment
-locks are released before the view update. The acquisition wait defaults to
+locks are released before the view update. A later migration failure leaves
+earlier revisions committed; returning to an earlier release requires its
+pre-upgrade backup. The acquisition wait defaults to
 60 seconds and is configurable through `migration_lock_timeout_seconds` in
 `alembic.ini`; an expired wait fails setup explicitly. The new view definitions
 also change the query-space manifest identity, so saved-query revalidation uses

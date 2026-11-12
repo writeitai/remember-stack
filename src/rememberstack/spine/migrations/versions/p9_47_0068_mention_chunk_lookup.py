@@ -81,7 +81,7 @@ def _document_shape(*, row: RowMapping, name: str, table_oid: int) -> bool:
         or row["collation_names"] != (["", "", "pg_catalog.C"] if is_ordered else [""])
     ):
         # Non-pretty pg_get_indexdef includes expression, collation, nondefault
-        # opclasses, INCLUDE, uniqueness, storage options and tablespace. Exact
+        # opclasses, INCLUDE, uniqueness and storage options. Exact
         # native DDL is intentional: an unexpected object is never adopted.
         raise RuntimeError("D153 document index name collides with a different object")
     return is_ordered

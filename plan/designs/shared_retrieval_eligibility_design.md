@@ -1,7 +1,7 @@
 # Shared retrieval eligibility and candidate-driven provenance
 
-Status: accepted design on this PR's merge (D153); implementation and
-qualification are pending. Claude Opus 5.5 HIGH approved the contract at
+Status: accepted design (D153); implementation/qualification status and exact
+evidence are recorded in [the delivery plan](../plans/shared_retrieval_eligibility.md). Claude Opus 5.5 HIGH approved the contract at
 `431900b1d` with zero remaining blockers; [review and execution identity](../analysis/retrieval_eligibility_reviews_20261112/opus-r3-review.md).
 The owner authorized implementation after this review. The ordered bridge
 amendment was approved at `68e156154` ([Opus review](https://github.com/writeitai/remember-stack/pull/587#issuecomment-6830637190));
@@ -93,9 +93,10 @@ mention. These semantics are retained. The defect is physical: the captured
 `conv26/scoped-claims_and_sources_context/plan-004.json.gz` joins 3,701 decisions
 to 19 versions (70,301 pairs), probes chunk partitions by document for every
 pair, and joins the mention's own chunk last. Its document-bridge alternative
-also builds a hashed set from every live document. No corrected entity-lookup
-prototype has been measured yet; this design's probe hypothesis must pass the
-actual-plan gate, or return to design review.
+also builds a hashed set from every live document. The corrected probe must
+pass the actual-plan gates; an equality predicate alone is not proof of
+bounded work. The failed document-bridge hypothesis returned to design review
+and produced the ordered replacement below.
 
 For one terminal entity, retain reverse merge enumeration but enforce the
 following correlated chain. Each stage projects only the coordinates needed
@@ -430,8 +431,8 @@ Register the new helper in `AUTHORIZATION_HELPER_VIEWS`, revoke PUBLIC and all
 query-role grants, and assign `rememberstack_view_owner`. Its AST becomes a
 hashed dependency; it is absent from public discovery/reachability.
 
-There is no successful fact prototype yet. A scope below the unchanged 50,000
-raw-row budget may still have expensive source qualification or many distinct
+A scope below the unchanged 50,000 raw-row budget may still have expensive
+source qualification or many distinct
 endpoints. It must finish within the configured operation deadline or return
 the existing explicit deadline boundary. This change neither recalibrates
 that budget nor claims it bounds every physical row access. The worst case

@@ -118,7 +118,7 @@ class MatrixSurface(BaseModel):
     compiles_deletion: bool = True
     """True when this surface itself drops rows on a deletion, and its cells are
     therefore executed before and after the mutation. False only for the
-    merge-redirect or partial source helper, whose consumer owns the remaining
+    survivor redirect helpers, whose consumer owns the remaining
     membership rule. Non-reachability plus consumer parity discharges its gate."""
 
 
