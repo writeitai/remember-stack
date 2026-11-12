@@ -41,7 +41,7 @@ def candidate_mention_coverage_ctes(
                count(DISTINCT visible.entity_id)::integer AS coverage
         FROM (SELECT DISTINCT unnest(CAST(:{candidate_parameter} AS uuid[])) AS item_id) candidate
         CROSS JOIN LATERAL (
-            SELECT mention.mention_id, mention.doc_id, mention.chunk_id
+            SELECT mention.mention_id, mention.doc_id, mention.chunk_id, mention.created_at
             FROM mentions AS mention
             WHERE mention.deployment_id = :deployment_id
               AND mention.{column} = candidate.item_id
@@ -52,6 +52,7 @@ def candidate_mention_coverage_ctes(
             FROM public.v_memory_mention_current_content AS current
             WHERE current.deployment_id = :deployment_id
               AND current.mention_id = raw.mention_id
+              AND current.created_at = raw.created_at
               AND current.doc_id = raw.doc_id
               AND current.chunk_id = raw.chunk_id
               AND current.{column} = candidate.item_id
@@ -69,9 +70,32 @@ def entity_mentions_ctes(
     *,
     grain: Literal["claim", "chunk"],
     entity_parameter: Literal["entity_ids", "filter_entity_ids"] = "entity_ids",
+    content_scope: Literal["current", "readable"] = "current",
 ) -> str:
-    """Enumerate canonical current mentions from requested identities, not a corpus scan."""
+    """Enumerate current coverage or D140's explicit pending-lineage probe scope."""
     column = "claim_id" if grain == "claim" else "chunk_id"
+    content = f"""
+            SELECT current.mention_id, current.{column}, current.survivor_entity_id
+            FROM public.v_memory_mention_current_content AS current
+            WHERE current.deployment_id = :deployment_id
+              AND current.mention_id = raw.mention_id
+              AND current.created_at = raw.created_at
+              AND current.doc_id = raw.doc_id
+              AND current.chunk_id = raw.chunk_id
+            OFFSET 0
+    """
+    if content_scope == "readable":
+        # This does not confirm answer evidence. D140's counterfactual
+        # freshness probe must discover lineages through older ready editions
+        # even while their in-force replacement is still converting. Reuse
+        # the version/readability authority, never hand-copy its tombstones.
+        content = f"""
+            SELECT raw.mention_id, raw.{column}, member.survivor_entity_id
+            FROM memory_v1.chunks_all_versions_live AS chunk
+            WHERE chunk.deployment_id = :deployment_id
+              AND chunk.doc_id = raw.doc_id AND chunk.chunk_id = raw.chunk_id
+            OFFSET 0
+        """
     return (
         visible_entities_cte(entity_parameter=entity_parameter)
         + f""",
@@ -102,22 +126,15 @@ def entity_mentions_ctes(
             ORDER BY latest.decided_at DESC, latest.decision_id DESC LIMIT 1
         ) latest
         CROSS JOIN LATERAL (
-            SELECT mention.mention_id, mention.doc_id, mention.chunk_id
+            SELECT mention.mention_id, mention.doc_id, mention.chunk_id,
+                   mention.claim_id, mention.created_at
             FROM mentions AS mention
             WHERE mention.deployment_id = :deployment_id
               AND mention.mention_id = decision.mention_id
               AND decision.decision_id = latest.decision_id
             OFFSET 0
         ) raw
-        CROSS JOIN LATERAL (
-            SELECT current.mention_id, current.{column}, current.survivor_entity_id
-            FROM public.v_memory_mention_current_content AS current
-            WHERE current.deployment_id = :deployment_id
-              AND current.mention_id = raw.mention_id
-              AND current.doc_id = raw.doc_id
-              AND current.chunk_id = raw.chunk_id
-            OFFSET 0
-        ) current
+        CROSS JOIN LATERAL ({content}) current
         WHERE current.{column} IS NOT NULL
           AND current.survivor_entity_id = member.survivor_entity_id
     ), scope_coverage AS MATERIALIZED (
@@ -128,7 +145,33 @@ def entity_mentions_ctes(
     )
 
 
-def fact_eligibility_ctes(*, candidates_sql: str) -> str:
+def claim_entity_filter() -> str:
+    """Check one fixed entity once and probe only each candidate claim's mentions."""
+    return """
+    EXISTS (SELECT 1 FROM memory_v1.entities_current entity
+            WHERE entity.deployment_id=:deployment_id
+              AND entity.entity_id=:filter_entity_id)
+    AND EXISTS (
+        SELECT 1 FROM LATERAL (
+            SELECT mention.mention_id,mention.created_at,mention.doc_id,mention.chunk_id
+            FROM mentions mention WHERE mention.deployment_id=:deployment_id
+              AND mention.claim_id=indexed.claim_id OFFSET 0
+        ) raw
+        CROSS JOIN LATERAL (
+            SELECT current.survivor_entity_id
+            FROM public.v_memory_mention_current_content current
+            WHERE current.deployment_id=:deployment_id
+              AND current.mention_id=raw.mention_id AND current.created_at=raw.created_at
+              AND current.doc_id=raw.doc_id AND current.chunk_id=raw.chunk_id
+              AND current.claim_id=indexed.claim_id OFFSET 0
+        ) current WHERE current.survivor_entity_id=:filter_entity_id
+    )
+    """
+
+
+def fact_eligibility_ctes(
+    *, candidates_sql: str, presentation: Literal["keys", "support", "full"] = "full"
+) -> str:
     """Share endpoint qualification for internal candidate (fact_kind, fact_id) SQL.
 
     The endpoint conjunction is identical to the immutable D153 fact wrapper.
@@ -136,14 +179,46 @@ def fact_eligibility_ctes(*, candidates_sql: str) -> str:
     identity/endpoint columns materialize before eligibility; presentation is
     hydrated through per-ID lookups afterwards, with unrequested counts prunable.
     """
+    fields = (
+        "deployment_id",
+        "fact_kind",
+        "fact_id",
+        "subject_entity_id",
+        "object_entity_id",
+        "predicate",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at",
+        "contradiction_group",
+        "confidence",
+        "valid_precision",
+    )
+    if presentation == "support":
+        fields += ("support_state_current",)
+    columns = ", ".join("fact." + field for field in fields)
+    source_columns = ", ".join("source." + field for field in fields)
+    hydration = (
+        "SELECT source.* FROM fact_sources source JOIN fact_eligible_keys eligible"
+        " ON eligible.fact_kind=source.fact_kind AND eligible.fact_id=source.fact_id"
+        if presentation != "full"
+        else """
+        SELECT presentation.* FROM fact_eligible_keys eligible
+        CROSS JOIN LATERAL (
+            SELECT fact.* FROM public.v_memory_fact_source_qualified fact
+            WHERE fact.deployment_id = :deployment_id
+              AND fact.fact_kind = eligible.fact_kind
+              AND fact.fact_id = eligible.fact_id
+            OFFSET 0
+        ) presentation
+        """
+    )
     return f"""
     fact_sources AS MATERIALIZED (
-        SELECT source.deployment_id, source.fact_kind, source.fact_id,
-               source.subject_entity_id, source.object_entity_id
-        FROM ({candidates_sql}) requested
+        SELECT {source_columns}
+        FROM (SELECT DISTINCT fact_kind,fact_id FROM ({candidates_sql}) input) requested
         CROSS JOIN LATERAL (
-            SELECT fact.deployment_id, fact.fact_kind, fact.fact_id,
-                   fact.subject_entity_id, fact.object_entity_id
+            SELECT {columns}
             FROM public.v_memory_fact_source_qualified AS fact
             WHERE fact.deployment_id = :deployment_id
               AND fact.fact_kind = requested.fact_kind
@@ -168,14 +243,5 @@ def fact_eligibility_ctes(*, candidates_sql: str) -> str:
             SELECT 1 FROM fact_visible_endpoints object
             WHERE object.entity_id = source.object_entity_id
         )
-    ), eligible_facts AS NOT MATERIALIZED (
-        SELECT presentation.* FROM fact_eligible_keys eligible
-        CROSS JOIN LATERAL (
-            SELECT fact.* FROM public.v_memory_fact_source_qualified fact
-            WHERE fact.deployment_id = :deployment_id
-              AND fact.fact_kind = eligible.fact_kind
-              AND fact.fact_id = eligible.fact_id
-            OFFSET 0
-        ) presentation
-    )
+    ), eligible_facts AS NOT MATERIALIZED ({hydration})
     """

@@ -498,6 +498,25 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         ),
         names=EXPECTED_INDEXES,
     )
+    mention_lookup_ready = connection.execute(
+        text("""
+        SELECT coalesce((SELECT parent.indisvalid AND NOT EXISTS (
+            SELECT 1 FROM pg_inherits part
+            WHERE part.inhparent='public.mentions'::regclass
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_inherits attached
+                JOIN pg_index leaf ON leaf.indexrelid=attached.inhrelid
+                WHERE attached.inhparent=parent.indexrelid
+                  AND leaf.indrelid=part.inhrelid AND leaf.indisvalid
+              )
+        ) FROM pg_index parent
+          WHERE parent.indexrelid=to_regclass('public.ix_mentions_deployment_chunk')),false)
+    """)
+    ).scalar_one()
+    if not mention_lookup_ready:
+        problems.append(
+            "mention chunk index must be valid with every partition attached"
+        )
     views = _named_relations(connection=connection, names=EXPECTED_VIEWS, kinds=("v",))
     query_space_views = _string_values(
         connection=connection,

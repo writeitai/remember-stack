@@ -54,6 +54,7 @@ from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import require_p1_vector
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
+from rememberstack.spine.retrieval_eligibility import claim_entity_filter
 from rememberstack.spine.retrieval_eligibility import entity_mentions_ctes
 from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
 
@@ -1190,7 +1191,10 @@ class PostgresP1Index:
         else:
             raise ValueError(f"unknown testimony channel {channel!r}")
 
-        scope_ctes = "WITH RECURSIVE " + entity_mentions_ctes(grain=grain)
+        scope_ctes = "WITH RECURSIVE " + entity_mentions_ctes(
+            grain=grain,
+            content_scope="current" if pending_doc_ids is None else "readable",
+        )
         # D142 §8.4 and review r1 P1-6: the same coverage-tier execution as
         # every entity-scoped search — the mention-row budget first, exact
         # scoring for small tiers, the index loop within large ones.
@@ -1391,6 +1395,7 @@ class PostgresP1Index:
                 predicates=f"{time_sql} {filter_sql} {supporting_sql}",
                 k=k,
                 deadline=deadline,
+                needs_support_state="support_state" in (equality_filters or {}),
             )
         if entity_ids:
             # Review r2 P1-5: the scoring scope matches survivor-resolved
@@ -1416,8 +1421,7 @@ class PostgresP1Index:
                         '{fact_kind}'::text AS qualifier,
                         {coverage_select}
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
-                 FROM {table} AS indexed
-                 {_FACT_AUTHORITY_JOIN.format(fact_kind=fact_kind, id_column=id_column)}
+                 {_fact_indexed_relation(fact_kind=fact_kind)}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
                    AND vector_norm(indexed.embedding) > 0
@@ -1434,7 +1438,10 @@ class PostgresP1Index:
                 required=required,
                 entity_scoped=bool(entity_ids),
                 keyed=candidate_keys is not None,
-            )
+            ),
+            presentation="support"
+            if "support_state" in (equality_filters or {})
+            else "keys",
         )
         scope = _SURVIVOR_SCOPE_BODY + "," if entity_ids else ""
         statement = f"""
@@ -1499,6 +1506,7 @@ class PostgresP1Index:
         predicates: str,
         k: int,
         deadline: float | None,
+        needs_support_state: bool = False,
     ) -> P1SearchResult:
         """One D142 loop per fact table, merged by (distance, kind, id)."""
         merged: list[p1_ranked.Candidate] = []
@@ -1521,13 +1529,12 @@ class PostgresP1Index:
                     candidates_sql=(
                         f"SELECT '{fact_kind}'::text AS fact_kind,"
                         " unnest(CAST(:batch_ids AS uuid[])) AS fact_id"
-                    )
+                    ),
+                    presentation="support" if needs_support_state else "keys",
                 )
                 confirm_sql = (
                     f"WITH {eligibility} SELECT indexed.{id_column}::text AS item_id"
-                    f" FROM eligible_facts AS fact JOIN {table} AS indexed"
-                    f" ON indexed.deployment_id = fact.deployment_id"
-                    f" AND indexed.{id_column} = fact.fact_id"
+                    f" {_fact_indexed_relation(fact_kind=fact_kind)}"
                     f" WHERE indexed.deployment_id = :deployment_id"
                     f" {predicates} AND {gate}"
                 )
@@ -1725,9 +1732,8 @@ class PostgresP1Index:
                         '{fact_kind}'::text AS qualifier,
                         {scope_select}
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
-                 FROM {table} AS indexed
+                 {_fact_indexed_relation(fact_kind=fact_kind)}
                  {scope_join}
-                 {_FACT_AUTHORITY_JOIN.format(fact_kind=fact_kind, id_column=id_column)}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
                    AND vector_norm(indexed.embedding) > 0
@@ -1743,7 +1749,8 @@ class PostgresP1Index:
         eligibility = fact_eligibility_ctes(
             candidates_sql=_fact_candidates_sql(
                 required=required, entity_scoped=True, keyed=False
-            )
+            ),
+            presentation="keys",
         )
         statement = f"""
             WITH RECURSIVE {scope_cte} {eligibility}, candidates AS ({" UNION ALL ".join(branches)})
@@ -2096,15 +2103,8 @@ def _claim_filters(
             clauses.append("document.source_kind = :filter_source_kind")
             parameters["filter_source_kind"] = value
         elif key == "entity_id":
-            scope = entity_mentions_ctes(
-                grain="claim", entity_parameter="filter_entity_ids"
-            )
-            clauses.append(
-                "indexed.claim_id IN (WITH RECURSIVE "
-                + scope
-                + " SELECT item_id FROM scope_coverage)"
-            )
-            parameters["filter_entity_ids"] = [UUID(value)]
+            clauses.append(claim_entity_filter())
+            parameters["filter_entity_id"] = UUID(value)
         elif key == "asserted_from":
             clauses.append("indexed.asserted_at >= :filter_asserted_from")
             parameters["filter_asserted_from"] = datetime.fromisoformat(value)
@@ -2453,13 +2453,22 @@ scoped_entities(entity_id, survivor_entity_id) AS MATERIALIZED (
 _SURVIVOR_SCOPE_CTE = "WITH RECURSIVE " + _SURVIVOR_SCOPE_BODY
 """The bounded reverse merge scope, shared by counting and ranked retrieval."""
 
-_FACT_AUTHORITY_JOIN = (
-    " JOIN eligible_facts AS fact"
-    "   ON fact.deployment_id = indexed.deployment_id"
-    "  AND fact.fact_kind = '{fact_kind}'"
-    "  AND fact.fact_id = indexed.{id_column}"
-)
-"""D153 bounded full fact authority with shared endpoint membership."""
+
+def _fact_indexed_relation(*, fact_kind: str) -> str:
+    """Drive each scored embedding row from its eligible primary key, never a corpus join."""
+    if fact_kind == "relation":
+        table, identifier = "relations", "relation_id"
+    elif fact_kind == "observation":
+        table, identifier = "observations", "observation_id"
+    else:
+        raise ValueError("unsupported internal fact kind")
+    return (
+        "FROM eligible_facts AS fact CROSS JOIN LATERAL ("
+        f" SELECT indexed.* FROM {table} indexed"
+        " WHERE indexed.deployment_id=fact.deployment_id"
+        f" AND indexed.{identifier}=fact.fact_id"
+        f" AND fact.fact_kind='{fact_kind}' OFFSET 0) indexed"
+    )
 
 
 def _fact_candidates_sql(

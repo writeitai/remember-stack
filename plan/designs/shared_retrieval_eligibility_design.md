@@ -201,6 +201,18 @@ its qualifying mention rows, before grouping, not a different approximation.
 A `LIMIT budget+1` on a deployment-wide `mentions_live` filter is insufficient.
 The inverse relation must equal that public filter in the independent oracle.
 
+D140's **pending-lineage counterfactual probe** is a different content regime,
+not answer eligibility. When its explicit `pending_doc_ids` input is present,
+it must still discover an entity mentioned only in an older readable edition
+while the edition now in force is converting. Reuse the same requested-survivor,
+reverse-member, latest-decision and own-mention probes, but bind that mention's
+chunk through `chunks_all_versions_live` (the version's current ready reading).
+Keep the existing pending-lineage/time predicates and mention-row budget in
+that same statement. This can report pending freshness metadata; it never makes
+the older text eligible as a current answer. Ordinary nomination and hydration
+retain current-content coverage. The existing D140 three-edition pending test
+is a required regression gate.
+
 Filtering early decisions/current coordinates may still examine substantial
 **requested-entity provenance**, including invisible early decisions. The row
 budget is not a bound on every physical access; the existing deadline remains
@@ -228,7 +240,11 @@ revision state and held across autocommit index-build phases. Current
 not assumed existing. Ordinary reads/ingestion do not take that lock.
 
 Concurrent builds run outside transaction blocks; final view/manifest-related
-DDL and the revision update run normally after index qualification. Under the
+DDL and the revision update run normally after index qualification. The native
+runner commits each revision separately, releasing index-attachment metadata
+locks before the following view revision can wait for readers. Lock acquisition
+has a finite configurable wait (`migration_lock_timeout_seconds` in Alembic;
+default 60 seconds), rather than waiting indefinitely behind a stuck upgrader. Under the
 same native migration lock, an interrupted own-named invalid leaf index is
 dropped concurrently and rebuilt; an existing valid index is reused only if
 its table/key/definition matches exactly. A foreign or mismatched object fails

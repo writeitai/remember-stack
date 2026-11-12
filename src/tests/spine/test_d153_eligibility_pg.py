@@ -509,14 +509,16 @@ def test_native_migration_serializes_autocommit_and_rebuilds_interrupted_own_lea
     url = pair.target.url.render_as_string(hide_password=False)
     pair.target.dispose()
     command.downgrade(config=_config(url=url), revision="p9_46_0067")
+    for keys in ("chunk_id,deployment_id", "deployment_id,chunk_id DESC"):
+        with pair.target.begin() as connection:
+            connection.exec_driver_sql(
+                f"CREATE INDEX ix_mentions_deployment_chunk ON ONLY mentions({keys})"
+            )
+        with pytest.raises(RuntimeError, match="collides"):
+            command.upgrade(config=_config(url=url), revision="head")
+        with pair.target.begin() as connection:
+            connection.exec_driver_sql("DROP INDEX ix_mentions_deployment_chunk")
     with pair.target.begin() as connection:
-        connection.exec_driver_sql(
-            "CREATE INDEX ix_mentions_deployment_chunk ON ONLY mentions(chunk_id,deployment_id)"
-        )
-    with pytest.raises(RuntimeError, match="collides"):
-        command.upgrade(config=_config(url=url), revision="head")
-    with pair.target.begin() as connection:
-        connection.exec_driver_sql("DROP INDEX ix_mentions_deployment_chunk")
         leaf_oid, leaf_name, mention_id = connection.execute(
             text(
                 "SELECT m.tableoid::oid,c.relname,m.mention_id FROM mentions m"
@@ -626,3 +628,85 @@ def test_native_migration_serializes_autocommit_and_rebuilds_interrupted_own_lea
             for process in processes:
                 output, _ = process.communicate(timeout=30)
                 assert process.returncode == 0, output[-1500:]
+
+
+def test_equality_entity_filter_is_candidate_bound_and_preserves_public_membership(
+    pair: _Pair,
+) -> None:
+    """A fixed entity equality has one visibility gate and only candidate mention work."""
+    from rememberstack.spine.retrieval_eligibility import claim_entity_filter
+
+    with pair.reference.connect() as old, pair.target.connect() as new:
+        for identifier in pair.corpus.entity.values():
+            parameters = {
+                "deployment_id": _DEPLOYMENT_ID,
+                "filter_entity_id": identifier,
+            }
+            actual = list(
+                new.execute(
+                    text(
+                        "SELECT indexed.claim_id FROM claims indexed WHERE indexed.deployment_id=:deployment_id AND "
+                        + claim_entity_filter()
+                        + " ORDER BY indexed.claim_id"
+                    ),
+                    parameters,
+                ).scalars()
+            )
+            expected = list(
+                old.execute(
+                    text(
+                        "SELECT DISTINCT claim_id FROM memory_v1.mentions_live WHERE deployment_id=:deployment_id"
+                        " AND resolved_entity_id=:filter_entity_id AND claim_id IS NOT NULL ORDER BY claim_id"
+                    ),
+                    parameters,
+                ).scalars()
+            )
+            assert actual == expected
+        claim = pair.corpus.claim["a"]
+        predicate = claim_entity_filter()
+        plan = new.execute(
+            text(
+                "EXPLAIN(ANALYZE,FORMAT JSON) SELECT indexed.claim_id FROM claims indexed"
+                " WHERE indexed.claim_id=:claim_id AND " + predicate
+            ),
+            {
+                "deployment_id": _DEPLOYMENT_ID,
+                "filter_entity_id": pair.corpus.entity["alice"],
+                "claim_id": claim,
+            },
+        ).scalar_one()[0]["Plan"]
+        nodes = list(_plan_nodes(node=plan))
+        entity_work = [
+            n
+            for n in nodes
+            if n.get("Alias") == "e" and n.get("Relation Name") == "entities"
+        ]
+        assert sum(n["Actual Loops"] for n in entity_work) == 1
+
+
+def test_duplicate_fact_nomination_keeps_original_multiplicity(pair: _Pair) -> None:
+    """Endpoint sharing deduplicates proof keys, not the caller's nomination ranks."""
+    from rememberstack.core.text_scope import TextScope
+    from rememberstack.surfaces.query_engine import _CONFIRM_FACTS_CONTEXT_BY_KIND
+
+    parameters: dict[str, Any] = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "entity_ids": [],
+        "ranking_entity_ids": [],
+        "fact_ids": [pair.corpus.fact["current"]] * 2,
+        "predicate": None,
+        "time_mode": "current",
+        "evaluated_at": datetime.now(UTC),
+        "at": None,
+        "from": None,
+        "to": None,
+        **TextScope.of(time=None, evaluated_at=datetime.now(UTC)).parameters(),
+    }
+    with pair.target.connect() as connection:
+        rows = (
+            connection.execute(_CONFIRM_FACTS_CONTEXT_BY_KIND["relation"], parameters)
+            .mappings()
+            .all()
+        )
+        assert len(rows) == 2
+        assert [row["nomination_rank"] for row in rows] == [1, 2]

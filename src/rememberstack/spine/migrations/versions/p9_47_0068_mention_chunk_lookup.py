@@ -22,6 +22,10 @@ def _index(*, connection: Connection, name: str) -> RowMapping | None:
             text("""
         SELECT c.oid, c.relkind, i.indrelid, i.indisvalid, i.indisunique,
                i.indisexclusion, i.indnkeyatts, i.indnatts, am.amname,
+               i.indoption::text AS options, i.indcollation::text AS collations,
+               ARRAY(SELECT opclass.opcdefault AND opclass.opcintype='uuid'::regtype
+                     FROM unnest(i.indclass::oid[]) key(class_oid)
+                     JOIN pg_opclass opclass ON opclass.oid=key.class_oid) AS default_uuid_ops,
                pg_get_expr(i.indpred, i.indrelid) AS predicate,
                pg_get_expr(i.indexprs, i.indrelid) AS expressions,
                pg_get_indexdef(c.oid, 1, true) AS first_key,
@@ -48,6 +52,9 @@ def _check(*, row: RowMapping, table_oid: int, partitioned: bool) -> None:
         and not row["indisexclusion"]
         and row["indnkeyatts"] == row["indnatts"] == 2
         and row["amname"] == "btree"
+        and row["options"] == "0 0"
+        and row["collations"] == "0 0"
+        and row["default_uuid_ops"] == [True, True]
         and row["predicate"] is None
         and row["expressions"] is None
         and row["first_key"] == "deployment_id"
@@ -74,6 +81,8 @@ def _leaves(*, connection: Connection) -> Sequence[RowMapping]:
     )
     if any(row["relkind"] != "r" for row in rows):
         raise RuntimeError("D153 requires the native direct monthly mention partitions")
+    if any(row["nspname"] != "public" for row in rows):
+        raise RuntimeError("D153 requires native mention partitions in public")
     return rows
 
 

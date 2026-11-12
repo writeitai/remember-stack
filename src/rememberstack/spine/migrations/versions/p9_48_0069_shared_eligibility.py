@@ -492,7 +492,7 @@ def downgrade() -> None:
         connection.execute(
             text("""
         SELECT DISTINCT namespace.nspname, relation.relname,
-               pg_get_viewdef(relation.oid, true) AS definition
+               pg_get_viewdef(relation.oid, false) AS definition
         FROM pg_depend dependency
         JOIN pg_rewrite rewrite ON rewrite.oid = dependency.objid
         JOIN pg_class relation ON relation.oid = rewrite.ev_class
@@ -508,6 +508,8 @@ def downgrade() -> None:
         "ALTER VIEW public.v_memory_fact_visible RENAME TO v_memory_fact_visible_d153"
     )
     op.execute(_fact_authority_views()[1][1])
+    op.execute("""COMMENT ON VIEW public.v_memory_fact_visible IS
+      'Private single authority for historically visible fact membership. A relation or observation appears only when every entity endpoint resolves to entities_current and at least one evidence association binds a fully visible historical claim coordinate. Both facts_visible_history and fact_claim_evidence_live consume this helper, so the fact catalog and its evidence bridge cannot disagree. Not part of memory_v1 and never granted to a query role.'""")
     op.execute(
         "ALTER VIEW public.v_memory_fact_visible OWNER TO rememberstack_view_owner"
     )
