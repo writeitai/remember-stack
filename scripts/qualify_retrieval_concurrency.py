@@ -69,7 +69,13 @@ def qualify(*, private: Path, cases: Path, output: Path) -> None:
     if output.exists():
         raise ValueError("refusing to overwrite an earlier qualification")
     db = Database.model_validate(json.loads(private.read_text())["databases"]["target"])
-    engine = create_engine(db.url(), pool_size=8, max_overflow=0, hide_parameters=True)
+    engine = create_engine(
+        db.url(),
+        pool_size=8,
+        max_overflow=0,
+        hide_parameters=True,
+        connect_args={"application_name": "d153-eight-reader"},
+    )
     output.mkdir(parents=True)
     with engine.connect() as connection:
         row = connection.execute(
@@ -163,6 +169,10 @@ def qualify(*, private: Path, cases: Path, output: Path) -> None:
                 "all_equal": all_equal,
             }
             (output / "receipt.json").write_text(json.dumps(receipt, indent=2))
+            if not all_equal or baseline["negative"] is not None:
+                raise RuntimeError(
+                    "known nonempty qualification case has a boundary or unequal results"
+                )
             print(
                 json.dumps(
                     {
@@ -184,6 +194,13 @@ def qualify(*, private: Path, cases: Path, output: Path) -> None:
                 )
             ).scalar_one()
         (output / "receipt.json").write_text(json.dumps(receipt, indent=2))
+        if (
+            receipt["checked_out_connections_after_reads"] != 0
+            or receipt["open_snapshot_transactions_after_reads"] != 0
+        ):
+            raise RuntimeError(
+                "qualification left an admitted connection or snapshot open"
+            )
     finally:
         engine.dispose()
 
