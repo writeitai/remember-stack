@@ -120,16 +120,25 @@ def pair() -> Iterator[_Pair]:
 
 def _snapshot(*, connection: Connection) -> dict[str, list[str]]:
     """Read every public row/column, without limits or a truncated denominator."""
-    return {
-        contract.name: list(
+    result: dict[str, list[str]] = {}
+    for contract in VIEW_CONTRACTS:
+        # Current views emit their read's statement timestamp. Independently
+        # assert that clock, then normalize only that invocation-specific field.
+        rows = (
             connection.execute(
                 text(
-                    f"SELECT to_jsonb(row)::text FROM memory_v1.{contract.name} row ORDER BY to_jsonb(row)::text"
+                    f"SELECT (to_jsonb(row)-'evaluated_at')::text AS value,"
+                    " (NOT (to_jsonb(row) ? 'evaluated_at') OR"
+                    " (to_jsonb(row)->>'evaluated_at')::timestamptz=statement_timestamp()) AS clock_matches"
+                    f" FROM memory_v1.{contract.name} row ORDER BY (to_jsonb(row)-'evaluated_at')::text"
                 )
-            ).scalars()
+            )
+            .mappings()
+            .all()
         )
-        for contract in VIEW_CONTRACTS
-    }
+        assert all(row["clock_matches"] for row in rows)
+        result[contract.name] = [str(row["value"]) for row in rows]
+    return result
 
 
 def _assert_coverage(*, old: Connection, new: Connection, entities: list[UUID]) -> None:
