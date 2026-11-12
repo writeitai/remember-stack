@@ -23,10 +23,11 @@ obligation:
   reachable set really is empty, before *and* after, so a wrong declaration
   fails loudly instead of hiding a leak.
 - ``not_applicable`` with basis ``not_caller_reachable`` — the surface is a
-  merge-redirect helper, which deliberately does
+  merge-redirect or partial-composition helper, which deliberately does
   *not* drop rows on a deletion: `entities_current` computes surviving
   provenance *from* it, so it must keep resolving an entity whose provenance is
-  gone, and an "absent afterwards" obligation would be false of it. Its D48
+  gone. Partial source projections defer endpoint membership to their consumers.
+  An "absent afterwards" obligation would be false of those helpers. Their D48
   obligation is discharged the other way, by non-reachability — outside
   `memory_v1`, no grant, and (Batch B) never on a query role's `search_path` —
   which the gate asserts from `pg_class.relacl` and `information_schema`, while
@@ -78,9 +79,6 @@ MATRIX_PATH: Final = Path(__file__).with_name("d48_deletion_matrix.json")
 #: entity whose provenance is gone.
 SURVIVOR_HELPERS: Final = ("public.v_graph_survivor", "public.v_memory_entity_survivor")
 
-#: The private helpers that *do* compile a deletion rule — they are where the
-#: rule is defined and the public relations project it — so their cells are
-#: executed like a public relation's, before and after the mutation.
 # These partial projections deliberately defer endpoint membership to their
 # consumers. They must stay unreachable; periodised-source/endpoint parity is
 # additionally qualified by the D140/D153 PostgreSQL suites.
@@ -89,6 +87,9 @@ COMPOSITION_HELPERS: Final = (
     "public.v_memory_fact_source_qualified",
 )
 
+#: The private helpers that *do* compile a deletion rule — they are where the
+#: rule is defined and the public relations project it — so their cells are
+#: executed like a public relation's, before and after the mutation.
 GATED_HELPERS: Final = (
     "public.v_memory_evidence_lineage_live",
     "public.v_memory_fact_claim_live",
@@ -127,8 +128,8 @@ class MatrixSurface(BaseModel):
     compiles_deletion: bool = True
     """True when this surface itself drops rows on a deletion, and its cells are
     therefore executed before and after the mutation. False only for the
-    merge-redirect helper, which must keep resolving an entity whose provenance
-    is gone because `entities_current` computes that provenance from it."""
+    merge-redirect or partial source helper, whose consumer owns the remaining
+    membership rule. Non-reachability plus consumer parity discharges its gate."""
 
 
 class DeletionTarget(BaseModel):
