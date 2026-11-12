@@ -59,6 +59,7 @@ from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
+from benchmarks.locomo.model import RetainedIngestionOrigin
 from benchmarks.locomo.model import RetrievedClaim
 from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import RunState
@@ -181,6 +182,7 @@ def prepare_run(
     protocol: ProtocolKey = DEFAULT_PROTOCOL_KEY,
     retrieval_budget: ContextRetrievalBudget | None = None,
     images: Path | None = None,
+    retained_ingestion: RetainedIngestionOrigin | None = None,
 ) -> RunConfiguration:
     """Validate, fingerprint, and render a local run without remote calls."""
     selected_protocol = protocol_for_key(protocol)
@@ -266,6 +268,8 @@ def prepare_run(
     base["execution_profile"] = selected_protocol.execution_profile.model_dump(
         mode="json"
     )
+    if retained_ingestion is not None:
+        base["retained_ingestion"] = retained_ingestion.model_dump(mode="json")
     configuration = RunConfiguration(
         **base,
         prepared_at=datetime.now(timezone.utc),
@@ -443,6 +447,10 @@ def ingest_sample(
 ) -> tuple[IngestRecord, ...]:
     """Upload one conversation's sessions through the public SDK."""
     context = _load_run(run_dir=run_dir)
+    if context.configuration.retained_ingestion is not None:
+        raise ExecutionGuardError(
+            "retained-ingestion runs are read-only; use the original processing run"
+        )
     _guard_remote(
         context=context,
         execute=execute,
@@ -1378,6 +1386,13 @@ def _validate_run(
         base["execution_profile"] = configuration.execution_profile.model_dump(
             mode="json"
         )
+    if configuration.retained_ingestion is not None:
+        base["retained_ingestion"] = configuration.retained_ingestion.model_dump(
+            mode="json"
+        )
+        from benchmarks.locomo.reuse import validate_origin
+
+        validate_origin(run_dir=run_dir, configuration=configuration)
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
     if current_pins:

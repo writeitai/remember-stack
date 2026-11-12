@@ -12,19 +12,23 @@ silent drift, but cannot express a deliberate read-path upgrade. Editing the
 old run.json/readiness/fingerprint would falsify ingestion provenance; repeating
 paid ingestion only to satisfy a read-build assertion is unnecessary.
 
-Add explicit full-profile opt-in `--use-current-retrieval`. Keep recorded source
-inputs/configuration/readiness immutable, validate their original fingerprints,
-require the same processing generations/models/documents, and separately require
-the current serving revision/query manifest/tools/readiness. Fingerprint the
-original source plus the actual new serving contract and both readiness
-identities in the fresh output. Default trials retain their exact-source guard.
-A generation/model/content mismatch must still fail before model calls.
+The selected implementation is a native `reuse-ingestion` preparation command.
+It creates a fresh current execution with an immutable `retained_ingestion`
+origin, preserves the original config/state bytes and fingerprints, and records
+actual new serving readiness. It re-renders/compares the same immutable document
+and image inputs without model calls, copies only ingestion IDs and verified
+readiness, and starts with no answers/judgments. Ingestion is forbidden on that
+scoring fork. The old/new processing generations, model bindings, version rows,
+content coordinates and current serving build/surface all remain strict guards.
 
-The mode changes neither prompts, models, ranking, retrieval limits nor engine
-eligibility. It performs no migration or ingestion itself. Operator rollout uses
-normal native migrations and existing stores. Readiness still requires pipeline,
-P1, graph and P3 capabilities. Returned source-version coordinates must match
-every retained document. Existing answer/checkpoint files are never overwritten.
+This supersedes the earlier idea of relaxing live guards with a current-serving
+flag. That flag would also require new backup restore-identity handling. A fresh
+execution run expresses current serving identity to the existing native six-
+archive backup/restore path, while explicitly preserving its actual original
+paid processing source. No live guard or native backup invariant is weakened.
+Default runs retain unchanged byte representations/fingerprints when no retained
+origin exists. The new mode changes no prompts, ranking, ingestion generations
+or provider work, and introduces no legacy serving fallback.
 
 Costs: one newly requested full 1,540-question answer/judge pass plus completion
 of conv48 pending processing and first ingestion of conv49/50; no paid processing
