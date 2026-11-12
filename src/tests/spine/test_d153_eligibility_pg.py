@@ -311,3 +311,318 @@ def test_scoped_context_statements_execute_with_canonical_coverage(pair: _Pair) 
             rows = connection.execute(statement, parameters).mappings().all()
             assert rows
             assert all(row["coverage"] > 0 for row in rows)
+
+
+def _plan_nodes(*, node: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Walk executed plan work without requiring any particular planner node type."""
+    yield node
+    for child in node.get("Plans", []):
+        yield from _plan_nodes(node=child)
+
+
+def _clone_fact_scope(*, connection: Connection, fact_id: UUID) -> None:
+    """Add a hundred supported facts sharing endpoints and inherited source counts."""
+    columns = list(
+        connection.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_schema='public' AND table_name='relations' AND is_generated='NEVER' ORDER BY ordinal_position"
+            )
+        ).scalars()
+    )
+    names = ",".join('"' + name + '"' for name in columns)
+    selection = ",".join('copy."' + name + '"' for name in columns)
+    connection.execute(
+        text(
+            f"INSERT INTO relations ({names}) SELECT {selection} FROM relations original"
+            " CROSS JOIN generate_series(1,100) AS series(n) CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::relations,to_jsonb(original) || jsonb_build_object("
+            " 'relation_id',md5('d153-fact-' || n)::uuid,"
+            " 'contradiction_group','cd153000-0000-0000-0000-000000000001'::uuid)) copy"
+            " WHERE original.relation_id=:fact_id"
+        ),
+        {"fact_id": fact_id},
+    )
+    columns = list(
+        connection.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public'"
+                " AND table_name='relation_evidence' AND is_generated='NEVER' ORDER BY ordinal_position"
+            )
+        ).scalars()
+    )
+    names = ",".join('"' + name + '"' for name in columns)
+    selection = ",".join('copy."' + name + '"' for name in columns)
+    connection.execute(
+        text(
+            f"INSERT INTO relation_evidence ({names}) SELECT {selection} FROM relation_evidence original"
+            " CROSS JOIN generate_series(1,100) AS series(n) CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::relation_evidence,to_jsonb(original) || jsonb_build_object("
+            " 'relation_id',md5('d153-fact-' || n)::uuid)) copy WHERE original.relation_id=:fact_id"
+        ),
+        {"fact_id": fact_id},
+    )
+
+
+def test_fact_endpoint_work_is_shared_and_unrequested_counts_stay_prunable(
+    pair: _Pair,
+) -> None:
+    """Both ranking arms share endpoint proof even when hundreds of facts reuse it."""
+    with pair.reference.connect() as old, pair.target.connect() as new:
+        for connection in (old, new):
+            _clone_fact_scope(
+                connection=connection, fact_id=pair.corpus.fact["current"]
+            )
+        _assert_facts(old=old, new=new)
+        candidates = (
+            "SELECT 'relation'::text AS fact_kind,relation_id AS fact_id FROM relations"
+            " WHERE deployment_id=:deployment_id UNION ALL SELECT 'observation',observation_id"
+            " FROM observations WHERE deployment_id=:deployment_id"
+        )
+        sql = (
+            "WITH "
+            + fact_eligibility_ctes(candidates_sql=candidates)
+            + (
+                " SELECT fact_id FROM eligible_facts WHERE fact_kind='relation' UNION ALL"
+                " SELECT fact_id FROM eligible_facts WHERE fact_kind='observation'"
+            )
+        )
+        new.exec_driver_sql("SET LOCAL jit=off")
+        plan = new.execute(
+            text("EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) " + sql),
+            {"deployment_id": _DEPLOYMENT_ID},
+        ).scalar_one()[0]["Plan"]
+        nodes = list(_plan_nodes(node=plan))
+        # Alias e is the entities_current identity source, distinct from the
+        # cheap survivor adapter. Its work is per distinct endpoint, not fact.
+        probes = [
+            node
+            for node in nodes
+            if node.get("Alias") == "e" and node.get("Relation Name") == "entities"
+        ]
+        assert probes
+        assert sum(node["Actual Loops"] for node in probes) <= len(pair.corpus.entity)
+        assert not any(node.get("Relation Name") == "review_queue" for node in nodes)
+        assert plan["Actual Rows"] >= 100
+
+
+def test_chunk_coverage_keeps_index_probes_across_120_monthly_partitions(
+    pair: _Pair,
+) -> None:
+    """Partition fanout is accepted; unrelated chunks/mentions cannot multiply probes."""
+    with pair.target.connect() as connection:
+        # Empty old monthly ranges avoid moving any existing source row. DDL
+        # and fixture expansion are rolled back with this test transaction.
+        for table in ("chunks", "mentions", "resolution_decisions"):
+            for number in range(120):
+                year, month = 2000 + number // 12, 1 + number % 12
+                next_year, next_month = (
+                    (year + 1, 1) if month == 12 else (year, month + 1)
+                )
+                connection.exec_driver_sql(
+                    f"CREATE TABLE {table}_d153_{year}_{month:02d} PARTITION OF {table}"
+                    f" FOR VALUES FROM ('{year}-{month:02d}-01') TO ('{next_year}-{next_month:02d}-01')"
+                )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM pg_inherits WHERE inhparent='mentions'::regclass"
+                )
+            ).scalar_one()
+            >= 121
+        )
+        assert connection.execute(
+            text(
+                "SELECT bool_and(idx.indisvalid) FROM pg_inherits child JOIN pg_index idx"
+                " ON idx.indexrelid=child.inhrelid WHERE child.inhparent='ix_mentions_deployment_chunk'::regclass"
+            )
+        ).scalar_one()
+        # One long source with many unrelated chunks: copy complete stored
+        # rows with new identities, retaining all real coordinate columns.
+        connection.execute(
+            text(
+                "INSERT INTO chunks SELECT copy.* FROM chunks original CROSS JOIN generate_series(1,10000) series(n)"
+                " CROSS JOIN LATERAL jsonb_populate_record(NULL::chunks,to_jsonb(original) || jsonb_build_object("
+                " 'chunk_id',md5('d153-chunk-'||n)::uuid,'ordinal',n+10000)) copy WHERE original.chunk_id=:chunk"
+            ),
+            {"chunk": pair.corpus.chunk["primary.v2"]},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO mentions SELECT copy.* FROM mentions original CROSS JOIN generate_series(1,10000) series(n)"
+                " CROSS JOIN LATERAL jsonb_populate_record(NULL::mentions,to_jsonb(original) || jsonb_build_object("
+                " 'mention_id',md5('d153-mention-'||n)::uuid,'chunk_id',md5('d153-chunk-'||n)::uuid)) copy"
+                " WHERE original.mention_id=:mention"
+            ),
+            {"mention": next(iter(pair.corpus.mention.values()))},
+        )
+        connection.exec_driver_sql("ANALYZE mentions")
+        connection.exec_driver_sql("ANALYZE chunks")
+        connection.exec_driver_sql("SET LOCAL jit=off")
+        parameters = {
+            "deployment_id": _DEPLOYMENT_ID,
+            "entity_ids": list(pair.corpus.entity.values()),
+            "chunk_ids": [pair.corpus.chunk["primary.v2"]],
+        }
+        sql = (
+            "WITH RECURSIVE "
+            + candidate_mention_coverage_ctes(
+                grain="chunk", candidate_parameter="chunk_ids"
+            )
+            + " SELECT * FROM scope_coverage"
+        )
+        plan = connection.execute(
+            text("EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) " + sql), parameters
+        ).scalar_one()[0]["Plan"]
+        assert plan["Actual Rows"] == 1
+        nodes = list(_plan_nodes(node=plan))
+        # Count tuple work, not empty partition probes or a particular plan
+        # node. The 10k unrelated mentions must not be visited by the lookup.
+        mentions = [
+            node
+            for node in nodes
+            if str(node.get("Relation Name", "")).startswith("mentions")
+        ]
+        assert mentions
+        assert (
+            sum(
+                node.get("Actual Rows", 0) * node.get("Actual Loops", 0)
+                for node in mentions
+            )
+            < 100
+        )
+
+
+def test_native_migration_serializes_autocommit_and_rebuilds_interrupted_own_leaf(
+    pair: _Pair, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancel a real concurrent leaf build, then run two native migration processes."""
+    from concurrent.futures import ThreadPoolExecutor
+    import subprocess
+    import sys
+    from threading import Event
+    from time import monotonic
+    from time import sleep
+
+    from sqlalchemy.exc import DBAPIError
+
+    url = pair.target.url.render_as_string(hide_password=False)
+    pair.target.dispose()
+    command.downgrade(config=_config(url=url), revision="p9_46_0067")
+    with pair.target.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE INDEX ix_mentions_deployment_chunk ON ONLY mentions(chunk_id,deployment_id)"
+        )
+    with pytest.raises(RuntimeError, match="collides"):
+        command.upgrade(config=_config(url=url), revision="head")
+    with pair.target.begin() as connection:
+        connection.exec_driver_sql("DROP INDEX ix_mentions_deployment_chunk")
+        leaf_oid, leaf_name, mention_id = connection.execute(
+            text(
+                "SELECT m.tableoid::oid,c.relname,m.mention_id FROM mentions m"
+                " JOIN pg_class c ON c.oid=m.tableoid LIMIT 1"
+            )
+        ).one()
+    own_index = f"ix_mentions_dc_{leaf_oid}"
+    ready = Event()
+    backend: list[int] = []
+
+    def interrupted_build() -> str:
+        """Wait behind a writer, then leave the actual invalid catalog index."""
+        with pair.target.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        ) as connection:
+            backend.append(
+                int(connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one())
+            )
+            ready.set()
+            try:
+                connection.exec_driver_sql(
+                    f'CREATE INDEX CONCURRENTLY {own_index} ON "{leaf_name}"(deployment_id,chunk_id)'
+                )
+            except DBAPIError as error:
+                return str(getattr(error.orig, "sqlstate", None))
+        return "unexpected_success"
+
+    with pair.target.connect() as writer, ThreadPoolExecutor(max_workers=1) as executor:
+        writer.execute(
+            text(
+                f'UPDATE "{leaf_name}" SET surface_form=surface_form WHERE mention_id=:id'
+            ),
+            {"id": mention_id},
+        )
+        future = executor.submit(interrupted_build)
+        assert ready.wait(timeout=5)
+        try:
+            end = monotonic() + 10
+            while True:
+                with pair.target.connect() as observer:
+                    invalid = observer.execute(
+                        text(
+                            "SELECT NOT indisvalid FROM pg_index WHERE indexrelid=to_regclass(:name)"
+                        ),
+                        {"name": own_index},
+                    ).scalar_one_or_none()
+                    if invalid:
+                        assert observer.execute(
+                            text("SELECT pg_cancel_backend(:pid)"), {"pid": backend[0]}
+                        ).scalar_one()
+                        break
+                assert monotonic() < end, (
+                    "concurrent build never reached its native invalid-index state"
+                )
+                sleep(0.02)
+            assert future.result(timeout=10) == "57014"
+        finally:
+            writer.rollback()
+    command.upgrade(config=_config(url=url), revision="head")
+    with pair.target.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT indisvalid FROM pg_index WHERE indexrelid='ix_mentions_deployment_chunk'::regclass"
+        ).scalar_one()
+        assert connection.execute(
+            text("SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass(:name)"),
+            {"name": own_index},
+        ).scalar_one()
+    pair.target.dispose()
+    monkeypatch.setenv("REMEMBERSTACK_DATABASE_URL", url)
+    processes: list[subprocess.Popen[str]] = []
+    with pair.target.connect() as gate:
+        gate.exec_driver_sql("SELECT pg_advisory_lock(1919251316,153)")
+        gate.commit()
+        try:
+            for _ in range(2):
+                processes.append(
+                    subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-c",
+                            "from alembic import command; from alembic.config import Config; command.upgrade(Config('alembic.ini'),'head')",
+                        ],
+                        cwd=_ROOT,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                )
+            end = monotonic() + 15
+            while True:
+                with pair.target.connect() as observer:
+                    waiting = observer.execute(
+                        text(
+                            "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()"
+                            " AND query LIKE '%SELECT pg_advisory_lock(1919251316, 153)%' AND wait_event_type='Lock'"
+                        )
+                    ).scalar_one()
+                if waiting == 2:
+                    break
+                assert monotonic() < end, (
+                    "both native upgraders did not wait before their revision read"
+                )
+                sleep(0.02)
+        finally:
+            gate.exec_driver_sql("SELECT pg_advisory_unlock(1919251316,153)")
+            gate.commit()
+            for process in processes:
+                output, _ = process.communicate(timeout=30)
+                assert process.returncode == 0, output[-1500:]
