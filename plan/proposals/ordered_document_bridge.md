@@ -13,17 +13,23 @@ all documents. A syntactic equality predicate and lookup fence alone do not
 establish the required work bound.
 
 The disposable prototype widens the **existing** `ix_documents_entity` from
-`(document_entity_id)` to `(document_entity_id, deployment_id, doc_id)`, retaining its predicate
+`(document_entity_id)` to `(document_entity_id, deployment_id, (doc_id::text COLLATE "C"))`, retaining its predicate
 `document_entity_id IS NOT NULL`, and reads the first matching document ordered
-by `doc_id` with `LIMIT 1 OFFSET 0`. That order has no membership meaning: any
-live document suffices. It gives PostgreSQL an ordered index range tied to the
-member **and deployment**, instead of relying on a guessed position in the
-document heap. The deployment equality is inside that index range. Ordering
-by doc_id also allows the primary key and the deployment/doc_id unique index
-to compete: a member-only widened index can lose to a deployment-wide ordered
-scan when multiple deployments share the database. The three-key shape avoids
-putting a deployment filter outside the member range. Actual-work gates still
-qualify the pinned PostgreSQL planner; this is not a universal index hint. No
+by `doc_id::text COLLATE "C"` with `LIMIT 1 OFFSET 0`. That order has no membership meaning: any
+live document suffices. It gives PostgreSQL an ordered index range tied to the member and deployment.
+A raw UUID doc_id ordering is also supplied by the primary key and the
+(deployment_id,doc_id) unique index. Those competing ordered paths still win
+under some skew estimates, even with a three-UUID bridge index; sole-index
+measurements actually scanned 1,000,007 tuples in a one-deployment fixture.
+Ordering by the bounded canonical UUID text in fixed C collation has only the
+bridge expression index as a matching ordered access path. It avoids that
+false cheap-start choice. Text conversion never enters a public value, identity,
+reuse key or ranking score: any live document proves membership. Its fixed
+36-character input prevents an unbounded-text B-tree key. Only stable doc_id
+and deployment/bridge keys are indexed, so observation-clock writes gain no
+new indexed dependency. The actual-work tests still qualify a pinned planner;
+this is not a universal query hint.
+No
 covering columns, persistent eligibility state, query hint, provider call or
 runtime fallback is introduced. All source/deployment/deletion predicates stay.
 
@@ -34,8 +40,15 @@ not a throughput promise. Raw plans, the reproduction and hashes are in
 indexes occupy 6,504,448 and 49,758,208 bytes on this highly duplicated synthetic
 key distribution. The +43,253,760 bytes per million documents includes loss of
 B-tree deduplication on that fixture; it is not a universal per-document price.
-The final three-key shape must additionally be measured with only its one
-working index, in common/absent/many-distinct and 1/2/16-deployment distributions.
+The final text-expression shape has additionally been measured with only its
+one working bridge index, in 1/2/16-deployment distributions: common and absent
+member probes examine 1 tuple in each million-document stratum (0.795–1.056ms).
+An all-tombstoned member examines its 62,500 own rows in the sixteen-deployment
+stratum (280.924ms), rather than unrelated deployments. Raw actual plans and
+buffer counts are recorded in bridge-text-summary.json and its linked gzip
+plans. This index occupies 95,600,640 bytes in these skewed fixtures, versus
+6,504,448 bytes for the old index; the earlier 49,758,208-byte two-key prototype
+is not the proposed index cost. These are observations, not guaranteed latency.
 An ordinary unique-document-entity distribution also needs measurement. During
 online replacement both indexes coexist, with I/O/WAL and temporary peak disk
 cost. Native storage capture must include the resulting allocation; this makes
@@ -58,10 +71,13 @@ an edited unreleased revision is never silently stamped over a test store.
 
 The original fixed name is `ix_documents_entity`; the only staging name is
 `ix_documents_entity_d153`. Shape A is the old one-key definition; shape B is
-`(document_entity_id, deployment_id, doc_id)`. Both require public.documents,
-ordinary B-tree, nonunique/nonexclusion, exactly the named keys in order, no
-expressions or INCLUDE columns, default UUID B-tree operator classes and zero
-collation/order-option vectors, and the exact `document_entity_id IS NOT NULL`
+`(document_entity_id, deployment_id, (doc_id::text COLLATE "C"))`. Both require public.documents,
+ordinary B-tree, nonunique/nonexclusion, exactly the specified keys in order and
+no INCLUDE columns. Shape A has one default pg_catalog UUID B-tree key, no
+expression, and zero collation/order options. Shape B has two default
+pg_catalog UUID B-tree keys then one default pg_catalog text B-tree expression
+key, exactly the doc_id UUID-to-text cast, with pg_catalog C collation only on
+that third key and zero order options. Both keep the exact `document_entity_id IS NOT NULL`
 predicate. A valid serving/replacement index must have indisvalid, indisready
 and indislive true. A differently shaped or wrongly bound object at either
 name fails setup. An expected shape alone does not make an invalid index valid.

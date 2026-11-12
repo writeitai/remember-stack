@@ -1,0 +1,101 @@
+{
+  "kind": "analysis_only_not_implemented",
+  "provider_calls": 0,
+  "sole_working_index": true,
+  "foreign_keys_enforced": true,
+  "key": "document_entity_id, deployment_id, (doc_id::text COLLATE C)",
+  "cases": [
+    {
+      "case": "deployments-1-tombstones-False",
+      "documents": 1000000,
+      "deployments": 1,
+      "tombstones": false,
+      "tuple_work": 1.0,
+      "execution_ms": 0.972,
+      "buffers": [
+        {
+          "Node Type": "Index Scan",
+          "Index Name": "d153_bridge_ordered_prototype",
+          "Index Cond": "((document_entity_id = members_1.entity_id) AND (deployment_id = e.deployment_id))",
+          "Actual Rows": 0.5,
+          "Actual Loops": 2,
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 4,
+          "Shared Read Blocks": 5
+        }
+      ],
+      "old_index_bytes": 6504448,
+      "new_index_bytes": 95600640,
+      "gzip_sha256": "deba2aef21de8e148e5b70ca83fd45be9aa88247f9adae92c94438c638e59666"
+    },
+    {
+      "case": "deployments-16-tombstones-False",
+      "documents": 1000000,
+      "deployments": 16,
+      "tombstones": false,
+      "tuple_work": 1.0,
+      "execution_ms": 0.795,
+      "buffers": [
+        {
+          "Node Type": "Index Scan",
+          "Index Name": "d153_bridge_ordered_prototype",
+          "Index Cond": "((document_entity_id = members_1.entity_id) AND (deployment_id = e.deployment_id))",
+          "Actual Rows": 0.5,
+          "Actual Loops": 2,
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 1,
+          "Shared Read Blocks": 8
+        }
+      ],
+      "old_index_bytes": 6619136,
+      "new_index_bytes": 95600640,
+      "gzip_sha256": "2a4dd6c50967bf8fdb79e501171e327f8940b8dd9186737f591c2163791914d6"
+    },
+    {
+      "case": "deployments-16-tombstones-True",
+      "documents": 1000000,
+      "deployments": 16,
+      "tombstones": true,
+      "tuple_work": 62500.0,
+      "execution_ms": 280.924,
+      "buffers": [
+        {
+          "Node Type": "Index Scan",
+          "Index Name": "d153_bridge_ordered_prototype",
+          "Index Cond": "((document_entity_id = members_1.entity_id) AND (deployment_id = e.deployment_id))",
+          "Actual Rows": 0.0,
+          "Actual Loops": 2,
+          "Rows Removed by Filter": 31250,
+          "Shared Hit Blocks": 38969,
+          "Shared Read Blocks": 24256
+        }
+      ],
+      "old_index_bytes": 6619136,
+      "new_index_bytes": 95600640,
+      "gzip_sha256": "7654838ee16bbd27ca6c57ee065e8aa79a69079631c6ebe92087838fd9cce318"
+    },
+    {
+      "case": "deployments-2-tombstones-False",
+      "documents": 1000000,
+      "deployments": 2,
+      "tombstones": false,
+      "tuple_work": 1.0,
+      "execution_ms": 1.056,
+      "buffers": [
+        {
+          "Node Type": "Index Scan",
+          "Index Name": "d153_bridge_ordered_prototype",
+          "Index Cond": "((document_entity_id = members_1.entity_id) AND (deployment_id = e.deployment_id))",
+          "Actual Rows": 0.5,
+          "Actual Loops": 2,
+          "Rows Removed by Filter": 0,
+          "Shared Hit Blocks": 4,
+          "Shared Read Blocks": 5
+        }
+      ],
+      "old_index_bytes": 6512640,
+      "new_index_bytes": 95600640,
+      "gzip_sha256": "1cf81cceb8bbf2838e3713b9d13ad574145e7d1c4ce6d083a3a0054c1977efc4"
+    }
+  ]
+}
