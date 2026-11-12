@@ -49,8 +49,7 @@ def _config(*, url: str) -> Config:
     return result
 
 
-@pytest.fixture(scope="module")
-def pair() -> Iterator[_Pair]:
+def _independent_pair() -> Iterator[_Pair]:
     """Clone an actual p9_46_0067 database, then migrate only its clone to head."""
     try:
         base = make_url(load_database_settings().sqlalchemy_url())
@@ -116,6 +115,18 @@ def pair() -> Iterator[_Pair]:
                         f"DROP ROLE IF EXISTS {prefix}{database}"
                     )
         admin.dispose()
+
+
+@pytest.fixture(scope="module")
+def pair() -> Iterator[_Pair]:
+    """Share independent oracle data across transactionally isolated semantic tests."""
+    yield from _independent_pair()
+
+
+@pytest.fixture
+def bridge_pair() -> Iterator[_Pair]:
+    """Give each physical scale stratum a fresh index without rolled-back bloat."""
+    yield from _independent_pair()
 
 
 def _snapshot(*, connection: Connection) -> dict[str, list[str]]:
@@ -723,7 +734,7 @@ def test_duplicate_fact_nomination_keeps_original_multiplicity(pair: _Pair) -> N
     ],
 )
 def test_document_bridge_work_ignores_unrelated_lineages(
-    pair: _Pair,
+    bridge_pair: _Pair,
     record_property: Any,
     deployments: int,
     tombstones: bool,
@@ -745,6 +756,7 @@ def test_document_bridge_work_ignores_unrelated_lineages(
         documents: int = Field(default=1000, ge=1000, le=2000000)
         evidence_dir: Path | None = None
 
+    pair = bridge_pair
     scale = Scale()
     count = min(scale.documents, 100000) if distinct else scale.documents
     owners = [pair.corpus.entity["ghost"]] + [uuid4() for _ in range(deployments - 1)]
@@ -1207,6 +1219,26 @@ def test_document_index_replacement_resumes_cancelled_native_ddl(pair: _Pair) ->
                                     {"name": name},
                                 ).scalar_one_or_none()
                                 if invalid:
+                                    # The index DDL is still active behind the
+                                    # first writer. A different row writer must
+                                    # finish before that writer or DDL ends.
+                                    with pair.target.begin() as concurrent_writer:
+                                        concurrent_writer.exec_driver_sql(
+                                            "SET LOCAL lock_timeout='1s'"
+                                        )
+                                        concurrent_writer.exec_driver_sql(
+                                            "SET LOCAL statement_timeout='2s'"
+                                        )
+                                        assert (
+                                            concurrent_writer.execute(
+                                                text(
+                                                    "UPDATE documents SET title=title"
+                                                    " WHERE doc_id=:doc RETURNING doc_id"
+                                                ),
+                                                {"doc": pair.corpus.doc["forgotten"]},
+                                            ).scalar_one()
+                                            == pair.corpus.doc["forgotten"]
+                                        )
                                     assert observer.execute(
                                         text("SELECT pg_cancel_backend(:pid)"),
                                         {"pid": backend[0]},
@@ -1235,3 +1267,128 @@ def test_document_index_replacement_resumes_cancelled_native_ddl(pair: _Pair) ->
                 ).scalar_one()
         finally:
             migration.exec_driver_sql("SELECT pg_advisory_unlock(1919251316,153)")
+
+
+def test_populated_document_index_upgrade_allows_writers(
+    bridge_pair: _Pair, record_property: Any
+) -> None:
+    """Build the real concurrent replacement over committed rows while writers run."""
+    from concurrent.futures import ThreadPoolExecutor
+    from time import monotonic
+    from time import sleep
+
+    from pydantic import Field
+    from pydantic_settings import BaseSettings
+    from pydantic_settings import SettingsConfigDict
+
+    class Scale(BaseSettings):
+        """Use the same owned synthetic corpus bound as the bridge read tests."""
+
+        model_config = SettingsConfigDict(
+            env_prefix="REMEMBERSTACK_D153_QUALIFICATION_"
+        )
+        documents: int = Field(default=1000, ge=1000, le=2000000)
+        evidence_dir: Path | None = None
+
+    import json
+
+    scale = Scale()
+    pair = bridge_pair
+    url = pair.target.url.render_as_string(hide_password=False)
+    pair.target.dispose()
+    command.downgrade(config=_config(url=url), revision="p9_46_0067")
+    with pair.target.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO documents SELECT copy.* FROM documents original CROSS JOIN generate_series(1,:count) series(n) CROSS JOIN LATERAL jsonb_populate_record(NULL::documents,to_jsonb(original)||jsonb_build_object('doc_id',md5('d153-populated-'||n)::uuid,'source_ref','d153-populated-'||n,'current_version_id',NULL,'document_entity_id',CAST(:entity AS uuid))) copy WHERE original.doc_id=:doc"
+            ),
+            {
+                "count": scale.documents,
+                "entity": pair.corpus.entity["ghost"],
+                "doc": pair.corpus.doc["primary"],
+            },
+        )
+        connection.exec_driver_sql("ANALYZE documents")
+    with pair.target.connect() as observer:
+        before_lsn = observer.exec_driver_sql(
+            "SELECT pg_current_wal_insert_lsn()::text"
+        ).scalar_one()
+        old_bytes = observer.exec_driver_sql(
+            "SELECT pg_relation_size('ix_documents_entity')"
+        ).scalar_one()
+    started = monotonic()
+    with (
+        pair.target.connect() as first_writer,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        first_writer.execute(
+            text("UPDATE documents SET title=title WHERE doc_id=:doc"),
+            {"doc": pair.corpus.doc["primary"]},
+        )
+        future = executor.submit(
+            command.upgrade, config=_config(url=url), revision="head"
+        )
+        try:
+            end = monotonic() + 30
+            while True:
+                with pair.target.connect() as observer:
+                    building = observer.exec_driver_sql(
+                        "SELECT NOT indisvalid FROM pg_index WHERE indexrelid=to_regclass('ix_documents_entity_d153')"
+                    ).scalar_one_or_none()
+                if building:
+                    break
+                if future.done():
+                    future.result()
+                    pytest.fail("build did not encounter the held ordinary writer")
+                assert monotonic() < end, (
+                    "index migration never reached its own concurrent build"
+                )
+                sleep(0.02)
+            with pair.target.begin() as second_writer:
+                second_writer.exec_driver_sql("SET LOCAL lock_timeout='1s'")
+                second_writer.exec_driver_sql("SET LOCAL statement_timeout='2s'")
+                assert (
+                    second_writer.execute(
+                        text(
+                            "UPDATE documents SET title=title WHERE doc_id=:doc RETURNING doc_id"
+                        ),
+                        {"doc": pair.corpus.doc["forgotten"]},
+                    ).scalar_one()
+                    == pair.corpus.doc["forgotten"]
+                )
+        finally:
+            first_writer.rollback()
+        future.result(timeout=120)
+    report = {
+        "documents": scale.documents,
+        "source": "actual p9_46_0067 populated schema upgraded through native Alembic",
+        "old_index_bytes": old_bytes,
+        "migration_seconds": monotonic() - started,
+        "concurrent_ordinary_writer_completed": True,
+        "provider_calls": 0,
+    }
+    with pair.target.connect() as connection:
+        report["new_index_bytes"] = connection.exec_driver_sql(
+            "SELECT pg_relation_size('ix_documents_entity')"
+        ).scalar_one()
+        report["migration_wal_bytes"] = int(
+            connection.execute(
+                text(
+                    "SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(),CAST(:lsn AS pg_lsn))"
+                ),
+                {"lsn": before_lsn},
+            ).scalar_one()
+        )
+        assert connection.exec_driver_sql(
+            "SELECT indisvalid AND indisready AND indislive FROM pg_index WHERE indexrelid='ix_documents_entity'::regclass"
+        ).scalar_one()
+        assert connection.exec_driver_sql(
+            "SELECT to_regclass('ix_documents_entity_d153') IS NULL"
+        ).scalar_one()
+    for key, value in report.items():
+        record_property(key, value)
+    if scale.evidence_dir is not None:
+        scale.evidence_dir.mkdir(parents=True, exist_ok=True)
+        (scale.evidence_dir / "populated-document-upgrade.json").write_text(
+            json.dumps(report, indent=2) + "\n"
+        )

@@ -23,6 +23,10 @@ A raw UUID doc_id ordering is also supplied by the primary key and the
 (deployment_id,doc_id) unique index. Those competing ordered paths still win
 under some skew estimates, even with a three-UUID bridge index; sole-index
 measurements actually scanned 1,000,007 tuples in a one-deployment fixture.
+The winning path was `documents_deployment_id_doc_id_key` in both the one-
+and two-deployment strata; [negative actual plans](shared_eligibility_qualification_20261112/bridge-uuid-order-negative.json.gz)
+and their [hash/source receipt](shared_eligibility_qualification_20261112/bridge-uuid-order-negative-receipt.json)
+preserve that rejected hypothesis.
 Ordering by the bounded canonical UUID text in fixed C collation has only the
 bridge expression index as a matching ordered access path. It avoids that
 false cheap-start choice. Text conversion never enters a public value, identity,
