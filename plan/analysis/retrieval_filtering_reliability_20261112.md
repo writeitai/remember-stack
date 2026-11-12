@@ -66,6 +66,11 @@ Source anchors: `postgres_p1.py:nominate_facts_scored`, `_run_testimony`,
 The [machine-readable measurements](retrieval_filtering_20261112/measurements.json)
 and [artifact/reproduction notes](retrieval_filtering_20261112/README.md)
 contain the complete statement captures, plans, SQL prototypes and receipts.
+The [GCS receipt](retrieval_filtering_20261112/gcs-receipt.json) records an
+immutable archive of evidence checkpoint `c813c9230`, independently downloaded
+and verified against all 108 manifest entries. This analysis archive is
+separate from the campaign's full-store backups; its receipt was added after
+archival and is deliberately outside that archive's file manifest.
 The following are SQL-only observations on conv-26, using a frozen stored
 vector. They are not newly generated benchmark answers or question-embedding
 recall measurements. Each diagnostic operation has a 20-second bound. A

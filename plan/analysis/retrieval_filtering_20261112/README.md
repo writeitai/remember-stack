@@ -36,9 +36,6 @@ They contain no generated answers, changed grades, credentials or database URLs.
   hashes, zero provider calls and restoration of retained PostgreSQL to its
   prior stopped state. API, object store, ingestion workers and setup are
   never started by these diagnostics.
-- `gcs-receipt.json` records immutable off-host archive generation, SHA-256,
-  CRC32C and independent complete download/manifest validation. This is an
-  analysis archive; it does not replace the separate full-store backups.
 - `compressed-artifacts.json` records raw sizes/hashes for larger JSON
   files compressed losslessly with gzip. `artifact-manifest.json` records
   published file hashes. SQL vector literals in plans/parameters are redacted.
