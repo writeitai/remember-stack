@@ -234,3 +234,25 @@ No further semantic candidate or unchanged replication is selected in this
 attempt. The full10-conversation campaign is not launched. The retained store,
 all unsuccessful trials, actual costs and complete answer/tool/judge states
 remain available for a separately justified next experiment.
+
+
+## Explicit current-judge replay of a retained source (2026-11-12)
+
+The retained conv47 source has the same ingestion profile, generations, models,
+schemas and loop settings as the current full reader. Its saved judge wording
+predates the current canonical wording. Rejecting all replay would require
+re-ingestion even though grading has no effect on stored claims or facts; silently
+ignoring this difference would hide an evaluation-policy change. The comparison
+runner therefore accepts an explicit `--use-current-judge-prompt` opt-in. It
+selects only the current canonical wording, records the choice and effective
+prompt hash in the new immutable identity, and keeps the old source identity,
+golds and grades unchanged. There is no arbitrary template loader or historical
+executable protocol. Schema, effort, provider, ingestion and readiness checks
+remain enforced; other drift still fails. Existing commands retain their
+identities and strict default. Changing the opt-in on resume is rejected.
+
+This adds no model call, ingestion cost, network surface or paid-reuse boundary.
+It makes current-policy re-scoring explicit rather than treating an old score
+policy as an ingestion requirement. The new conv47 arm uses the same general
+reader template and Pro HIGH model roles as conv42, with eight answer workers.
+It is a retained-data answer/scoring comparison, not fresh ingestion validation.

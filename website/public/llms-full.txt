@@ -20084,8 +20084,13 @@ The output saves the frozen template, its hash, source and runner revisions,
 complete new answers/tool traces/grades, usage, and summary. It leaves the source
 run untouched. Identical commands resume missing work; changed prompts or
 source identity or answer models require a new output directory. Live readiness, exact ingests,
-models, query surface and P3 must still match. The source judge prompt/schema
-must equal the current judge. These are development trials; retain every trial
+models, query surface and P3 must still match. The source judge schema
+must equal the current judge. Judge wording must also match unless the explicit
+`--use-current-judge-prompt` option selects current canonical wording. That
+choice and effective prompt hash enter the new immutable identity; changing
+it rejects resume. Source metadata, golds and old grades remain untouched,
+and all other compatibility checks still apply. No re-ingestion is needed
+for this evaluation-only choice. These are development trials; retain every trial
 and do not report a selected trial as held-out evaluation. Archive the output
 alongside the processed-store backups.
 

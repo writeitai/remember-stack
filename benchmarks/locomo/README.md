@@ -281,11 +281,20 @@ compares answer routes or full-surface prompt variants without re-ingesting it:
 | `mcp-p3` | OpenRouter Luna | read-only OSS MCP plus bounded P3-like tools |
 | `full` | source-pinned canonical Luna | all 22 SDK/P3 tools, optional frozen `--answer-prompt` template |
 
-The `full` profile keeps source models, retrieval budgets, judge and call limits;
+The `full` profile keeps source models, retrieval budgets, judge and call limits
+unless an explicit evaluation override is recorded;
 it saves exact prompt bytes plus independent answers/traces/grades. Use a new
 output for each template; identical inputs resume missing work. Provider routing
 uses the canonical Flex-to-normal OpenAI allowlist, and HTTP timeout comes from
 the saved source. Keep all trials and report them as development results.
+
+For a retained source with older judge wording, explicitly pass
+`--use-current-judge-prompt` to grade with the current canonical prompt. The
+choice and effective prompt hash are frozen in the new identity; changing it
+rejects resume. The source, golds, prior grades, ingestion contracts and all
+other readiness/schema/provider guards remain unchanged. Without this option,
+judge-wording drift remains an error. This is evaluation-only and requires no
+re-ingestion. `--judge-model` separately selects the grader model.
 
 This starts with OSS artifacts only. P3 is already an ordinary published
 directory, so copy it from the benchmark host or restore it with the existing

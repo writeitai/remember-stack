@@ -228,6 +228,9 @@ class AblationConfiguration(_FrozenModel):
     judge_reasoning_effort: ReasoningEffort | None = "high"
     judge_temperature: float = 0.0
     judge_prompt_sha256: str
+    use_current_judge_prompt: bool = Field(
+        default=False, exclude_if=lambda value: not value
+    )
     judge_schema_sha256: str
     mcp_catalog_sha256: str | None = None
     p3_version: str | None = None
@@ -383,9 +386,14 @@ def run_retrieval_ablation(
     answer_workers: int = 1,
     answer_provider_only: tuple[str, ...] | None = None,
     judge_model: str | None = None,
+    use_current_judge_prompt: bool = False,
     item_ids: tuple[str, ...] | None = None,
 ) -> AblationSummary:
     """Run or resume an isolated access, prompt or answer-model experiment."""
+    if use_current_judge_prompt and profile != "full":
+        raise runner.ExecutionGuardError(
+            "--use-current-judge-prompt requires --profile full"
+        )
     if answer_prompt is not None and profile != "full":
         raise runner.ExecutionGuardError("--answer-prompt requires --profile full")
     if answer_model is not None:
@@ -451,7 +459,9 @@ def run_retrieval_ablation(
         execute=execute,
     )
     if profile == "full":
-        _guard_full_contract(context=context)
+        _guard_full_contract(
+            context=context, use_current_judge_prompt=use_current_judge_prompt
+        )
     readiness_protocol = (
         protocol_for_key(DEFAULT_PROTOCOL_KEY).name
         if profile == "full"
@@ -490,6 +500,7 @@ def run_retrieval_ablation(
             checkpointed=checkpointed,
             client=client,
             canonical_full=profile == "full",
+            use_current_judge_prompt=use_current_judge_prompt,
         )
         if profile == "full":
             mcp_tools = runner._require_current_query_surface(  # noqa: SLF001
@@ -522,6 +533,7 @@ def run_retrieval_ablation(
             answer_workers=answer_workers,
             answer_provider_only=answer_provider_only,
             judge_model=judge_model,
+            use_current_judge_prompt=use_current_judge_prompt,
         )
         _run_answers(
             output=output,
@@ -548,6 +560,7 @@ def run_retrieval_ablation(
                 checkpointed=checkpointed,
                 client=client,
                 canonical_full=profile == "full",
+                use_current_judge_prompt=use_current_judge_prompt,
             )
             if profile == "full":
                 runner._require_current_query_surface(context=context, client=client)  # noqa: SLF001
@@ -669,12 +682,15 @@ def _guard_live_source(
     checkpointed: PipelineReadinessReport,
     client: MemoryClient,
     canonical_full: bool = False,
+    use_current_judge_prompt: bool = False,
 ) -> None:
     """Require the live MCP deployment to remain the exact processed source."""
     configuration = context.configuration
     state = context.state
     if canonical_full:
-        _guard_full_contract(context=context)
+        _guard_full_contract(
+            context=context, use_current_judge_prompt=use_current_judge_prompt
+        )
     live = client.pipeline_readiness(
         version_ids=version_ids,
         require=runner.ReadinessRequirements(
@@ -711,8 +727,10 @@ def _guard_live_source(
     )
 
 
-def _guard_full_contract(*, context: _SourceContext) -> None:
-    """Keep the full profile's non-prompt model and judge contracts unchanged."""
+def _guard_full_contract(
+    *, context: _SourceContext, use_current_judge_prompt: bool = False
+) -> None:
+    """Preserve source contracts except an explicitly selected current judge prompt."""
     source = context.configuration
     canonical = protocol_for_key(DEFAULT_PROTOCOL_KEY)
     expected = {
@@ -733,6 +751,8 @@ def _guard_full_contract(*, context: _SourceContext) -> None:
         "judge_repetitions": canonical.judge_repetitions,
     }
     for field, value in expected.items():
+        if field == "judge_prompt_sha256" and use_current_judge_prompt:
+            continue
         if getattr(source, field) != value:
             raise runner.ExecutionGuardError(f"full profile source {field} changed")
 
@@ -778,6 +798,7 @@ def _load_or_create_output(
     answer_workers: int = 1,
     answer_provider_only: tuple[str, ...] | None = None,
     judge_model: str | None = None,
+    use_current_judge_prompt: bool = False,
 ) -> tuple[AblationConfiguration, AblationState]:
     """Create one immutable experiment identity or validate its exact resume."""
     if (output / _CONFIG_FILE).exists():
@@ -794,6 +815,7 @@ def _load_or_create_output(
             answer_workers=answer_workers,
             answer_provider_only=answer_provider_only,
             judge_model=judge_model,
+            use_current_judge_prompt=use_current_judge_prompt,
         )
         persisted = configuration.model_dump(
             mode="python", exclude={"created_at", "fingerprint"}
@@ -825,6 +847,7 @@ def _load_or_create_output(
         answer_workers=answer_workers,
         answer_provider_only=answer_provider_only,
         judge_model=judge_model,
+        use_current_judge_prompt=use_current_judge_prompt,
     )
     configuration = AblationConfiguration.model_validate(
         {
@@ -908,6 +931,7 @@ def _configuration_base(
     answer_workers: int = 1,
     answer_provider_only: tuple[str, ...] | None = None,
     judge_model: str | None = None,
+    use_current_judge_prompt: bool = False,
 ) -> dict[str, object]:
     """Return every immutable ablation field except time and fingerprint."""
     source = context.configuration
@@ -971,6 +995,8 @@ def _configuration_base(
         base["answer_workers"] = answer_workers
     if answer_provider_only is not None:
         base["answer_provider_only"] = answer_provider_only
+    if use_current_judge_prompt:
+        base["use_current_judge_prompt"] = True
     return base
 
 

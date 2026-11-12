@@ -704,6 +704,7 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
     configuration, _state = ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
     assert configuration.answer_model == (answer_model or ANSWER_AGENT_MODEL)
     assert configuration.judge_model == (judge_model or JUDGE_MODEL)
+    assert "use_current_judge_prompt" not in configuration.model_dump()
     assert configuration.source_processing_revision == "a" * 40
     assert configuration.ablation_runner_revision == "b" * 40
     assert (output / "answer-prompt.txt").read_bytes() == b"Question: {question}\r\n"
@@ -728,6 +729,8 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         ablation._load_or_create_output(
             **{**values, "answer_provider_only": ("test-host",)}
         )  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(**{**values, "use_current_judge_prompt": True})  # type: ignore[arg-type]  # noqa: SLF001
     (output / "answer-prompt.txt").write_text("corrupt", encoding="utf-8")
     with pytest.raises(runner.BenchmarkRunError, match="frozen answer prompt changed"):
         ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
@@ -897,6 +900,16 @@ def test_full_profile_rejects_judge_drift_and_incomplete_prompts() -> None:
     context.configuration = source.model_copy(update={"judge_prompt_sha256": "changed"})
     with pytest.raises(runner.ExecutionGuardError, match="judge_prompt_sha256 changed"):
         ablation._guard_full_contract(context=context)  # noqa: SLF001
+    ablation._guard_full_contract(  # noqa: SLF001
+        context=context, use_current_judge_prompt=True
+    )
+    context.configuration = source.model_copy(
+        update={"judge_prompt_sha256": "changed", "judge_schema_sha256": "changed"}
+    )
+    with pytest.raises(runner.ExecutionGuardError, match="judge_schema_sha256 changed"):
+        ablation._guard_full_contract(  # noqa: SLF001
+            context=context, use_current_judge_prompt=True
+        )
     ablation._validate_full_prompt(  # noqa: SLF001
         template=protocol.answer_prompt_template, tools=answer_tool_catalog()
     )
@@ -1413,3 +1426,32 @@ def _usage(*, model: str) -> ProviderCallUsage:
         cost_usd=Decimal("0.01"),
         latency_ms=1,
     )
+
+
+def test_current_judge_opt_in_is_frozen_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Current-prompt scoring is an explicit immutable evaluation choice."""
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+    context = _SyntheticContext(
+        configuration=_configuration(),
+        state=RunState(protocol_name=PROTOCOL_NAME, protocol_fingerprint="source"),
+    )
+    values = {
+        "output": tmp_path / "trial",
+        "context": context,
+        "questions": (_question(),),
+        "sample_id": "conv-test",
+        "profile": "full",
+        "p3_version": "p3-v1",
+        "mcp_tools": answer_tool_catalog(),
+        "prompt_template": "Question: {question}",
+        "use_current_judge_prompt": True,
+    }
+    configuration, _state = ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
+    assert configuration.model_dump()["use_current_judge_prompt"] is True
+    ablation._load_or_create_output(**values)  # type: ignore[arg-type]  # noqa: SLF001
+    with pytest.raises(runner.BenchmarkRunError, match="identity changed"):
+        ablation._load_or_create_output(  # type: ignore[arg-type]  # noqa: SLF001
+            **{**values, "use_current_judge_prompt": False}
+        )

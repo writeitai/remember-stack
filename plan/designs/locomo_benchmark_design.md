@@ -721,7 +721,8 @@ the deployment.
 ### 8.1 Explicit development comparisons
 
 The `retrieval-ablation --profile full` comparison supports an explicit answer
-template/model, bounded answer workers, `--judge-model` and repeatable `--item`
+template/model, bounded answer workers, `--judge-model`, explicit
+`--use-current-judge-prompt` and repeatable `--item`
 selection. Selected IDs must be unique and belong to the source sample; use
 canonical source order, and keep the full source corpus available to retrieval.
 Omission selects the entire sample. A subset is a development result rather
@@ -736,7 +737,13 @@ schema and provider policy; default canonical grading remains unchanged.
 An older source protocol name is metadata, not an alternate executable path.
 For a full comparison, first require all non-prompt source contracts to match
 the current protocol: processing profile/generations, provider policy, models,
-schemas, judge wording and loop settings. Use that matching current contract
+schemas, judge wording and loop settings. The explicit
+`--use-current-judge-prompt` option permits only the saved judge-wording hash
+to differ: judging uses the current canonical prompt, and both the opt-in and
+effective prompt hash are frozen into the new evaluation identity. Default
+commands still reject that difference. The source identity, old grades and
+reference answers remain unchanged; switching the choice on resume fails.
+All other source contracts remain required. Use that matching current contract
 for checkpoint/live readiness checks, retaining exact source build revision,
 live ingests, query surface and P3 attestation. A different ingestion contract
 is rejected; no historical registry or source-identity rewrite is introduced.
