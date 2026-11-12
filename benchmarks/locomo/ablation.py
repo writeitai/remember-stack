@@ -14,6 +14,7 @@ from datetime import timezone
 from decimal import Decimal
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from string import Formatter
@@ -216,6 +217,9 @@ class AblationConfiguration(_FrozenModel):
     answer_workers: int = Field(
         default=1, ge=1, le=16, exclude_if=lambda value: value == 1
     )
+    api_timeout_seconds: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False, exclude_if=lambda value: value is None
+    )
     answer_provider_only: tuple[str, ...] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -286,6 +290,9 @@ class AblationSummary(_FrozenModel):
     )
     answer_workers: int = Field(
         default=1, ge=1, le=16, exclude_if=lambda value: value == 1
+    )
+    api_timeout_seconds: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False, exclude_if=lambda value: value is None
     )
     answer_reasoning_effort: str
     judge_provider: str
@@ -388,12 +395,22 @@ def run_retrieval_ablation(
     judge_model: str | None = None,
     use_current_judge_prompt: bool = False,
     item_ids: tuple[str, ...] | None = None,
+    api_timeout_seconds: float | None = None,
 ) -> AblationSummary:
     """Run or resume an isolated access, prompt or answer-model experiment."""
     if use_current_judge_prompt and profile != "full":
         raise runner.ExecutionGuardError(
             "--use-current-judge-prompt requires --profile full"
         )
+    if api_timeout_seconds is not None:
+        if profile != "full":
+            raise runner.ExecutionGuardError(
+                "--api-timeout-seconds requires --profile full"
+            )
+        if not math.isfinite(api_timeout_seconds) or api_timeout_seconds <= 0:
+            raise runner.ExecutionGuardError(
+                "--api-timeout-seconds must be finite and positive"
+            )
     if answer_prompt is not None and profile != "full":
         raise runner.ExecutionGuardError("--answer-prompt requires --profile full")
     if answer_model is not None:
@@ -534,6 +551,7 @@ def run_retrieval_ablation(
             answer_provider_only=answer_provider_only,
             judge_model=judge_model,
             use_current_judge_prompt=use_current_judge_prompt,
+            api_timeout_seconds=api_timeout_seconds,
         )
         _run_answers(
             output=output,
@@ -799,6 +817,7 @@ def _load_or_create_output(
     answer_provider_only: tuple[str, ...] | None = None,
     judge_model: str | None = None,
     use_current_judge_prompt: bool = False,
+    api_timeout_seconds: float | None = None,
 ) -> tuple[AblationConfiguration, AblationState]:
     """Create one immutable experiment identity or validate its exact resume."""
     if (output / _CONFIG_FILE).exists():
@@ -816,6 +835,7 @@ def _load_or_create_output(
             answer_provider_only=answer_provider_only,
             judge_model=judge_model,
             use_current_judge_prompt=use_current_judge_prompt,
+            api_timeout_seconds=api_timeout_seconds,
         )
         persisted = configuration.model_dump(
             mode="python", exclude={"created_at", "fingerprint"}
@@ -848,6 +868,7 @@ def _load_or_create_output(
         answer_provider_only=answer_provider_only,
         judge_model=judge_model,
         use_current_judge_prompt=use_current_judge_prompt,
+        api_timeout_seconds=api_timeout_seconds,
     )
     configuration = AblationConfiguration.model_validate(
         {
@@ -932,6 +953,7 @@ def _configuration_base(
     answer_provider_only: tuple[str, ...] | None = None,
     judge_model: str | None = None,
     use_current_judge_prompt: bool = False,
+    api_timeout_seconds: float | None = None,
 ) -> dict[str, object]:
     """Return every immutable ablation field except time and fingerprint."""
     source = context.configuration
@@ -993,6 +1015,8 @@ def _configuration_base(
     }
     if answer_workers != 1:
         base["answer_workers"] = answer_workers
+    if api_timeout_seconds is not None:
+        base["api_timeout_seconds"] = api_timeout_seconds
     if answer_provider_only is not None:
         base["answer_provider_only"] = answer_provider_only
     if use_current_judge_prompt:
@@ -1622,6 +1646,7 @@ def _summarize(
         answer_provider=configuration.answer_provider,
         answer_model=configuration.answer_model,
         answer_workers=configuration.answer_workers,
+        api_timeout_seconds=configuration.api_timeout_seconds,
         answer_provider_only=configuration.answer_provider_only,
         answer_reasoning_effort=configuration.answer_reasoning_effort,
         judge_provider=configuration.judge_provider,

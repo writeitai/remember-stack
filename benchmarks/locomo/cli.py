@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from decimal import Decimal
 from decimal import InvalidOperation
+import math
 from pathlib import Path
 import sys
 from typing import cast
@@ -21,6 +22,7 @@ from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.runner import answer_sample
 from benchmarks.locomo.runner import BenchmarkRunError
+from benchmarks.locomo.runner import ExecutionGuardError
 from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
@@ -135,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "retrieval-ablation":
             profile = cast(AblationProfile, args.profile)
+            if args.api_timeout_seconds is not None and profile != "full":
+                raise ExecutionGuardError(
+                    "--api-timeout-seconds requires --profile full"
+                )
             full_policy = (
                 protocol_for_key(
                     DEFAULT_PROTOCOL_KEY
@@ -163,7 +169,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             if profile in {"codex-p3-mcp", "mcp", "mcp-p3", "full"}:
                 with MemoryClient(
-                    timeout=run_api_timeout_seconds(run_dir=args.run)
+                    timeout=(
+                        args.api_timeout_seconds
+                        if args.api_timeout_seconds is not None
+                        else run_api_timeout_seconds(run_dir=args.run)
+                    )
                 ) as client:
                     summary = run_retrieval_ablation(
                         run_dir=args.run,
@@ -188,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
                         answer_provider=answer_provider,
                         judge_provider=judge_provider,
                         client=client,
+                        api_timeout_seconds=args.api_timeout_seconds,
                     )
             else:
                 summary = run_retrieval_ablation(
@@ -271,6 +282,14 @@ def _seat_provider(
         ),
         recorder=recorder,
     )
+
+
+def _positive_seconds(value: str) -> float:
+    """Parse a finite positive request timeout before constructing any client."""
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive and finite")
+    return parsed
 
 
 def _positive_decimal(value: str) -> Decimal:
@@ -474,6 +493,11 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="concurrent full-profile questions (1-16, default 1); recorded in identity",
+    )
+    ablation.add_argument(
+        "--api-timeout-seconds",
+        type=_positive_seconds,
+        help="explicit full-profile API request timeout; frozen into experiment identity; default source timeout",
     )
     ablation.add_argument(
         "--answer-provider",
