@@ -13,21 +13,29 @@ all documents. A syntactic equality predicate and lookup fence alone do not
 establish the required work bound.
 
 The disposable prototype widens the **existing** `ix_documents_entity` from
-`(document_entity_id)` to `(document_entity_id, doc_id)`, retaining its predicate
+`(document_entity_id)` to `(document_entity_id, deployment_id, doc_id)`, retaining its predicate
 `document_entity_id IS NOT NULL`, and reads the first matching document ordered
 by `doc_id` with `LIMIT 1 OFFSET 0`. That order has no membership meaning: any
 live document suffices. It gives PostgreSQL an ordered index range tied to the
-member, instead of relying on a guessed position in the document heap. No
+member **and deployment**, instead of relying on a guessed position in the
+document heap. The deployment equality is inside that index range. Ordering
+by doc_id also allows the primary key and the deployment/doc_id unique index
+to compete: a member-only widened index can lose to a deployment-wide ordered
+scan when multiple deployments share the database. The three-key shape avoids
+putting a deployment filter outside the member range. Actual-work gates still
+qualify the pinned PostgreSQL planner; this is not a universal index hint. No
 covering columns, persistent eligibility state, query hint, provider call or
 runtime fallback is introduced. All source/deployment/deletion predicates stay.
 
-The same million-row fixture changes from 1,000,013 examined document tuples to
+The initial **two-key prototype**, measured with both indexes present, changes from 1,000,013 examined document tuples to
 1, and from 75.607ms to 1.161ms. These are single-run local plan observations,
 not a throughput promise. Raw plans, the reproduction and hashes are in
 `plan/analysis/shared_eligibility_qualification_20261112/`. The old and widened
 indexes occupy 6,504,448 and 49,758,208 bytes on this highly duplicated synthetic
 key distribution. The +43,253,760 bytes per million documents includes loss of
 B-tree deduplication on that fixture; it is not a universal per-document price.
+The final three-key shape must additionally be measured with only its one
+working index, in common/absent/many-distinct and 1/2/16-deployment distributions.
 An ordinary unique-document-entity distribution also needs measurement. During
 online replacement both indexes coexist, with I/O/WAL and temporary peak disk
 cost. Native storage capture must include the resulting allocation; this makes
@@ -46,6 +54,57 @@ historical main migrations remain untouched. Qualification stores previously
 created from PR prototypes are recreated from protected original volumes, so
 an edited unreleased revision is never silently stamped over a test store.
 
+## Exact catalog contract and replacement states
+
+The original fixed name is `ix_documents_entity`; the only staging name is
+`ix_documents_entity_d153`. Shape A is the old one-key definition; shape B is
+`(document_entity_id, deployment_id, doc_id)`. Both require public.documents,
+ordinary B-tree, nonunique/nonexclusion, exactly the named keys in order, no
+expressions or INCLUDE columns, default UUID B-tree operator classes and zero
+collation/order-option vectors, and the exact `document_entity_id IS NOT NULL`
+predicate. A valid serving/replacement index must have indisvalid, indisready
+and indislive true. A differently shaped or wrongly bound object at either
+name fails setup. An expected shape alone does not make an invalid index valid.
+
+For upgrade, source shape is A and destination shape B. Downgrade reverses
+those roles and restores the exact original one-key index, using the same
+staging name under the same session migration lock. This is necessary for a
+truthful old-head physical schema; it introduces no deployment rollback service.
+
+| Fixed current name | Staging name | Action |
+| --- | --- | --- |
+| Valid source shape | absent | Build destination concurrently, then recheck |
+| Valid source shape | invalid, exact destination shape | Drop only the own invalid staging index concurrently and rebuild it |
+| Valid source shape | valid exact destination | Drop current concurrently, then rename staging |
+| Invalid/not-ready source shape | valid exact destination | An interrupted concurrent drop: finish that drop, then rename staging |
+| Invalid/not-ready source shape | absent or invalid | Fail; never remove the last object without a validated replacement |
+| absent | valid exact destination | Drop already committed; rename staging |
+| absent | absent or invalid | Fail; no validated native replacement exists |
+| Valid destination shape | absent | Completed catalog change; no-op and continue revision stamping |
+| Destination shape invalid, or destination plus an unexpected staging object | any | Fail for inspection |
+| Any mismatched/foreign object | any | Fail without dropping it |
+
+Every drop/rename is preceded by rechecking the valid own replacement. A
+cancelled DROP INDEX CONCURRENTLY can leave the fixed old index invalid or
+not ready: that is explicitly distinguished from an interrupted CREATE at the
+staging name. No general-purpose recovery journal or release coordinator exists.
+The final rename and revision update use native DDL transactions; each revision
+commits before the following view revision waits on its readers.
+
+Tombstoned documents retain their bridge. The predicate must **not** become
+`deleted_at IS NULL`: native entity-FK cleanup must still find tombstoned rows.
+An all-tombstoned member can therefore examine that member's own history; this
+is measured separately from scanning unrelated documents and remains subject
+to the operation deadline. Keep the OFFSET 0 fence explicitly documented: it
+prevents EXISTS simplification from discarding the ordering/limit.
+
+The current source has no active writer that assigns this compatibility bridge
+(`rg document_entity_id` across src; D134 metadata design §7); archived/custom
+stores can still contain it. Empty bridges have a small empty-index cost.
+The populated synthetic cost above is deliberately shown rather than claimed
+for every current deployment. Native allocation capture must measure each
+store's actual index forks after the upgrade.
+
 Required qualification adds common-key, absent-key and many-distinct-key strata;
 actual tuple/buffer work with millions of unrelated documents; unchanged any-live
 lineage/any-ready-reading semantics; old/new complete rows; concurrent normal
@@ -53,3 +112,12 @@ writers during build; cancellation/rerun at each replacement state; and the
 existing ACL/manifest/capture gates. The new ordering changes the authored view
 AST and requires a real current surface pin update. No ingestion or reuse key
 changes are authorized by this amendment.
+
+
+Primary PostgreSQL 19 documentation, retrieved 2026-11-12:
+[ordered indexes and LIMIT](https://www.postgresql.org/docs/19/indexes-ordering.html),
+[multicolumn leading-key constraints](https://www.postgresql.org/docs/19/indexes-multicolumn.html),
+[concurrent index creation](https://www.postgresql.org/docs/19/sql-createindex.html).
+These explain available paths; the prototype and required work strata establish
+the observed planner behavior. They do not guarantee which path every future
+planner will select.
