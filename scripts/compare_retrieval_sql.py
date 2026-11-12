@@ -90,6 +90,49 @@ def _mention_fence(statement: str) -> str:
     )
 
 
+def _coverage_materialized(statement: str) -> str:
+    """Factor scoped entity visibility out of per-claim coverage aggregation.
+
+    mentions_live is current-content mentions left-joined to entities_current.
+    For an explicit resolved-entity filter, its nullable left join is equivalent
+    to joining the filtered visible entities once, under the same snapshot.
+    """
+    pattern = (
+        r"JOIN LATERAL \(\s*SELECT count\(DISTINCT mention.resolved_entity_id\)::integer AS coverage"
+        r"\s+FROM memory_v1.mentions_live AS mention\s+"
+        r"WHERE mention.deployment_id = c.deployment_id\s+"
+        r"AND mention.claim_id = c.claim_id\s+"
+        r"AND mention.resolved_entity_id = ANY\(CAST\(%\(entity_ids\)s AS uuid\[\]\)\)"
+        r"\s*\) AS scope ON scope.coverage > 0"
+    )
+    rewritten, count = re.subn(
+        pattern,
+        "JOIN candidate_coverage AS scope ON scope.claim_id=c.claim_id AND scope.coverage>0",
+        statement,
+    )
+    if count != 1:
+        raise ValueError(
+            "expected exactly the captured scoped claim coverage aggregate"
+        )
+    return (
+        """
+    WITH visible_scope AS MATERIALIZED (
+        SELECT entity_id FROM memory_v1.entities_current
+        WHERE deployment_id=%(deployment_id)s
+          AND entity_id=ANY(CAST(%(entity_ids)s AS uuid[]))
+    ), candidate_coverage AS MATERIALIZED (
+        SELECT mention.claim_id, count(DISTINCT scope.entity_id)::integer AS coverage
+        FROM v_memory_mention_current_content AS mention
+        JOIN visible_scope AS scope ON scope.entity_id=mention.survivor_entity_id
+        WHERE mention.deployment_id=%(deployment_id)s
+          AND mention.claim_id=ANY(%(claim_ids)s)
+        GROUP BY mention.claim_id
+    )
+    """
+        + rewritten
+    )
+
+
 def _measure(
     *,
     engine: Engine,
@@ -163,6 +206,7 @@ def main() -> None:
     parser.add_argument("--capture", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seconds", type=float, default=20)
+    parser.add_argument("--variants", help="comma-separated prototype names to execute")
     arguments = parser.parse_args()
     if not 0 < arguments.seconds <= 120:
         parser.error("seconds must be positive and at most 120")
@@ -218,7 +262,20 @@ def main() -> None:
                 variants.append(
                     ("claims-fenced", _mention_fence(slow["statement"]), parameters)
                 )
+                for count in (1, 16, len(parameters["claim_ids"])):
+                    variants.append(
+                        (
+                            f"claims-materialized-{count}",
+                            _coverage_materialized(slow["statement"]),
+                            {
+                                **parameters,
+                                "claim_ids": parameters["claim_ids"][:count],
+                            },
+                        )
+                    )
             for name, statement, bindings in variants:
+                if arguments.variants and name not in arguments.variants.split(","):
+                    continue
                 _measure(
                     engine=engine,
                     statement=statement,
