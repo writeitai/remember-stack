@@ -3857,3 +3857,251 @@ def test_capacity_stop_retries_rejected_item_and_preserves_prior_work(
             assert state.judges[first_question.item_id].model_dump_json() == before
     finally:
         raw_client.close()
+
+
+def test_retained_ingestion_fork_keeps_paid_origin_and_current_serving_guards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A serving upgrade reuses exact paid rows without uploading or calling models."""
+    from benchmarks.locomo import reuse
+
+    from rememberstack.model import PipelineReadinessReport
+
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    source = tmp_path / "original"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=source)
+    requests: list[tuple[str, str]] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        """Serve old ingestion, then an upgraded native readiness report."""
+        requests.append((request.method, request.url.path))
+        if request.method == "POST" and request.url.path == "/readiness":
+            payload = _complete_readiness_payload()
+            payload["build_revision"] = runner._repository_revision()
+            return httpx.Response(200, json=payload)
+        return _run_transport(request)
+
+    with httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(transport)
+    ) as raw:
+        client = MemoryClient(client=raw)
+        ingest_sample(
+            run_dir=source,
+            sample_id="conv-test",
+            max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        context = runner.load_recorded_run(run_dir=source)
+        context.state.readiness["conv-test"] = PipelineReadinessReport.model_validate(
+            _complete_readiness_payload()
+        )
+        runner._save_state(run_dir=source, state=context.state)
+        original = {
+            name: (source / name).read_bytes() for name in ("run.json", "state.json")
+        }
+        requests.clear()
+        monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+        derived = tmp_path / "upgraded"
+        config = reuse.prepare_reused_run(
+            source_run=source,
+            output=derived,
+            sample_id="conv-test",
+            execute=True,
+            client=client,
+        )
+        assert config.repository_revision == "b" * 40
+        assert config.retained_ingestion is not None
+        assert config.retained_ingestion.processing_revision == "a" * 40
+        assert config.protocol_fingerprint != context.configuration.protocol_fingerprint
+        result = runner._load_run(run_dir=derived)
+        assert result.state.ingests == context.state.ingests
+        assert result.state.readiness["conv-test"].build_revision == "b" * 40
+        assert not result.state.answers and not result.state.judges
+        assert all(path != "/ingest" for _, path in requests)
+        assert {name: (source / name).read_bytes() for name in original} == original
+        for name, data in original.items():
+            assert (
+                derived / "provenance/retained-ingestion" / name
+            ).read_bytes() == data
+        with pytest.raises(ExecutionGuardError, match="read-only"):
+            ingest_sample(
+                run_dir=derived,
+                sample_id="conv-test",
+                max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(),
+            )
+        with pytest.raises(ExecutionGuardError, match="original processing run"):
+            reuse.prepare_reused_run(
+                source_run=derived,
+                output=tmp_path / "again",
+                sample_id="conv-test",
+                execute=True,
+                client=client,
+            )
+        (derived / "provenance/retained-ingestion/state.json").write_text("{}")
+        with pytest.raises(BenchmarkRunError, match="provenance"):
+            runner._load_run(run_dir=derived)
+
+
+@pytest.mark.parametrize(
+    "drift", ("not-ready", "model", "processing-clock", "serving-revision", "surface")
+)
+def test_retained_fork_rejects_incompatible_live_data_before_upload(
+    drift: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reuse never accepts changed processing, models, builds or query surfaces."""
+    from benchmarks.locomo import reuse
+
+    from rememberstack.model import PipelineReadinessReport
+
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    source = tmp_path / "original"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=source)
+    mode = "ingest"
+    uploads = 0
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        """Vary one real wire contract after creating the original ingestion."""
+        nonlocal uploads
+        if request.url.path == "/ingest":
+            uploads += 1
+        if mode == "reuse" and request.url.path == "/readiness":
+            payload = _complete_readiness_payload()
+            if drift == "not-ready":
+                payload["ready"] = False
+            elif drift == "model":
+                payload["model_bindings"] = {
+                    **EXPECTED_INGEST_MODEL_BINDINGS,
+                    "structurer_model": "other",
+                }
+            elif drift == "processing-clock":
+                version = PipelineReadinessReport.model_validate(payload).versions[0]
+                stages = [stage.model_dump(mode="json") for stage in version.stages]
+                stages[0]["finished_at"] = "2026-07-24T12:00:00Z"
+                payload["versions"] = [
+                    {**version.model_dump(mode="json"), "stages": stages}
+                ]
+            payload["build_revision"] = (
+                "c" * 40 if drift == "serving-revision" else "b" * 40
+            )
+            return httpx.Response(200, json=payload)
+        if (
+            mode == "reuse"
+            and drift == "surface"
+            and request.url.path == "/query/space"
+        ):
+            return httpx.Response(200, json={"surface_manifest_hash": "wrong"})
+        return _run_transport(request)
+
+    with httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(transport)
+    ) as raw:
+        client = MemoryClient(client=raw)
+        ingest_sample(
+            run_dir=source,
+            sample_id="conv-test",
+            max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        context = runner.load_recorded_run(run_dir=source)
+        context.state.readiness["conv-test"] = PipelineReadinessReport.model_validate(
+            _complete_readiness_payload()
+        )
+        runner._save_state(run_dir=source, state=context.state)
+        before = (source / "state.json").read_bytes()
+        mode = "reuse"
+        monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+        with pytest.raises(ExecutionGuardError):
+            reuse.prepare_reused_run(
+                source_run=source,
+                output=tmp_path / "new",
+                sample_id="conv-test",
+                execute=True,
+                client=client,
+            )
+        assert uploads == 1
+        assert (source / "state.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("variant", ("same", "different-origin", "ordinary"))
+def test_retained_summary_merges_only_common_processing_and_serving_identity(
+    variant: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-sample retained provenance survives a validated whole-manifest merge."""
+    from benchmarks.locomo.model import RetainedIngestionOrigin
+
+    from rememberstack.model import PipelineReadinessReport
+
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    original = tmp_path / "original"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=original)
+    context = runner.load_recorded_run(run_dir=original)
+    context.state.readiness = {
+        sample: PipelineReadinessReport.model_validate(_complete_readiness_payload())
+        for sample in ("conv-a", "conv-b")
+    }
+    runner._save_state(run_dir=original, state=context.state)
+    original_files = {
+        name: (original / name).read_bytes() for name in ("run.json", "state.json")
+    }
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+    outputs = []
+    for index, question in enumerate(questions):
+        output = tmp_path / str(index)
+        origin = RetainedIngestionOrigin(
+            sample_id=question.sample_id,
+            processing_revision="c" * 40
+            if index and variant == "different-origin"
+            else "a" * 40,
+            protocol_fingerprint=context.configuration.protocol_fingerprint,
+            configuration_sha256=hashlib.sha256(original_files["run.json"]).hexdigest(),
+            state_sha256=hashlib.sha256(original_files["state.json"]).hexdigest(),
+        )
+        # Different origin is represented by another fully valid original configuration.
+        files = original_files.copy()
+        if index and variant == "different-origin":
+            config = json.loads(files["run.json"])
+            config["repository_revision"] = "c" * 40
+            files["run.json"] = json.dumps(config).encode()
+            origin = origin.model_copy(
+                update={
+                    "configuration_sha256": hashlib.sha256(
+                        files["run.json"]
+                    ).hexdigest()
+                }
+            )
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json",
+            tier="smoke",
+            output=output,
+            retained_ingestion=None if index and variant == "ordinary" else origin,
+        )
+        provenance = output / "provenance/retained-ingestion"
+        provenance.mkdir(parents=True)
+        for name, data in files.items():
+            (provenance / name).write_bytes(data)
+        _write_terminal_records(run_dir=output, questions=(question,))
+        outputs.append(output)
+    if variant == "same":
+        summary = summarize_runs(run_dirs=tuple(outputs))
+        assert summary.questions == 2 and summary.judge_correct == 1
+        assert summary.missing_sample_ids == []
+        assert {row.sample_id for row in summary.retained_ingestion_origins} == {
+            "conv-a",
+            "conv-b",
+        }
+    else:
+        with pytest.raises(BenchmarkRunError, match="retained"):
+            summarize_runs(run_dirs=tuple(outputs))

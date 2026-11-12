@@ -20,6 +20,7 @@ from benchmarks.locomo.protocol import protocol_for_key
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
+from benchmarks.locomo.reuse import prepare_reused_run
 from benchmarks.locomo.runner import answer_sample
 from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ExecutionGuardError
@@ -75,6 +76,21 @@ def main(argv: list[str] | None = None) -> int:
                     k=args.retrieval_k, candidate_k=args.retrieval_candidate_k
                 ),
             )
+            print(configuration.model_dump_json())
+            return 0
+        if args.command == "reuse-ingestion":
+            with MemoryClient(
+                timeout=protocol_for_key(
+                    DEFAULT_PROTOCOL_KEY
+                ).execution_profile.api_timeout_seconds
+            ) as client:
+                configuration = prepare_reused_run(
+                    source_run=args.source_run,
+                    output=args.output,
+                    sample_id=args.sample,
+                    execute=args.execute,
+                    client=client,
+                )
             print(configuration.model_dump_json())
             return 0
         if args.command == "ingest":
@@ -377,6 +393,15 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         help="internal candidates per search channel (1-400; default max(4*k, 60))",
     )
+
+    reuse = commands.add_parser(
+        "reuse-ingestion",
+        help="derive a current serving execution from compatible recorded ingestion",
+    )
+    reuse.add_argument("--source-run", type=Path, required=True)
+    reuse.add_argument("--output", type=Path, required=True)
+    reuse.add_argument("--sample", required=True)
+    reuse.add_argument("--execute", action="store_true")
 
     ingest = commands.add_parser(
         "ingest", help="upload one sample to a clean isolated deployment"

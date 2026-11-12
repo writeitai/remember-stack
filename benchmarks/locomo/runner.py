@@ -59,6 +59,7 @@ from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
+from benchmarks.locomo.model import RetainedIngestionOrigin
 from benchmarks.locomo.model import RetrievedClaim
 from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import RunState
@@ -181,6 +182,7 @@ def prepare_run(
     protocol: ProtocolKey = DEFAULT_PROTOCOL_KEY,
     retrieval_budget: ContextRetrievalBudget | None = None,
     images: Path | None = None,
+    retained_ingestion: RetainedIngestionOrigin | None = None,
 ) -> RunConfiguration:
     """Validate, fingerprint, and render a local run without remote calls."""
     selected_protocol = protocol_for_key(protocol)
@@ -266,6 +268,8 @@ def prepare_run(
     base["execution_profile"] = selected_protocol.execution_profile.model_dump(
         mode="json"
     )
+    if retained_ingestion is not None:
+        base["retained_ingestion"] = retained_ingestion.model_dump(mode="json")
     configuration = RunConfiguration(
         **base,
         prepared_at=datetime.now(timezone.utc),
@@ -443,6 +447,10 @@ def ingest_sample(
 ) -> tuple[IngestRecord, ...]:
     """Upload one conversation's sessions through the public SDK."""
     context = _load_run(run_dir=run_dir)
+    if context.configuration.retained_ingestion is not None:
+        raise ExecutionGuardError(
+            "retained-ingestion runs are read-only; use the original processing run"
+        )
     _guard_remote(
         context=context,
         execute=execute,
@@ -1078,6 +1086,11 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
             combined_run / "documents",
             copy_function=_link_or_copy,
         )
+        if contexts[0].configuration.retained_ingestion is not None:
+            shutil.copytree(
+                first_run / "provenance/retained-ingestion",
+                combined_run / "provenance/retained-ingestion",
+            )
         _atomic_model(path=combined_run / _STATE_FILE, value=combined_state)
         summary = summarize_run(run_dir=combined_run)
     missing_sample_ids = [
@@ -1089,6 +1102,11 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
         update={
             "merged_run_count": len(run_dirs),
             "missing_sample_ids": missing_sample_ids,
+            "retained_ingestion_origins": tuple(
+                context.configuration.retained_ingestion
+                for context in contexts
+                if context.configuration.retained_ingestion is not None
+            ),
         }
     )
     if contexts[0].configuration.protocol_name == PROTOCOL_NAME:
@@ -1109,8 +1127,34 @@ def _require_merge_identity(
         "item_ids_sha256",
     )
     reference = contexts[0].configuration
+    origin = reference.retained_ingestion
     for run_dir, context in zip(run_dirs[1:], contexts[1:], strict=True):
+        actual_origin = context.configuration.retained_ingestion
+        if (origin is None) != (actual_origin is None):
+            raise BenchmarkRunError("cannot merge retained and ordinary runs")
+        if origin is not None and actual_origin is not None:
+            if (origin.processing_revision, origin.protocol_fingerprint) != (
+                actual_origin.processing_revision,
+                actual_origin.protocol_fingerprint,
+            ):
+                raise BenchmarkRunError(
+                    "cannot merge different retained processing origins"
+                )
+            excluded = {
+                "retained_ingestion",
+                "protocol_fingerprint",
+                "prepared_at",
+                "dataset_path",
+            }
+            if reference.model_dump(
+                exclude=excluded
+            ) != context.configuration.model_dump(exclude=excluded):
+                raise BenchmarkRunError(
+                    "cannot merge different retained serving identities"
+                )
         for field in fields:
+            if field == "protocol_fingerprint" and origin is not None:
+                continue
             expected = getattr(reference, field)
             actual = getattr(context.configuration, field)
             if actual != expected:
@@ -1378,6 +1422,13 @@ def _validate_run(
         base["execution_profile"] = configuration.execution_profile.model_dump(
             mode="json"
         )
+    if configuration.retained_ingestion is not None:
+        base["retained_ingestion"] = configuration.retained_ingestion.model_dump(
+            mode="json"
+        )
+        from benchmarks.locomo.reuse import validate_origin
+
+        validate_origin(run_dir=run_dir, configuration=configuration)
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
     if current_pins:

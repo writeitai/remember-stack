@@ -972,7 +972,11 @@ def _configuration_base(
         "schema_name": _SCHEMA,
         "source_protocol_name": source.protocol_name,
         "source_protocol_fingerprint": source.protocol_fingerprint,
-        "source_processing_revision": source.repository_revision,
+        "source_processing_revision": (
+            source.retained_ingestion.processing_revision
+            if source.retained_ingestion is not None
+            else source.repository_revision
+        ),
         "ablation_runner_revision": runner._repository_revision(),  # noqa: SLF001
         "tier": source.tier,
         "sample_id": sample_id,

@@ -19782,6 +19782,41 @@ The summary reports:
   failure counts. Ingest cost is not in the summary; it is on the
   deployment's cost ledger.
 
+### Scoring retained ingestion after a serving-only upgrade
+
+Use `reuse-ingestion` to prepare a new current-code run over an already processed
+conversation. First migrate its existing database with the normal setup command
+and publish/verify its current projections. Do not rerun ingestion. Then run:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo reuse-ingestion \
+  --source-run /private/original-run --sample conv-42 \
+  --output /private/current-serving-run --execute
+```
+
+This command makes readiness and query-surface requests, but no model call and no
+upload. It requires identical document bytes, dataset selection, processing
+generations, model bindings and per-version processing rows. Changed extraction
+or embedding generations require a fresh ingestion instead. Current code/build,
+public query-surface and exact live-document guards still apply.
+
+The new run records the current serving revision and surface fingerprint. Its
+`retained_ingestion` origin records the original processing revision/fingerprint
+and hashes of the original configuration and state; their exact bytes are saved
+under `provenance/retained-ingestion/`. Original files and results stay unchanged.
+New answer/judge state starts empty. Ingestion is refused for the derived run.
+Always derive from the original processing run, rather than another scoring fork.
+Normal `summarize --run ... --run ...` can combine disjoint retained forks only
+when their serving identities and original processing revision/fingerprint match.
+Its summary retains all per-sample origins; mixing ordinary and retained runs fails.
+
+Keep the matching P3 mount root and frozen dataset available to the new run;
+this command does not republish or copy the mount. Use normal answer/judge or
+`retrieval-ablation --profile full` with that run. Native store backups then name
+the actual serving revision for restoration, while retaining the paid processing
+origin. A partially prepared output is inspected and removed explicitly before
+retrying; the command refuses a nonempty output. No automatic paid retry occurs.
+
 ### The current protocol
 
 Execution uses one profile, `RS-LoCoMo-Full-v45` (key `full-v45`). It selects

@@ -132,6 +132,16 @@ class ExecutionProfile(FrozenModel):
     api_timeout_seconds: float = Field(gt=0)
 
 
+class RetainedIngestionOrigin(FrozenModel):
+    """Original paid processing behind a separately prepared serving execution."""
+
+    sample_id: NonEmpty
+    processing_revision: NonEmpty
+    protocol_fingerprint: NonEmpty
+    configuration_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    state_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
@@ -174,6 +184,9 @@ class RunConfiguration(FrozenModel):
     judge_schema_sha256: NonEmpty
     protocol_fingerprint: NonEmpty
     execution_profile: ExecutionProfile | None = None
+    retained_ingestion: RetainedIngestionOrigin | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class PreparedDocument(FrozenModel):
@@ -514,6 +527,9 @@ class RunSummary(FrozenModel):
     ] = "deployment cost ledger; not available through benchmark SDK"
     merged_run_count: int = Field(default=1, ge=1)
     missing_sample_ids: list[NonEmpty] = Field(default_factory=list)
+    retained_ingestion_origins: tuple[RetainedIngestionOrigin, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @model_serializer(mode="wrap")
     def omit_single_run_merge_fields(
