@@ -1399,9 +1399,27 @@ def test_d118_refuses_lossy_downgrade() -> None:
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
     command.upgrade(config=config, revision="head")
-    with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
-        command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_48_0069"
+    try:
+        with pytest.raises(
+            RuntimeError, match="explicitly reviewed restore/conversion"
+        ):
+            command.downgrade(config=config, revision="p9_27_0048")
+        # D153 commits native revisions separately, including its concurrent
+        # index phases. A failed older revision leaves its own schema intact;
+        # it cannot undo earlier committed revisions in this invocation.
+        assert _head_revision(database_url=database_url) == "p9_31_0052"
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                assert connection.exec_driver_sql(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                    " WHERE table_schema='public' AND table_name='chunk_claims'"
+                    " AND column_name='evidence_spans' AND is_nullable='NO')"
+                ).scalar_one()
+        finally:
+            engine.dispose()
+    finally:
+        command.upgrade(config=config, revision="head")
 
 
 def test_d122_refuses_a_populated_store() -> None:
