@@ -106,6 +106,7 @@ class NativeCapturedStorageView:
             raise NativeStorageCaptureRefused("native_view_not_bound")
         self._connection = connection
         self._identity = acquisition.identity
+        self.identity = acquisition.identity
         self._deployment_id = acquisition.deployment_id
         self.storage: NativeStorageConfiguration = acquisition.storage
         self.allocation_sample = allocation_sample
