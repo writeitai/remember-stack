@@ -517,6 +517,31 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         problems.append(
             "mention chunk index must be valid with every partition attached"
         )
+    document_bridge_ready = connection.execute(
+        text("""
+        SELECT coalesce((SELECT idx.indisvalid AND idx.indisready AND idx.indislive
+          AND idx.indrelid='public.documents'::regclass
+          AND pg_get_indexdef(idx.indexrelid)=
+            'CREATE INDEX ix_documents_entity ON public.documents USING btree (document_entity_id, deployment_id, ((doc_id)::text) COLLATE "C") WHERE (document_entity_id IS NOT NULL)'
+          AND ARRAY(SELECT ns.nspname||'.'||opclass.opcname
+              FROM unnest(idx.indclass::oid[]) WITH ORDINALITY key(class_oid,n)
+              JOIN pg_opclass opclass ON opclass.oid=key.class_oid
+              JOIN pg_namespace ns ON ns.oid=opclass.opcnamespace ORDER BY key.n)
+            = ARRAY['pg_catalog.uuid_ops','pg_catalog.uuid_ops','pg_catalog.text_ops']
+          AND ARRAY(SELECT CASE WHEN key.collation_oid=0 THEN ''
+              ELSE ns.nspname||'.'||coll.collname END
+              FROM unnest(idx.indcollation::oid[]) WITH ORDINALITY key(collation_oid,n)
+              LEFT JOIN pg_collation coll ON coll.oid=key.collation_oid
+              LEFT JOIN pg_namespace ns ON ns.oid=coll.collnamespace ORDER BY key.n)
+            = ARRAY['','','pg_catalog.C']
+          FROM pg_index idx WHERE idx.indexrelid=to_regclass('public.ix_documents_entity')),false)
+          AND to_regclass('public.ix_documents_entity_d153') IS NULL
+    """)
+    ).scalar_one()
+    if not document_bridge_ready:
+        problems.append(
+            "document bridge index must have the valid D153 ordered shape with no staging object"
+        )
     views = _named_relations(connection=connection, names=EXPECTED_VIEWS, kinds=("v",))
     query_space_views = _string_values(
         connection=connection,

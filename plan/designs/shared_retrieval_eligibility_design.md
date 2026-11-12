@@ -3,7 +3,10 @@
 Status: accepted design on this PR's merge (D153); implementation and
 qualification are pending. Claude Opus 5.5 HIGH approved the contract at
 `431900b1d` with zero remaining blockers; [review and execution identity](../analysis/retrieval_eligibility_reviews_20261112/opus-r3-review.md).
-The owner authorized implementation after this review. This amends D142/D149's
+The owner authorized implementation after this review. The ordered bridge
+amendment was approved at `68e156154` ([Opus review](https://github.com/writeitai/remember-stack/pull/587#issuecomment-6830637190));
+its [analysis and rejected UUID-order plans](../analysis/ordered_document_bridge_20261112.md)
+record why the existing document index must change. This amends D142/D149's
 physical execution and D23's unsupported UUID-derived pruning assumption;
 eligibility, ranking, finite budgets and D56 reuse semantics remain intact.
 
@@ -107,7 +110,7 @@ by the next, and uses a lookup boundary where needed to prevent reordering:
 | Mention's chunk | Partition primary-key prefix `chunk_id`; check the mention's deployment and `doc_id` before other joins |
 | Chunk's version | `document_versions` primary key `version_id`, through the existing visible-version relation with deployment/document checks |
 | Recorded reading | `document_representations` primary key `representation_id`, checked against the chunk's version/deployment and `status=ready` |
-| Independent document bridge | Correlated per-member probe through `ix_documents_entity (document_entity_id)`, plus deployment and nondeleted document; no all-document hashed scan |
+| Independent document bridge | Per-member/deployment probe through the ordered `ix_documents_entity` definition below, with the nondeleted-document predicate; no all-document hashed or competing deployment-wide ordered scan |
 
 The mention/chunk lookups must precede the broader version/reading joins.
 An entity qualifies through **any ready reading of any nondeleted version of
@@ -123,6 +126,85 @@ aggregates. Visibility with zero current counts remains valid. Missing,
 inactive, merged-away and provenance-free requested entities remain absent;
 merge cycles/dangling redirects and deployment boundaries keep their existing
 meaning, without an invented recursion-depth cap.
+
+#### Ordered document bridge and its online index replacement
+
+A missing bridge must not scan unrelated documents. Under skew, an equality
+predicate with `OFFSET 0` can still choose a sequential scan. An ordinary
+UUID `ORDER BY doc_id LIMIT 1` can instead choose the existing deployment/UUID
+unique index, scanning unrelated member IDs while expecting an early match.
+Measured million-document fixtures demonstrated both failures. Widen the
+existing `ix_documents_entity`, retaining one serving index, to:
+
+```sql
+CREATE INDEX ix_documents_entity ON public.documents
+  (document_entity_id, deployment_id,
+   ((doc_id::text) COLLATE pg_catalog."C"))
+  WHERE document_entity_id IS NOT NULL;
+```
+
+The correlated membership probe keeps all three predicates (deployment,
+member and `deleted_at IS NULL`) and uses `ORDER BY document.doc_id::text
+COLLATE pg_catalog."C" LIMIT 1 OFFSET 0`. This order selects any live bridge;
+it is not relevance, temporal or identity order. Only this native expression
+index supplies it without sorting. `OFFSET 0` prevents PostgreSQL from
+simplifying EXISTS and discarding the ordering. Fixed C collation gives byte
+order independent of the database default or external ICU/glibc collation
+versions. A UUID's canonical text is always bounded to 36 characters. No
+user value, public row, scoring input or reuse key changes.
+
+Tombstoned documents remain indexed: entity FK cleanup must find them too.
+Do not add `deleted_at IS NULL` to the index predicate. A member with only
+tombstoned bridges may scan its own history; qualify that cost separately
+from unrelated-row amplification and retain the operation deadline. The
+current source does not actively assign this compatibility bridge (D134 §7),
+but historical/custom stores may populate it. Qualification must include
+populated data, multiple deployments, absent/common/distinct keys and generic
+prepared plans, using only the final serving index. This is actual-work
+qualification of the supported planner, not a promise about future planners
+or operator-added competing expression indexes.
+
+The unreleased index revision builds only `ix_documents_entity_d153` as the
+replacement, concurrently under the native session migration lock. Shape A is
+the exact original one-UUID-key index; shape B is the definition above. Both
+are public.documents ordinary nonunique/nonexclusion B-trees, with precisely
+the stated key order, predicate and no INCLUDE columns. Require pg_catalog
+UUID opclasses on UUID keys, pg_catalog text_ops on the expression, zero order
+options, no expression in A and exactly UUID-to-text in B. Only B's third key
+has pg_catalog C collation. A usable index has indisvalid, indisready and
+indislive true. Any differently shaped/bound object at either fixed name
+fails setup without being removed.
+
+| Serving name | Staging name | Native action |
+| --- | --- | --- |
+| Valid source | absent | Build exact destination concurrently |
+| Valid source | invalid exact destination | Drop/rebuild only own invalid staging index |
+| Valid source | valid destination | Drop source concurrently, rename staging |
+| Invalid/not-ready source | valid destination | Finish interrupted concurrent drop, rename staging |
+| Invalid/not-ready source | absent or invalid | Fail; no validated replacement |
+| absent | valid destination | Finish rename after committed drop |
+| absent | absent or invalid | Fail; no validated replacement |
+| Valid destination | absent | Completed replacement; continue revision stamp |
+| Destination invalid or unexpected staging beside destination | any | Fail for inspection |
+| Foreign/mismatched object | any | Fail without adopting/removing it |
+
+Recheck the exact ready replacement before drop and rename. Upgrade uses A→B;
+native downgrade uses B→A with the same fixed staging name, restoring the old
+physical schema. A cancelled concurrent drop may leave the source invalid or
+not ready; a cancelled create leaves the own staging index invalid. These are
+native DDL completion states, not a journal or release recovery framework.
+Each revision commits before the subsequent ordinary view revision can wait
+on readers. Reject leftover staging objects and a wrong serving shape in the
+current catalog contract. Previously built unmerged prototype stores are
+recreated from protected originals when unreleased migration text changes;
+never stamp edited SQL over them.
+
+The index increases storage and write/build I/O. In a highly duplicated
+million-document fixture its measured size is 95,600,640 bytes versus
+6,504,448 bytes for the old index; ordinary distinct-key costs must also be
+recorded. Both coexist temporarily during replacement, adding peak disk/WAL.
+Measure rather than claiming a universal per-document cost or free capacity;
+D152 native allocation capture includes the actual resulting forks.
 
 #### Partition cost is explicit, not claimed away
 

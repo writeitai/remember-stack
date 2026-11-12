@@ -35191,6 +35191,14 @@
                                 }
                               ],
                               "groupDistinct": false,
+                              "limitCount": {
+                                "@": "A_Const",
+                                "isnull": false,
+                                "val": {
+                                  "@": "Integer",
+                                  "ival": 1
+                                }
+                              },
                               "limitOffset": {
                                 "@": "A_Const",
                                 "isnull": false,
@@ -35207,6 +35215,60 @@
                                 "#": "SetOperation",
                                 "name": "SETOP_NONE"
                               },
+                              "sortClause": [
+                                {
+                                  "@": "SortBy",
+                                  "node": {
+                                    "@": "CollateClause",
+                                    "arg": {
+                                      "@": "TypeCast",
+                                      "arg": {
+                                        "@": "ColumnRef",
+                                        "fields": [
+                                          {
+                                            "@": "String",
+                                            "sval": "document"
+                                          },
+                                          {
+                                            "@": "String",
+                                            "sval": "doc_id"
+                                          }
+                                        ]
+                                      },
+                                      "typeName": {
+                                        "@": "TypeName",
+                                        "names": [
+                                          {
+                                            "@": "String",
+                                            "sval": "text"
+                                          }
+                                        ],
+                                        "pct_type": false,
+                                        "setof": false,
+                                        "typemod": -1
+                                      }
+                                    },
+                                    "collname": [
+                                      {
+                                        "@": "String",
+                                        "sval": "pg_catalog"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "C"
+                                      }
+                                    ]
+                                  },
+                                  "sortby_dir": {
+                                    "#": "SortByDir",
+                                    "name": "SORTBY_DEFAULT"
+                                  },
+                                  "sortby_nulls": {
+                                    "#": "SortByNulls",
+                                    "name": "SORTBY_NULLS_DEFAULT"
+                                  }
+                                }
+                              ],
                               "targetList": [
                                 {
                                   "@": "ResTarget",
@@ -48338,5 +48400,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "37a481c1b2771dc14e69e084db38bf7b7f275e32271ceadaf07ebd8f90bd57f3"
+  "surface_manifest_hash": "6a5b81486cba3daccb109b3d1d936e048a6557afa7dd4eac1dbd6f9fde33578c"
 }

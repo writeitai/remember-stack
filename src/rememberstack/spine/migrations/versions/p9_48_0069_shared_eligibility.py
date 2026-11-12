@@ -71,7 +71,11 @@ WHERE e.status = 'active'
       WHERE document.deployment_id = e.deployment_id
         AND document.document_entity_id = members.entity_id
         AND document.deleted_at IS NULL
-      OFFSET 0
+      -- Only the bridge expression index supplies this fixed byte order.
+      -- UUID-key ordering can select a deployment-wide scan under skew.
+      -- OFFSET prevents EXISTS simplification from dropping ORDER BY/LIMIT.
+      ORDER BY document.doc_id::text COLLATE pg_catalog."C"
+      LIMIT 1 OFFSET 0
     ) OR EXISTS (
       SELECT 1
       FROM LATERAL (

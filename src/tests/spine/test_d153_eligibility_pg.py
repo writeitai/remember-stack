@@ -712,10 +712,26 @@ def test_duplicate_fact_nomination_keeps_original_multiplicity(pair: _Pair) -> N
         assert [row["nomination_rank"] for row in rows] == [1, 2]
 
 
+@pytest.mark.parametrize(
+    "deployments,tombstones,distinct",
+    [
+        (1, False, False),
+        (2, False, False),
+        (16, False, False),
+        (16, True, False),
+        (1, False, True),
+    ],
+)
 def test_document_bridge_work_ignores_unrelated_lineages(
-    pair: _Pair, record_property: Any
+    pair: _Pair,
+    record_property: Any,
+    deployments: int,
+    tombstones: bool,
+    distinct: bool,
 ) -> None:
-    """Qualify point/short-circuit bridge work at configurable synthetic corpus scale."""
+    """Qualify actual migrated bridge work under skew, generic plans and ordinary keys."""
+    import json
+
     from pydantic import Field
     from pydantic_settings import BaseSettings
     from pydantic_settings import SettingsConfigDict
@@ -727,56 +743,128 @@ def test_document_bridge_work_ignores_unrelated_lineages(
             env_prefix="REMEMBERSTACK_D153_QUALIFICATION_"
         )
         documents: int = Field(default=1000, ge=1000, le=2000000)
+        evidence_dir: Path | None = None
 
-    count = Scale().documents
+    scale = Scale()
+    count = min(scale.documents, 100000) if distinct else scale.documents
+    owners = [pair.corpus.entity["ghost"]] + [uuid4() for _ in range(deployments - 1)]
+    deployment_ids = [_DEPLOYMENT_ID] + [uuid4() for _ in range(deployments - 1)]
     with pair.target.connect() as connection:
+        for number in range(1, deployments):
+            connection.execute(
+                text(
+                    "INSERT INTO deployments(deployment_id,slug,name,raw_bucket,artifacts_bucket,corpusfs_bucket) VALUES(:id,:slug,'D153 synthetic','mem://r','mem://a','mem://c')"
+                ),
+                {"id": deployment_ids[number], "slug": "d153-bridge-" + str(number)},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO entities(entity_id,deployment_id,canonical_name,normalized_name) VALUES(:entity,:deployment,'Bridge owner','bridge owner')"
+                ),
+                {"entity": owners[number], "deployment": deployment_ids[number]},
+            )
+        if distinct:
+            connection.execute(
+                text(
+                    "INSERT INTO entities(entity_id,deployment_id,canonical_name,normalized_name) SELECT md5('d153-distinct-'||n)::uuid,:deployment,'Distinct bridge '||n,'distinct bridge '||n FROM generate_series(2,:count) series(n)"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "count": count},
+            )
         connection.execute(
             text(
                 "INSERT INTO documents SELECT copy.* FROM documents original CROSS JOIN generate_series(1,:count) series(n)"
                 " CROSS JOIN LATERAL jsonb_populate_record(NULL::documents,to_jsonb(original)||jsonb_build_object("
                 " 'doc_id',md5('d153-bridge-'||n)::uuid,'source_ref','d153-bridge-'||n,"
-                " 'current_version_id',NULL,'document_entity_id',CAST(:entity AS uuid))) copy"
+                " 'current_version_id',NULL,'deployment_id',(CAST(:deployments AS uuid[]))[1+mod(n,:total)],"
+                " 'document_entity_id',CASE WHEN CAST(:distinct AS boolean) AND n>1 THEN md5('d153-distinct-'||n)::uuid ELSE (CAST(:owners AS uuid[]))[1+mod(n,:total)] END,"
+                " 'deleted_at',CASE WHEN CAST(:tombstones AS boolean) AND mod(n,:total)=0 THEN '2025-01-01'::timestamptz ELSE NULL END)) copy"
                 " WHERE original.doc_id=:doc"
             ),
             {
                 "count": count,
-                "entity": pair.corpus.entity["ghost"],
+                "deployments": deployment_ids,
+                "owners": owners,
+                "total": deployments,
+                "distinct": distinct,
+                "tombstones": tombstones,
                 "doc": pair.corpus.doc["primary"],
             },
         )
         connection.exec_driver_sql("ANALYZE documents")
+        connection.exec_driver_sql("ANALYZE entities")
         connection.exec_driver_sql("SET LOCAL jit=off")
-        parameters = {
-            "deployment_id": _DEPLOYMENT_ID,
-            "entities": [pair.corpus.entity["alice"], pair.corpus.entity["ghost"]],
-        }
-        sql = "SELECT entity_id FROM memory_v1.entities_current WHERE deployment_id=:deployment_id AND entity_id=ANY(CAST(:entities AS uuid[]))"
-        plan = connection.execute(
-            text("EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) " + sql), parameters
-        ).scalar_one()[0]
-        assert plan["Plan"]["Actual Rows"] == 2
-        document_work = [
-            node
-            for node in _plan_nodes(node=plan["Plan"])
-            if node.get("Alias") == "document"
-        ]
-        assert document_work
-        work = sum(
-            (node.get("Actual Rows", 0) + node.get("Rows Removed by Filter", 0))
-            * node.get("Actual Loops", 0)
-            for node in document_work
+        assert connection.exec_driver_sql(
+            "SELECT count(*)=1 FROM pg_indexes WHERE starts_with(indexname,'ix_documents_entity')"
+        ).scalar_one()
+        # Explicit PREPARE exercises both server plan modes. Membership sees
+        # outer variables in either mode; both must retain the same work bound.
+        connection.exec_driver_sql(
+            "PREPARE d153_bridge(uuid,uuid[]) AS SELECT entity_id FROM memory_v1.entities_current WHERE deployment_id=$1 AND entity_id=ANY($2)"
         )
-        assert work < 100
-        record_property("synthetic_bridge_documents", count)
-        record_property("bridge_tuple_work", work)
-        record_property("query_execution_ms", plan["Execution Time"])
-        record_property("query_planning_ms", plan["Planning Time"])
-        record_property(
-            "documents_allocated_bytes",
-            connection.exec_driver_sql(
-                "SELECT pg_total_relation_size('documents')"
+        report: dict[str, Any] = {
+            "documents": count,
+            "deployments": deployments,
+            "tombstones": tombstones,
+            "distinct": distinct,
+            "source": "actual head migration, no injected DDL",
+            "provider_calls": 0,
+            "plans": {},
+            "index_bytes": connection.exec_driver_sql(
+                "SELECT pg_relation_size('ix_documents_entity')"
             ).scalar_one(),
-        )
+        }
+        try:
+            ids = [pair.corpus.entity["alice"], pair.corpus.entity["ghost"]]
+            execute = (
+                "EXECUTE d153_bridge('"
+                + str(_DEPLOYMENT_ID)
+                + "'::uuid,ARRAY["
+                + ",".join("'" + str(identifier) + "'::uuid" for identifier in ids)
+                + "] )"
+            )
+            for mode in ("force_custom_plan", "force_generic_plan"):
+                connection.exec_driver_sql("SET LOCAL plan_cache_mode=" + mode)
+                plan = connection.exec_driver_sql(
+                    "EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) " + execute
+                ).scalar_one()[0]
+                assert plan["Plan"]["Actual Rows"] == (1 if tombstones else 2)
+                nodes = [
+                    node
+                    for node in _plan_nodes(node=plan["Plan"])
+                    if node.get("Alias") == "document"
+                ]
+                assert nodes
+                work = sum(
+                    (node.get("Actual Rows", 0) + node.get("Rows Removed by Filter", 0))
+                    * node.get("Actual Loops", 0)
+                    for node in nodes
+                )
+                assert work <= (count // deployments + 10 if tombstones else 10)
+                report["plans"][mode] = {"tuple_work": work, "plan": plan}
+                record_property(mode + "_bridge_work", work)
+                record_property(mode + "_execution_ms", plan["Execution Time"])
+            # The leading entity key also serves older prefix callers and
+            # tombstoned-row FK cleanup; qualify their complete required range.
+            prefix = connection.execute(
+                text(
+                    "EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) SELECT doc_id FROM documents WHERE document_entity_id=:entity"
+                ),
+                {"entity": owners[0]},
+            ).scalar_one()[0]
+            report["prefix_plan"] = prefix
+            assert prefix["Plan"]["Actual Rows"] == (
+                1 if distinct else count // deployments
+            )
+            if scale.evidence_dir is not None:
+                scale.evidence_dir.mkdir(parents=True, exist_ok=True)
+                (
+                    scale.evidence_dir
+                    / f"bridge-{deployments}-{tombstones}-{distinct}.json"
+                ).write_text(json.dumps(report, indent=2, default=str) + "\n")
+            record_property("synthetic_bridge_documents", count)
+            record_property("ordered_index_bytes", report["index_bytes"])
+        finally:
+            connection.exec_driver_sql("DEALLOCATE d153_bridge")
 
 
 def test_statement_proofs_do_not_outlive_their_repeatable_read_snapshot(
@@ -974,3 +1062,176 @@ def test_legacy_invalid_redirects_cannot_borrow_foreign_provenance(
             old=old, new=new, entities=[*pair.corpus.entity.values(), foreign_entity]
         )
         _assert_facts(old=old, new=new)
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["built", "dropped", "renamed", "wrong_staging", "wrong_serving", "leftover"],
+)
+def test_document_index_replacement_catalog_states(pair: _Pair, state: str) -> None:
+    """Complete only native own-name states and refuse colliding objects intact."""
+    from rememberstack.spine.migrations.versions.p9_47_0068_mention_chunk_lookup import (
+        _replace_document_index,
+    )
+
+    with pair.target.connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as connection:
+        connection.exec_driver_sql("SELECT pg_advisory_lock(1919251316,153)")
+        try:
+            _replace_document_index(connection=connection, ordered=False)
+            if state in ("built", "dropped"):
+                connection.exec_driver_sql(
+                    'CREATE INDEX ix_documents_entity_d153 ON documents(document_entity_id,deployment_id,((doc_id::text) COLLATE pg_catalog."C")) WHERE document_entity_id IS NOT NULL'
+                )
+                if state == "dropped":
+                    connection.exec_driver_sql("DROP INDEX ix_documents_entity")
+            if state in ("renamed", "leftover"):
+                _replace_document_index(connection=connection, ordered=True)
+            if state in ("wrong_staging", "leftover"):
+                connection.exec_driver_sql(
+                    "CREATE INDEX ix_documents_entity_d153 ON documents(document_entity_id) WHERE document_entity_id IS NOT NULL"
+                )
+            if state == "wrong_serving":
+                connection.exec_driver_sql("DROP INDEX ix_documents_entity")
+                connection.exec_driver_sql(
+                    "CREATE INDEX ix_documents_entity ON documents(document_entity_id DESC) WHERE document_entity_id IS NOT NULL"
+                )
+            if state in ("wrong_staging", "wrong_serving", "leftover"):
+                before = list(
+                    connection.exec_driver_sql(
+                        "SELECT indexname,indexdef FROM pg_indexes WHERE starts_with(indexname,'ix_documents_entity') ORDER BY indexname"
+                    )
+                )
+                with pytest.raises(RuntimeError, match="collides|staging"):
+                    _replace_document_index(connection=connection, ordered=True)
+                assert (
+                    list(
+                        connection.exec_driver_sql(
+                            "SELECT indexname,indexdef FROM pg_indexes WHERE starts_with(indexname,'ix_documents_entity') ORDER BY indexname"
+                        )
+                    )
+                    == before
+                )
+            else:
+                _replace_document_index(connection=connection, ordered=True)
+                assert connection.exec_driver_sql(
+                    "SELECT indisvalid AND indisready AND indislive FROM pg_index WHERE indexrelid='ix_documents_entity'::regclass"
+                ).scalar_one()
+                assert connection.exec_driver_sql(
+                    "SELECT to_regclass('ix_documents_entity_d153') IS NULL"
+                ).scalar_one()
+        finally:
+            connection.exec_driver_sql("DROP INDEX IF EXISTS ix_documents_entity_d153")
+            if state == "wrong_serving":
+                connection.exec_driver_sql("DROP INDEX ix_documents_entity")
+                connection.exec_driver_sql(
+                    "CREATE INDEX ix_documents_entity ON documents(document_entity_id) WHERE document_entity_id IS NOT NULL"
+                )
+            _replace_document_index(connection=connection, ordered=True)
+            connection.exec_driver_sql("SELECT pg_advisory_unlock(1919251316,153)")
+
+
+def test_document_index_replacement_resumes_cancelled_native_ddl(pair: _Pair) -> None:
+    """Real cancelled CREATE and DROP phases complete without losing the serving path."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from time import monotonic
+    from time import sleep
+
+    from sqlalchemy.exc import DBAPIError
+
+    from rememberstack.spine.migrations.versions.p9_47_0068_mention_chunk_lookup import (
+        _replace_document_index,
+    )
+
+    ready = Event()
+    backend: list[int] = []
+
+    def execute_ddl(*, sql: str) -> str:
+        """Leave PostgreSQL's own interrupted catalog state, never edit pg_index."""
+        with pair.target.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        ) as connection:
+            backend.append(
+                int(connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one())
+            )
+            ready.set()
+            try:
+                connection.exec_driver_sql(sql)
+            except DBAPIError as error:
+                return str(getattr(error.orig, "sqlstate", None))
+        return "unexpected_success"
+
+    with pair.target.connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as migration:
+        migration.exec_driver_sql("SELECT pg_advisory_lock(1919251316,153)")
+        try:
+            for phase in ("create", "drop"):
+                _replace_document_index(connection=migration, ordered=False)
+                if phase == "drop":
+                    migration.exec_driver_sql(
+                        'CREATE INDEX CONCURRENTLY ix_documents_entity_d153 ON documents(document_entity_id,deployment_id,((doc_id::text) COLLATE pg_catalog."C")) WHERE document_entity_id IS NOT NULL'
+                    )
+                ready.clear()
+                backend.clear()
+                with (
+                    pair.target.connect() as writer,
+                    ThreadPoolExecutor(max_workers=1) as executor,
+                ):
+                    writer.execute(
+                        text("UPDATE documents SET title=title WHERE doc_id=:doc"),
+                        {"doc": pair.corpus.doc["primary"]},
+                    )
+                    sql = (
+                        'CREATE INDEX CONCURRENTLY ix_documents_entity_d153 ON documents(document_entity_id,deployment_id,((doc_id::text) COLLATE pg_catalog."C")) WHERE document_entity_id IS NOT NULL'
+                        if phase == "create"
+                        else "DROP INDEX CONCURRENTLY ix_documents_entity"
+                    )
+                    future = executor.submit(execute_ddl, sql=sql)
+                    assert ready.wait(timeout=5)
+                    try:
+                        end = monotonic() + 10
+                        name = (
+                            "ix_documents_entity_d153"
+                            if phase == "create"
+                            else "ix_documents_entity"
+                        )
+                        while True:
+                            with pair.target.connect() as observer:
+                                invalid = observer.execute(
+                                    text(
+                                        "SELECT NOT indisvalid FROM pg_index WHERE indexrelid=to_regclass(:name)"
+                                    ),
+                                    {"name": name},
+                                ).scalar_one_or_none()
+                                if invalid:
+                                    assert observer.execute(
+                                        text("SELECT pg_cancel_backend(:pid)"),
+                                        {"pid": backend[0]},
+                                    ).scalar_one()
+                                    break
+                            assert monotonic() < end, (
+                                f"{phase} did not reach its invalid native state"
+                            )
+                            sleep(0.02)
+                        assert future.result(timeout=10) == "57014"
+                    finally:
+                        writer.rollback()
+                # Ordinary inserts still succeed while an interrupted build is
+                # present; an interrupted drop has its valid staging replacement.
+                with pair.target.begin() as writer:
+                    writer.execute(
+                        text("UPDATE documents SET title=title WHERE doc_id=:doc"),
+                        {"doc": pair.corpus.doc["primary"]},
+                    )
+                _replace_document_index(connection=migration, ordered=True)
+                assert migration.exec_driver_sql(
+                    "SELECT indisvalid AND indisready AND indislive FROM pg_index WHERE indexrelid='ix_documents_entity'::regclass"
+                ).scalar_one()
+                assert migration.exec_driver_sql(
+                    "SELECT to_regclass('ix_documents_entity_d153') IS NULL"
+                ).scalar_one()
+        finally:
+            migration.exec_driver_sql("SELECT pg_advisory_unlock(1919251316,153)")

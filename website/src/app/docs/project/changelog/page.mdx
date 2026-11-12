@@ -34,7 +34,11 @@ are reused; this upgrade does not run ingestion or change model settings.
 **Action needed (operators).** Run the native online migration to
 `p9_48_0069`. Its preceding revision, `p9_47_0068`, adds a mention-to-chunk
 B-tree on existing data: it builds partition indexes concurrently, then attaches
-them. Allow disk space and I/O/WAL for the new index. An interrupted own index
+them. It also replaces the existing document-entity index online with a
+deployment-aware ordered shape, preventing absent-member bridge checks from
+scanning unrelated documents under skew. Allow disk space and I/O/WAL for the
+new mention index and temporary coexistence of both document-index shapes.
+An interrupted own index
 build is checked and completed on rerun; a colliding index with a different
 definition causes setup to fail. Offline `alembic upgrade --sql` is unsupported
 for this catalog-driven revision.

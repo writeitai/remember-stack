@@ -1,7 +1,9 @@
 # Ordered document bridge: amendment to the D153 physical probe
 
-Status: proposed, not implemented. Adoption requires Claude Opus design approval
-and the D153 parity, actual-plan and migration gates. This preserves D153's
+Status: historical analysis of the accepted D153 physical amendment. Claude
+Opus 5.5 HIGH approved revision 68e156154 on 2026-11-12 ([review](https://github.com/writeitai/remember-stack/pull/587#issuecomment-6830637190)).
+The binding contract is [D153 §4.1](../designs/shared_retrieval_eligibility_design.md#41-entity-provenance-constrain-the-existing-probe-chain); implementation still requires
+the parity, actual-plan and migration gates. This preserves D153's
 visibility/ranking decisions; it corrects a failed physical-work hypothesis.
 
 The one-million-document bridge fixture failed on implementation `3ca16ea0f`:
@@ -29,8 +31,7 @@ reuse key or ranking score: any live document proves membership. Its fixed
 and deployment/bridge keys are indexed, so observation-clock writes gain no
 new indexed dependency. The actual-work tests still qualify a pinned planner;
 this is not a universal query hint.
-No
-covering columns, persistent eligibility state, query hint, provider call or
+No covering columns, persistent eligibility state, query hint, provider call or
 runtime fallback is introduced. All source/deployment/deletion predicates stay.
 
 The initial **two-key prototype**, measured with both indexes present, changes from 1,000,013 examined document tuples to
@@ -45,7 +46,7 @@ one working bridge index, in 1/2/16-deployment distributions: common and absent
 member probes examine 1 tuple in each million-document stratum (0.795–1.056ms).
 An all-tombstoned member examines its 62,500 own rows in the sixteen-deployment
 stratum (280.924ms), rather than unrelated deployments. Raw actual plans and
-buffer counts are recorded in bridge-text-summary.json and its linked gzip
+buffer counts (9 per pair) are recorded in bridge-text-summary.json and its linked gzip
 plans. This index occupies 95,600,640 bytes in these skewed fixtures, versus
 6,504,448 bytes for the old index; the earlier 49,758,208-byte two-key prototype
 is not the proposed index cost. These are observations, not guaranteed latency.
@@ -54,7 +55,7 @@ online replacement both indexes coexist, with I/O/WAL and temporary peak disk
 cost. Native storage capture must include the resulting allocation; this makes
 no unmeasured margin or free-storage claim.
 
-After approval, extend this PR's **unreleased** `p9_47_0068` migration to build a
+The approved delivery change extends this PR's **unreleased** `p9_47_0068` migration to build a
 strictly validated own-named replacement concurrently, drop the old index
 concurrently, and rename the valid replacement to `ix_documents_entity`. Under
 the existing session migration lock a rerun recognizes the exact old shape,

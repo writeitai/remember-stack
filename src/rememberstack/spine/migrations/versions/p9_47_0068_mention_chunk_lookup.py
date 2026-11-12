@@ -1,4 +1,4 @@
-"""Build the D153 mention-to-chunk access path on existing data, online."""
+"""Build the D153 mention and ordered document-bridge indexes online."""
 
 from collections.abc import Sequence
 
@@ -13,6 +13,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _PARENT = "ix_mentions_deployment_chunk"
+_DOCUMENT_INDEX = "ix_documents_entity"
+_DOCUMENT_STAGING = "ix_documents_entity_d153"
 
 
 def _index(*, connection: Connection, name: str) -> RowMapping | None:
@@ -22,12 +24,25 @@ def _index(*, connection: Connection, name: str) -> RowMapping | None:
             text("""
         SELECT c.oid, c.relkind, i.indrelid, i.indisvalid, i.indisunique,
                i.indisexclusion, i.indnkeyatts, i.indnatts, am.amname,
+               i.indisready, i.indislive,
                i.indoption::text AS options, i.indcollation::text AS collations,
                ARRAY(SELECT opclass.opcdefault AND opclass.opcintype='uuid'::regtype
                      FROM unnest(i.indclass::oid[]) key(class_oid)
                      JOIN pg_opclass opclass ON opclass.oid=key.class_oid) AS default_uuid_ops,
+               ARRAY(SELECT ns.nspname||'.'||opclass.opcname
+                     FROM unnest(i.indclass::oid[]) WITH ORDINALITY key(class_oid,n)
+                     JOIN pg_opclass opclass ON opclass.oid=key.class_oid
+                     JOIN pg_namespace ns ON ns.oid=opclass.opcnamespace
+                     ORDER BY key.n) AS opclasses,
+               ARRAY(SELECT CASE WHEN key.collation_oid=0 THEN ''
+                                  ELSE ns.nspname||'.'||coll.collname END
+                     FROM unnest(i.indcollation::oid[]) WITH ORDINALITY key(collation_oid,n)
+                     LEFT JOIN pg_collation coll ON coll.oid=key.collation_oid
+                     LEFT JOIN pg_namespace ns ON ns.oid=coll.collnamespace
+                     ORDER BY key.n) AS collation_names,
                pg_get_expr(i.indpred, i.indrelid) AS predicate,
                pg_get_expr(i.indexprs, i.indrelid) AS expressions,
+               pg_get_indexdef(c.oid) AS definition,
                pg_get_indexdef(c.oid, 1, true) AS first_key,
                pg_get_indexdef(c.oid, 2, true) AS second_key
         FROM pg_class AS c
@@ -40,6 +55,116 @@ def _index(*, connection: Connection, name: str) -> RowMapping | None:
         )
         .mappings()
         .one_or_none()
+    )
+
+
+def _document_shape(*, row: RowMapping, name: str, table_oid: int) -> bool:
+    """Identify the ordered shape, refusing every non-native name collision."""
+    prefix = f"CREATE INDEX {name} ON public.documents USING btree "
+    predicate = " WHERE (document_entity_id IS NOT NULL)"
+    old = prefix + "(document_entity_id)" + predicate
+    ordered = (
+        prefix
+        + '(document_entity_id, deployment_id, ((doc_id)::text) COLLATE "C")'
+        + predicate
+    )
+    is_ordered = row["definition"] == ordered
+    if (
+        row["relkind"] != "i"
+        or row["indrelid"] != table_oid
+        or row["definition"] not in (old, ordered)
+        or row["opclasses"]
+        != (
+            ["pg_catalog.uuid_ops"] * (2 if is_ordered else 1)
+            + (["pg_catalog.text_ops"] if is_ordered else [])
+        )
+        or row["collation_names"] != (["", "", "pg_catalog.C"] if is_ordered else [""])
+    ):
+        # Non-pretty pg_get_indexdef includes expression, collation, nondefault
+        # opclasses, INCLUDE, uniqueness, storage options and tablespace. Exact
+        # native DDL is intentional: an unexpected object is never adopted.
+        raise RuntimeError("D153 document index name collides with a different object")
+    return is_ordered
+
+
+def _ready(*, row: RowMapping) -> bool:
+    """Require a complete native index before removing any serving object."""
+    return bool(row["indisvalid"] and row["indisready"] and row["indislive"])
+
+
+def _replace_document_index(*, connection: Connection, ordered: bool) -> None:
+    """Complete one exact native online replacement, also across interruptions."""
+    table_oid = int(
+        connection.exec_driver_sql(
+            "SELECT 'public.documents'::regclass::oid"
+        ).scalar_one()
+    )
+    current = _index(connection=connection, name=_DOCUMENT_INDEX)
+    staging = _index(connection=connection, name=_DOCUMENT_STAGING)
+    current_shape = (
+        _document_shape(row=current, name=_DOCUMENT_INDEX, table_oid=table_oid)
+        if current is not None
+        else None
+    )
+    if staging is not None:
+        if (
+            _document_shape(row=staging, name=_DOCUMENT_STAGING, table_oid=table_oid)
+            != ordered
+        ):
+            raise RuntimeError(
+                "D153 document staging index has the wrong destination shape"
+            )
+    if current_shape == ordered:
+        if current is None or not _ready(row=current) or staging is not None:
+            raise RuntimeError(
+                "D153 document destination index is incomplete or has a leftover staging object"
+            )
+        return
+    if current is None or not _ready(row=current):
+        if staging is None or not _ready(row=staging):
+            raise RuntimeError("D153 document replacement has no validated index")
+    elif staging is None or not _ready(row=staging):
+        if staging is not None:
+            connection.exec_driver_sql(
+                f"DROP INDEX CONCURRENTLY public.{_DOCUMENT_STAGING}"
+            )
+        keys = (
+            '(document_entity_id, deployment_id, ((doc_id::text) COLLATE pg_catalog."C"))'
+            if ordered
+            else "(document_entity_id)"
+        )
+        connection.exec_driver_sql(
+            f"CREATE INDEX CONCURRENTLY {_DOCUMENT_STAGING} ON public.documents {keys}"
+            " WHERE document_entity_id IS NOT NULL"
+        )
+    # Recheck the validated replacement immediately before every destructive
+    # step. The native SESSION migration lock spans these autocommit phases.
+    staging = _index(connection=connection, name=_DOCUMENT_STAGING)
+    if (
+        staging is None
+        or _document_shape(row=staging, name=_DOCUMENT_STAGING, table_oid=table_oid)
+        != ordered
+        or not _ready(row=staging)
+    ):
+        raise RuntimeError("D153 document replacement index is not ready")
+    current = _index(connection=connection, name=_DOCUMENT_INDEX)
+    if current is not None:
+        if (
+            _document_shape(row=current, name=_DOCUMENT_INDEX, table_oid=table_oid)
+            == ordered
+        ):
+            raise RuntimeError("D153 document source changed during replacement")
+        connection.exec_driver_sql(f"DROP INDEX CONCURRENTLY public.{_DOCUMENT_INDEX}")
+    staging = _index(connection=connection, name=_DOCUMENT_STAGING)
+    if (
+        staging is None
+        or _document_shape(row=staging, name=_DOCUMENT_STAGING, table_oid=table_oid)
+        != ordered
+        or not _ready(row=staging)
+    ):
+        raise RuntimeError("D153 document replacement index changed before rename")
+    connection.exec_driver_sql(
+        f"ALTER INDEX public.{_DOCUMENT_STAGING} RENAME TO {_DOCUMENT_INDEX}"
     )
 
 
@@ -145,6 +270,7 @@ def upgrade() -> None:
                 f" ON {quote(leaf['nspname'])}.{quote(leaf['relname'])}"
                 " (deployment_id, chunk_id)"
             )
+        _replace_document_index(connection=connection, ordered=True)
     # Prevent partition attachment/creation during final enumeration. Ordinary
     # row writers remain allowed; this lock covers metadata, never a table scan.
     connection.exec_driver_sql(
@@ -169,5 +295,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove the parent and its attached leaf indexes through native DDL."""
+    """Restore the exact old bridge shape and remove the mention index."""
+    if op.get_context().as_sql:
+        raise RuntimeError("D153 concurrent indexes require an online migration")
+    with op.get_context().autocommit_block():
+        _replace_document_index(connection=op.get_bind(), ordered=False)
     op.execute(f"DROP INDEX public.{_PARENT}")

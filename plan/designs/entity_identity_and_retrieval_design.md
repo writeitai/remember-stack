@@ -1014,3 +1014,8 @@ generations are abandoned, not dual-run. Sequencing:
   malformed-answer retries remain bounded and accounted.
 
 No LLM on the query path is added (D9).
+
+The independent document bridge uses D153 §4.1's per-member/deployment ordered
+index probe. Its fixed C-collated UUID-text ordering preserves membership while
+avoiding a competing deployment-wide UUID scan under skew. Deleted bridge rows
+remain indexed for native FK cleanup.
