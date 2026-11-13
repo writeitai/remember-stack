@@ -1072,9 +1072,9 @@ def _window_order(window: Window) -> str:
 
 
 def _scope_hash(*, request: DocumentReferencesRequest) -> str:
-    """Identify the call a cursor belongs to (everything but ``k`` and ``cursor``)."""
+    """Identify the call a cursor belongs to (everything but ``limit`` and ``cursor``)."""
     payload = json.dumps(
-        request.model_dump(mode="json", by_alias=True, exclude={"k", "cursor"}),
+        request.model_dump(mode="json", by_alias=True, exclude={"limit", "cursor"}),
         sort_keys=True,
         separators=(",", ":"),
     )

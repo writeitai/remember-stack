@@ -206,7 +206,7 @@ export class MemoryClient {
   /** Read live property observations for an entity. */
   async lookupObservations({entityId,propertyQuery,k=10,limit=50,cursor,signal}:{entityId:string;propertyQuery?:string|null;k?:number;limit?:number;cursor?:string|null;signal?:AbortSignal}):Promise<Envelope> {
     if(propertyQuery!=null&&cursor!=null)throw new InputValidationError({detail:'cursor pages filter-only observation lookups; drop propertyQuery or cursor'});
-    const params=propertyQuery==null?{entity_id:entityId,limit,cursor}:{entity_id:entityId,k,property_query:propertyQuery};
+    const params=propertyQuery==null?{entity_id:entityId,limit,cursor}:{entity_id:entityId,property_query:propertyQuery,k};
     return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/observations',params,signal}),response:true});
   }
   /** Search source claims; filters switch the wire request from GET to POST. */
