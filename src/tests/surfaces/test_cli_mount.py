@@ -293,6 +293,17 @@ def test_http_errors_do_not_start_mountable_or_print_response_secrets(
         [],
         {"ticket": _TICKET},
         {"session_id": _SESSION, "ticket": _TICKET, "expires_at": _TICKET},
+        {"session_id": _SESSION, "ticket": "", "expires_at": "2030-01-01T00:05:00Z"},
+        {
+            "session_id": _SESSION,
+            "ticket": _TICKET + "\n",
+            "expires_at": "2030-01-01T00:05:00Z",
+        },
+        {
+            "session_id": _SESSION,
+            "ticket": _TICKET + "\rmore",
+            "expires_at": "2030-01-01T00:05:00Z",
+        },
     ],
 )
 def test_invalid_session_response_never_prints_ticket(
@@ -338,6 +349,11 @@ def test_failed_or_expired_ticket_surfaces_mountable_error_and_exit_code(
     capfd: pytest.CaptureFixture[str],
     code: int,
 ) -> None:
+    cloud.body = {
+        "session_id": _SESSION,
+        "ticket": _TICKET,
+        "expires_at": "2000-01-01T00:05:00Z",
+    }
     mountable(
         "emit(error={'code': 'ticket_invalid', 'message': 'ticket expired or used'})\n"
         "print('mountable: ticket expired or used', file=sys.stderr)\n"
@@ -348,6 +364,24 @@ def test_failed_or_expired_ticket_surfaces_mountable_error_and_exit_code(
     assert "ticket_invalid" in out
     assert "ticket expired or used" in err
     assert "session_id" not in out
+    assert _TICKET not in out + err
+
+
+def test_child_failure_after_mount_is_not_reported_as_success(
+    cloud: _Cloud,
+    mountable: Callable[[str], Path],
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    mountable(
+        "emit(event='mounted', path=directory)\n"
+        "emit(event='unmounted', reason='session_ended', detail='session revoked')\n"
+        "sys.exit(1)\n"
+    )
+    assert cli.main(["mount", str(tmp_path)]) == 1
+    out, err = capfd.readouterr()
+    assert _SESSION in out
+    assert "session revoked" in out
     assert _TICKET not in out + err
 
 

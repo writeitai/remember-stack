@@ -80,7 +80,11 @@ def _create_session(*, connection: Connection, http: httpx.Client) -> _MountSess
             f"remember.dev mount session failed (HTTP {response.status_code}): {hint}"
         )
     try:
-        return _MountSession.model_validate(response.json())
+        session = _MountSession.model_validate(response.json())
+        ticket = session.ticket.get_secret_value()
+        if ticket != ticket.strip() or "\n" in ticket or "\r" in ticket:
+            raise ValueError("mountable needs a single-line ticket")
+        return session
     except (ValueError, ValidationError) as error:
         raise ValueError("remember.dev returned an invalid mount session") from error
 
