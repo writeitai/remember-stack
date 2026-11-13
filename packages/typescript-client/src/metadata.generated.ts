@@ -1,6 +1,6 @@
 /* Generated from Python; regenerate with npm run generate. */
 export default {
-  "openapiHash": "f76081407751d230338bd6f5c427051ce1cb04fdfa07060226728efe21d0929b",
+  "openapiHash": "6256717ccf42ddd6b34d566ff16d63ec1821bba876af609f81d37a134f7c34e9",
   "publishedBaseline": {
     "revision": "dd0c78015099cdd84ab5f3501744d6e225125989",
     "version": "0.17.2"
