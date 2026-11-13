@@ -281,6 +281,86 @@ related qualifying information affirmatively, without an unsolicited correction
 of the question's terminology. Do not include your retrieval process, taxonomy
 lesson or evidence limitations in the final answer.{answer_word_cap_instruction}
 
+For hypothetical or counterfactual questions, reason from causal or
+motivational relationships in the evidence. If the question asks whether an outcome
+would still happen without a condition and the evidence says that condition
+caused, enabled, or motivated the outcome, answer "Likely no". If the evidence
+indicates that the outcome is independent of the condition, answer "Likely
+yes". When that dependency is uncertain, select the better-supported outcome
+and qualify it as likely or possible rather than abstaining.
+
+Interpret conversational replies together with the question that elicited them.
+If a relevant reply starts with a confirmation or unresolved reference ("Yes",
+"that one", "this series") and the initiating context is missing, read
+adjacent_chunks before deciding what was affirmed, even when another session
+offers a plausible answer; a visible exchange needs no extra read. A direct reply
+inherits the scope of the question it answers; a preference qualified to a
+particular period or situation is not an unrestricted preference.
+
+Use an explicit singular preference statement or a direct answer to a singular
+preference question as the primary choice; "one of my favorites" does not
+identify a unique favorite. Before committing to a preference or an ambiguous
+reference, run an independent claims/source search across sessions for other
+candidates in the requested class without entity_ids, including enthusiastic
+recommendations and unnamed objects from preference exchanges, and verify each
+owner in the source. When no exclusive choice is established, answer the
+best-matching candidate first and add another strongly supported one only as a
+brief qualified alternative. Keep candidates tied to the requested person, kind,
+medium and time; casual mentions are not preferences, and liking only an
+adaptation is not liking the original ("based on books I love" is). Name an
+unnamed item ("that other series") only from its own exchange, never from another
+person's favorite.
+
+For what a work or depicted object is about, combine the spoken description with
+its owning attachment and name the concrete subjects shown or discussed, not only
+genre labels or adjectives. For an unnamed depicted series without a synopsis,
+describe its recurring pictured subject with a brief visual qualifier; never
+invent a title or plot or substitute a better-named work. Use an attached
+description only for its owning turn and speaker; if a chunk boundary hides it
+or its owner, read adjacent chunks first.
+
+When the requested answer is an activity, choice, action or experience itself,
+prefer the speaker's specific verbatim terms, unless the question explicitly asks for a broader category or the
+speaker used it. For hobbies or interests, distinguish activities explicitly
+stated as personal hobbies or ongoing interests from routine daily tasks, one-off
+chores, or casual passing mentions.
+
+Interpret short personal-memory questions by their everyday intent, not an
+unrequested technical classification. For stated limitations or restrictions,
+include every concrete item from that practical domain even under a neighboring
+label, kept in parentheses. Do not add a contrast negating the question's category
+unless a source states it; different labels do not establish absence.
+
+For feelings or emotional reactions, include named states and attitudes conveyed
+by the person's own words about the requested subject, as concise state words. An
+attitude held now can concern a future outcome.
+
+For shared, mutual, or collective attributes, require evidence that every
+referenced participant holds or joins it; one participant's solo activity is not
+shared.
+
+For deductive questions involving negative constraints (options avoiding stated
+restrictions), deduce the compatible choices rather than
+answering "Unknown". Name the compatible category with its defining criteria;
+examples may illustrate it but not replace it.
+
+Loop discipline: never repeat a tool call with the same tool AND the same
+arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
+it. Before any final answer, you must have tried at least one content-bearing
+operation, primitive, query, or P3 read/search.
+
+Return one structured step: either action="tool" with one listed tool_name and
+arguments_json (the tool arguments as one JSON object encoded as a string, with
+nothing after the closing brace), or action="answer" with the final answer.
+Never invent a tool.
+
+PUBLIC TOOLS:
+{tools}
+
+TOOL TRACE SO FAR:
+{trace}
+{guard_feedback}
+
 Answer procedure (examples are invented):
 
 1. Frame: the subject, the event or relation asked (read, visited, likes,
@@ -366,86 +446,6 @@ ones, including later clauses of a kept statement. A spoken statement beats a
 photo inference when they conflict but never removes compatible items. Keep names
 concrete, not "the lake", and give quoted titles exactly as written: "Later"
 (possibly another title).
-
-For hypothetical or counterfactual questions, reason from causal or
-motivational relationships in the evidence. If the question asks whether an outcome
-would still happen without a condition and the evidence says that condition
-caused, enabled, or motivated the outcome, answer "Likely no". If the evidence
-indicates that the outcome is independent of the condition, answer "Likely
-yes". When that dependency is uncertain, select the better-supported outcome
-and qualify it as likely or possible rather than abstaining.
-
-Interpret conversational replies together with the question that elicited them.
-If a relevant reply starts with a confirmation or unresolved reference ("Yes",
-"that one", "this series") and the initiating context is missing, read
-adjacent_chunks before deciding what was affirmed, even when another session
-offers a plausible answer; a visible exchange needs no extra read. A direct reply
-inherits the scope of the question it answers; a preference qualified to a
-particular period or situation is not an unrestricted preference.
-
-Use an explicit singular preference statement or a direct answer to a singular
-preference question as the primary choice; "one of my favorites" does not
-identify a unique favorite. Before committing to a preference or an ambiguous
-reference, run an independent claims/source search across sessions for other
-candidates in the requested class without entity_ids, including enthusiastic
-recommendations and unnamed objects from preference exchanges, and verify each
-owner in the source. When no exclusive choice is established, answer the
-best-matching candidate first and add another strongly supported one only as a
-brief qualified alternative. Keep candidates tied to the requested person, kind,
-medium and time; casual mentions are not preferences, and liking only an
-adaptation is not liking the original ("based on books I love" is). Name an
-unnamed item ("that other series") only from its own exchange, never from another
-person's favorite.
-
-For what a work or depicted object is about, combine the spoken description with
-its owning attachment and name the concrete subjects shown or discussed, not only
-genre labels or adjectives. For an unnamed depicted series without a synopsis,
-describe its recurring pictured subject with a brief visual qualifier; never
-invent a title or plot or substitute a better-named work. Use an attached
-description only for its owning turn and speaker; if a chunk boundary hides it
-or its owner, read adjacent chunks first.
-
-When the requested answer is an activity, choice, action or experience itself,
-prefer the speaker's specific verbatim terms, unless the question explicitly asks for a broader category or the
-speaker used it. For hobbies or interests, distinguish activities explicitly
-stated as personal hobbies or ongoing interests from routine daily tasks, one-off
-chores, or casual passing mentions.
-
-Interpret short personal-memory questions by their everyday intent, not an
-unrequested technical classification. For stated limitations or restrictions,
-include every concrete item from that practical domain even under a neighboring
-label, kept in parentheses. Do not add a contrast negating the question's category
-unless a source states it; different labels do not establish absence.
-
-For feelings or emotional reactions, include named states and attitudes conveyed
-by the person's own words about the requested subject, as concise state words. An
-attitude held now can concern a future outcome.
-
-For shared, mutual, or collective attributes, require evidence that every
-referenced participant holds or joins it; one participant's solo activity is not
-shared.
-
-For deductive questions involving negative constraints (options avoiding stated
-restrictions), deduce the compatible choices rather than
-answering "Unknown". Name the compatible category with its defining criteria;
-examples may illustrate it but not replace it.
-
-Loop discipline: never repeat a tool call with the same tool AND the same
-arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
-it. Before any final answer, you must have tried at least one content-bearing
-operation, primitive, query, or P3 read/search.
-
-Return one structured step: either action="tool" with one listed tool_name and
-arguments_json (the tool arguments as one JSON object encoded as a string, with
-nothing after the closing brace), or action="answer" with the final answer.
-Never invent a tool.
-
-PUBLIC TOOLS:
-{tools}
-
-TOOL TRACE SO FAR:
-{trace}
-{guard_feedback}
 
 Before finalizing, check: every requested part has the requested kind of value; a
 duration has its start and end; every candidate seen in chunk text was decided,

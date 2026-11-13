@@ -724,3 +724,94 @@ this analysis:
 
 The step 4 and step 6 changes described above already include these
 calibrations.
+
+## Candidate 6: a single-variable layout experiment
+
+**Trial 5 status (reported by Codex, not final).** Candidate 5 (commit
+`a93578a06`) has generated all 29 answers. At least 21 are graded, and 5 of
+those are correct. The trial cannot reach the 15-item target even before
+grading finishes. Codex will record the final tally and keep the GCS outputs.
+One technical interruption, a JSON-decoding failure, was resumed through the
+native resume path. The 22 answers already completed stayed byte-identical.
+That interruption is an execution matter and does not bear on the prompt's
+semantic rules.
+
+**Why a layout experiment instead of more rules.** Candidates 3, 4 and 5 each
+changed several rules at once. Their per-item outcomes moved in both
+directions, and no change can be credited or blamed on its own. Adding
+another tailored rule would repeat that problem. Candidate 6 instead changes
+exactly one thing, where the answer procedure sits. A difference in outcome
+can then be read against a single variable. This comparison is still one run
+per prompt. It does not separate the effect of the change from run-to-run
+variation, and this note does not estimate that variation.
+
+**Hypothesis (untested).** The ordered "Answer procedure (examples are
+invented)" block, steps 1–7, holds the concrete rules for lists, qualified
+items, episodes, ownership and proposals. In candidates 3–5 it sits in the
+middle of the prompt. The dynamic tool trace comes after it and is often very
+long. By the time the model writes its answer, those rules may get too little
+attention compared with the trace and the short checklist that follows it.
+Moving the block to just after the trace places it next to the point where
+the answer is written. This is an attention and placement hypothesis. The
+trial 4 traces show that evidence was visible and then omitted. They do not
+show that placement caused the omissions.
+
+**What candidate 6 changes.** Only the position of one block inside
+`ANSWER_AGENT_PROMPT_TEMPLATE` changes:
+
+- **Before:**
+  - output-format paragraph, ending `{answer_word_cap_instruction}`;
+  - the Answer procedure block;
+  - "For hypothetical or counterfactual questions …" through
+    `TOOL TRACE SO FAR: {trace}` and `{guard_feedback}`;
+  - "Before finalizing, check: …".
+- **After:**
+  - output-format paragraph, ending `{answer_word_cap_instruction}`;
+  - "For hypothetical or counterfactual questions …" through
+    `TOOL TRACE SO FAR: {trace}` and `{guard_feedback}`;
+  - the Answer procedure block;
+  - "Before finalizing, check: …".
+
+The block, 5,895 characters, moved with its single blank-line separator. Its
+wording, examples and internal line breaks are unchanged. Everything outside
+the block is unchanged and stays in its original order. Static checks show
+that the template length (18,281 characters) and its multiset of characters
+are identical to candidate 5. The five placeholders keep their order:
+
+- `{answer_word_cap_instruction}`
+- `{tools}`
+- `{trace}`
+- `{guard_feedback}`
+- `{question}`
+
+The block contains no placeholder. All pinned contract phrases are present.
+Template SHA256:
+
+- candidate 5: `5155a4ffaf083dd6059aa9ab490fb7664598ffa8c661e80ec878dacf221ada24`
+- candidate 6: `a9e83a5a314d1e084e971ea7a10ca7df6ee6c21f3aee7c2451eb85bcea1b0d4e`
+
+Tests are run by Codex. Models, judge, data, retrieval
+pool, tool budgets and the eight workers are unchanged.
+
+**How to read the result.**
+
+- If candidate 6 beats candidate 5 on the same 29 items, the gain fits the
+  placement hypothesis. A single run does not prove it, and the full
+  178-question run would still be needed.
+- If the two prompts score about the same or candidate 6 scores lower,
+  placement is unlikely to be the main constraint for these items.
+
+**Risks.**
+
+- The procedure now appears after the tool catalogue and the trace. On the
+  first step the trace is empty, so the model may plan its retrieval with
+  less attention on step 2's search guidance than before.
+- The paragraphs that stayed in place (preferences, attachments, verbatim
+  terms, limitations, feelings, shared attributes, deductive questions) now
+  come before the procedure. They no longer follow it. That can change how
+  the model weighs them.
+- The procedure now sits directly before the end checklist and the
+  adjacent-chunks paragraph. Together they form a long block of instructions
+  after the trace, which may dilute the checklist.
+- Any score change also includes run-to-run variation, which this design
+  does not measure.
