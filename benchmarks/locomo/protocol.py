@@ -228,9 +228,8 @@ the conversation speakers.
 Dates and temporal semantics:
 - Facts carry validity with valid_from, valid_until, and valid_precision.
   valid_from and valid_until record when the event or state was true in the real world.
-  valid_precision indicates granularity: unknown, instant, day, month, quarter, year, or open.
-  "open" means an ongoing state with a known start date and no recorded end date (still true).
-  "unknown" means the source gave no usable real-world date.
+  valid_precision is unknown (no usable real-world date), instant, day, month, quarter,
+  year, or open (ongoing from a known start with no recorded end; still true).
 - Evidence rows carry asserted_at, claim_valid_from, claim_valid_until, and claim_valid_precision.
   asserted_at is when the source made this statement (when the message was sent or page
   was published). claim_valid_from and claim_valid_until are when the claim says it happened or was true.
@@ -282,28 +281,31 @@ related qualifying information affirmatively, without an unsolicited correction
 of the question's terminology. Do not include your retrieval process, taxonomy
 lesson or evidence limitations in the final answer.{answer_word_cap_instruction}
 
-Memory reasoning patterns (invented examples; reuse the reasoning):
+Memory reasoning patterns (invented examples):
 
-Complete lists. When evidence supports multiple distinct values that directly
-satisfy the question, return the complete union of all distinct matching values
-across sessions, chunks and facts. Do not stop after the first or highest-ranked
-match. For a list, also query claims_and_sources_context for the item class (e.g.
-"books", "cities") without entity_ids, then verify the owner of each item.
-Experience is often implied: "just finished X", "a series I love" or "one of my
-favorite cities to explore" show first-hand contact. A bare "X is great" counts
-only when context shows contact (they describe its content or compare it with
-others they read); hearsay ("I've heard X is great"), wishes and plans do not.
-Mark a weaker item "(likely)". Derive a requested attribute of each item with
-general knowledge (a title's author). Example: "Lyon was amazing", "Porto is one
-of my favorite cities to explore", "I hope to see Oslo" -> visited: Lyon, Porto.
-Exclude merely related facts; keep owners, chronology, and planned versus completed events distinct.
+Lists. When evidence supports multiple distinct values that directly satisfy the
+question, return the complete union of all distinct matching values across
+sessions, chunks and facts. Do not stop after the first or highest-ranked match.
+Match the asked relation: "likes" covers anything described with enjoyment, even
+one season of it; "has read/visited" needs first-hand contact. Also query the
+class and relation in plain words without entity_ids ("activities she enjoys",
+"books he mentions or discusses"); guessed names or one literal verb in a query
+hide implied items. Contact is often implied: "just finished X", "a book series I
+love" (even said of its screen version), praising a work as someone who
+knows it ("X is great, but have you read Y? Also awesome"), or a partner's "one of
+my favorites too". Credit B with an activity only when B's words show it: after B
+"I ski every winter", A "I don't ski, but..." confirms it; after B "Do you ski?"
+it says nothing about B. Keep each supported item with an affirmative
+qualifier instead of dropping or overstating it: "Book C (likely)", "graduate school
+(admitted; attendance not stated)". Exclude hearsay, wishes and merely related facts;
+keep owners, chronology, and planned versus completed events distinct. Derive a
+requested attribute of each item with general knowledge (a title's author). Cover
+the whole span described, and answer the kind of value asked ("what kind of dance":
+a style, not a step; "which schools": stages when no institution is named).
+Example: "Lyon was amazing", "Porto is one of my favorite cities to explore", "I
+hope to see Oslo" -> visited: Lyon, Porto.
 
-Requested kind and span. Answer with the kind of value asked for: "what kind of
-dance" wants a style, not one step; "which schools" can be answered by the stages
-named (e.g. "middle school, high school and college") when no institution is named.
-Cover the whole span described.
-
-Episodes. Similar episodes repeat (injuries, trips, games, books). For "when",
+Episodes. Episodes repeat (injuries, trips, games). For "when",
 "during", "how many times" or "how long after", list the candidate episodes with
 their dates, then match the one the question specifies (year, place, companion,
 period). Count distinct episodes, not mentions; merge mentions only
@@ -312,11 +314,14 @@ report ("this injury") and one at a clearly earlier time ("last season") are
 separate occurrences unless the source says it is the same ongoing one; a
 recurrence ("hurt it again") is another. An unspecified "this" can be identified
 from the same turn's attachment reading or caption. For "during X", choose the
-item dated inside X's window, not a more prominent one from another period.
-Example: Mar 3 "rough week with this injury" (photo: knee brace); Mar 10 "two years
-ago I tore my knee" and "I recently finished rereading Book A"; Jun "fully healed";
-Aug "just finished Book B" -> knee injuries: likely two; current one: the week
-before Mar 3; read while recovering: Book A.
+item dated inside X's window; for "in <year>", prefer an episode described as
+current ("this injury") when reported in that year over a retrospective one of
+uncertain date; date a retrospective episode by its stated event time, not by
+when it was mentioned. Example: Mar 3 "rough week with
+this injury" (photo: knee brace); Mar 10 "two years ago I tore my knee" and "I
+recently finished rereading Book A"; Jun "fully healed"; Aug "just finished Book
+B" -> knee injuries: likely two; this year's: the week before Mar 3; read while
+recovering: Book A.
 
 Indirect references. When a later event gives only a description ("a big outdoor
 brand signed me", "that shop"), look for an earlier named candidate of that kind
@@ -328,30 +333,32 @@ signed with a big sportswear company" -> likely Brand Q.
 Suggestions. For what a person might enjoy, try, visit or do, ground the answer in
 the most specific thing they named and love in that domain (a creator, brand,
 author, team), connected by general knowledge (that creator's own shop, another book
-by that author). "Other", "new" or "pick up" asks for options beyond what they
-already do; combine an established strength with the stated goal (a painter who
-longs for the coast -> plein-air painting trips). For a future role, weigh stated
-plans and natural extensions of current activities (a chef who teaches weekend
-classes -> teaching or a cooking school). Give the best-grounded option first; one
-brief alternative is allowed.
+by that author). "Other", "new" or "pick up" asks beyond their current routine:
+combine a strength with the goal (a painter who longs for the coast -> plein-air
+trips). When memory names no fitting option, name common real options from general
+knowledge that serve their stated goal. For a future role, name a concrete
+occupation extending current activities (a chef who teaches weekend classes ->
+cooking instructor). Lead with the best-grounded option; one brief alternative is
+allowed.
 
 Direct statements first. A spoken statement that answers the question's predicate
-outranks an inference from a photo's contents, OCR or branding. Match ordinary
-paraphrases: "often cooks" = "I make X a lot"; "supports a team" = "X are my team"
-or praising X in a talk about teams. Example: photo of muffins, then "I bake banana
-bread a lot" -> often bakes: banana bread. Use images when dialogue is silent, to
-identify an unspecified "this", or when asked what is depicted.
+outranks an inference from a photo's contents, OCR or branding: "often cooks" =
+"I make X a lot". Example: photo of muffins, then "I bake banana bread a lot" ->
+often bakes: banana bread. Use images when dialogue is silent or to identify an
+unspecified "this". Direct priority settles
+conflicts; it does not drop compatible items from a list.
 
-Wrong-person premises. If the sources show that another participant, not the named
-person, did or said what the question describes, say so briefly and answer with that
-content: "Ben (not Ana) had that call; they discussed the cover design." If the named
-person has their own answer, give it first; when the other participant's statement
-repeats the question's exact wording, add it as a short labeled note.
+Wrong-person premises. Only when the named person has no statement of their own on
+the subject and another participant did or said what the question describes, say
+so briefly and answer with that content: "Ben (not Ana) had that call; they
+discussed the cover design." In a talk about which team each supports, agreement
+in reply is the replier's own likely preference: A "X is my club"; B "X is great
+too!" -> B likely supports X. Mere praise ("X played well") is not affiliation.
 
 Names verbatim. Keep names, titles, places, dates and values concrete and exactly as
-the source writes them, even when a quoted title looks like an ordinary word (a show
-called "Later"); add an interpretation only as a qualifier. Do not reduce a named
-place to "the lake".
+the source writes them. Give a quoted title first exactly as written, even when it
+looks like an ordinary word: "Later" (possibly another title). Do not reduce a
+named place to "the lake".
 
 For hypothetical or counterfactual questions, reason from causal or
 motivational relationships in the evidence. If the question asks whether an outcome
@@ -382,18 +389,16 @@ in the source, and do not narrow every follow-up to the first candidate's name.
 When no exclusive choice is established, answer the requested attribute of the
 best-matching candidate first and add another strongly supported candidate only
 as a brief qualified alternative. Keep candidates tied to the requested person,
-kind, medium and time; casual mentions are not preferences, and liking an
-adaptation is not liking the original work.
+kind, medium and time; casual mentions are not preferences, and liking only an
+adaptation is not liking the original ("based on books I love" is).
 
-When asked what a work or depicted object is about, combine the spoken or
-written description with its owning attachment. Name the concrete subjects shown
-or discussed alongside supported themes; genre labels or positive adjectives do
-not replace them. For an unnamed depicted series or collection without a synopsis,
-describe its recurring pictured subject with a brief visual qualifier. Never
-invent a title or plot, or substitute a better-named recommendation. Use an
-attached description only for its owning source turn and speaker; if a chunk
-boundary hides the description, its introducing utterance or its owner, read
-adjacent chunks first. Keep derived visual observations distinct from dialogue.
+For what a work or depicted object is about, combine the spoken description with
+its owning attachment and name the concrete subjects shown or discussed, not only
+genre labels or adjectives. For an unnamed depicted series without a synopsis,
+describe its recurring pictured subject with a brief visual qualifier; never
+invent a title or plot or substitute a better-named work. Use an attached
+description only for its owning turn and speaker; if a chunk boundary hides it,
+its introducing utterance or its owner, read adjacent chunks first.
 
 When the requested answer is an activity, choice, action or experience itself,
 prefer the speaker's specific verbatim terms (e.g. "making desserts", not
@@ -403,12 +408,10 @@ stated as personal hobbies or ongoing interests from routine daily tasks, one-of
 chores, or casual passing mentions.
 
 Interpret short personal-memory questions by their everyday intent, not an
-unrequested technical classification. For stated limitations, incompatibilities
-or restrictions, include every concrete item from the same practical domain even
-under a neighboring label, keeping the source's label in parentheses; this does
-not equate categories. Do not append a contrast negating the question's category
-unless a source states that exclusion; different labels and partial retrieval do
-not establish absence.
+unrequested technical classification. For stated limitations or restrictions,
+include every concrete item from that practical domain even under a neighboring
+label, kept in parentheses. Do not add a contrast negating the question's category
+unless a source states it; different labels do not establish absence.
 
 For feelings or emotional reactions, include named states and attitudes conveyed
 by the person's own words about the requested subject, as concise state words. An
@@ -441,13 +444,10 @@ TOOL TRACE SO FAR:
 {trace}
 {guard_feedback}
 
-Before finalizing, check: every requested part is covered with the requested kind
-of value; a duration has its start and end; a list is the complete union across
-sessions (indirect experience included, merely related facts excluded); a "when",
-"during" or count answer uses the episode the question specifies; a direct
-statement was not overridden by an image inference; a wrong-person premise is
-named; names and titles are verbatim; a preference or ambiguous reference had an
-independent source search without entity_ids.
+Before finalizing, check: every requested part has the requested kind of value; a
+duration has its start and end; a list keeps every supported item, qualified where
+needed; the episode matches the question; quoted titles are verbatim; a preference
+or ambiguous reference had an independent source search without entity_ids.
 
 If an unanswered question or reference directly relevant to the requested detail
 remains, inspect the initiating turn and reply together. Use adjacent_chunks for

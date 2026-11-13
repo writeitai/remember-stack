@@ -134,3 +134,102 @@ now fixed:
   recovery was still ongoing.
 
 The template is now 18,277 characters.
+
+## Candidate 2: diagnosis of trial 1 and changes
+
+**Trial 1 result (measured by Codex).** Candidate 1 answered 7 of the 29 frozen
+misses correctly. There were no answer, judge or tool failures and no database
+deadlines. This counts only the development cohort and is not a
+full-conversation score. The diagnosis below comes from the projected reader
+trace of each item, which keeps the content the reader saw and omits only rank
+and debug bookkeeping.
+
+**Why the remaining fixable misses failed:**
+
+- **Books and authors.** Both books the answers omitted were in the reader's
+  trace. In one, the person praises a book and compares it with another
+  series, in reply to a partner who says the book is "one of my favorites too".
+  Candidate 1's calibration ("a bare 'X is great' counts only when...") made
+  the reader treat this as not proven, and it dropped the item instead of
+  qualifying it. The other book was mentioned only as "a show based on a book
+  series that I love". The prompt line "liking an adaptation is not liking the
+  original work" could be read as excluding it, although the statement is
+  explicitly about the books. The reader's queries also asked only for books the
+  person "explicitly says he read, finished", which favours the literal verb.
+- **"What sports does he like".** The decisive utterance was never retrieved.
+  The reader's queries listed guessed sports by name, which steered retrieval
+  away from the real activity. Only weaker signals were in the trace: the
+  person saying "I love the ocean", plus a surfboard caption.
+- **School stages.** The trace contained "kept playing through middle and high
+  school before earning a college scholarship". The reader did not upgrade the
+  scholarship to playing in college, which is correct, but it then dropped the
+  stage entirely instead of keeping it with the source's own qualifier.
+- **Supported team.** The wrong-person rule fired too broadly. One speaker
+  said a team "is my team" and the named person replied that the team was
+  solid. The reader answered that the other speaker supports the team and the
+  named person "only said they were solid". Agreement in reply is the
+  replier's own attitude.
+- **Year-restricted injury date.** The reader chose a retrospective "last
+  season" injury. A current injury reported in the requested year was visible
+  in the trace.
+- **Quoted placeholder title.** The reader again replaced a quoted title that
+  looks like an ordinary word with a guess. The candidate 1 rule did not say to
+  give the quoted text first.
+
+**What candidate 2 changes:**
+
+- **Relationship-specific lists.** "Likes" covers anything described with
+  enjoyment, while "has read/visited" needs first-hand contact. List queries
+  are written in plain class and relationship words, not guessed names or a
+  single literal verb. Implied contact counts, including praise from someone
+  who knows the work, a partner's "favorite too", and a statement about the
+  books behind a screen version. A reply such as "I don't ski, but..." reveals
+  the other speaker's activity. Supported items are kept with an affirmative
+  qualifier, never dropped and never overstated.
+- **Adaptations.** The rule now excludes only liking the adaptation alone.
+- **Direct statements.** A spoken statement still beats an image inference
+  when the two conflict, but it does not remove compatible items from a list.
+- **Wrong-person premises.** The rule applies only when the named person has
+  no statement of their own on the subject. Agreement in reply counts as the
+  replier's attitude.
+- **Episodes.** "In <year>" prefers the episode reported in that year over a
+  retrospective one of uncertain date.
+- **Verbatim titles.** A quoted title is given first, exactly as written.
+- **Suggestions.** When memory names no option, common real options from
+  general knowledge may be named. Earlier named candidates still win over
+  outside guesses. A future role is a concrete occupation.
+
+To make room, the precision definitions and the end-of-prompt checklist were
+compressed. The template is about 18,280 characters, within the
+18,284-character guard.
+
+**Not targeted.** Reference conflicts and wrong-speaker references, the
+interval and count disagreements, and suggestions whose expected answer is one
+specific real title or organization are not targeted. Nothing here forces a
+reference that conflicts with the sources.
+
+**Risks:**
+
+- The broader "likes" scope and "(likely)" items may lengthen list answers and
+  bring in weak items.
+- Applying the wrong-person rule more narrowly may lose one of trial 1's
+  recoveries.
+- Naming options from general knowledge may push some answers away from the
+  conversation's own candidates.
+
+**Candidate 2 calibration, made before the first run.** Three new rules
+claimed more than ordinary conversation supports, so all three were narrowed:
+
+- **Negative self-disclosure.** "I don't ski, but..." credits the partner with
+  the activity only when the partner's own preceding words show it, for example
+  "I ski every winter". After a plain question ("Do you ski?") it says nothing
+  about the partner.
+- **Club support.** Agreement in reply counts as the replier's likely
+  preference only inside a talk about which team each person supports. General
+  praise of a club ("X played well") is not affiliation.
+- **Year-restricted episodes.** "In <year>" prefers an episode described as
+  current ("this injury") when reported in that year. A retrospective episode
+  is dated by its stated event time, never by when it was mentioned.
+
+To stay within the 18,284-character guard, the attachment-description and
+limitations paragraphs were reworded more tightly. Their rules are unchanged.
