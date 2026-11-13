@@ -208,8 +208,11 @@ metadata (family, authors, recipients, created/modified ranges, language, thread
 (`chunk_claims`) lies in a matching version — for inclusion this refines the origin-chunk join
 above, because a claim reused across versions (D56) has one occurrence per version; the returned
 claim evidence is still its origin; relations and observations when at least one live supporting claim comes from a
-matching document, with returned evidence limited to those claims. The filter is applied in the
-ranked search's confirmation step, before the top-k cut (D142). `document_metadata_and_search_design.md` §4.
+matching document, with returned supporting evidence limited to matching documents and contradicting
+evidence and co-members disclosed from every document, marked in or out of the filter (D156). The filter
+also carries D156's caller `tags` and is accepted by the context operations. It is applied in the
+ranked search's confirmation step, before the top-k cut (D142). `document_metadata_and_search_design.md` §4,
+`document_tags_design.md` §4.
 
 `combine_evidence` is the side-effect-free composition operator for separately typed evidence
 sets. It combines confirmed claim and chunk envelopes without cross-fusing their unlabeled UUIDs

@@ -1405,6 +1405,20 @@ CREATE TABLE document_people (
 );
 CREATE INDEX ix_document_people_name    ON document_people USING gin (normalized_name gin_trgm_ops);
 CREATE INDEX ix_document_people_address ON document_people (deployment_id, normalized_address);
+
+-- D156: caller tags on a document lineage. Stored only here; chunks, claims and facts inherit
+-- through their documents. Not versioned and never part of a reuse key, so a tag write causes
+-- no processing. document_tags_design.md §5.
+CREATE TABLE document_tags (
+  deployment_id uuid NOT NULL,
+  doc_id        uuid NOT NULL,
+  tag           text NOT NULL,              -- NFC, lower-cased, 1–128 chars, no whitespace/control
+  added_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, doc_id, tag),
+  FOREIGN KEY (doc_id) REFERENCES documents (doc_id) ON DELETE CASCADE,
+  CHECK (char_length(tag) BETWEEN 1 AND 128)
+);
+CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag, doc_id);
 ```
 
 > **Documents are not entities (D134; replaces the D18-era Document-typed bridge).** Entity types
@@ -2847,7 +2861,8 @@ test fails when a new source-bearing field is not classified. At minimum it cove
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
   audit rationales/features, every `document_entity_bindings` row for the lineage, the
   lineage's `document_metadata`, `document_people` and `document_names`
-  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), and
+  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), its
+  `document_tags` rows (D156 — caller-written text that can name people or customers), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
