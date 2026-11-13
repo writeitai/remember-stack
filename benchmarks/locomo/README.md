@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v46 setup
+# RS-LoCoMo-Full-v47 setup
 
 One current execution profile uses Luna 6 for ingestion and vision at low
 reasoning, Luna 6 for answering and judging at high reasoning, and Jev
@@ -7,7 +7,17 @@ Luna as the only fallback; actual provider usage records the higher price when
 standard processing serves a call. Historical protocols are retained in saved run artifacts
 and Git, not as runnable branches.
 
-Full-v46 uses the bounded visual-label description prompt. Old image bundles
+Full-v47 keeps Full-v46's models, processing generations and bounded visual-label
+readings. It changes only corpus attestation: per-version nullable publication
+markers replace global snapshot state. Ready `document.json` / folder indexes
+must match exact ingests, and the run freezes streamed file hashes (including
+binary originals/media and navigation). Reads and resumes reject changed bytes.
+The run stores publication identities and inventories; ablations require that
+same evidence. A multi-version readiness response has no global version or
+publication timestamp. No Full-v47 benchmark has been run by this change.
+Old evidence stays pinned to its original protocol and source revision.
+
+Full-v46 introduced the bounded visual-label description prompt. Old image bundles
 are not relabelled: preparing this profile requires matching new visual readings,
 while independent OCR checkpoints may be reused. For a reader-only comparison
 on retained v45 stores, use the PR593 reader revision before adopting this
@@ -110,13 +120,13 @@ Once a bundle exists, preparation is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v46 \
+  --protocol full-v47 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v46` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v47` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -140,7 +150,7 @@ missing/Unknown answer is wrong. Equivalent calendar and relative dates are
 accepted without a fixed date-error tolerance. Luna high still judges; old
 Sol grades are not relabeled. This is a new protocol identity, not a new score.
 
-Full-v46 asks the answerer to give its best-supported answer to every scored
+Full-v47 asks the answerer to give its best-supported answer to every scored
 question, including a qualified inference when evidence is indirect. It forbids
 terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
 `possibly` attached to an actual answer. The prompt still forbids invented source
@@ -282,21 +292,22 @@ calls and verifies the provider-reported model identity for both seats. Ambient
 OpenRouter settings or model aliases therefore cannot silently change the
 prepared protocol.
 
-P3 is built, freshness-checked, and published through the ordinary self-host
-mount adapter before answering:
+Corpus publication follows served versions automatically. Wait for each source's
+`p3` readiness, then mount or copy the corpus bucket read-only as described in
+[Filesystem views](../../website/src/app/docs/self-hosting/filesystem-views/page.mdx).
+The normal operations command verifies/repairs the same live tree:
 
 ```bash
-mkdir -p "$PWD/.benchmark-mounts"
-docker compose --profile operations run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$PWD/.benchmark-mounts:$PWD/.benchmark-mounts" \
-  projections mounts --root "$PWD/.benchmark-mounts"
+docker compose --profile operations run --rm projections
 ```
 
-Pass the resulting
-`.benchmark-mounts/$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID/p3` path to `answer`
-with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
-from readiness.
+Pass its readable local directory to `answer --p3-root`. The runner resolves
+`p3_path` through document search, obtains each exact version's marker, verifies
+ready folder identities and streamed reader hashes, and stores a frozen inventory.
+It rejects an unrelated publication or a changed/incomplete reading. There is no
+global P3 snapshot version or pointer. The root starts at `llms.txt`; type/topic
+indexes lead to copied originals and derivatives. Only the document suffix is
+stable after type/topic/title moves.
 
 ### Scoring retained ingestion after a serving-only upgrade
 
@@ -336,7 +347,7 @@ retrying; the command refuses a nonempty output. No automatic paid retry occurs.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v46 sample and
+The additive D124 runner reuses one completely processed Full-v47 sample and
 compares answer routes or full-surface prompt variants without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -365,11 +376,11 @@ re-ingestion. `--judge-model` separately selects the grader model.
 This starts with OSS artifacts only. P3 is already an ordinary published
 directory, so copy it from the benchmark host or restore it with the existing
 OSS backup workflow; no UMC, RememberFS, FUSE mount, or new download service is
-involved. For example, a normal copy preserves the required marker:
+involved. For example, copy the live corpus and retain the matching run evidence:
 
 ```bash
 rsync -a bench-host:/absolute/published/mount/p3/ /local/conv-42-p3/
-test -s /local/conv-42-p3/.snapshot-version
+test -s /local/conv-42-p3/llms.txt
 ```
 
 Run one profile into its own empty output directory. The P3 argument is required
@@ -423,7 +434,7 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v46 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v47 protocol and
 its source state are never modified by this command.
 
 ## Sharded runs

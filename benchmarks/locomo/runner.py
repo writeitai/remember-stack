@@ -29,6 +29,7 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from benchmarks.locomo.corpus import capture_publications
 from benchmarks.locomo.dataset import DATASET_COMMIT
 from benchmarks.locomo.dataset import DATASET_SHA256
 from benchmarks.locomo.dataset import item_ids_hash
@@ -321,9 +322,8 @@ def _readiness_matches_protocol(
             capability.required and capability.ready
             for capability in readiness.capabilities.values()
         )
-        and bool(readiness.capabilities["p3"].version)
-        and readiness.capabilities["p3"].built_at is not None
-        and readiness.capabilities["p3"].published_at is not None
+        and readiness.capabilities["p3"].built_at is None
+        and readiness.capabilities["p3"].published_at is None
     )
     return bool(
         readiness.ready
@@ -665,7 +665,6 @@ def answer_sample(
         )
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
-    p3_capability = readiness.capabilities["p3"]
     tools = _require_current_query_surface(context=context, client=client)
     _require_exact_live_ingests(
         client=client,
@@ -706,13 +705,44 @@ def answer_sample(
     tracer = _configured_langfuse_tracer(context=context)
     p3: P3Mount | None = None
     p3_error: str | None = None
-    if p3_capability.version is None:
-        p3_error = "P3 readiness did not identify a snapshot version"
-    else:
-        try:
-            p3 = P3Mount(root=p3_root, expected_version=p3_capability.version)
-        except (RetrievalToolError, RetrievalInfrastructureError) as error:
-            p3_error = str(error)
+    try:
+        publications = capture_publications(
+            client=client,
+            versions={
+                record.doc_id: record.version_id
+                for record in context.state.ingests.values()
+                if record.sample_id == sample_id
+            },
+        )
+        p3 = P3Mount(root=p3_root, publications=publications)
+        if (
+            capture_publications(
+                client=client,
+                versions={
+                    record.doc_id: record.version_id
+                    for record in context.state.ingests.values()
+                    if record.sample_id == sample_id
+                },
+            )
+            != publications
+        ):
+            raise RetrievalInfrastructureError(
+                "P3 publication changed during local attestation"
+            )
+        prior_publications = context.state.corpus_publications.get(sample_id)
+        prior_inventory = context.state.corpus_inventories.get(sample_id)
+        if (prior_publications is not None and prior_publications != publications) or (
+            prior_inventory is not None and prior_inventory != p3.inventory
+        ):
+            raise RetrievalInfrastructureError("P3 frozen run inventory changed")
+        context.state.corpus_publications[sample_id] = publications
+        context.state.corpus_inventories[sample_id] = p3.inventory
+        _save_state(run_dir=run_dir, state=context.state)
+    except (ValueError, RetrievalToolError, RetrievalInfrastructureError) as error:
+        if p3 is not None:
+            p3.close()
+        p3 = None
+        p3_error = str(error)
     try:
         for question in remaining:
             if tracer is None:
@@ -799,7 +829,24 @@ def answer_sample(
         raise
     finally:
         if p3 is not None:
-            p3.close()
+            try:
+                p3.verify_inventory()
+                if (
+                    capture_publications(
+                        client=client,
+                        versions={
+                            record.doc_id: record.version_id
+                            for record in context.state.ingests.values()
+                            if record.sample_id == sample_id
+                        },
+                    )
+                    != context.state.corpus_publications[sample_id]
+                ):
+                    raise RetrievalInfrastructureError(
+                        "P3 publication changed during answering"
+                    )
+            finally:
+                p3.close()
         if tracer is not None:
             tracer.flush()
     return tuple(context.state.answers[question.item_id] for question in questions)

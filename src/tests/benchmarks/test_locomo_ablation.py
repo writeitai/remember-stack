@@ -55,6 +55,8 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.ports import ModelProviderPort
+from tests.benchmarks.corpus_support import publications
+from tests.benchmarks.corpus_support import write_corpus
 
 
 class _FakeMcpServer:
@@ -153,7 +155,7 @@ def _full_arm(
         questions=questions,
         sample_id="conv-test",
         profile="full",
-        p3_version="p3-v1",
+        p3_inventory_sha256="p3-v1",
         mcp_tools=answer_tool_catalog(),
         answer_workers=workers,
         answer_model="test/alternative-model",
@@ -230,7 +232,7 @@ def test_parallel_questions_overlap_and_resume_without_repeating_completed_work(
         questions=questions,
         sample_id="conv-test",
         profile="full",
-        p3_version="p3-v1",
+        p3_inventory_sha256="p3-v1",
         mcp_tools=answer_tool_catalog(),
         answer_workers=4,
         answer_model="test/alternative-model",
@@ -516,9 +518,9 @@ def test_p3_mcp_facade_preserves_bounded_mount_semantics(tmp_path: Path) -> None
     """The portable P3 arm uses the existing validated P3 list/search/read code."""
     root = tmp_path / "p3"
     root.mkdir()
-    (root / ".snapshot-version").write_text("p3-v1", encoding="utf-8")
+    write_corpus(root, "p3-v1")
     (root / "session.md").write_text("Alpha lives in Prague.\n", encoding="utf-8")
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     facade = ablation._P3McpFacade(mount=mount)  # noqa: SLF001
     try:
         result = facade.call(name="p3_search", arguments={"query": "Prague"})
@@ -536,10 +538,10 @@ def test_p3_marker_mismatch_fails_before_opening_an_answer_route(
     """A local corpus from another publication cannot enter an ablation."""
     root = tmp_path / "p3"
     root.mkdir()
-    (root / ".snapshot-version").write_text("p3-other", encoding="utf-8")
+    write_corpus(root, "p3-other")
 
     with pytest.raises(RetrievalInfrastructureError, match="differs from readiness"):
-        P3Mount(root=root, expected_version="p3-expected")
+        P3Mount(root=root, publications=publications("p3-expected"))
 
 
 def test_live_source_is_revalidated_after_answer_execution(
@@ -697,7 +699,7 @@ def test_full_prompt_is_frozen_and_resume_rejects_changes(
         "questions": (_question(),),
         "sample_id": "conv-test",
         "profile": "full",
-        "p3_version": "p3-v1",
+        "p3_inventory_sha256": "p3-v1",
         "mcp_tools": answer_tool_catalog(),
         "prompt_template": "Question: {question}\r\n",
         "answer_model": answer_model,
@@ -764,7 +766,7 @@ def test_full_profile_calls_the_native_loop_with_source_settings(
         questions=(question,),
         sample_id="conv-test",
         profile="full",
-        p3_version="p3-v1",
+        p3_inventory_sha256="p3-v1",
         mcp_tools=tools,
         prompt_template="General candidate: {question}",
         answer_model=answer_model,
@@ -1255,7 +1257,7 @@ def test_ablation_output_resumes_without_touching_source_state(
         questions=(question,),
         sample_id="conv-test",
         profile="codex-p3",
-        p3_version="p3-v1",
+        p3_inventory_sha256="p3-v1",
         mcp_tools=(),
     )
     state.run_state.answers[question.item_id] = _answer(question=question)
@@ -1271,7 +1273,7 @@ def test_ablation_output_resumes_without_touching_source_state(
         questions=(question,),
         sample_id="conv-test",
         profile="codex-p3",
-        p3_version="p3-v1",
+        p3_inventory_sha256="p3-v1",
         mcp_tools=(),
     )
 
@@ -1298,7 +1300,7 @@ def test_summary_counts_failures_and_route_utilization() -> None:
                 questions=(question, missing),
                 sample_id="conv-test",
                 profile="codex-p3-mcp",
-                p3_version="p3-v1",
+                p3_inventory_sha256="p3-v1",
                 mcp_tools=(),
             ),
             "created_at": datetime.now(timezone.utc),
@@ -1462,7 +1464,7 @@ def test_current_judge_opt_in_is_frozen_on_resume(
         "questions": (_question(),),
         "sample_id": "conv-test",
         "profile": "full",
-        "p3_version": "p3-v1",
+        "p3_inventory_sha256": "p3-v1",
         "mcp_tools": answer_tool_catalog(),
         "prompt_template": "Question: {question}",
         "use_current_judge_prompt": True,

@@ -18,6 +18,7 @@ from pydantic import model_validator
 from pydantic import RootModel
 from pydantic import SerializerFunctionWrapHandler
 
+from benchmarks.locomo.corpus import CorpusPublication
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
 from remember.retrieval import ContextRetrievalBudget
@@ -33,7 +34,7 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v46"]
+ProtocolKey = Literal["full-v47"]
 ProtocolName = NonEmpty
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = NonEmpty
@@ -145,7 +146,7 @@ class RetainedIngestionOrigin(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v46"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v47"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -470,6 +471,10 @@ class RunState(BaseModel):
     protocol_fingerprint: NonEmpty
     ingests: dict[str, IngestRecord] = Field(default_factory=dict)
     preflight_usages: list[ProviderCallUsage] = Field(default_factory=list)
+    corpus_publications: dict[str, tuple[CorpusPublication, ...]] = Field(
+        default_factory=dict
+    )
+    corpus_inventories: dict[str, dict[str, str]] = Field(default_factory=dict)
     readiness: dict[str, PipelineReadinessReport] = Field(default_factory=dict)
     answers: dict[str, AnswerRecord] = Field(default_factory=dict)
     judges: dict[str, JudgeRecord] = Field(default_factory=dict)
@@ -504,7 +509,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v46"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v47"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)
