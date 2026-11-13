@@ -46,6 +46,32 @@ def test_suffix_uses_uuid_bytes_and_needs_no_retained_metadata() -> None:
     )
 
 
+@pytest.mark.parametrize("limit", [32, 150])
+def test_ancestor_navigation_matches_full_render_and_omits_other_branches(
+    limit,
+) -> None:
+    documents = [
+        document(doc_id=UUID(int=index + 1), placement_path=topic, source_kind=kind)
+        for index, (topic, kind) in enumerate(
+            [("Finance/Annual", "upload")] * 70
+            + [("Finance/Other", "upload")] * 3
+            + [("Unrelated/Branch", "upload")] * 70
+            + [("Unrelated/Branch", "email")] * 70
+        )
+    ]
+    ancestors = {"", "pdf", "pdf/finance", "pdf/finance/annual", "pdf/vanished"}
+    policy = CorpusPolicy(member_limit=limit)
+    full = render_navigation(documents, policy=policy)
+    partial = render_navigation(iter(documents), policy=policy, ancestors=ancestors)
+    expected = {
+        path: content
+        for path, content in full.items()
+        if path == "llms.txt" or posixpath.dirname(path).split("/~", 1)[0] in ancestors
+    }
+    assert partial == expected
+    assert "pdf/vanished/_index.md" not in partial
+
+
 @pytest.mark.parametrize(
     ("source", "mime", "family", "route", "attachment", "expected"),
     [

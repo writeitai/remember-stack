@@ -782,7 +782,9 @@ class OpenRouterModelProvider:
                     f"{response.text[:500]}",
                     provider_host=slug,
                 )
-            body = response.json()
+            body = _success_body(
+                response=response, path="/chat/completions", provider_host=slug
+            )
             usage = self._completion_usage(body=body, started_ns=started_ns)
             content = _completion_content(body=body)
             if content is None:
@@ -964,6 +966,9 @@ class OpenRouterModelProvider:
     def _post(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
         """POST one JSON request; non-2xx responses become typed errors.
 
+        A success status whose body is not a JSON object also becomes a typed
+        error (see ``_success_body``); it is never retried here.
+
         Call shape is pinned by adapter tests: unconfigured chat routing and
         embeddings share this historic bound (numerically identical to the
         default chat throttle budget). Rotation uses ``_post_once`` plus the
@@ -1000,7 +1005,7 @@ class OpenRouterModelProvider:
                     f"OpenRouter {path} returned {response.status_code}: "
                     f"{response.text[:500]}"
                 )
-            return response.json()
+            return _success_body(response=response, path=path, provider_host=None)
         raise AssertionError("bounded OpenRouter POST retry loop did not return")
 
     def _post_once(self, *, path: str, payload: dict[str, object]) -> httpx.Response:
@@ -1014,6 +1019,79 @@ class OpenRouterModelProvider:
             generation_id=generation_id,
             timeout_s=self._settings.timeout_s,
         )
+
+
+_JSON_TYPE_NAMES: dict[type, str] = {
+    list: "array",
+    str: "string",
+    int: "number",
+    float: "number",
+    bool: "boolean",
+    type(None): "null",
+}
+
+
+def _success_body(
+    *, response: httpx.Response, path: str, provider_host: str | None
+) -> dict[str, Any]:
+    """Decode a success-status POST body as the JSON object OpenRouter promises.
+
+    Every OpenRouter POST reply is a JSON object: a completion, an embedding
+    batch or an error envelope. An empty, whitespace-only, non-JSON or
+    non-object body is a broken provider reply. It becomes the ordinary typed
+    ``OpenRouterProviderError`` so callers record and handle it like any other
+    transport failure. Without this, a bare ``json.JSONDecodeError`` escaped
+    the adapter with no endpoint or host.
+
+    The reply came with a success status, so the provider may already have
+    charged for it. The error therefore carries no usage (unknown, not zero),
+    is never marked ``retryable_unbilled``, and is not retried here.
+
+    The message holds only safe facts: endpoint, status, body size, a body
+    class, and the decoder's fixed reason and character offset. It never
+    includes body text, headers or credentials, because a partial body can
+    contain model output derived from user content.
+
+    The error is raised after the ``except`` block, so it has no chained
+    decoder exception (neither ``__cause__`` nor ``__context__``). A
+    traceback of it therefore shows no decoder message and offers no path to
+    the decoder's ``doc`` attribute, which holds the raw body. This covers the
+    message and the exception chain only; the response object itself still
+    lives in the callers' frames.
+    """
+    body: object = None
+    decode_failure: str | None = None
+    try:
+        body = response.json()
+    except json.JSONDecodeError as error:
+        decode_failure = f"decode_error={error.msg!r}, decode_pos={error.pos}"
+    except ValueError:
+        decode_failure = "decode_error='invalid text encoding'"
+    if decode_failure is not None:
+        size = len(response.content)
+        if size == 0:
+            body_class = "empty"
+        elif not response.content.strip():
+            body_class = "whitespace_only"
+        else:
+            body_class = "not_json"
+        raise OpenRouterProviderError(
+            f"OpenRouter {path} returned {response.status_code} with an"
+            f" undecodable body (body={body_class}, body_bytes={size},"
+            f" {decode_failure})",
+            provider_host=provider_host,
+            status_code=response.status_code,
+        )
+    if not isinstance(body, dict):
+        json_type = _JSON_TYPE_NAMES.get(type(body), "other")
+        raise OpenRouterProviderError(
+            f"OpenRouter {path} returned {response.status_code} with a non-object"
+            f" JSON body (json_type={json_type},"
+            f" body_bytes={len(response.content)})",
+            provider_host=provider_host,
+            status_code=response.status_code,
+        )
+    return body
 
 
 def _in_flight_budget_retry_after(*, response: httpx.Response) -> float | None:

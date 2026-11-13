@@ -90,3 +90,5 @@ src/tests/workers/test_processing_layers_pg.py
 src/tests/workers/test_ingest_stored_pg.py
 src/tests/spine/test_d153_eligibility_pg.py
 src/tests/adapters/test_minio_object_operations.py
+src/tests/adapters/test_minio_corpus_lock_loss.py
+src/tests/adapters/test_minio_corpus_publication.py

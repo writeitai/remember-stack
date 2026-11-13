@@ -6,6 +6,7 @@ from typing import Protocol
 
 import pytest
 
+from rememberstack.core.object_transfer import object_transfer_scope
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
@@ -180,3 +181,37 @@ class ObjectOperationContract:
     ) -> None:
         with pytest.raises(ValueError, match="positive"):
             list(store.iter_bytes(key=ObjectKey("unused"), chunk_size=size))
+
+    def test_digest_metadata_and_mutation_guard(self, store: OperationStore) -> None:
+        key = ObjectKey("digest")
+        assert store.sha256_of(key=key) is None
+        store.write_bytes(key=key, content=b"old", storage_class="hot")
+        assert store.sha256_of(key=key) is None
+        digest = sha256(b"new").hexdigest()
+        called = []
+        store.replace_stream(
+            key=key,
+            chunks=(b"new",),
+            storage_class="hot",
+            sha256=digest,
+            before_write=lambda: called.append(True),
+        )
+        assert called and store.sha256_of(key=key) == digest
+
+        def lost() -> None:
+            raise RuntimeError("lock lost")
+
+        with object_transfer_scope() as transfer:
+            with pytest.raises(RuntimeError, match="lock lost"):
+                store.replace_stream(
+                    key=key,
+                    chunks=(b"stale",),
+                    storage_class="hot",
+                    sha256=sha256(b"stale").hexdigest(),
+                    before_write=lost,
+                )
+        assert transfer.bytes_written == 0
+        assert store.read_bytes(key=key) == b"new"
+        assert store.sha256_of(key=key) == digest
+        store.delete(key=key)
+        assert store.sha256_of(key=key) is None

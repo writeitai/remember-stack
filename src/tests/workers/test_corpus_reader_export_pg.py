@@ -71,17 +71,18 @@ def _seed(engine: Engine, source: CorpusDocument) -> None:
         "family": source.family,
         "route": source.route,
         "date": source.source_date,
+        "version_no": source.version_no,
         "placement": source.placement_path,
         "summary": source.root_summary,
         "source_kind": source.source_kind,
     }
     statements = (
         """INSERT INTO documents (doc_id, deployment_id, source_kind, source_ref, title)
-        VALUES (:doc, :d, :source_kind, :doc, :lineage_title)""",
+        VALUES (:doc, :d, :source_kind, :doc, :lineage_title) ON CONFLICT DO NOTHING""",
         """INSERT INTO content_objects (deployment_id, content_hash, mime, byte_size, raw_uri)
         VALUES (:d, :hash, :mime, 100, :raw) ON CONFLICT DO NOTHING""",
         """INSERT INTO document_versions (version_id, deployment_id, doc_id, content_hash,
-        version_no, status, source_modified_at) VALUES (:v, :d, :doc, :hash, 1, 'ready', :date)""",
+        version_no, status, source_modified_at) VALUES (:v, :d, :doc, :hash, :version_no, 'ready', :date)""",
         """INSERT INTO document_metadata (deployment_id, version_id, doc_id, family, title,
         file_name, metadata_mapping_version) VALUES (:d, :v, :doc, :family, :title, :filename, 'test')""",
         """INSERT INTO document_representations (representation_id, deployment_id, version_id,
@@ -403,31 +404,42 @@ def test_attachment_type_uses_its_own_format(engine: Engine, corpus) -> None:
     assert _select(engine, doc_id=attachment.doc_id)[0] == selected
 
 
-def test_schema_change_is_only_one_nullable_marker(engine: Engine) -> None:
+def test_schema_change_is_only_nullable_marker_and_cleanup_paths(
+    engine: Engine,
+) -> None:
     def shape():
         with engine.connect() as connection:
             return set(
                 connection.execute(
                     text("""SELECT table_schema, table_name, column_name,
-                data_type, is_nullable, column_default FROM information_schema.columns
+                data_type, udt_name, is_nullable, column_default FROM information_schema.columns
                 WHERE table_schema IN ('public', 'memory_v1')""")
                 ).tuples()
             )
 
     config = _config()
-    # Later revisions (D156 tags) sit above the marker; compare the marker alone.
+    # D156 tags sit above the corpus revisions; compare those revisions alone.
     with engine.begin() as connection:
         connection.execute(text("TRUNCATE TABLE tags CASCADE"))
-    command.downgrade(config=config, revision="p9_49_0070")
+    command.downgrade(config=config, revision="p9_51_0072")
     after = shape()
     command.downgrade(config=config, revision="p9_48_0069")
     try:
         before = shape()
         assert after - before == {
-            ("public", "documents", "corpus_published_revision", "text", "YES", None)
+            (
+                "public",
+                "documents",
+                "corpus_published_revision",
+                "text",
+                "text",
+                "YES",
+                None,
+            ),
+            ("public", "documents", "corpus_paths", "ARRAY", "_text", "YES", None),
         }
         assert before - after == set()
-        command.upgrade(config=config, revision="p9_49_0070")
+        command.upgrade(config=config, revision="p9_51_0072")
         assert shape() == after
     finally:
         command.upgrade(config=config, revision="head")

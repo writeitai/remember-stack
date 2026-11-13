@@ -7484,6 +7484,7 @@ and three values Compose sets itself, which win over `.env`:
 |---|---|
 | `REMEMBERSTACK_DATABASE_URL` | Built from `REMEMBERSTACK_POSTGRES_USER`, `_PASSWORD` and `_DB`, pointing at the `postgres` service. |
 | `REMEMBERSTACK_MINIO_ENDPOINT_URL` | `http://object-store:8333`, the bundled SeaweedFS store. |
+| `REMEMBERSTACK_MINIO_CONNECT_TIMEOUT_S`, `REMEMBERSTACK_MINIO_READ_TIMEOUT_S` | Per-request S3 connect/read timeouts, 5/30 seconds by default. Automatic S3 retries are disabled; failed pipeline work uses the durable work ledger retry path. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | `8000`. In `.env` the same variable is the host port Compose publishes. |
 
 A variable exported in your shell overrides `.env` only if it is on the
@@ -7731,6 +7732,25 @@ stops with an accounting error containing the generation ID and lookup status.
 Use those identifiers to reconcile the request with the provider before
 retrying paid work. The adapter does not invent a zero cost or automatically
 generate the same potentially paid response again.
+
+A reply can arrive with a success status but a body that is not a JSON
+object: empty, only whitespace, an HTML page, a cut-off object, or a JSON
+value such as `null` or `[]`. The call then fails with an ordinary OpenRouter
+provider error, on chat and embedding calls alike. The message names the
+endpoint, the status, the body size and the kind of problem, for example:
+
+```text
+OpenRouter /chat/completions returned 200 with an undecodable body (body=whitespace_only, body_bytes=26, decode_error='Expecting value', decode_pos=26)
+```
+
+The message never contains the body text, headers or your API key. A
+success status does not prove the request was free, so usage stays unknown
+rather than zero. The adapter does not treat this as a capacity rejection, so
+it does not retry, rotate to another provider, or start a new retry budget.
+Callers handle it as an ordinary provider error, using their existing retry
+or fallback policy: some stages retry the work item, while optional steps,
+such as section summaries, continue without the model's answer. Valid replies
+and the capacity retries above work as before.
 
 Lowering reasoning effort makes extraction faster and cheaper; the comment
 in `.env.example` notes that `none` can reduce adjudication quality and
@@ -20240,6 +20260,8 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | S3 region name used for signing. |
+| `REMEMBERSTACK_MINIO_CONNECT_TIMEOUT_S` | `5` | finite seconds, > 0 | Connection timeout for each S3 request. |
+| `REMEMBERSTACK_MINIO_READ_TIMEOUT_S` | `30` | finite seconds, > 0 | Socket read timeout for each S3 request. Multipart uploads send at most 8 MiB per part. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for filesystem-view snapshots. Fixed after the first start. |
@@ -21198,7 +21220,12 @@ compares credible references across sessions before narrowing to one candidate,
 and retains relevant restrictions with their source qualifiers without adding
 unsupported denials. If resolved-entity filters leave required details missing,
 it searches claims and chunks without that semantic filter and verifies
-attribution from the source. Deployment, visibility and time boundaries remain
+attribution from the source. It reads returned chunk text as well as extracted
+claims, because claims can omit items mentioned only in a reply or attachment.
+List answers keep strongly implied items with a qualifier such as "likely"
+instead of dropping them. Repeated episodes are kept apart by when they
+happened. An answer names a different participant only when the event in the
+question belongs uniquely to them. Deployment, visibility and time boundaries remain
 in force. These rules do not change ingestion, ranking or the primary judge.
 The current full-profile comparison runner can read a source with an older
 prompt-only protocol name when its entire non-prompt contract still matches.
@@ -21719,6 +21746,11 @@ absent from the current release; nothing here has a date.
   `pipeline_readiness` tool.
 
 ## Knowledge
+
+- **Self-contained document folders on mounted filesystems.** The current
+  [filesystem view](https://remember.dev/docs/self-hosting/filesystem-views) links to originals
+  and converted artifacts; it does not place their bytes together in one
+  document folder.
 
 - **Compiled pages.** RememberStack does not write summary pages that
   combine what it knows about a topic; the envelope's `pages` field and the

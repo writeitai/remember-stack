@@ -716,7 +716,16 @@ class DocumentCatalog:
         earlier attempt, that is the earlier attempt's tree, and derived
         artifacts (the sidecar) must be built from it, not from the input.
         """
+        from rememberstack.core.corpus_export import desired_export_revision
+        from rememberstack.spine.corpus_publication import corpus_changed_on
+        from rememberstack.spine.corpus_publication import document_on
+
         with self._engine.begin() as connection:
+            previous = document_on(
+                connection=connection,
+                deployment_id=record.deployment_id,
+                doc_id=record.doc_id,
+            )
             generation_payload = record.model_dump(mode="json")
             generation_payload["stats"] = json.dumps(
                 generation_payload["stats"],
@@ -827,6 +836,19 @@ class DocumentCatalog:
                     connection=connection,
                     deployment_id=record.deployment_id,
                     version_id=record.version_id,
+                )
+            current = document_on(
+                connection=connection,
+                deployment_id=record.deployment_id,
+                doc_id=record.doc_id,
+            )
+            if (desired_export_revision(previous) if previous else None) != (
+                desired_export_revision(current) if current else None
+            ):
+                corpus_changed_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    doc_id=record.doc_id,
                 )
         return _persisted_tree(generation=generation, sections=persisted)
 

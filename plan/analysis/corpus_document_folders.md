@@ -49,7 +49,7 @@ and D147 (`run_task`); D101 itself concerns ingest attribution.
 | What about parked uploads? | Retain D117 storage/parking and raw API access; no folder until a version completes | Losing early mount visibility is explicit, smaller than a mixed-version tree, and never promotes unfinished testimony |
 | Type/topic | Engine-derived small type enum; stored nullable topic from root placement | Asking the model for types or reconciling topics corpus-wide adds unstable choices and extra paid work |
 | Stable handle | Existing `doc_id`; a deterministic 96-bit SHA-256 suffix; MCP `p3_path` or mounted suffix search | A suffix reservation and radix id index add state without improving the required lookup or erasure contract |
-| Maintenance | Idempotent `publish_corpus(doc_id)` recomputes paths/files and indexes from the DB; one deployment advisory lock serializes publication | Revision counters, path journals, publication receipts and membership tables duplicate authority and introduce recovery state |
+| Maintenance | Idempotent `publish_corpus(doc_id)` recomputes desired files from the DB, lists only recorded possibly written folder paths, and regenerates their ancestor indexes; one deployment advisory lock serializes publication | Whole-store suffix discovery per document makes N ingests require quadratic object listing; revision counters, receipts and membership tables add unnecessary coordination |
 | Read consistency | Atomic objects, explicit folder-level in-progress marker, indexes written after files | S3 has no portable multi-object directory transaction; snapshot isolation would restore the recopy cost or add a pointer filesystem |
 | Hard forget | List by deterministic document suffix, erase that document's copies, then regenerate indexes from scrubbed DB authority under D74 | Resetting the store empties every customer's mount and recopies every survivor to forget one document; recording historic friendly paths in portable intent is unnecessary |
 | Provider API | S3 operations, streamed across stores when necessary | Native GCS and mandatory server-side copy add provider-specific behavior with no required benefit |
@@ -96,35 +96,52 @@ retries deliver that same processing row. A→B→A commits get separate ordinar
 rows, but every handler reads current authority, so their delivery order cannot
 restore an obsolete reading. Existing attempts, leases and DLQ rules stay intact.
 
-The sole new per-document state is nullable `corpus_published_revision`, a digest
-of the current DB-selected export inputs, desired path and builder policy. Clear
-it when those inputs change and before publication; set it only after files,
-cleanup and index regeneration succeed and authority still matches. MCP computes
-the current path only behind that match; readiness uses the same guard. No stored
-published path, reader-inventory receipt or pending-path list is needed. Type/
-topic/title changes invalidate the digest by comparison; navigation pagination
-changes indexes only, not physical document paths or other documents' markers.
+The publication marker, `corpus_published_revision`, is a nullable digest of
+current DB-selected export inputs, desired path and builder policy. Clear it on
+input changes and before publication; set it only after files, cleanup and index
+regeneration succeed and authority still matches. MCP and readiness use that
+match. The marker and the cleanup paths below do not enter paid-work identities.
 
-One deployment advisory lock keeps concurrent publishers from overwriting shared
-indexes with competing snapshots and also serializes same-document copies. Each
-publish lists existing suffix-bearing folders, streams the desired files, deletes
-other copies, and renders affected ancestor indexes and root `llms.txt` afresh from
-the DB. Never patch old index contents or replay queued paths. If a crash deletes
-the last old-folder object before its parent index is repaired, a paged scan of
-navigation indexes can still discover the stale member link by `doc_id`/suffix;
-regenerate that entire index from the DB. Reconcile renders all current navigation
-indexes and prunes obsolete ones. These are recomputable operations, not a journal.
-The inventory's member links identify documents explicitly, so retry discovery
-does not depend on titles. Empty obsolete topic/page indexes are pruned against
-DB membership. Lost or reordered shared-index writes are corrected by the next
-affected publish or reconcile.
+### Ordinary-publication scaling correction (Claude, design owner, 2026-11-13)
 
-Suffix discovery requires a paged key scan because the navigation prefix can move;
-it is O(corpus keys), not O(corpus bytes), and ordinary publication recopies only
-the selected document. Navigation page splits/merges rewrite metadata only.
-Measure listing cost, lock wait and large-media transfer cost. Full reconcile is
-repair, not a prerequisite for every edit. There is no new scheduler or persistent
-navigation-membership cache.
+The original no-path-state choice is superseded. Slice 3 listed every object to
+find one document's suffix, then rendered and HEAD-checked every shared index.
+At 100,000 documents with five reader objects each, a single publish lists about
+500,000 keys. Repeating this for N ingests is quadratic listing work, despite
+copying only each changed document. Avoiding a small DB field does not justify
+that cost at the required millions-of-documents scale.
+
+Record one nullable `documents.corpus_paths text[]`: the small set of folder paths
+this document may have written. Before any object write under a new path, commit
+the union of the recorded paths and that path on the advisory-lock session. A move
+from `pdf/finance/a--<suffix>` to `pdf/legal/b--<suffix>` therefore records both
+before the first new object can exist. Write the new folder, remove the old ones,
+and repair the ancestors of every recorded path before reducing the set to the
+new path (or null after removal). Keeping old paths through index repair also
+covers a crash just after deleting the last old object. A retry recomputes current
+authority and can find every possibly written folder and stale ancestor without
+looking through unrelated objects. No receipt table, path reservation or separate
+membership cache is needed.
+
+Only affected ancestor indexes and root `llms.txt` are rendered from current DB
+membership. Stream DB selections for membership/counts; retain document rows only
+for affected indexes and their immediate topic rows. Never parse old Markdown as
+authority. Put radix pages inside each index's reserved `~/` subtree, so paged
+listing of that subtree finds obsolete pages without visiting sibling document
+folders. Splits/merges change only navigation metadata. A fresh tree initializes
+the fixed eleven type indexes once because root navigation links even empty types.
+The builder-policy change rekeys P3 exports only, with no paid-work reuse change.
+
+Full-store scans remain the simple repair operation for reconcile and D74
+forget/restore replay: an independently restored bucket may contain paths that
+PostgreSQL never recorded. Reconcile unions discovered and recorded paths,
+rebuilds all navigation and repairs path state for served and unselected documents.
+Portable forget intent still needs only `doc_id`, not friendly-path history. The
+accepted digest-verifying repair of rare late writes after DB-session loss is
+unchanged. Alternatives rejected: scanning suffixes per ordinary publish remains
+quadratic; a directory-membership table or journal duplicates DB authority; using
+recorded paths as navigation membership would confuse cleanup state with the
+current served reading.
 
 Hard forget uses the same suffix scan after authority scrub. It also enumerates
 navigation-index keys and regenerates/prunes them against the scrubbed DB, covering
@@ -137,6 +154,79 @@ bring back a former path while PostgreSQL still says `complete`. Engine-controll
 mount/cache copies must acknowledge purge before serving reopens; external client
 downloads are outside library-controlled active stores. An expired worker lease
 alone does not prove that an object request stopped.
+
+## Slice 3 lock-loss counterexample (2026-11-13)
+
+**Historical stop, resolved by the reviewer disposition below.** Implementation
+originally stopped under the owner's explicit instruction: if a single
+idempotent recomputation is insufficient, report the concrete failure instead of
+adding coordination machinery. The disposition below amends D155 and its binding
+design to accept and repair this specific ordinary-publication race.
+
+[The executable reproducer](../../src/tests/adapters/test_minio_corpus_lock_loss.py)
+uses the real PostgreSQL test database and real MinIO started with
+`.github/ci/start-minio.sh`. A small HTTP relay delays delivery of one complete
+signed PUT after boto3 has sent it. It forwards the request and MinIO's response
+without mocking storage. The test controls ordering with thread events, not
+timing sleeps:
+
+1. Writer A owns a deployment-scoped PostgreSQL advisory lock and sends the
+   ready document `_index.md` for the original export identity. The relay receives
+   its complete request and holds it in flight.
+2. The test terminates A's PostgreSQL backend with `pg_terminate_backend`. Writer
+   B now successfully acquires the same advisory lock. The test also confirms
+   A's next DB operation fails: lock loss is observable, but the issued PUT
+   cannot be retracted by that observation.
+3. A canonical title change from `Annual Report` to `ANNUAL REPORT` changes the
+   export identity while preserving its normalized physical path. B re-reads
+   authority, renders and writes every selected reader file and navigation index,
+   then locks the document row, confirms the desired digest and sets its marker.
+   The ready index contains B's identity and the old request is still in flight.
+4. The relay releases A's old PUT. Real MinIO atomically replaces B's ready index
+   with A's old bytes. The document marker still equals the current DB-derived
+   digest, but the ready-folder identity is from the previous export.
+
+The original counterexample passed by asserting this **failure state**. It
+characterized the proposed primitives; the current regression extends it with
+the accepted repair and refusal of further writes described below. The upload
+thread is joined before exit: it does not require a
+detached upload, a new stale event, a lost announcement, or a stale final marker
+write from A. B may finish while A's synchronous request remains outside its
+control. A later recomputation could repair the index, but the last ordinary event
+can already have succeeded; the marker cannot certify that its files survived.
+
+This violates E0 §6.5's requirement that claim/lock loss settle or fence in-flight
+external IO **before another writer can proceed**. Renewing a lease, checking the
+DB before/after each operation, or joining IO before a handler returns does not
+keep the PostgreSQL lock held after its session is terminated. An HTTP timeout
+also does not establish that a remote request cannot commit. The same ordering
+can affect a file replacement or removal; delete/forget/restore have deliberately
+not been wired or exercised by this change.
+
+**Accepted reviewer disposition (Claude, design owner, 2026-11-13).** Prevent
+where cheap, repair by digest, and do not add coordination machinery. Check the
+same lock session before every mutation, bound provider connect/read timeouts and
+multipart units, and stop issuing requests on lock/claim loss. One already-issued
+request can still land late; timeout alone cannot retract it. Accept that rare
+transient staleness and define the marker as “current inputs were published once”.
+Attach the expected SHA-256 to every corpus object and have verifying reconcile
+rewrite mismatches, absent objects and missing metadata, including behind a matching
+marker. This preserves the small protocol instead of introducing durable fences,
+receipts or journals. Periodic verification is wired with activation in slice 4;
+D74's erasure barrier/drain remains binding and separate. The reproducer becomes
+an implementation regression: the late write really lands, further requests from
+the dead publisher are refused, and verifying reconcile repairs the newer bytes.
+The accepted contract is reconciled in D155 and E0 §§5–7. No ingestion identity or
+paid-work reuse boundary changes (Rule 4).
+
+Reproduce with `REMEMBERSTACK_DATABASE_URL` pointing to a disposable PostgreSQL
+test database (the imported fixture resets its schema):
+
+```bash
+.github/ci/start-minio.sh
+REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL=http://127.0.0.1:59000 \
+  uv run pytest src/tests/adapters/test_minio_corpus_lock_loss.py -q
+```
 
 ## Provider facts checked on 2026-11-13
 

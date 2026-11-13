@@ -116,3 +116,18 @@ def test_local_disk_failure_closes_source_and_removes_temporary_file(
     assert store.read_bytes(key=key) == b"old"
     assert store.storage_class_of(key=key) == "cold"
     assert not list((tmp_path / ".objects.metadata").glob("tmp*"))
+
+
+def test_local_purge_includes_orphaned_digest_metadata(tmp_path: Path) -> None:
+    store = LocalFSObjectStore(root=tmp_path / "corpus")
+    key = ObjectKey("folder/document.md")
+    store.replace_stream(
+        key=key, chunks=(b"source",), storage_class="hot", sha256="a" * 64
+    )
+    (tmp_path / "corpus" / key.root).unlink()
+    (tmp_path / ".corpus.metadata" / "classes" / key.root).unlink()
+    with pytest.raises(RuntimeError, match="purge verification"):
+        store.verify_objects_purged(keys=(), prefixes=(ObjectKey("folder"),))
+    store.purge_objects(keys=(), prefixes=(ObjectKey("folder"),))
+    store.verify_objects_purged(keys=(), prefixes=(ObjectKey("folder"),))
+    assert not list((tmp_path / ".corpus.metadata" / "digests").rglob("*.md"))

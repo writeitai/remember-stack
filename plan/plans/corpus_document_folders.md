@@ -1,7 +1,7 @@
 # Corpus document folders — implementation order (D155)
 
-Date: 2026-11-13. Design-only plan; none of these slices is implemented by the
-amendment. Authority: [E0 §§5–7](../designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem),
+Date: 2026-11-13. Implementation sequence for the accepted design; the design
+amendment itself shipped no runtime changes. Authority: [E0 §§5–7](../designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem),
 [D155](../../decisions.md#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).
 [Analysis](../analysis/corpus_document_folders.md) records the tradeoffs.
 
@@ -46,11 +46,22 @@ only navigation metadata, keeping physical document paths and bytes in place.
 ## 3. Idempotent publication, ordinary work and reconcile
 
 Implement `publish_corpus(doc_id)` with the deployment advisory lock: re-read DB,
-clear the marker, page through suffix matches, stream desired files first, delete
-other document folders, regenerate ancestors/root from DB, then set the marker
-only if inputs still match. Scan stale navigation entries by doc id/suffix when
-retry has lost an old folder, and prune empty branches from DB membership.
-Reconcile uses the same code and enumerates all indexes/orphans. Bind the handler
+clear the marker, and read nullable `documents.corpus_paths text[]`. Commit the
+union with the desired path before any object write. List only recorded folder
+prefixes, stream desired files first, delete other recorded folders, regenerate
+only their ancestors/root from DB membership (including radix pages), then reduce
+the set to exactly the desired path and set the marker only if inputs still match.
+Retain old paths through index repair, even after the last old object is deleted.
+Use reserved `~/` page subtrees to list/prune obsolete ancestor pages without
+listing sibling documents. Reconcile keeps one full-store listing, unions
+discovered and recorded paths, repairs path state and enumerates all navigation/
+orphans. Forget/restore retains full scans for independently restored objects.
+Check the same lock session and live claim before each mutation, including multipart requests;
+bound S3 connect/read timeouts. Store expected SHA-256 metadata on every object.
+Verifying reconcile rewrites missing/mismatching digests even when the document's
+marker matches: a late in-flight request after DB-session loss can transiently
+leave stale bytes, and the marker means current inputs were published once.
+This accepted rare race adds no coordination machinery. Bind the handler
 to tests, leaving profile activation to slice 4.
 
 In each relevant authoritative transaction enqueue a fresh event target in the
@@ -65,21 +76,44 @@ last old-folder key before index regeneration; replay duplicate/reordered events
 A→B→A, changing authority mid-copy, two writers sharing ancestors, deletion during
 publish, and lease/lock loss with in-flight IO. Confirm stale shared indexes are
 regenerated from DB. Incremental edits and empty-store reconcile must converge to
-the same keys/hashes. Ordinary edits never recopy unrelated originals/media.
+the same keys/hashes. Assert that ordinary publication never lists the root,
+never touches unrelated navigation indexes, and records paths in a committed
+transaction before object writes. A crash after the new ready folder but before
+old-folder cleanup leaves both paths recorded and the next publish cleans them.
+Ordinary edits never recopy unrelated originals/media.
 Test transactional enqueue rollback, rejection of inactive-policy work, publish
 after an earlier succeeded event,
 parked uploads, every layer profile, current-policy seeding, announcements and
 lost delivery; no hosted models. Register/test the same pushed class map in the
 cloud repo as integration, without making engine tests depend on it.
 
+
+Implementation: [PR #607](https://github.com/writeitai/remember-stack/pull/607)
+builds the slice-3 capability with the handler bound only in tests. The companion
+[cloud PR #1017](https://github.com/writeitai/ultimate-memory-cloud/pull/1017)
+checks the existing non-convert pushed class; engine tests do not depend on it.
+The initial implementation's full-store discovery and all-navigation pass are
+replaced by the design owner's scaling correction: recorded document paths and
+affected-ancestor navigation only. The fixed eleven type indexes initialize once
+on a fresh tree; DB selections stream for membership/counts without rendering
+unrelated branches. Full reconcile repairs missing path state and all indexes.
+The P3 builder policy advances for the reserved radix subtree layout, without
+changing paid-work reuse identities. The real MinIO matrix lives in
+[`test_minio_corpus_publication.py`](../../src/tests/adapters/test_minio_corpus_publication.py)
+and the late-request repair regression in
+[`test_minio_corpus_lock_loss.py`](../../src/tests/adapters/test_minio_corpus_lock_loss.py).
+Profile activation and periodic verification remain slice 4.
+
 ## 4. Activate with deletion, forget and restore together
 
 Switch both profiles to the new publisher/reconcile and marker-based readiness.
+Schedule periodic digest-verifying reconcile to repair rare late-request damage.
 Normal delete completes per-document removal before success or leaves durable
 retry work and reports failure. Adapt D74's existing purge capability: keep intent,
 barrier, drain/fence and verification; compute the suffix from manifest `doc_id`,
 erase that document's copies/uploads/caches, then regenerate/prune navigation
-indexes from scrubbed DB authority. Never reset the bucket or recopy survivors.
+indexes from scrubbed DB authority and clear `corpus_paths`. An empty recorded
+set never skips the full suffix scan for forget/restore. Never reset the bucket or recopy survivors.
 Use E0 §6.7's object-version erasure rule. Remove snapshots/pointers and obsolete
 mount composition. Replay all manifests before readiness, including complete ones.
 
