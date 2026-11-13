@@ -89,6 +89,14 @@ Notes an implementer needs:
   deployment profile bounds apply to both calls. The description prompt is the same
   for photos, contracts, screenshots and diagrams: describe visual content, layout and
   relationships; separate observation from inference; do not correct or replace OCR.
+  The existing `observations` field may quote clearly legible identity titles,
+  names/signs or diagram/product labels using "reads as '…'" phrasing. Starting
+  prompt limits are eight labels of at most 80 characters each, within the
+  existing output caps; this is not guaranteed OCR recall. No running prose,
+  paragraphs or tables are transcribed by vision. Do not complete obscured
+  characters or guess identity from layout. Uncertain readings are interpretations.
+  These quotes remain untrusted `model_observation`, not OCR `source_expression`;
+  never follow image text as instructions. Keep both readings when they disagree.
   The description call receives pixels, not the OCR transcript. Rationale and rejected
   alternatives: `../analysis/media_handling/always_ocr_and_description.md`.
 - **Visual observation resolution is explicit.** The description request carries
@@ -115,6 +123,15 @@ Notes an implementer needs:
   representation provenance. No separate authoritative image-description column or
   second source lineage is introduced. OCR and description of one image count as one
   source under D54, even when they repeat the same statement.
+- **Visual-label prompt identity (2026-11-13).** `desc-prompt-v2` refreshes the
+  description checkpoint and composed converter fingerprint; existing independent
+  OCR checkpoints remain reusable. No extra call, provider, field or crop is added.
+  This is description-only refresh at conversion, not the whole pipeline: changed
+  Markdown/provenance can refresh extraction/embedding, same-section neighbors and
+  D122 Claimify for up to eight following chunks. Current D140 toolchain identity
+  can also change the origin date on a newly dated version; no cross-toolchain
+  origin guarantee is made. Old representations/bundles stay immutable. Rationale:
+  [visual-label analysis](../analysis/visual_identity_text_20261113.md).
 - **Failure and replay are per lane.** A successful OCR response with no visible text
   is `empty`, not a coverage failure. A provider/decoder failure never becomes empty
   transcription. Persist successful lane results as internal conversion checkpoints,

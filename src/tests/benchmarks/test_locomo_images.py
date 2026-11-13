@@ -501,7 +501,7 @@ def test_offline_run_copies_image_inputs_and_validates_saved_bytes(
         images=tmp_path / "bundle",
     )
     assert config.image_inputs_sha256 is not None and config.protocol_name.endswith(
-        "v45"
+        "v46"
     )
     assert calls == before
     (tmp_path / "bundle" / IMAGE_INDEX).write_text("corrupt ambient source")

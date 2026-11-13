@@ -5844,6 +5844,15 @@ D98's live-PostgreSQL graph behavior.
 
 ## D115. Agent-visible source access — `source_open` serves perception, and images always run dedicated OCR and visual description
 
+**Partial refinement (2026-11-13, bounded visual identity labels).** The description
+lane may quote short legible identity labels as untrusted model observations,
+without transcribing running text or correcting/replacing dedicated OCR. Both
+independent required lanes, provenance and D54's one-source counting survive.
+The exact limits, checkpoint and downstream reprocessing boundaries are in
+[media design §2](plan/designs/media_design.md#2-converter-routes-extends-the-d38-router-table),
+with [analysis](plan/analysis/visual_identity_text_20261113.md). Source-opening and
+perception contracts below are unchanged.
+
 **Decision (2026-09-03).** D65 bound how a media source is *derived* and *pointed at*. It left
 the last step — an unmounted agent actually perceiving the source — unbuilt: `media_design.md`
 §4 named "a `source_open` primitive" once as an alternative, while §8 and

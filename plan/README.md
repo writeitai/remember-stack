@@ -138,3 +138,7 @@ For concrete answer values and bounded source-chunk continuation, see the
 and [evidence-fidelity analysis](analysis/evidence_fidelity_20261113.md). That
 analysis also records the unresolved extractor-generation/text-origin coupling;
 no date-reuse correction is claimed.
+
+For bounded legible identity labels in image observations, with independent OCR
+and explicit cache/downstream costs, see [media §2](designs/media_design.md#2-converter-routes-extends-the-d38-router-table)
+and the [visual-label analysis](analysis/visual_identity_text_20261113.md).

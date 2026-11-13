@@ -32,7 +32,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v45 (full-v45)
+protocol                 RS-LoCoMo-Full-v46 (full-v46)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -227,6 +227,11 @@ Retries do not belong inside the shared adapter because engine workers already
 own their work-ledger retry policy. The measured answer-reader failure above is
 handled only in the benchmark answer loop, where its two additional attempts
 are fingerprinted and charged to the existing agent-call budgets.
+
+Full-v46 inherits the Full-v45 reader, including the PR593 completeness update,
+and adds `desc-prompt-v2` image readings. It requires new visual products;
+ingested representations can differ. The document-adapter format stays at the
+reader-catalog-v45 generation because that wire/rendering format is unchanged.
 
 ## 3. Ingestion mapping
 
@@ -537,7 +542,7 @@ before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-Full-v45 requires the best-supported answer to each scored question, including
+Full-v46 requires the best-supported answer to each scored question, including
 an inference when the conclusion is not stated verbatim. Prefer direct statements,
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
@@ -618,9 +623,9 @@ relaxes a caller's explicit entity filter, and broader retrieval does not prove
 attribution. This conditional search uses the existing public tools and the
 same call budget; it adds no ranking model or ingestion work.
 
-Full-v45 records these prompt changes under a new identity; the restored
+Full-v45 introduced these reader changes under a new identity; the restored
 Full-v42 judge, models, retrieval depth, eight-tool/nine-model-call cap and all
-ingestion/reuse generations stay unchanged. Missing context can require another
+ingestion/reuse generations were unchanged by those reader changes. Missing context can require another
 public tool read and reader continuation within that same cap. Budget exhaustion
 or provider/tool failures remain visible; no hidden retry or answer repair is
 introduced. Offline checks establish identity integrity, not a score gain.
@@ -636,7 +641,7 @@ The ordinary reader's displayed tool catalog omits each descriptor's complete
 continuation. It retains the full input schema and descriptor contracts, grain,
 intent and descriptions. Public schemas, catalog hashing, runtime validation
 and durable tool records remain complete. MCP-shaped catalogs are unchanged.
-This rendering change receives the Full-v45 adapter identity; it changes no
+This rendering change retains the Full-v45 reader-catalog adapter identity; it changes no
 paid ingestion input or reuse generation. The reader observes actual typed
 response fields in its unfiltered trace. Omitting schemas establishes neither
 better answers nor faster inference; those need separate development evidence.
@@ -670,12 +675,12 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v45 \
+  --protocol full-v46 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Execution uses `full-v45`; later stages
+`--protocol` exists only on `prepare`. Execution uses `full-v46`; later stages
 read the immutable current choice from the saved run. Historical protocols are
 read-only and cannot be selected as an execution fallback.
 
@@ -819,8 +824,9 @@ The reader consolidates list and final-answer reminders rather than growing its
 prompt. It retains supplied concrete names/dates, accounts for distinct supported
 items, and expands missing owner/reply context from returned edge chunk IDs within
 existing limits. A short adjacency side means a boundary only without missing
-center, drops or truncation. No ingestion/image/model/judge or budget changes.
-The family remains v45 for retained-store comparisons; prompt hashes and immutable
+center, drops or truncation. The reader-only PR593 checkpoint changes no
+ingestion/image/model/judge profile or budget and retains v45 for independent
+retained-store comparisons. The visual-label profile is v46; prompt hashes and immutable
 fingerprints identify each reader. Old-prompt runs remain inspectable but cannot
 resume under changed instructions. Prepare a new retained-ingestion fork; do not
 edit prior records. This instruction change establishes no score improvement.
