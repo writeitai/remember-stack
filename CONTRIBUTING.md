@@ -19,6 +19,39 @@ Run the smallest relevant test set while iterating, then the complete checks app
 to the change before requesting review. User-facing behavior changes must update the
 corresponding documentation in the same pull request.
 
+## Object-store integration tests
+
+D155's object operations run the same contract against local files and **real
+MinIO**. Compose's ordinary object store is SeaweedFS; it is not the MinIO gate.
+Start a disposable MinIO container (Docker, curl and Python 3.11+ required):
+
+```bash
+.github/ci/start-minio.sh
+REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL=http://127.0.0.1:59000 \
+  uv run pytest src/tests/adapters/test_minio_object_operations.py -q
+# After testing:
+docker rm --force rememberstack-minio-test
+```
+
+The helper builds a local image from MinIO's pinned, checksum-verified upstream
+GitHub release binary because the old upstream registry images are unavailable.
+It publishes only on loopback and uses disposable test credentials. To use an
+existing MinIO service, set `REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL` and optionally
+`REMEMBERSTACK_TEST_MINIO_ACCESS_KEY` / `REMEMBERSTACK_TEST_MINIO_SECRET_KEY`
+(defaults: `rememberstack` / `rememberstack_test`). Each test provisions and removes
+its own randomly named bucket, including unfinished multipart uploads.
+
+As with the PostgreSQL tests, missing connection configuration skips this suite.
+An explicitly configured unavailable service, wrong provider or invalid credential
+fails the tests. The adapters CI lane starts MinIO and sets the endpoint explicitly,
+so this gate cannot silently skip there. Other S3-compatible providers require
+separate qualification; MinIO results alone do not qualify them.
+
+The local adapter keeps class records and temporary files in a sibling directory
+`.<root-name>.metadata`, outside the reader tree. Keep that directory on the same
+filesystem as the object root for atomic replacement; include it with local
+storage when moving or backing up class records.
+
 ## Contributor agreement
 
 RememberStack is currently distributed under the Apache License, Version 2.0. Before a
