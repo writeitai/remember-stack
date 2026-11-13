@@ -126,10 +126,23 @@ class _MemoryS3:
             raise _client_error(code="NoSuchKey", operation="HeadObject") from error
         return {"Metadata": metadata}
 
-    def delete_object(self, *, Bucket: str, Key: str) -> object:
+    def delete_object(self, *, Bucket: str, Key: str, VersionId: str = "") -> object:
         """Delete one object idempotently."""
         self.objects.pop((Bucket, Key), None)
         return {}
+
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:
+        return {}
+
+    def list_object_versions(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str,
+        KeyMarker: str = "",
+        VersionIdMarker: str = "",
+    ):
+        raise AssertionError("unversioned fixture must not enumerate history")
 
     def generate_presigned_url(
         self, ClientMethod: str, Params: dict[str, str], ExpiresIn: int
@@ -529,7 +542,9 @@ def test_purge_follows_both_multipart_markers() -> None:
 @pytest.mark.parametrize("code", ["404", "NoSuchKey", "NotFound", "AccessDenied"])
 def test_exact_delete_accepts_only_absence_errors(code: str) -> None:
     class DeleteError(_MemoryS3):
-        def delete_object(self, *, Bucket: str, Key: str) -> object:
+        def delete_object(
+            self, *, Bucket: str, Key: str, VersionId: str = ""
+        ) -> object:
             raise _client_error(code=code, operation="DeleteObject")
 
     store = MinIOObjectStore(bucket="corpus", client=DeleteError())
