@@ -554,14 +554,15 @@ def test_one_hop_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None
     assert full.freshness.pg_live_ts is not None
     assert full.truncation is not None and full.truncation.truncated is False
     first = graph.neighborhood(entity_id=ids["Acme"], hops=1, limit=1)
-    assert first.truncation is not None and first.truncation.continuation is not None
+    assert first.next_cursor is not None
+    assert first.truncation is not None
     assert first.truncation.truncated is True
     assert first.truncation.reason == "result_budget"
     second = graph.neighborhood(
         entity_id=ids["Acme"],
         hops=1,
         limit=1,
-        continuation=first.truncation.continuation,
+        cursor=first.next_cursor,
     )
     assert _names(first).isdisjoint(_names(second))
 
@@ -1492,7 +1493,7 @@ def test_typed_absence_boundaries_and_hard_depth_limits(graph: GraphQueries) -> 
     assert (
         empty.negative is not None and empty.negative.kind is NegativeKind.KNOWN_EMPTY
     )
-    foreign = graph.neighborhood(entity_id=ids["Acme"], continuation="snapshot-v1:1")
+    foreign = graph.neighborhood(entity_id=ids["Acme"], cursor="snapshot-v1:1")
     assert (
         foreign.negative is not None and foreign.negative.kind is NegativeKind.BOUNDARY
     )

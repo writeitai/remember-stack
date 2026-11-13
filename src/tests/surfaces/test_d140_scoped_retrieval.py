@@ -1367,7 +1367,7 @@ def test_a_fact_without_live_supporting_text_is_not_eligible(rig: _Rig) -> None:
     assert _support_function(rig, supported) is True
     assert _support_function(rig, deleted_only) is False
     assert _support_function(rig, unsupported) is False
-    lookup = rig.query.lookup_relations(deployment_id=_DEPLOYMENT_ID, k=50)
+    lookup = rig.query.lookup_relations(deployment_id=_DEPLOYMENT_ID, limit=50)
     assert contradicted_only in {fact.fact_id for fact in lookup.facts}
     assert _support_function(rig, contradicted_only) is True
 

@@ -577,8 +577,8 @@ def test_s1_current_employer_via_resolve_and_lookup(rig: _ApiRig) -> None:
     assert relations["freshness"]["pg_live_ts"] is not None
 
 
-def test_lookup_relations_caps_at_k_and_says_so(rig: _ApiRig) -> None:
-    """G28: a lookup never returns an unbounded list; a cap is disclosed."""
+def test_lookup_relations_pages_via_cursor(rig: _ApiRig) -> None:
+    """D154: browse relations page with limit/cursor → next_cursor."""
     alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
         "entities"
     ][0]
@@ -617,21 +617,31 @@ def test_lookup_relations_caps_at_k_and_says_so(rig: _ApiRig) -> None:
             {"second": second, "subject": alice["entity_id"]},
         )
     capped = rig.client.get(
-        "/lookup/relations", params={"subject_entity_id": alice["entity_id"], "k": 1}
+        "/lookup/relations",
+        params={"subject_entity_id": alice["entity_id"], "limit": 1},
     ).json()
     assert len(capped["facts"]) == 1
-    assert capped["truncation"]["truncated"] is True
-    assert capped["truncation"]["returned"] == 1
-    assert capped["truncation"]["reason"] == "lookup_k_limit"
-    assert capped["truncation"]["total_is_exact"] is False
+    assert capped["next_cursor"] is not None
+    assert capped["truncation"] is None
+
+    page2 = rig.client.get(
+        "/lookup/relations",
+        params={
+            "subject_entity_id": alice["entity_id"],
+            "limit": 1,
+            "cursor": capped["next_cursor"],
+        },
+    ).json()
+    assert len(page2["facts"]) == 1
+    assert page2["facts"][0]["fact_id"] != capped["facts"][0]["fact_id"]
 
     unfiltered = rig.client.get("/lookup/relations").json()
     assert len(unfiltered["facts"]) == 2
-    assert unfiltered["truncation"] is None
+    assert unfiltered["next_cursor"] is None
 
 
-def test_lookup_observations_honours_k_without_a_property_query(rig: _ApiRig) -> None:
-    """G28: the direct entity read is capped by `k` like the semantic one."""
+def test_lookup_observations_pages_without_a_property_query(rig: _ApiRig) -> None:
+    """D154: browse observations page with limit/cursor → next_cursor."""
     acme = rig.client.get("/resolve", params={"name": "Acme"}).json()["entities"][0]
     with rig.engine.begin() as connection:
         connection.execute(
@@ -659,16 +669,16 @@ def test_lookup_observations_honours_k_without_a_property_query(rig: _ApiRig) ->
             {"second": second, "entity": acme["entity_id"]},
         )
     capped = rig.client.get(
-        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 1}
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "limit": 1}
     ).json()
     assert len(capped["facts"]) == 1
-    assert capped["truncation"]["truncated"] is True
-    assert capped["truncation"]["reason"] == "lookup_k_limit"
+    assert capped["next_cursor"] is not None
+    assert capped["truncation"] is None
     whole = rig.client.get(
-        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 2}
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "limit": 2}
     ).json()
     assert len(whole["facts"]) == 2
-    assert whole["truncation"] is None
+    assert whole["next_cursor"] is None
 
 
 def test_s2_headcount_via_semantic_observation_lookup(rig: _ApiRig) -> None:
