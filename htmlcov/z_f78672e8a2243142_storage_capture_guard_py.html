@@ -66,8 +66,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_f78672e8a2243142_storage_capture_view_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
-            created at 2026-11-12 15:12 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
+            created at 2026-11-13 14:23 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -84,7 +84,7 @@
 <main id="source">
     <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">&quot;&quot;&quot;Fixed native relation exclusion and in-guard allocation sampling for D152.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">This is a PG19 / p9_46_0067 primitive, not a complete capture, clock witness,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">This is a PG19 / p9_48_0069 primitive, not a complete capture, clock witness,</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">classification or billable quantity. Installation uses trusted operator</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">authority; the existing collector LOGIN receives only the fixed operation.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">The caller retains this original transaction and rolls it back after its</span>&nbsp;</span><span class="r"></span></p>
@@ -163,7 +163,7 @@
     <p class="pln"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t">    <span class="nam">contract</span><span class="op">:</span> <span class="nam">Literal</span><span class="op">[</span><span class="str">&quot;rememberstack.native_relation_guard.v1&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">    <span class="nam">deployment_id</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">    <span class="nam">schema_head</span><span class="op">:</span> <span class="nam">Literal</span><span class="op">[</span><span class="str">&quot;p9_46_0067&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">    <span class="nam">schema_head</span><span class="op">:</span> <span class="nam">Literal</span><span class="op">[</span><span class="str">&quot;p9_48_0069&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t">    <span class="nam">session_login</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t">    <span class="nam">definer_role</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t">    <span class="nam">backend_pid</span><span class="op">:</span> <span class="nam">_POSITIVE</span>&nbsp;</span><span class="r"></span></p>
@@ -226,7 +226,7 @@
     <p class="run run2"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t"><span class="str">  LOCK TABLE pg_catalog.pg_class, pg_catalog.pg_namespace,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t"><span class="str">             pg_catalog.pg_proc, pg_catalog.pg_extension IN SHARE MODE NOWAIT;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t"><span class="str">  IF (SELECT count(*) FROM public.alembic_version) &lt;&gt; 1</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t"><span class="str">     OR (SELECT version_num FROM public.alembic_version) &lt;&gt; &#x27;p9_46_0067&#x27; THEN</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t"><span class="str">     OR (SELECT version_num FROM public.alembic_version) &lt;&gt; &#x27;p9_48_0069&#x27; THEN</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t"><span class="str">    RAISE EXCEPTION USING ERRCODE=&#x27;55000&#x27;, MESSAGE=&#x27;native_guard_schema&#x27;;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t"><span class="str">  END IF;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t"><span class="str">  SELECT array_agg(extname||&#x27;=&#x27;||extversion ORDER BY extname COLLATE &quot;C&quot;)</span>&nbsp;</span><span class="r"></span></p>
@@ -354,7 +354,7 @@
     <p class="run run2"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t"><span class="str">    RAISE EXCEPTION USING ERRCODE=&#x27;57014&#x27;, MESSAGE=&#x27;native_guard_deadline&#x27;;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t"><span class="str">  END IF;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t"><span class="str">  RETURN jsonb_build_object(&#x27;contract&#x27;,&#x27;rememberstack.native_relation_guard.v1&#x27;,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t"><span class="str">    &#x27;deployment_id&#x27;,native_scope::text,&#x27;schema_head&#x27;,&#x27;p9_46_0067&#x27;,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t"><span class="str">    &#x27;deployment_id&#x27;,native_scope::text,&#x27;schema_head&#x27;,&#x27;p9_48_0069&#x27;,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t"><span class="str">    &#x27;session_login&#x27;,session_user,&#x27;definer_role&#x27;,current_user,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t"><span class="str">    &#x27;backend_pid&#x27;,pg_backend_pid(),&#x27;transaction_id&#x27;,pg_current_xact_id()::text,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t"><span class="str">    &#x27;guard_started_unix_us&#x27;,started_us::text,&#x27;sample_before_unix_us&#x27;,before_us::text,</span>&nbsp;</span><span class="r"></span></p>
@@ -484,8 +484,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_f78672e8a2243142_storage_capture_view_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.2">coverage.py v7.17.2</a>,
-            created at 2026-11-12 15:12 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
+            created at 2026-11-13 14:23 +0000
         </p>
     </div>
 </footer>
