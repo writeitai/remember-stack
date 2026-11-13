@@ -3,6 +3,7 @@
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
+import json
 from typing import cast
 from uuid import UUID
 
@@ -93,6 +94,7 @@ def _sample_page(**overrides: object) -> CostExportPage:
         "deployment_id": _DEPLOYMENT,
         "server_time": _WHEN,
         "horizon": _WHEN,
+        "cursor": "cursor-in",
         "next_cursor": "cursor-out",
         "persist_failures": 0,
         "scope_missing": 0,
@@ -142,27 +144,46 @@ def test_cost_usd_serializes_as_decimal_string_not_float() -> None:
 
 
 def test_cursor_round_trips_and_rejects_garbage() -> None:
-    """Opaque cursors encode the key plus frozen horizon and scope hash."""
-    from rememberstack.core.cursor_scope import cursor_scope_hash
-
-    scope = cursor_scope_hash({"deployment_id": str(_DEPLOYMENT)})
+    """Opaque cursors encode the key plus frozen horizon."""
     encoded = encode_cost_export_cursor(
-        scope_hash=scope,
         last_occurred_at=_WHEN,
         last_source="surface",
         last_cost_id=_COST,
         horizon_at_issue=_WHEN,
     )
-    decoded = decode_cost_export_cursor(cursor=encoded, scope_hash=scope)
+    decoded = decode_cost_export_cursor(cursor=encoded)
     assert decoded is not None
     assert decoded.last_source == "surface"
     assert decoded.last_cost_id == _COST
-    assert decode_cost_export_cursor(cursor=None, scope_hash=scope) is None
+    assert decode_cost_export_cursor(cursor=None) is None
     with pytest.raises(CostExportCursorError):
-        decode_cost_export_cursor(cursor="%%%not-a-cursor", scope_hash=scope)
-    other = cursor_scope_hash({"deployment_id": str(_COST)})
-    with pytest.raises(CostExportCursorError):
-        decode_cost_export_cursor(cursor=encoded, scope_hash=other)
+        decode_cost_export_cursor(cursor="%%%not-a-cursor")
+
+
+def test_origin_main_cost_export_cursor_still_decodes() -> None:
+    """A cursor issued by origin/main's cost export (no scope hash) still decodes.
+
+    The remember.dev billing pipeline persists engine cursors across deploys;
+    D154 must not change the wire encoding.
+    """
+    from base64 import urlsafe_b64encode
+
+    from rememberstack.spine.cost_export import rfc3339_utc
+
+    # Hand-built payload matching origin/main encode_cost_export_cursor.
+    payload = {
+        "horizon_at_issue": rfc3339_utc(value=_WHEN),
+        "last_cost_id": str(_COST),
+        "last_occurred_at": rfc3339_utc(value=_WHEN),
+        "last_source": "surface",
+    }
+    assert "s" not in payload
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    main_cursor = urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    decoded = decode_cost_export_cursor(cursor=main_cursor)
+    assert decoded is not None
+    assert decoded.last_source == "surface"
+    assert decoded.last_cost_id == _COST
 
 
 def test_build_api_does_not_register_export() -> None:

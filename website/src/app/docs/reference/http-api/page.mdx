@@ -360,24 +360,34 @@ Results are bounded everywhere, and a bound is never silent (D154).
 
 Filter-only, exhaustive listings request `limit` (default 50, max 200) and
 an opaque `cursor`. The response carries `next_cursor`: `null` exactly at
-the end — the only "more exists" signal. A short page with a non-null
-`next_cursor` is legal. Keyset order uses an immutable key plus an id
-tiebreak. Every cursor binds to the request's listing scope (its filters);
-reusing a cursor with a different scope is rejected as an invalid cursor
-(`400`, or the route's existing typed error). There are no totals, offsets,
-or `has_more`.
+the end — the only "more exists" signal. A short or empty page with a
+non-null `next_cursor` is legal (for example when a document-search browse
+page hits its lineage scan cap before finding another match). Keyset order
+uses an immutable key plus an id tiebreak. Every cursor binds to the
+request's listing scope (its filters); reusing a cursor with a different
+scope is rejected as an invalid cursor (`400`, or the route's existing typed
+error). There are no totals, offsets, or `has_more`.
 
 Where the source can honour an as-of read cheaply, the cursor also pins that
 instant (document search browse, section history, document references, graph
-neighborhood clocks, lookup browse). `GET /documents` always reads the
+neighborhood clocks, lookup browse). Lookup browse uses one as-of
+belief/ingest predicate on every page: page one pins the database clock and
+is simply continuation with no position. `GET /documents` always reads the
 current newest live version and serving flag, so its cursor carries no
 instant: unchanged rows are never repeated or skipped; a row whose filtered
 status changes between pages may enter or leave the listing.
 
 Applies to: `GET /documents`, `POST /documents/search` without a `query`,
-section history, document references, cost-export, `GET /lookup/relations`,
-and `GET /lookup/observations` without `property_query`. Pass the previous
+section history, document references, `GET /lookup/relations`, and
+`GET /lookup/observations` without `property_query`. Pass the previous
 page's `next_cursor` back as `cursor`.
+
+`GET /ops/cost-export/v1` is outside these list rules: it is a resumable
+feed with its own contract (echoed `cursor`, always-present `next_cursor`
+when receipts are present, limits 1–500 default 100). See
+[Deployment — cost export](/docs/reference/http-api/deployment#get-opscost-exportv1)
+and the binding design
+[`request_path_metering_and_cost_export_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/request_path_metering_and_cost_export_design.md).
 
 ### Ranked results
 

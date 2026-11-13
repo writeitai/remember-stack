@@ -46,10 +46,13 @@ uses it as the evaluation and belief instant of the time scope: declarations
 are read as known then (``memory_v1.versions_in_scope`` with ``believed_at``,
 for each batch of walked lineages), so a later period correction, clear or
 redeclaration cannot move a lineage across pages. A page walks lineages in
-batches and stops after ``PAGE_SCAN_FACTOR × limit`` lineages, returning a
-short page with a ``next_cursor`` rather than scanning further. With a query
-the response is the top ``k`` matches, ``next_cursor`` stays null, and
-``truncated`` is true when more than ``k`` matched.
+batches and stops after ``PAGE_SCAN_FACTOR × limit`` lineages. When that scan
+cap is hit, the page (possibly empty) still carries a non-null ``next_cursor``
+at the last examined position so the caller can continue; ``next_cursor`` is
+null only when the underlying lineage walk has reached the end. An empty page
+with a non-null cursor is legal. With a query the response is the top ``k``
+matches, ``next_cursor`` stays null, and ``truncated`` is true when more than
+``k`` matched.
 """
 
 from __future__ import annotations
@@ -442,11 +445,13 @@ def _filtered_page(
     page = picks[:limit]
     if len(picks) > limit:
         resume = page[-1][1]
-    elif exhausted or position is None or not page:
+    elif exhausted or position is None:
+        # End means the lineage walk reached the end (or never started).
         resume = None
     else:
-        # Scan-cap or a full page that never confirmed a further match: emit a
-        # cursor only when another lineage exists past the walk position.
+        # Scan-cap hit (page may be empty) or a full page that never confirmed
+        # a further match: emit a cursor at the last examined position when
+        # another lineage exists past it. Empty page + non-null cursor is legal.
         peek = _walk(
             connection=connection,
             deployment_id=deployment_id,

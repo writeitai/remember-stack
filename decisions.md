@@ -7952,26 +7952,40 @@ No users yet: rename directly; no shims, aliases, deprecations or migrations.
 
 **A. Browse lists** (filter-only, exhaustive). Request `limit` (default 50,
 max 200) and opaque `cursor`; response `next_cursor` (null exactly at the end —
-the only "more exists" signal; a short page with a non-null `next_cursor` is
-legal). Keyset order on an immutable key plus id tiebreak. Every cursor carries
-a short hash of the request's listing scope (the filters that define the
-result set); a cursor whose scope hash does not match the request is rejected
-with the existing typed invalid-cursor 400 (or the route's existing typed
-error). Invalid cursor → 400 (or the existing typed error). No totals, no
-offsets, no `has_more`. Applies to: `GET /documents`, `POST /documents/search`
-(browse mode), section history, document references, cost-export (drop its echo
-response `cursor`), and `GET /lookup/relations` plus `GET /lookup/observations`
-without `property_query` (keyset browse ordered by `(ingested_at DESC, id)`).
+the only "more exists" signal; a short or empty page with a non-null
+`next_cursor` is legal, e.g. when a document-search browse page hits its
+lineage scan cap before finding another match). Keyset order on an immutable
+key plus id tiebreak. Every cursor carries a short hash of the request's
+listing scope (the filters that define the result set); a cursor whose scope
+hash does not match the request is rejected with the existing typed
+invalid-cursor 400 (or the route's existing typed error). Invalid cursor → 400
+(or the existing typed error). No totals, no offsets, no `has_more`. Applies
+to: `GET /documents`, `POST /documents/search` (browse mode), section history,
+document references, and `GET /lookup/relations` plus
+`GET /lookup/observations` without `property_query` (keyset browse ordered by
+`(ingested_at DESC, id)`).
+
+**Cost export is outside these list rules.** `GET /ops/cost-export/v1` is a
+resumable feed consumed by the remember.dev billing pipeline. It keeps its own
+contract from
+[request_path_metering_and_cost_export_design.md](plan/designs/request_path_metering_and_cost_export_design.md):
+limits 1–500 (default 100), echoed request `cursor` on every page,
+`next_cursor` always present when the batch has receipts (and null only on an
+empty batch), and the existing cursor encoding without a listing-scope hash so
+already-stored engine cursors stay valid across deploys. D154 does not rename
+or reshape that feed.
 
 **Pinned read instant.** Where the source can honour an as-of read cheaply,
 the cursor also pins that instant and later pages reuse it: document search
 browse, section history, document references, graph neighborhood clocks, and
-lookup browse (belief via `invalidated_at` / ingested bounds and the as-of
-evidence gate). Where it cannot — `GET /documents` always reads the current
-newest live version and serving flag — the cursor carries no instant. The
-guarantee there is keyset stability only: unchanged rows are never repeated or
-skipped; a row whose filtered attribute (e.g. status) changes between pages
-may enter or leave the listing.
+lookup browse. Lookup browse uses **one** as-of belief/ingest predicate on
+every page (page one pins the database clock and is continuation with no
+position; there is no first-page-only `invalidated_at IS NULL` branch). Where
+it cannot — `GET /documents` always reads the current newest live version and
+serving flag — the cursor carries no instant. The guarantee there is keyset
+stability only: unchanged rows are never repeated or skipped; a row whose
+filtered attribute (e.g. status) changes between pages may enter or leave the
+listing.
 
 **B. Ranked results** (any `query` / `property_query` / `name`). Request `k`
 (top-k), no cursor; a request with both a query and a cursor is a validation
@@ -8013,5 +8027,6 @@ Graph deep neighborhoods may stop before a full page with an explicit reason
 rather than offering an unbounded fetch.
 
 **Amends:** listing and truncation naming on the HTTP / SDK / CLI / MCP
-surfaces; Envelope / Truncation / Contradiction wire shapes; cost-export page
-fields; SQL request validation for `max_rows`.
+surfaces; Envelope / Truncation / Contradiction wire shapes; SQL request
+validation for `max_rows`. Does **not** amend the cost-export feed contract
+(D91 / `request_path_metering_and_cost_export_design.md`).

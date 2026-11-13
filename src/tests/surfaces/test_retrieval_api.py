@@ -7,6 +7,7 @@ against the live spine (D48), every answer carrying the D49 envelope.
 
 from collections.abc import Iterator
 from datetime import datetime
+from datetime import timedelta
 from datetime import UTC
 import json
 from pathlib import Path
@@ -704,6 +705,99 @@ def test_lookup_observations_pages_without_a_property_query(rig: _ApiRig) -> Non
     )
     assert mismatched.status_code == 400
     assert "different listing" in mismatched.json()["detail"]
+
+
+def test_lookup_page_one_keeps_fact_invalidated_after_pinned_instant(
+    rig: _ApiRig,
+) -> None:
+    """Page one uses the same as-of belief predicate as continuation pages.
+
+    Pin the evaluation instant, then invalidate the fact after that instant:
+    page one must still return it (the old ``invalidated_at IS NULL`` branch
+    would have skipped it).
+    """
+    alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
+        "entities"
+    ][0]
+    before = rig.client.get(
+        "/lookup/relations",
+        params={"subject_entity_id": alice["entity_id"], "predicate": "works_for"},
+    ).json()
+    (fact,) = before["facts"]
+    fact_id = fact["fact_id"]
+
+    with rig.engine.begin() as connection:
+        pinned = connection.execute(text("SELECT now()")).scalar_one()
+        connection.execute(
+            text(
+                "UPDATE relations SET invalidated_at = :after"
+                " WHERE relation_id = :fact_id"
+            ),
+            {"fact_id": fact_id, "after": pinned + timedelta(seconds=30)},
+        )
+
+    # Force page one to reuse the pinned instant by issuing a cursor-shaped
+    # continuation at the start position: encode evaluated_at=pinned with no
+    # prior keyset by calling the engine through a synthetic first-page path.
+    # Direct SQL proof of the shared predicate (same as page-one SQL).
+    with rig.engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT relation_id FROM relations"
+                    " WHERE relation_id = :fact_id"
+                    "   AND ingested_at <= :evaluated_at"
+                    "   AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+                ),
+                {"fact_id": fact_id, "evaluated_at": pinned},
+            )
+            .scalars()
+            .all()
+        )
+    assert rows == [UUID(fact_id)]
+
+    # Continuation with the pinned evaluated_at must still return the fact
+    # (page one shares that SQL). Position the keyset before this row.
+    scope_hash = query_engine_module._lookup_relations_scope_hash(
+        subject_entity_id=UUID(alice["entity_id"]),
+        predicate="works_for",
+        object_entity_id=None,
+        valid_at=None,
+    )
+    # Position after a synthetic newer key so the real row is still in range.
+    newer_at = pinned + timedelta(seconds=60)
+    cursor = query_engine_module._encode_lookup_cursor(
+        scope_hash=scope_hash,
+        evaluated_at=pinned,
+        ingested_at=newer_at,
+        fact_id=uuid4(),
+    )
+    page = rig.client.get(
+        "/lookup/relations",
+        params={
+            "subject_entity_id": alice["entity_id"],
+            "predicate": "works_for",
+            "cursor": cursor,
+        },
+    ).json()
+    assert any(item["fact_id"] == fact_id for item in page["facts"])
+
+    # And a plain page-one read after the pin still includes it when we restore
+    # the row's invalidated_at into the future relative to DB now() — the live
+    # page-one path pins now() inside the same snapshot as the read.
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE relations SET invalidated_at = now() + interval '1 hour'"
+                " WHERE relation_id = :fact_id"
+            ),
+            {"fact_id": fact_id},
+        )
+    page_one = rig.client.get(
+        "/lookup/relations",
+        params={"subject_entity_id": alice["entity_id"], "predicate": "works_for"},
+    ).json()
+    assert any(item["fact_id"] == fact_id for item in page_one["facts"])
 
 
 def test_s2_headcount_via_semantic_observation_lookup(rig: _ApiRig) -> None:

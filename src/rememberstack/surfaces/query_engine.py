@@ -2103,36 +2103,36 @@ class QueryEngine:
             valid_at=valid_at,
         )
         evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
-        pinned_belief = keyset is not None
         with self._engine.connect() as connection:
-            # Pin belief to the database clock on the first page so a cursor
-            # cannot lag rows just written with now() (Python clocks can).
-            if keyset is None:
-                evaluated_at = connection.execute(text("SELECT now()")).scalar_one()
-            as_of = valid_at or evaluated_at
-            rows = (
-                connection.execute(
-                    _lookup_relations_sql(pinned_belief=pinned_belief),
-                    {
-                        "deployment_id": deployment_id,
-                        "subject_entity_id": subject_entity_id,
-                        "predicate": predicate,
-                        "object_entity_id": object_entity_id,
-                        "as_of": as_of,
-                        "evaluated_at": evaluated_at,
-                        "cursor_at": keyset[0] if keyset else None,
-                        "cursor_id": keyset[1] if keyset else None,
-                        "limit": limit + 1,
-                        **_lookup_scope(
-                            valid_at=valid_at,
-                            evaluated_at=evaluated_at,
-                            pinned_belief=pinned_belief,
-                        ).parameters(),
-                    },
+            # One as-of predicate on every page (D154): page one is continuation
+            # with no position. Pin the DB clock and read inside one REPEATABLE
+            # READ so there is no window between the clock and the listing.
+            connection = connection.execution_options(isolation_level="REPEATABLE READ")
+            with connection.begin():
+                if keyset is None:
+                    evaluated_at = connection.execute(text("SELECT now()")).scalar_one()
+                as_of = valid_at or evaluated_at
+                rows = (
+                    connection.execute(
+                        _lookup_relations_sql(),
+                        {
+                            "deployment_id": deployment_id,
+                            "subject_entity_id": subject_entity_id,
+                            "predicate": predicate,
+                            "object_entity_id": object_entity_id,
+                            "as_of": as_of,
+                            "evaluated_at": evaluated_at,
+                            "cursor_at": keyset[0] if keyset else None,
+                            "cursor_id": keyset[1] if keyset else None,
+                            "limit": limit + 1,
+                            **_lookup_scope(
+                                valid_at=valid_at, evaluated_at=evaluated_at
+                            ).parameters(),
+                        },
+                    )
+                    .mappings()
+                    .all()
                 )
-                .mappings()
-                .all()
-            )
         has_more = len(rows) > limit
         rows = rows[:limit]
         facts = self._enrich_facts(
@@ -2211,32 +2211,36 @@ class QueryEngine:
                 entity_id=entity_id, valid_at=valid_at
             )
             evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
-            pinned_belief = keyset is not None
             with self._engine.connect() as connection:
-                if keyset is None:
-                    evaluated_at = connection.execute(text("SELECT now()")).scalar_one()
-                as_of = valid_at or evaluated_at
-                rows = (
-                    connection.execute(
-                        _lookup_observations_sql(pinned_belief=pinned_belief),
-                        {
-                            "deployment_id": deployment_id,
-                            "entity_id": entity_id,
-                            "as_of": as_of,
-                            "evaluated_at": evaluated_at,
-                            "cursor_at": keyset[0] if keyset else None,
-                            "cursor_id": keyset[1] if keyset else None,
-                            "limit": limit + 1,
-                            **_lookup_scope(
-                                valid_at=valid_at,
-                                evaluated_at=evaluated_at,
-                                pinned_belief=pinned_belief,
-                            ).parameters(),
-                        },
-                    )
-                    .mappings()
-                    .all()
+                # Same as-of predicate on every page; pin DB clock in one snapshot.
+                connection = connection.execution_options(
+                    isolation_level="REPEATABLE READ"
                 )
+                with connection.begin():
+                    if keyset is None:
+                        evaluated_at = connection.execute(
+                            text("SELECT now()")
+                        ).scalar_one()
+                    as_of = valid_at or evaluated_at
+                    rows = (
+                        connection.execute(
+                            _lookup_observations_sql(),
+                            {
+                                "deployment_id": deployment_id,
+                                "entity_id": entity_id,
+                                "as_of": as_of,
+                                "evaluated_at": evaluated_at,
+                                "cursor_at": keyset[0] if keyset else None,
+                                "cursor_id": keyset[1] if keyset else None,
+                                "limit": limit + 1,
+                                **_lookup_scope(
+                                    valid_at=valid_at, evaluated_at=evaluated_at
+                                ).parameters(),
+                            },
+                        )
+                        .mappings()
+                        .all()
+                    )
             has_more = len(rows) > limit
             rows = rows[:limit]
             if has_more and rows:
@@ -4445,13 +4449,14 @@ class QueryEngine:
 
 
 def _lookup_scope(
-    *, valid_at: datetime | None, evaluated_at: datetime, pinned_belief: bool
+    *, valid_at: datetime | None, evaluated_at: datetime, pinned_belief: bool = True
 ) -> TextScope:
     """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current.
 
-    A continued page pins ``believed_at`` to the cursor's evaluation clock so
-    the as-of evidence gate stays stable across pages (D154). The first page
-    reads current belief through the projection.
+    Browse pages always pin ``believed_at`` to the evaluation clock (page one
+    pins the DB ``now()``; later pages reuse the cursor) so the as-of evidence
+    gate is the same predicate on every page (D154). Ranked confirmation keeps
+    ``pinned_belief=False`` and reads current belief through the projection.
     """
     return TextScope.of(
         time=None if valid_at is None else AtFactTime(at=valid_at),
@@ -5598,27 +5603,20 @@ _RESOLVE_CONTEXT_HITS = text(
 )
 
 
-def _lookup_belief_predicate(*, pinned_belief: bool) -> str:
-    """Belief filter for browse lookups.
+_LOOKUP_BELIEF_PREDICATE = (
+    "ingested_at <= :evaluated_at"
+    " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+)
+"""One as-of belief/ingest predicate for every browse-lookup page (D154).
 
-    The first page reads current belief (``invalidated_at IS NULL``). A
-    continued page pins the cursor's evaluation instant so later pages keep
-    the same as-of view: rows ingested after that instant stay out, and rows
-    invalidated after it stay in (D154). The ingested bound is applied only
-    when pinned — on the first page a Python ``now()`` can lag the database
-    clock that stamped ``ingested_at``, which would drop just-written rows.
-    """
-    if pinned_belief:
-        return (
-            "ingested_at <= :evaluated_at"
-            " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
-        )
-    return "invalidated_at IS NULL"
+Page one pins ``evaluated_at`` from the database clock; later pages reuse the
+cursor. Rows ingested after that instant stay out; rows invalidated after it
+stay in. There is no first-page-only ``invalidated_at IS NULL`` branch.
+"""
 
 
-def _lookup_relations_sql(*, pinned_belief: bool) -> TextClause:
-    """Browse-relations statement; continued pages use the as-of evidence gate."""
-    belief = _lookup_belief_predicate(pinned_belief=pinned_belief)
+def _lookup_relations_sql() -> TextClause:
+    """Browse-relations statement; every page uses the as-of evidence gate."""
     return text(
         f"""
     SELECT relation_id AS fact_id,
@@ -5627,7 +5625,7 @@ def _lookup_relations_sql(*, pinned_belief: bool) -> TextClause:
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
-      AND {belief}
+      AND {_LOOKUP_BELIEF_PREDICATE}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (CAST(:subject_entity_id AS uuid) IS NULL
@@ -5640,16 +5638,15 @@ def _lookup_relations_sql(*, pinned_belief: bool) -> TextClause:
             OR ingested_at < :cursor_at
             OR (ingested_at = :cursor_at AND relation_id < CAST(:cursor_id AS uuid))
           )
-      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id", pinned_belief=pinned_belief)}
+      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id", pinned_belief=True)}
     ORDER BY ingested_at DESC, relation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
     )
 
 
-def _lookup_observations_sql(*, pinned_belief: bool) -> TextClause:
-    """Browse-observations statement; continued pages use the as-of evidence gate."""
-    belief = _lookup_belief_predicate(pinned_belief=pinned_belief)
+def _lookup_observations_sql() -> TextClause:
+    """Browse-observations statement; every page uses the as-of evidence gate."""
     return text(
         f"""
     SELECT observation_id AS fact_id, statement AS label,
@@ -5658,7 +5655,7 @@ def _lookup_observations_sql(*, pinned_belief: bool) -> TextClause:
     FROM observations
     WHERE deployment_id = :deployment_id
       AND subject_entity_id = :entity_id
-      AND {belief}
+      AND {_LOOKUP_BELIEF_PREDICATE}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (
@@ -5666,7 +5663,7 @@ def _lookup_observations_sql(*, pinned_belief: bool) -> TextClause:
             OR ingested_at < :cursor_at
             OR (ingested_at = :cursor_at AND observation_id < CAST(:cursor_id AS uuid))
           )
-      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id", pinned_belief=pinned_belief)}
+      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id", pinned_belief=True)}
     ORDER BY ingested_at DESC, observation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant

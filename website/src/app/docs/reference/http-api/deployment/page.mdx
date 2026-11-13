@@ -151,7 +151,10 @@ listener, not on the API's address, and only when you configure it.
 
 Page through the deployment's cost receipts: one row per model call made by
 the pipeline workers or by a query route, with tokens, cost and latency. It
-never carries memory content.
+never carries memory content. This is a resumable feed with its own contract
+(outside the [browse-list pagination rules](/docs/reference/http-api#pagination-and-truncation)):
+every page echoes the request `cursor`, `next_cursor` stays set whenever the
+batch has receipts, and stored cursors remain valid across deploys.
 
 The listener starts only when `REMEMBERSTACK_COST_EXPORT_BIND` is set
 (`host:port`, `[ipv6]:port` or `unix:/path/to.sock`). It then requires
@@ -168,7 +171,7 @@ This token is separate from the API credential.
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `cursor` | query | string | no | start | The `next_cursor` from the previous page. |
-| `limit` | query | integer | no | `50` | 1 to 200. |
+| `limit` | query | integer | no | `100` | 1 to 500. |
 
 ### Response
 
@@ -180,7 +183,8 @@ This token is separate from the API credential.
 | `deployment_id` | UUID | |
 | `server_time` | date-time | When the page was read. |
 | `horizon` | date-time | The page covers receipts up to this instant. |
-| `next_cursor` | string or null | Pass it back to continue; `null` exactly at the end. |
+| `cursor` | string | The cursor this page started from. |
+| `next_cursor` | string | Pass it back to continue. |
 | `persist_failures` | integer | Receipts the engine failed to record. |
 | `scope_missing` | integer | Receipts recorded without an attribution scope. |
 | `receipts` | array | The receipts, below. |
@@ -217,6 +221,6 @@ Each receipt:
 ### Example
 
 ```bash
-curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=50" \
+curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=500" \
   -H "Authorization: Bearer $REMEMBERSTACK_COST_EXPORT_TOKEN"
 ```

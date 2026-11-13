@@ -9180,7 +9180,7 @@ that ledger. It contains no document text and no prompts.
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 
 docker compose exec -T api \
-  remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 50
+  remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 100
 ```
 
 Pass the page's `next_cursor` as `--cursor` to read the next page. The
@@ -9221,12 +9221,12 @@ the published port to reach it.
 
 ```bash
 curl -H "Authorization: Bearer $COST_EXPORT_TOKEN" \
-  "http://127.0.0.1:8001/ops/cost-export/v1?limit=50"
+  "http://127.0.0.1:8001/ops/cost-export/v1?limit=100"
 ```
 
 | Parameter | Default | Range |
 |---|---|---|
-| `limit` | `50` | 1–200 |
+| `limit` | `100` | 1–500 |
 | `cursor` | none (start from the beginning) | a `next_cursor` from an earlier page |
 
 | Status | Meaning |
@@ -9993,24 +9993,34 @@ Results are bounded everywhere, and a bound is never silent (D154).
 
 Filter-only, exhaustive listings request `limit` (default 50, max 200) and
 an opaque `cursor`. The response carries `next_cursor`: `null` exactly at
-the end — the only "more exists" signal. A short page with a non-null
-`next_cursor` is legal. Keyset order uses an immutable key plus an id
-tiebreak. Every cursor binds to the request's listing scope (its filters);
-reusing a cursor with a different scope is rejected as an invalid cursor
-(`400`, or the route's existing typed error). There are no totals, offsets,
-or `has_more`.
+the end — the only "more exists" signal. A short or empty page with a
+non-null `next_cursor` is legal (for example when a document-search browse
+page hits its lineage scan cap before finding another match). Keyset order
+uses an immutable key plus an id tiebreak. Every cursor binds to the
+request's listing scope (its filters); reusing a cursor with a different
+scope is rejected as an invalid cursor (`400`, or the route's existing typed
+error). There are no totals, offsets, or `has_more`.
 
 Where the source can honour an as-of read cheaply, the cursor also pins that
 instant (document search browse, section history, document references, graph
-neighborhood clocks, lookup browse). `GET /documents` always reads the
+neighborhood clocks, lookup browse). Lookup browse uses one as-of
+belief/ingest predicate on every page: page one pins the database clock and
+is simply continuation with no position. `GET /documents` always reads the
 current newest live version and serving flag, so its cursor carries no
 instant: unchanged rows are never repeated or skipped; a row whose filtered
 status changes between pages may enter or leave the listing.
 
 Applies to: `GET /documents`, `POST /documents/search` without a `query`,
-section history, document references, cost-export, `GET /lookup/relations`,
-and `GET /lookup/observations` without `property_query`. Pass the previous
+section history, document references, `GET /lookup/relations`, and
+`GET /lookup/observations` without `property_query`. Pass the previous
 page's `next_cursor` back as `cursor`.
+
+`GET /ops/cost-export/v1` is outside these list rules: it is a resumable
+feed with its own contract (echoed `cursor`, always-present `next_cursor`
+when receipts are present, limits 1–500 default 100). See
+[Deployment — cost export](https://remember.dev/docs/reference/http-api/deployment#get-opscost-exportv1)
+and the binding design
+[`request_path_metering_and_cost_export_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/request_path_metering_and_cost_export_design.md).
 
 ### Ranked results
 
@@ -13144,7 +13154,10 @@ listener, not on the API's address, and only when you configure it.
 
 Page through the deployment's cost receipts: one row per model call made by
 the pipeline workers or by a query route, with tokens, cost and latency. It
-never carries memory content.
+never carries memory content. This is a resumable feed with its own contract
+(outside the [browse-list pagination rules](https://remember.dev/docs/reference/http-api#pagination-and-truncation)):
+every page echoes the request `cursor`, `next_cursor` stays set whenever the
+batch has receipts, and stored cursors remain valid across deploys.
 
 The listener starts only when `REMEMBERSTACK_COST_EXPORT_BIND` is set
 (`host:port`, `[ipv6]:port` or `unix:/path/to.sock`). It then requires
@@ -13161,7 +13174,7 @@ This token is separate from the API credential.
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `cursor` | query | string | no | start | The `next_cursor` from the previous page. |
-| `limit` | query | integer | no | `50` | 1 to 200. |
+| `limit` | query | integer | no | `100` | 1 to 500. |
 
 ### Response
 
@@ -13173,7 +13186,8 @@ This token is separate from the API credential.
 | `deployment_id` | UUID | |
 | `server_time` | date-time | When the page was read. |
 | `horizon` | date-time | The page covers receipts up to this instant. |
-| `next_cursor` | string or null | Pass it back to continue; `null` exactly at the end. |
+| `cursor` | string | The cursor this page started from. |
+| `next_cursor` | string | Pass it back to continue. |
 | `persist_failures` | integer | Receipts the engine failed to record. |
 | `scope_missing` | integer | Receipts recorded without an attribution scope. |
 | `receipts` | array | The receipts, below. |
@@ -13210,7 +13224,7 @@ Each receipt:
 ### Example
 
 ```bash
-curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=50" \
+curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=500" \
   -H "Authorization: Bearer $REMEMBERSTACK_COST_EXPORT_TOKEN"
 ```
 
@@ -18416,7 +18430,7 @@ docker compose exec api \
 | Subcommand | Flags | What it does | Output |
 |---|---|---|---|
 | `inspect` | `--deployment ID` | A bounded report of the pipeline: work in progress, dead letters, projections and freshness. | JSON |
-| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 50, max 200) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
+| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100, max 500) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
 | `resume-no-route` | `--deployment ID` | Releases documents that were parked because no converter handled their media type, once a route now covers them. | `{"released": [...]}` |
 | `replay` | `PROCESSING_ID`, `--deployment ID`, `--attempts N` (default 1), `--lane {steady,backfill}`, `--not-before ISO8601` | Reopens one dead-lettered work item with N more attempts. | JSON |
 | `graph-catalog ensure` | none | Checks the database's graph metadata and repairs it when needed. | `{"ready", "changed", "problems_before", "problems_after", "definitions"}` |

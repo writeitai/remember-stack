@@ -478,8 +478,6 @@ def _run_cost_export(*, deployment_id: UUID, args: argparse.Namespace) -> int:
     finally:
         engine.dispose()
     print(page.model_dump_json())
-    if page.next_cursor is not None:
-        print(f"# next_cursor={page.next_cursor}", file=sys.stderr)
     return 0
 
 
@@ -1056,12 +1054,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         )
         cost_export.add_argument("--deployment", type=UUID, required=True)
         cost_export.add_argument("--cursor", default=None)
-        cost_export.add_argument(
-            "--limit",
-            type=int,
-            default=50,
-            help="receipts per page (1-200, default 50)",
-        )
+        cost_export.add_argument("--limit", type=int, default=100)
         resume = ops_commands.add_parser(
             "resume-no-route",
             help="release parked conversion covered by current routes",

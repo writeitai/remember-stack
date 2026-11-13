@@ -3,6 +3,7 @@
   "deployment_id": "11111111-1111-1111-1111-111111111111",
   "server_time": "2026-08-13T12:00:00Z",
   "horizon": "2026-08-13T12:00:00Z",
+  "cursor": "cursor-in",
   "next_cursor": "cursor-out",
   "persist_failures": 0,
   "scope_missing": 0,
