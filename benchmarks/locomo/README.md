@@ -45,6 +45,14 @@ tool catalog while retaining full inputs and result contracts. Public schemas,
 runtime validation and retrieved evidence remain complete. This is a prompt-size
 change, with no score or latency improvement established by offline checks.
 
+The 2026-11-13 reader refinement consolidates completeness reminders, preserves
+concrete requested values and continues bounded adjacency only when needed.
+It retains the v45 family and identical processing/image profile for retained
+store comparisons; each prompt has a distinct saved hash/fingerprint. Quote that
+fingerprint in results. Prior-prompt runs remain inspectable/summarizable, but
+cannot resume under a different prompt. Prepare a separate reuse-ingestion fork;
+never edit a finished run's identity. No new score is established by this change.
+
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
 CC BY-NC 4.0 terms.

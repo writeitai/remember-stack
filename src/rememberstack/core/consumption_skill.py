@@ -14,8 +14,8 @@ from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
-#: Bumped for the D87 four-operation clean cut and context contracts.
-CONSUMPTION_SKILL_VERSION: Final = "4.0.0"
+#: Bumped for concrete-value completeness and bounded source-chunk continuation.
+CONSUMPTION_SKILL_VERSION: Final = "4.0.1"
 
 
 def render_consumption_skill(
@@ -331,7 +331,20 @@ def _working_rules() -> str:
         "5. For graph traversal, did I inspect the terminal work-budget status?\n"
         "6. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
         "support?\n"
-        "7. Did I hydrate to evidence or raw source when the stakes required it?"
+        "7. Did I hydrate to evidence or raw source when the stakes required it?\n"
+        "8. Does my answer retain the supplied concrete names, dates and distinct "
+        "list members, with the right owners and event times? Never replace a "
+        "known place name with a generic phrase or invent missing members.\n\n"
+        "When facts lack a required detail or complete owner/reply, read source "
+        "chunks. `adjacent_chunks` returns chunks in document order around its "
+        "center `chunk_id`. If needed context is still missing, continue from "
+        "the first or last returned `chunk_id` on that side within the existing "
+        "budget. Fewer than `window` neighbors on a side establish a document "
+        "boundary only when the center is present and there are no drops or "
+        "truncation. Otherwise do not infer a boundary. Stop at a known boundary "
+        "or once the requested parts are supported. Do not repeat identical "
+        "calls or treat a top-k result as exhaustive; retain honest negatives "
+        "and qualifications when evidence remains insufficient."
     )
 
 

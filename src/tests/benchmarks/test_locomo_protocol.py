@@ -379,6 +379,8 @@ def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     assert PROTOCOL_NAME == "RS-LoCoMo-Full-v45"
     assert DEFAULT_PROTOCOL_KEY == "full-v45"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
+    # Measured main8e338379a baseline; consolidation must not grow the prompt.
+    assert len(prompt) <= 18_284
     normalized_prompt = " ".join(prompt.split())
     assert (
         "Return only a compact, direct answer to the requested attribute."

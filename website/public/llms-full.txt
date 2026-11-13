@@ -4658,6 +4658,17 @@ Default to `facts_context` for "is it true" questions and fall back to
 claims only when facts are missing or you need a verbatim quote. Use
 `combined_context` when you cannot tell in advance which the model needs.
 
+## Finish the source read when a detail is missing
+
+Keep supplied place names, dates and distinct list members in the answer, with
+the correct person and event. When facts leave a required detail or dialogue
+reply unresolved, inspect source chunks. `adjacent_chunks` returns chunks in
+document order around its supplied `chunk_id`; continue from the first or last
+returned ID only when that side still lacks needed context. A short side is a
+document boundary only if the center is present and no drops or truncation hide
+rows. Stop once the question is supported, at a known boundary or at the agent's
+call budget. Preserve uncertainty and never treat a top-k list as exhaustive.
+
 ## Parameters and limits
 
 | Operation | Parameter | Default | Allowed |
@@ -19817,6 +19828,12 @@ origin. A partially prepared output is inspected and removed explicitly before
 retrying; the command refuses a nonempty output. No automatic paid retry occurs.
 
 ### The current protocol
+
+Reader refinements within this family have distinct saved prompt hashes and
+protocol fingerprints. Reports must identify that fingerprint; the family name
+alone does not identify the prompt. A prior-prompt run stays inspectable, but
+cannot resume with changed instructions. Use a separate retained-ingestion fork
+for a new reader comparison. The published result below remains frozen.
 
 Execution uses one profile, `RS-LoCoMo-Full-v45` (key `full-v45`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,

@@ -4105,3 +4105,36 @@ def test_retained_summary_merges_only_common_processing_and_serving_identity(
     else:
         with pytest.raises(BenchmarkRunError, match="retained"):
             summarize_runs(run_dirs=tuple(outputs))
+
+
+def test_prior_reader_prompt_stays_inspectable_but_cannot_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same-family prompt changes preserve recorded results and refuse mixing."""
+    from dataclasses import replace
+    from types import MappingProxyType
+
+    from benchmarks.locomo import protocol
+
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "prior-reader"
+    previous = replace(
+        protocol.PROTOCOL_REGISTRY[protocol.DEFAULT_PROTOCOL_KEY],
+        answer_prompt_template="A previous generic reader prompt.",
+    )
+    with monkeypatch.context() as old:
+        old.setattr(
+            protocol, "PROTOCOL_REGISTRY", MappingProxyType({previous.key: previous})
+        )
+        prepared = prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+    before = {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
+    assert runner.load_recorded_run(run_dir=run_dir).configuration == prepared
+    assert (
+        summarize_run(run_dir=run_dir).protocol_fingerprint
+        == prepared.protocol_fingerprint
+    )
+    with pytest.raises(BenchmarkRunError, match="answer_prompt_sha256"):
+        runner._load_run(run_dir=run_dir)
+    assert before == {name: (run_dir / name).read_bytes() for name in before}

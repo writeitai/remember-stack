@@ -812,3 +812,15 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.
 - No claim is made that K ran.
 - Raw artifacts and failures will be retained for publication review.
+
+### Concrete values and bounded continuation (2026-11-13)
+
+The reader consolidates list and final-answer reminders rather than growing its
+prompt. It retains supplied concrete names/dates, accounts for distinct supported
+items, and expands missing owner/reply context from returned edge chunk IDs within
+existing limits. A short adjacency side means a boundary only without missing
+center, drops or truncation. No ingestion/image/model/judge or budget changes.
+The family remains v45 for retained-store comparisons; prompt hashes and immutable
+fingerprints identify each reader. Old-prompt runs remain inspectable but cannot
+resume under changed instructions. Prepare a new retained-ingestion fork; do not
+edit prior records. This instruction change establishes no score improvement.
