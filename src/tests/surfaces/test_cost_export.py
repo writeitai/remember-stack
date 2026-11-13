@@ -189,10 +189,16 @@ def test_same_cursor_replay_ignores_insert_between(database_engine: Engine) -> N
         engine=database_engine, safety_lag=timedelta(milliseconds=40)
     )
     aged = datetime.now(timezone.utc) - timedelta(seconds=1)
+    _insert_surface(
+        database_engine, cost_id=uuid4(), occurred_at=aged - timedelta(seconds=1)
+    )
     first_id = uuid4()
     _insert_surface(database_engine, cost_id=first_id, occurred_at=aged)
-    start = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=10)
-    cursor = start.cursor
+    start = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=1)
+    # The request echo is None on a fresh read; only an issued cursor pins
+    # the horizon when replayed, regardless of network latency.
+    cursor = start.next_cursor
+    assert cursor is not None
     first = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
     assert [row.cost_id for row in first.receipts] == [first_id]
     _insert_surface(
