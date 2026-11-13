@@ -719,6 +719,28 @@ creates the read-only mountable session; its authentication route, ticket format
 and session lifecycle implementation belong to the cloud repo. These commands
 are a thin client wrapper, not an engine mount scheduler or new truth surface.
 
+Use the CLI's existing D136 connection precedence for the API key and project;
+the signed key's `org` identifies the organisation. The issuer metadata's
+`remember_account_endpoint` supplies the remember.dev API base, independently of
+the engine URL. Resolve a project name or the key's default through the existing
+`remember_project_endpoint`; an explicit UUID needs no deployment lookup. Send
+`POST <API base>/v1/orgs/{org_id}/mount-sessions` with `Authorization: Bearer <key>`
+and JSON `{"project_id":"<uuid>","idempotency_key":"<uuid4>"}`. Generate a fresh
+UUID4 per invocation. The key needs `memory:read` on that project. A 201 or 200
+response contains `session_id`, secret `ticket` and RFC3339 `expires_at`; the
+ticket is single-use and valid for five minutes. Do not follow POST redirects
+or echo response bodies in errors. Explain 401/403/404 failures without exposing
+credentials.
+
+Mountable stays in the foreground and emits JSON lines. Wait for
+`{"event":"mounted","path":"<canonical DIR>",...}`, add `session_id` to that
+event, and flush it immediately. Keep the wrapper attached until mountable exits,
+forwarding its events, diagnostics and exit status with the ticket redacted.
+Another terminal can run `remember unmount DIR`, which invokes
+`mountable unmount DIR` with no ticket or cloud credential lookup. Missing
+mountable reports the supported npm/uv installation commands. This lifecycle
+follows [mountable's CLI source](https://github.com/writeitai/mountable/blob/d936589b1e200e347f03dfc32609c5d368668ae2/cmd/mountable/mount.go).
+
 **Self-host.** Mount the configured corpus bucket using any S3 FUSE tool with
 read-only credentials/options and bounded stat/list/data caching. A local
 filesystem adapter serves the same live directory tree; it uses atomic file
