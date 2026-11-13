@@ -8,6 +8,7 @@ from base64 import b64encode
 from collections.abc import Iterable
 from collections.abc import Iterator
 from hashlib import md5
+import logging
 from typing import cast
 from typing import NotRequired
 from typing import Protocol
@@ -27,6 +28,13 @@ from rememberstack.core.storage_routing import COLD
 from rememberstack.core.storage_routing import HOT
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
+from rememberstack.model import ObjectPurgeEvidence
+
+_logger = logging.getLogger(__name__)
+
+
+class _UploadListingNotImplemented(Exception):
+    """This provider owns abandoned-upload cleanup instead of serving a listing."""
 
 
 class MinIOSettings(BaseSettings):
@@ -393,8 +401,8 @@ class MinIOObjectStore:
 
     def purge_objects(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
-    ) -> None:
-        """Idempotently delete exact keys and prefix-boundary descendants."""
+    ) -> ObjectPurgeEvidence:
+        """Delete exact keys/descendants and report unfinished-upload coverage."""
         # Validate all destructive inputs before touching the store.
         for key in keys:
             _validated_key(key=key)
@@ -404,16 +412,21 @@ class MinIOObjectStore:
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
                 self.delete(key=key)
-        for name, upload_id in self._iter_uploads(prefix=""):
-            if name in {key.root for key in keys} or any(
-                matches_object_prefix(name, prefix=boundary) for boundary in boundaries
-            ):
-                self._abort_upload(name=name, upload_id=upload_id)
+        try:
+            for name, upload_id in self._iter_uploads(prefix=""):
+                if name in {key.root for key in keys} or any(
+                    matches_object_prefix(name, prefix=boundary)
+                    for boundary in boundaries
+                ):
+                    self._abort_upload(name=name, upload_id=upload_id)
+        except _UploadListingNotImplemented:
+            return ObjectPurgeEvidence(multipart_uploads="provider_managed")
+        return ObjectPurgeEvidence(multipart_uploads="checked")
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
-    ) -> None:
-        """Fail when any exact key or prefix-boundary descendant remains."""
+    ) -> ObjectPurgeEvidence:
+        """Verify object absence and report whether unfinished uploads were checked."""
         remaining: list[str] = []
         for key in keys:
             normalized = _validated_key(key=key)
@@ -422,15 +435,21 @@ class MinIOObjectStore:
         for prefix in prefixes:
             remaining.extend(key.root for key in self.iter_keys(prefix=prefix.root))
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
-        for name, _ in self._iter_uploads(prefix=""):
-            if name in {key.root for key in keys} or any(
-                matches_object_prefix(name, prefix=boundary) for boundary in boundaries
-            ):
-                remaining.append(f"multipart:{name}")
+        evidence = ObjectPurgeEvidence(multipart_uploads="checked")
+        try:
+            for name, _ in self._iter_uploads(prefix=""):
+                if name in {key.root for key in keys} or any(
+                    matches_object_prefix(name, prefix=boundary)
+                    for boundary in boundaries
+                ):
+                    remaining.append(f"multipart:{name}")
+        except _UploadListingNotImplemented:
+            evidence = ObjectPurgeEvidence(multipart_uploads="provider_managed")
         if remaining:
             raise RuntimeError(
                 f"object purge verification found: {sorted(remaining)!r}"
             )
+        return evidence
 
     def iter_bytes(self, *, key: ObjectKey, chunk_size: int) -> Iterator[bytes]:
         """Stream one object's body, at most ``chunk_size`` bytes at a time."""
@@ -507,12 +526,28 @@ class MinIOObjectStore:
         key_marker = upload_marker = ""
         seen: set[tuple[str, str]] = set()
         while True:
-            page = self._client.list_multipart_uploads(
-                Bucket=self._bucket,
-                Prefix=prefix,
-                KeyMarker=key_marker,
-                UploadIdMarker=upload_marker,
-            )
+            try:
+                page = self._client.list_multipart_uploads(
+                    Bucket=self._bucket,
+                    Prefix=prefix,
+                    KeyMarker=key_marker,
+                    UploadIdMarker=upload_marker,
+                )
+            except ClientError as error:
+                if (
+                    _error_code(error=error) not in {"NotImplemented", "501"}
+                    and error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                    != 501
+                ):
+                    raise
+                # Mountable sweeps its own abandoned uploads. Existing callers
+                # may ignore returned evidence, so keep this limitation in logs too.
+                _logger.warning(
+                    "ListMultipartUploads is not implemented for bucket %s; "
+                    "unfinished uploads were not checked; cleanup is provider-managed",
+                    self._bucket,
+                )
+                raise _UploadListingNotImplemented from error
             for upload in page.get("Uploads", ()):
                 yield upload["Key"], upload["UploadId"]
             if not page.get("IsTruncated", False):

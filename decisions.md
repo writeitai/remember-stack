@@ -8126,6 +8126,11 @@ There are no users requiring migration, aliases or a transition layout.
 - **S3 and one customer mount.** Reuse the S3 adapter for mountable.io (bucket =
   filesystem id), AWS S3, GCS XML API/HMAC and MinIO. Keep E0 writes immutable;
   add only streamed replacement, paged listing and idempotent deletion for P3.
+  Repair/forget lists and aborts abandoned uploads where supported. An upload-listing
+  `NotImplemented`/501 delegates unfinished-part cleanup to the qualified provider
+  and reports `provider_managed` coverage plus a warning; published-object absence
+  is still verified. This does not attest immediate erasure of unfinished parts.
+  [Provider source audit](plan/analysis/corpus_document_folders.md#mountable-upload-listing-compatibility-pr-603).
   All corpus copies are hot and customers mount read-only. `remember mount DIR`
   obtains a one-time remember.dev ticket and invokes
   `mountable mount --ticket-stdin --json DIR`, ticket only on stdin; `remember

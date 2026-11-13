@@ -311,6 +311,7 @@ from rememberstack.model.mounts import PublishedMounts
 from rememberstack.model.object_store import ObjectAlreadyExistsError
 from rememberstack.model.object_store import ObjectKey
 from rememberstack.model.object_store import ObjectKeyEscapesRootError
+from rememberstack.model.object_store import ObjectPurgeEvidence
 from rememberstack.model.operational_scale import OperationalScaleMeasurement
 from rememberstack.model.operational_scale import OperationalScaleReport
 from rememberstack.model.operations import CurrencyLedgerAudit
@@ -559,6 +560,7 @@ __all__ = (
     "ObjectAlreadyExistsError",
     "ObjectKey",
     "ObjectKeyEscapesRootError",
+    "ObjectPurgeEvidence",
     "ObservationAssertion",
     "ObservationCandidate",
     "ObservationForEmbedding",

@@ -130,6 +130,16 @@ endpoints, access logs and read-only session/cache erasure acknowledgement. Chec
 mountable bucket=filesystem-id. MinIO remains the repeatable engine gate, without
 claiming that it qualifies other providers.
 
+Qualify purge on providers without `ListMultipartUploads`: mountable's gateway
+returns `NotImplemented`/501 and sweeps unfinished uploads after seven days.
+Verify published-object deletion/absence still succeeds and evidence explicitly
+reports `multipart_uploads="provider_managed"`, never checked absence of parts.
+Record the deployed provider's expiry/sweep guarantee and check that own failed
+uploads still abort. Exercise continuation-token `ListObjectsV2`, `Content-MD5`
+on PUT/upload-part and immutable `If-None-Match: *` against each endpoint; the
+[source audit](../analysis/corpus_document_folders.md#mountable-upload-listing-compatibility-pr-603)
+supports these mountable operations but does not replace sandbox qualification.
+
 ## Cross-slice gates
 
 Preserve Rule 4: two dated versions with unchanged sections before/after an edit

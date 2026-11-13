@@ -177,9 +177,10 @@ def test_abandoned_upload_purge_is_exact_and_boundary_safe(bucket: _Bucket) -> N
     bucket.store.purge_objects(
         keys=(ObjectKey("exact"),), prefixes=(ObjectKey("path"),)
     )
-    bucket.store.verify_objects_purged(
+    verified = bucket.store.verify_objects_purged(
         keys=(ObjectKey("exact"),), prefixes=(ObjectKey("path"),)
     )
+    assert verified.multipart_uploads == "checked"
     assert [
         u["Key"]
         for u in bucket.client.list_multipart_uploads(Bucket=bucket.name)["Uploads"]

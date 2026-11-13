@@ -46,6 +46,7 @@ class _MemoryS3:
         self.buckets: set[str] = set()
         self.objects: dict[tuple[str, str], tuple[bytes, dict[str, str]]] = {}
         self.last_body: _Body | None = None
+        self.upload_listing_error: ClientError | None = None
 
     def head_bucket(self, *, Bucket: str) -> object:
         """Raise the provider's ordinary absence code for a missing bucket."""
@@ -88,6 +89,8 @@ class _MemoryS3:
     def list_multipart_uploads(
         self, *, Bucket: str, Prefix: str, KeyMarker: str = "", UploadIdMarker: str = ""
     ) -> _ListUploadsOutput:
+        if self.upload_listing_error is not None:
+            raise self.upload_listing_error
         return {"IsTruncated": False}
 
     def create_multipart_upload(
@@ -209,10 +212,13 @@ def test_purge_respects_prefix_boundaries_and_verifies() -> None:
             key=ObjectKey(name), content=name.encode(), storage_class="cold"
         )
 
-    store.purge_objects(keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),))
-    store.verify_objects_purged(
+    purged = store.purge_objects(
         keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
     )
+    verified = store.verify_objects_purged(
+        keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+    )
+    assert purged.multipart_uploads == verified.multipart_uploads == "checked"
 
     assert store.read_bytes(key=ObjectKey("document/sibling")) == b"document/sibling"
     store.write_bytes(
@@ -231,12 +237,113 @@ def test_keys_cannot_escape_the_logical_store_root(value: str) -> None:
         store.write_bytes(key=ObjectKey(value), content=b"no", storage_class="cold")
 
 
-def _client_error(*, code: str, operation: str) -> ClientError:
+def _client_error(
+    *, code: str, operation: str, status: int | None = None
+) -> ClientError:
     """Construct a real botocore error so exception handling stays production-like."""
-    return ClientError(
-        error_response={"Error": {"Code": code, "Message": code}},
-        operation_name=operation,
+    response: dict[str, object] = {"Error": {"Code": code, "Message": code}}
+    if status is not None:
+        response["ResponseMetadata"] = {"HTTPStatusCode": status}
+    return ClientError(error_response=response, operation_name=operation)
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [("NotImplemented", 501), ("NotImplemented", None), ("501", None), ("", 501)],
+)
+def test_purge_without_upload_listing_reports_provider_managed_cleanup(
+    code: str, status: int | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mountable's 501 must not break hard forget or claim uploads were checked."""
+    client = _MemoryS3()
+    client.upload_listing_error = _client_error(
+        code=code, status=status, operation="ListMultipartUploads"
     )
+    store = MinIOObjectStore(bucket="raw", client=client)
+    for name in ("exact", "doc/a", "doc/nested/b", "doc-other/control"):
+        store.write_bytes(key=ObjectKey(name), content=b"body", storage_class="cold")
+
+    for _ in range(2):
+        purged = store.purge_objects(
+            keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+        )
+        verified = store.verify_objects_purged(
+            keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+        )
+        assert (
+            purged.multipart_uploads == verified.multipart_uploads == "provider_managed"
+        )
+
+    assert [key.root for key in store.iter_keys(prefix="")] == ["doc-other/control"]
+    assert store.read_bytes(key=ObjectKey("doc-other/control")) == b"body"
+    assert len(caplog.records) == 4
+    assert all(
+        "unfinished uploads were not checked; cleanup is provider-managed"
+        in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.parametrize("name", ["exact", "doc/remaining"])
+def test_unsupported_upload_listing_still_verifies_published_objects(name: str) -> None:
+    client = _MemoryS3()
+    client.upload_listing_error = _client_error(
+        code="NotImplemented", status=501, operation="ListMultipartUploads"
+    )
+    store = MinIOObjectStore(bucket="raw", client=client)
+    store.write_bytes(key=ObjectKey(name), content=b"remaining", storage_class="cold")
+
+    with pytest.raises(RuntimeError, match=name):
+        store.verify_objects_purged(
+            keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+        )
+
+
+@pytest.mark.parametrize("operation", ["purge_objects", "verify_objects_purged"])
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("AccessDenied", 403),
+        ("NoSuchBucket", 404),
+        ("InternalError", 500),
+        ("SlowDown", 503),
+    ],
+)
+def test_upload_listing_errors_other_than_not_implemented_propagate(
+    operation: str, code: str, status: int
+) -> None:
+    client = _MemoryS3()
+    error = _client_error(code=code, status=status, operation="ListMultipartUploads")
+    client.upload_listing_error = error
+    store = MinIOObjectStore(bucket="raw", client=client)
+
+    with pytest.raises(ClientError) as raised:
+        getattr(store, operation)(keys=(ObjectKey("missing"),), prefixes=())
+    assert raised.value is error
+
+
+def test_purge_keeps_unsupported_abort_failure_visible() -> None:
+    class UnsupportedAbort(_MemoryS3):
+        def list_multipart_uploads(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            KeyMarker: str = "",
+            UploadIdMarker: str = "",
+        ) -> _ListUploadsOutput:
+            return {"Uploads": [{"Key": "exact", "UploadId": "unfinished"}]}
+
+        def abort_multipart_upload(
+            self, *, Bucket: str, Key: str, UploadId: str
+        ) -> object:
+            raise _client_error(
+                code="NotImplemented", status=501, operation="AbortMultipartUpload"
+            )
+
+    store = MinIOObjectStore(bucket="raw", client=UnsupportedAbort())
+    with pytest.raises(ClientError, match="NotImplemented"):
+        store.purge_objects(keys=(ObjectKey("exact"),), prefixes=())
 
 
 def test_presigned_get_is_signed_locally_for_one_object() -> None:

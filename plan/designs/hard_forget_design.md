@@ -209,15 +209,22 @@ table or deletion-specific scheduler is added.
 3. **Raw and artifact objects.** `ObjectPurgePort` deletes every manifest raw, artifact, asset, and
    transcript key/prefix. A deduplicated content object is deleted only when no other live lineage
    references it; otherwise the other lineage remains the lawful owner of that identical byte
-   object. Missing keys count as success. P3 document erasure is handled in stage 4. The
-   committed PostgreSQL scrub immediately removes the lineage from later live graph statements.
+   object. Missing keys count as success. Unfinished uploads follow
+   [E0 §5's provider rule](e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem):
+   list/abort/verify where supported; `NotImplemented`/501 on upload listing
+   delegates unfinished-part cleanup to the qualified provider and reports
+   `multipart_uploads="provider_managed"` evidence plus a warning. This does not
+   attest immediate erasure of unfinished parts. Published-object absence remains
+   mandatory, and other listing or abort failures keep the barrier closed.
+   P3 document erasure is handled in stage 4. The committed PostgreSQL scrub
+   immediately removes the lineage from later live graph statements.
 4. **P3 (D155).** Under the publication advisory lock, compute the deterministic
    suffix from manifest `doc_id`, page through corpus keys and erase every matching
    document folder, including former moved paths, partial unindexed copies and
-   their incomplete uploads. Clear only this document's publication marker and
-   purge its controlled serving/cache copies. Regenerate affected `_index.md` and
-   root `llms.txt` from scrubbed DB authority; enumerate navigation-index keys too,
-   rebuilding/pruning them against DB membership to cover index-only remnants of
+   their incomplete uploads under the same provider rule. Clear only this document's
+   publication marker and purge its controlled serving/cache copies. Regenerate
+   affected `_index.md` and root `llms.txt` from scrubbed DB authority; enumerate
+   navigation-index keys too, rebuilding/pruning them against DB membership to cover index-only remnants of
    an earlier interrupted delete. No historic friendly paths are needed in intent.
    Never reset the corpus or recopy surviving originals/media. Verify absence of
    all document copies and source-bearing index entries before acknowledgement.
