@@ -1,7 +1,7 @@
 # Corpus document folders — implementation order (D155)
 
-Date: 2026-11-13. Design-only plan; none of these slices is implemented by the
-amendment. Authority: [E0 §§5–7](../designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem),
+Date: 2026-11-13. Implementation sequence for the accepted design; the design
+amendment itself shipped no runtime changes. Authority: [E0 §§5–7](../designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem),
 [D155](../../decisions.md#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).
 [Analysis](../analysis/corpus_document_folders.md) records the tradeoffs.
 
@@ -77,6 +77,20 @@ after an earlier succeeded event,
 parked uploads, every layer profile, current-policy seeding, announcements and
 lost delivery; no hosted models. Register/test the same pushed class map in the
 cloud repo as integration, without making engine tests depend on it.
+
+
+Implementation: [PR #607](https://github.com/writeitai/remember-stack/pull/607)
+builds the slice-3 capability with the handler bound only in tests. The companion
+[cloud PR #1017](https://github.com/writeitai/ultimate-memory-cloud/pull/1017)
+checks the existing non-convert pushed class; engine tests do not depend on it.
+The publisher uses a conservative pass over all shared navigation metadata,
+regenerating it from DB membership and skipping digest-equal writes. This covers
+stale index-only doc-id/suffix rows without parsing escaped old Markdown; it
+never recopies unrelated originals/media. The real MinIO matrix lives in
+[`test_minio_corpus_publication.py`](../../src/tests/adapters/test_minio_corpus_publication.py)
+and the late-request repair regression in
+[`test_minio_corpus_lock_loss.py`](../../src/tests/adapters/test_minio_corpus_lock_loss.py).
+Profile activation and periodic verification remain slice 4.
 
 ## 4. Activate with deletion, forget and restore together
 
