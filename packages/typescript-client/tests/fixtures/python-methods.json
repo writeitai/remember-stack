@@ -13765,6 +13765,36 @@
     },
     {
       "arguments": {
+        "cursor": "opaque-position",
+        "limit": 1
+      },
+      "name": "search_documents",
+      "result": {
+        "request": {
+          "cursor": "opaque-position",
+          "filters": {
+            "authors": [],
+            "created_from": null,
+            "created_to": null,
+            "doc_ids": [],
+            "family": [],
+            "language": null,
+            "modified_from": null,
+            "modified_to": null,
+            "recipients": [],
+            "thread_ref": null
+          },
+          "k": 20,
+          "limit": 1,
+          "query": null,
+          "time": null,
+          "versions": "current"
+        }
+      },
+      "variant": "browse-limit-cursor"
+    },
+    {
+      "arguments": {
         "effective_from": "2026-10-02T12:00:00+00:00",
         "filename": "note.md",
         "source_kind": "policy",
@@ -13888,6 +13918,78 @@
       },
       "name": "document_references",
       "variant": "two-sources"
+    },
+    {
+      "arguments": {
+        "max_rows": 1000,
+        "sql": "SELECT 1"
+      },
+      "name": "query_sql",
+      "result": {
+        "max_rows": 1000,
+        "parameters": [],
+        "sql": "SELECT 1"
+      },
+      "variant": "max-rows-1000"
+    },
+    {
+      "arguments": {
+        "max_rows": 1001,
+        "sql": "SELECT 1"
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "max_rows must be <= 1000",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "query_sql",
+      "variant": "max-rows-1001"
+    },
+    {
+      "arguments": {
+        "max_rows": 1000,
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "name": "run_saved_query",
+      "result": {
+        "max_rows": 1000,
+        "name": "safe",
+        "namespace": "examples",
+        "parameters": [],
+        "version": null
+      },
+      "variant": "max-rows-1000"
+    },
+    {
+      "arguments": {
+        "max_rows": 1001,
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "max_rows must be <= 1000",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "run_saved_query",
+      "variant": "max-rows-1001"
     }
   ]
 }

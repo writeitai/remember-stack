@@ -1365,6 +1365,11 @@ def tool_fixtures() -> list[dict[str, Any]]:
     cases.extend(
         [
             {
+                "name": "search_documents",
+                "variant": "browse-limit-cursor",
+                "arguments": {"limit": 1, "cursor": "opaque-position"},
+            },
+            {
                 "name": "ingest",
                 "variant": "effective-period",
                 "arguments": {
@@ -1409,6 +1414,12 @@ def tool_fixtures() -> list[dict[str, Any]]:
                 "arguments": {"doc_id": ID, "chunk_id": ID},
             },
         ]
+    )
+    cases.extend(
+        {"name": name, "variant": f"max-rows-{max_rows}",
+         "arguments": {**valid[name], "max_rows": max_rows}}
+        for name in ("query_sql", "run_saved_query")
+        for max_rows in (1000, 1001)
     )
     for case in cases:
         try:
