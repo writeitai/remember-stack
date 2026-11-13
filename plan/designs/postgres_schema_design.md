@@ -1405,6 +1405,34 @@ CREATE TABLE document_people (
 );
 CREATE INDEX ix_document_people_name    ON document_people USING gin (normalized_name gin_trgm_ops);
 CREATE INDEX ix_document_people_address ON document_people (deployment_id, normalized_address);
+
+-- D156: the deployment's tag registry and tag assignments on document lineages. Tags are
+-- created before use; names are unique case-insensitively. Assignments are stored only here;
+-- chunks, claims and facts inherit through their documents. Not versioned and never part of a
+-- reuse key, so a tag write causes no processing. document_tags_design.md §5.
+CREATE TABLE tags (
+  deployment_id uuid NOT NULL,
+  tag_id        uuid NOT NULL,
+  name          text NOT NULL,              -- NFC, 1–128 chars, no whitespace/control
+  description   text NOT NULL,              -- up to 2,000 chars; written for agents
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, tag_id),
+  CHECK (char_length(name) BETWEEN 1 AND 128),
+  CHECK (char_length(description) <= 2000)
+);
+CREATE UNIQUE INDEX ux_tags_name ON tags (deployment_id, lower(name));
+
+CREATE TABLE document_tags (
+  deployment_id uuid NOT NULL,
+  doc_id        uuid NOT NULL,
+  tag_id        uuid NOT NULL,
+  assigned_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, doc_id, tag_id),
+  FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, tag_id) REFERENCES tags (deployment_id, tag_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag_id, doc_id);
 ```
 
 > **Documents are not entities (D134; replaces the D18-era Document-typed bridge).** Entity types
@@ -2847,7 +2875,9 @@ test fails when a new source-bearing field is not classified. At minimum it cove
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
   audit rationales/features, every `document_entity_bindings` row for the lineage, the
   lineage's `document_metadata`, `document_people` and `document_names`
-  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), and
+  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), its
+  `document_tags` assignment rows (D156; the deployment's tag registry is not source content
+  and is unaffected), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;

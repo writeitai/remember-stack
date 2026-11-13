@@ -6702,6 +6702,14 @@ event digest is a documented alternative with an adoption trigger.
 > chooses which versions are judged. Lineages without periods keep the
 > `versions: current | all` behaviour described here.
 
+> **Refined by [D156](#d156-caller-tags-on-documents-filter-every-grain-through-their-documents) (2026-11-13).**
+> Item 3's document filters gain caller `tags` and reach the context
+> operations. Its rule that a filtered fact's returned evidence is limited to
+> matching claims is replaced: supporting evidence stays limited to matching
+> documents, while contradicting evidence and contradiction co-members are
+> disclosed from every document, marked in or out of the filter. Items 1, 2,
+> 4 and 5 are unchanged.
+
 **Status:** accepted. **Date:** 2026-09-24.
 
 **Context.** Agents ask for files ("find Q3_sales_2025.xlsx"), for files by
@@ -8172,3 +8180,77 @@ identified inside those entries. D147's context/work/portable-store seams are re
 **Authority:** [E0 §§5–7](plan/designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem).
 **Analysis:** [choices and provider evidence](plan/analysis/corpus_document_folders.md).
 **Delivery:** [ordered slices and tests](plan/plans/corpus_document_folders.md).
+
+---
+
+## D156. Caller tags on documents; filter every grain through their documents
+
+**Status:** accepted design (owner direction and GPT 6.1 sol review
+dispositions 2026-11-13); implementation is separate. **Date:** 2026-11-13.
+
+**Context.** One deployment often holds several bodies of work, such as the
+decision logs, designs and ticket outcomes of several products, kept together
+so the memory can connect them. Agents still need narrower reads ("only this
+product", "only decisions", "everything except the smoke tests"). D134
+metadata says what a source declares about itself, not how the caller
+organizes it; `source_ref` is identity and cannot double as a label; and the
+context operations agents use most accept no document filter at all.
+
+**Decision.**
+1. **A tag registry.** Each tag is created before use (`create_tag(name,
+   description)`), with a name unique case-insensitively (a `key:value`
+   convention is documented, never parsed) and a description written for
+   agents. `list_tags` makes the vocabulary discoverable; renames and
+   deletes happen in one place. There are no tag groups.
+2. **Assignments on the lineage only.** Registered tags are assigned to a
+   document lineage, stored once in `document_tags`, and not versioned. Every version, including
+   versions selected by a D140 time scope, carries the lineage's current
+   tags. `ingest` adds tags and never removes them (one lineage can be
+   reached by several callers); `update_document_tags` adds, removes or
+   replaces them atomically. Tags never decide whether an ingest creates a
+   version. Any unregistered tag in a write or filter fails with
+   `unknown_tag`.
+3. **Tags never reach processing.** They enter no reuse key, header,
+   embedding input or extraction window; a tag write causes no model call and
+   no version (D56).
+4. **One filter, every grain.** D134's `documents` filter gains
+   `tags: {all, any, none}` and is accepted by `search_documents`, `search`,
+   `claims_and_sources_context`, `facts_context` and `combined_context`.
+   Chunks inherit through their document, claims through their live
+   occurrences, facts through at least one live supporting claim; with a
+   D140 time scope, filter and scope hold on the same occurrence. Eligibility
+   precedes ranking (D142/D153). `resolve_entity` stays unfiltered: the
+   entity space is shared.
+5. **Filtered facts disclose disagreement.** Supporting evidence comes from
+   matching documents only; contradicting evidence and contradiction
+   co-members come from every document, marked in or out of the filter, with
+   exact two-sided totals. A filter selects facts; it never re-adjudicates
+   them. This applies to every `documents` filter and replaces D134 item 3's
+   evidence limit for facts.
+6. **Honest empties.** A completed empty filtered read's `known_empty`
+   explanation says whether no live document matched the filter or the
+   matching documents say nothing about the question. Incomplete reads keep
+   their `boundary`; ordinary responses carry no extra filter block.
+
+**Alternatives and consequences.** Free-text tags created by use, creation on
+first use, tag groups, copying tags onto claims, chunks or facts, tags on
+versions or entities, structured key/value tags, prefix matching, rename
+aliases, per-filter re-adjudication, a `source_ref` prefix filter and bulk
+retag were rejected (analysis §4–§7, §12). Automatic tagging is kept as the
+unchosen [classification rules proposal](plan/proposals/tag_classification_rules.md). Operation versions advance
+(`claims_and_sources_context@5`, `facts_context@5`, `combined_context@6`), MCP
+tools `ingest`, `search_documents` and the three context tools raise their
+`tool_version`, `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
+`update_document_tags` join the catalogue, and `memory_v1.tags_current` and
+`memory_v1.document_tags_live` join the view catalog. Hard forget deletes a
+lineage's assignments and leaves the registry; normal deletion keeps
+assignments for audit. Tags organize one memory; bodies
+of work that must never share entities or facts still use separate
+deployments.
+
+**Design:** [document tags](plan/designs/document_tags_design.md).
+**Analysis:** [document tags](plan/analysis/document_tags_analysis.md).
+**Delivery:** [document tags plan](plan/plans/document_tags.md).
+**Refines:** D134 (filters and fact evidence). **Amends:** the open query
+space §3.1/§3.2 contract and the D136 MCP catalogue. **Retains:** D54, D56,
+D80, D135, D140, D142, D153 and D74.
