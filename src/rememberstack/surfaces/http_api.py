@@ -131,8 +131,8 @@ from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import ProcessingLayer
 from rememberstack.model.client import ProcessingLayerStates
-from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
-from rememberstack.model.client import SECTION_HISTORY_MAX_K
+from rememberstack.model.client import SECTION_HISTORY_DEFAULT_LIMIT
+from rememberstack.model.client import SECTION_HISTORY_MAX_LIMIT
 from rememberstack.model.client import SectionHistoryPage
 from rememberstack.model.client import SectionHistoryRequest
 from rememberstack.model.processing_layers import LayerAdmission
@@ -1678,8 +1678,8 @@ def _mount_section_history(*, app: FastAPI) -> None:
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to: datetime | None = None,
         k: Annotated[
-            int, Query(ge=1, le=SECTION_HISTORY_MAX_K)
-        ] = SECTION_HISTORY_DEFAULT_K,
+            int, Query(ge=1, le=SECTION_HISTORY_MAX_LIMIT)
+        ] = SECTION_HISTORY_DEFAULT_LIMIT,
         cursor: Annotated[str | None, Query(min_length=1)] = None,
     ) -> SectionHistoryPage:
         """One section key across the document's versions.
