@@ -15,6 +15,7 @@ from rememberstack.core.corpus_export import corpus_topics
 from rememberstack.core.corpus_export import corpus_type
 from rememberstack.core.corpus_export import CORPUS_TYPES
 from rememberstack.core.corpus_export import CorpusPolicy
+from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.core.corpus_export import GeneratedFile
 from rememberstack.core.corpus_export import original_name
 from rememberstack.core.corpus_export import render_navigation
@@ -308,6 +309,7 @@ def test_hostile_metadata_cannot_inject_markdown_rows_or_links() -> None:
 def test_digest_covers_authority_and_policy_but_not_success_marker() -> None:
     source, store, _ = authority()
     original = load_document_export(source, artifact_store=store)
+    assert desired_export_revision(source) == original.revision
     assert (
         load_document_export(
             replace(source, corpus_published_revision="already-published"),
@@ -341,3 +343,16 @@ def test_digest_covers_authority_and_policy_but_not_success_marker() -> None:
     metadata = next(file for file in original.files if file.path == "document.json")
     assert isinstance(metadata, GeneratedFile)
     assert json.loads(metadata.content)["export_revision"] == original.revision
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["content_hash", "markdown_hash", "manifest_hash", "pageindex_uri", "raw_uri"],
+)
+def test_db_only_digest_covers_immutable_inventory_and_active_structure(
+    field: str,
+) -> None:
+    source = document()
+    assert desired_export_revision(
+        replace(source, **{field: "changed"})
+    ) != desired_export_revision(source)

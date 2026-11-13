@@ -326,15 +326,16 @@ def json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def render_document(
-    document: CorpusDocument,
-    *,
-    files: Iterable[CopyFile],
-    disclosure: dict[str, object],
-    policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
-) -> DocumentExport:
-    """Render reader metadata around exact immutable files and disclosure."""
-    copies = tuple(sorted(files, key=lambda file: file.path))
+def desired_export_revision(
+    document: CorpusDocument, *, policy: CorpusPolicy = DEFAULT_CORPUS_POLICY
+) -> str:
+    """Compute the desired identity using DB inputs only, with no object IO.
+
+    E0's recorded manifest hash covers the source map, asset inventory/hashes
+    and reader disclosure. The active structure id and recorded immutable URI
+    identify its exact PageIndex. Neither inventories nor suffixes need another
+    durable table. Object integrity remains the reader/publisher's responsibility.
+    """
     facts = asdict(document)
     facts.pop("corpus_published_revision")
     # A pending edition can change the lineage's best-effort title. Only the
@@ -343,17 +344,21 @@ def render_document(
     facts.pop("file_name")
     facts.pop("lineage_title")
     facts["placement_path"] = corpus_topics(document.placement_path)
-    revision = hashlib.sha256(
-        json_bytes(
-            {
-                "policy": asdict(policy),
-                "document": facts,
-                "path": document.path,
-                "files": [asdict(file) for file in copies],
-                "disclosure": disclosure,
-            }
-        )
+    return hashlib.sha256(
+        json_bytes({"policy": asdict(policy), "document": facts, "path": document.path})
     ).hexdigest()
+
+
+def render_document(
+    document: CorpusDocument,
+    *,
+    files: Iterable[CopyFile],
+    disclosure: dict[str, object],
+    policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
+) -> DocumentExport:
+    """Render exact files/disclosure loaded from the recorded E0 inventory."""
+    copies = tuple(sorted(files, key=lambda file: file.path))
+    revision = desired_export_revision(document, policy=policy)
     inventory = [
         {
             key: value
