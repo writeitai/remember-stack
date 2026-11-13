@@ -19,6 +19,9 @@ htmlcov/
 .loopy_loop/state.json
 .loopy_loop/state.json.lock
 .loopy_loop/state.json.archive_*.json
+/loopy_loop_config.yaml
+/loopy_loop_goal.txt
+/loopy_loop_runbook.md
 .eval-banana/results/
 .benchmark-runs/
 .codex/
