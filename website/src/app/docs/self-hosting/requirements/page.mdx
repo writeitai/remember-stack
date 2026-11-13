@@ -119,17 +119,23 @@ Compose runs [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for this
 (image `chrislusf/seaweedfs`, pinned to `4.44` by digest). The engine talks
 to it through the S3 API with path-style addressing and SigV4 signing. It
 writes every object with a conditional create (`If-None-Match: *`), so an
-object is never silently replaced. Only SeaweedFS is exercised by the
-project's checks. Another S3-compatible store has to support path-style
-requests, conditional writes and user metadata on objects.
+object is never silently replaced. The project's checks exercise SeaweedFS
+and real MinIO adapter contracts. Another S3-compatible store has to support
+path-style requests, conditional writes and user metadata on objects.
 
 SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
 of them, so the bundled store holds up to about 100 GiB before writes fail
 (each bucket also reserves 7 volumes on its first write). Volumes are not
 preallocated, so unused capacity takes no disk. To store more, raise
 `-volume.max` on the `object-store` service in `compose.yaml`. The engine
-sets no S3 lifecycle (expiry) rules and does not need them: it deletes
-objects itself, during a hard forget.
+sets no S3 lifecycle (expiry) rules; it deletes published objects itself
+during a hard forget.
+
+For unfinished multipart uploads, purge aborts matching uploads when the
+provider supports listing them. A `NotImplemented`/501 response to that listing
+leaves unfinished-part cleanup to the provider's policy. Purge evidence records
+that limitation and the engine logs a warning; it still verifies that published
+objects are absent. This does not verify immediate erasure of unfinished parts.
 
 ## Model provider keys
 

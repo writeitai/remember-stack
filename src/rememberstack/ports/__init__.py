@@ -6,6 +6,7 @@ from rememberstack.ports.git import KGitRemotePort
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.mounts import MountPublisherPort
+from rememberstack.ports.object_store import MutableObjectStorePort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.object_store import PresignedReadPort
 from rememberstack.ports.object_store import StreamingReadPort
@@ -25,6 +26,7 @@ __all__ = (
     "ModelProviderPort",
     "MeterReceiptPort",
     "MountPublisherPort",
+    "MutableObjectStorePort",
     "ObjectStorePort",
     "PresignedReadPort",
     "StreamingReadPort",

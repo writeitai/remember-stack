@@ -144,6 +144,39 @@ Public mountable documentation could not be retrieved in this session; no
 successful interoperability or session-revocation test is claimed. Provider
 qualification belongs to the delivery tests, with MinIO mandatory in this repo.
 
+### Mountable upload-listing compatibility (PR #603)
+
+Source inspection on 2026-11-13 of
+[`writeitai/fsit@a645c163`](https://github.com/writeitai/fsit/tree/a645c163e4746503dc0d83ad5a6d8827f397c060/internal/gateway)
+found one incompatible request in slice 1: `s3.go`'s `bucket()` returns
+`NotImplemented`/501 for `ListMultipartUploads`. Requiring it during raw/artifact
+purge or verification would block every managed hard forget. `s3_multipart.go`
+serves create/upload-part/complete/abort for a known upload id and sweeps abandoned
+uploads after its seven-day `uploadLifetime` (on an hourly sweep). Staged parts
+are not published files. The adapter continues aborting its own failed uploads.
+
+Treat only upload-listing `NotImplemented`/501 as provider-managed cleanup and
+return explicit `multipart_uploads="provider_managed"` evidence, with a warning
+for existing callers that discard the return. This verifies published-object
+absence, not immediate erasure of unfinished parts. Providers serving upload
+listing keep explicit abort and verification. Swallowing authorization, transport,
+other service or abort failures would hide real erasure failures; all still fail.
+No provider-name switch, configuration flag or cached capability is needed.
+
+The same source audit checked the other S3 requests added by the PR:
+
+| Adapter request | Mountable handler contract |
+|---|---|
+| `ListObjectsV2`, including `continuation-token` and automatic `encoding-type=url` | `s3_list.go` accepts both and returns an opaque next token |
+| `Content-MD5` on small PUT and upload-part | Both call `s3body.go`'s `newS3Body`, which validates the base64 MD5 and rejects mismatched bytes |
+| `If-None-Match: *` on immutable PUT | `s3.go`'s `s3Conditions` accepts this exact precondition |
+| Multipart create, upload-part, complete and abort | Object-level routes in `s3.go`/`s3_multipart.go` serve them; 8 MiB parts meet the 5 MiB minimum |
+
+These calls need no compatibility change. Source inspection does not qualify a
+deployed endpoint. Slice 6 must exercise these requests, record the provider's
+unfinished-part retention/cleanup guarantee and distinguish it from checked
+absence in purge evidence.
+
 ## Reuse and scope
 
 P3 reads committed bytes and never calls a model. Nullable placement changes only

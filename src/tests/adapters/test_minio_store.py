@@ -6,9 +6,13 @@ from botocore.exceptions import ClientError
 import pytest
 
 from rememberstack.adapters.selfhost import MinIOObjectStore
+from rememberstack.adapters.selfhost.minio import _CreatedUpload
 from rememberstack.adapters.selfhost.minio import _GetObjectOutput
 from rememberstack.adapters.selfhost.minio import _HeadObjectOutput
 from rememberstack.adapters.selfhost.minio import _ListObjectsOutput
+from rememberstack.adapters.selfhost.minio import _ListUploadsOutput
+from rememberstack.adapters.selfhost.minio import _MultipartUpload
+from rememberstack.adapters.selfhost.minio import _UploadedPart
 from rememberstack.core.object_transfer import current_object_transfer
 from rememberstack.core.object_transfer import object_transfer_scope
 from rememberstack.model import ObjectAlreadyExistsError
@@ -42,6 +46,7 @@ class _MemoryS3:
         self.buckets: set[str] = set()
         self.objects: dict[tuple[str, str], tuple[bytes, dict[str, str]]] = {}
         self.last_body: _Body | None = None
+        self.upload_listing_error: ClientError | None = None
 
     def head_bucket(self, *, Bucket: str) -> object:
         """Raise the provider's ordinary absence code for a missing bucket."""
@@ -70,16 +75,48 @@ class _MemoryS3:
         Bucket: str,
         Key: str,
         Body: bytes,
-        IfNoneMatch: str,
         Metadata: dict[str, str],
+        IfNoneMatch: str = "",
+        ContentMD5: str = "",
     ) -> object:
         """Honor the S3 conditional-create header."""
-        assert IfNoneMatch == "*"
         identity = (Bucket, Key)
-        if identity in self.objects:
+        if IfNoneMatch == "*" and identity in self.objects:
             raise _client_error(code="PreconditionFailed", operation="PutObject")
         self.objects[identity] = (Body, Metadata)
         return {}
+
+    def list_multipart_uploads(
+        self, *, Bucket: str, Prefix: str, KeyMarker: str = "", UploadIdMarker: str = ""
+    ) -> _ListUploadsOutput:
+        if self.upload_listing_error is not None:
+            raise self.upload_listing_error
+        return {"IsTruncated": False}
+
+    def create_multipart_upload(
+        self, *, Bucket: str, Key: str, Metadata: dict[str, str]
+    ) -> _CreatedUpload:
+        raise NotImplementedError("multipart is exercised against real MinIO")
+
+    def upload_part(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        UploadId: str,
+        PartNumber: int,
+        Body: bytes,
+        ContentMD5: str,
+    ) -> _UploadedPart:
+        raise NotImplementedError("multipart is exercised against real MinIO")
+
+    def complete_multipart_upload(
+        self, *, Bucket: str, Key: str, UploadId: str, MultipartUpload: _MultipartUpload
+    ) -> object:
+        raise NotImplementedError("multipart is exercised against real MinIO")
+
+    def abort_multipart_upload(self, *, Bucket: str, Key: str, UploadId: str) -> object:
+        raise NotImplementedError("multipart is exercised against real MinIO")
 
     def head_object(self, *, Bucket: str, Key: str) -> _HeadObjectOutput:
         """Return metadata or the provider's ordinary absence code."""
@@ -175,10 +212,13 @@ def test_purge_respects_prefix_boundaries_and_verifies() -> None:
             key=ObjectKey(name), content=name.encode(), storage_class="cold"
         )
 
-    store.purge_objects(keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),))
-    store.verify_objects_purged(
+    purged = store.purge_objects(
         keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
     )
+    verified = store.verify_objects_purged(
+        keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+    )
+    assert purged.multipart_uploads == verified.multipart_uploads == "checked"
 
     assert store.read_bytes(key=ObjectKey("document/sibling")) == b"document/sibling"
     store.write_bytes(
@@ -197,12 +237,113 @@ def test_keys_cannot_escape_the_logical_store_root(value: str) -> None:
         store.write_bytes(key=ObjectKey(value), content=b"no", storage_class="cold")
 
 
-def _client_error(*, code: str, operation: str) -> ClientError:
+def _client_error(
+    *, code: str, operation: str, status: int | None = None
+) -> ClientError:
     """Construct a real botocore error so exception handling stays production-like."""
-    return ClientError(
-        error_response={"Error": {"Code": code, "Message": code}},
-        operation_name=operation,
+    response: dict[str, object] = {"Error": {"Code": code, "Message": code}}
+    if status is not None:
+        response["ResponseMetadata"] = {"HTTPStatusCode": status}
+    return ClientError(error_response=response, operation_name=operation)
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [("NotImplemented", 501), ("NotImplemented", None), ("501", None), ("", 501)],
+)
+def test_purge_without_upload_listing_reports_provider_managed_cleanup(
+    code: str, status: int | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mountable's 501 must not break hard forget or claim uploads were checked."""
+    client = _MemoryS3()
+    client.upload_listing_error = _client_error(
+        code=code, status=status, operation="ListMultipartUploads"
     )
+    store = MinIOObjectStore(bucket="raw", client=client)
+    for name in ("exact", "doc/a", "doc/nested/b", "doc-other/control"):
+        store.write_bytes(key=ObjectKey(name), content=b"body", storage_class="cold")
+
+    for _ in range(2):
+        purged = store.purge_objects(
+            keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+        )
+        verified = store.verify_objects_purged(
+            keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+        )
+        assert (
+            purged.multipart_uploads == verified.multipart_uploads == "provider_managed"
+        )
+
+    assert [key.root for key in store.iter_keys(prefix="")] == ["doc-other/control"]
+    assert store.read_bytes(key=ObjectKey("doc-other/control")) == b"body"
+    assert len(caplog.records) == 4
+    assert all(
+        "unfinished uploads were not checked; cleanup is provider-managed"
+        in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.parametrize("name", ["exact", "doc/remaining"])
+def test_unsupported_upload_listing_still_verifies_published_objects(name: str) -> None:
+    client = _MemoryS3()
+    client.upload_listing_error = _client_error(
+        code="NotImplemented", status=501, operation="ListMultipartUploads"
+    )
+    store = MinIOObjectStore(bucket="raw", client=client)
+    store.write_bytes(key=ObjectKey(name), content=b"remaining", storage_class="cold")
+
+    with pytest.raises(RuntimeError, match=name):
+        store.verify_objects_purged(
+            keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
+        )
+
+
+@pytest.mark.parametrize("operation", ["purge_objects", "verify_objects_purged"])
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("AccessDenied", 403),
+        ("NoSuchBucket", 404),
+        ("InternalError", 500),
+        ("SlowDown", 503),
+    ],
+)
+def test_upload_listing_errors_other_than_not_implemented_propagate(
+    operation: str, code: str, status: int
+) -> None:
+    client = _MemoryS3()
+    error = _client_error(code=code, status=status, operation="ListMultipartUploads")
+    client.upload_listing_error = error
+    store = MinIOObjectStore(bucket="raw", client=client)
+
+    with pytest.raises(ClientError) as raised:
+        getattr(store, operation)(keys=(ObjectKey("missing"),), prefixes=())
+    assert raised.value is error
+
+
+def test_purge_keeps_unsupported_abort_failure_visible() -> None:
+    class UnsupportedAbort(_MemoryS3):
+        def list_multipart_uploads(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            KeyMarker: str = "",
+            UploadIdMarker: str = "",
+        ) -> _ListUploadsOutput:
+            return {"Uploads": [{"Key": "exact", "UploadId": "unfinished"}]}
+
+        def abort_multipart_upload(
+            self, *, Bucket: str, Key: str, UploadId: str
+        ) -> object:
+            raise _client_error(
+                code="NotImplemented", status=501, operation="AbortMultipartUpload"
+            )
+
+    store = MinIOObjectStore(bucket="raw", client=UnsupportedAbort())
+    with pytest.raises(ClientError, match="NotImplemented"):
+        store.purge_objects(keys=(ObjectKey("exact"),), prefixes=())
 
 
 def test_presigned_get_is_signed_locally_for_one_object() -> None:
@@ -262,3 +403,138 @@ def test_an_object_streams_in_bounded_chunks() -> None:
     assert client.last_body is not None and client.last_body.closed
     with pytest.raises(FileNotFoundError):
         list(store.iter_bytes(key=ObjectKey("a/missing"), chunk_size=4))
+
+
+@pytest.mark.parametrize("tokens", [(None,), ("a", "a"), ("a", "b", "a")])
+def test_listing_refuses_missing_or_repeated_continuations(
+    tokens: tuple[str | None, ...],
+) -> None:
+    class BrokenPages(_MemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.tokens = iter(tokens)
+
+        def list_objects_v2(
+            self, *, Bucket: str, Prefix: str, ContinuationToken: str = ""
+        ) -> _ListObjectsOutput:
+            page: _ListObjectsOutput = {"IsTruncated": True}
+            token = next(self.tokens)
+            if token is not None:
+                page["NextContinuationToken"] = token
+            return page
+
+    store = MinIOObjectStore(bucket="corpus", client=BrokenPages())
+    with pytest.raises(RuntimeError, match="continuation token"):
+        list(store.iter_keys(prefix=""))
+
+
+def test_listing_follows_empty_truncated_pages() -> None:
+    class EmptyFirstPage(_MemoryS3):
+        def list_objects_v2(
+            self, *, Bucket: str, Prefix: str, ContinuationToken: str = ""
+        ) -> _ListObjectsOutput:
+            if not ContinuationToken:
+                return {"IsTruncated": True, "NextContinuationToken": "next"}
+            assert ContinuationToken == "next"
+            return {
+                "IsTruncated": False,
+                "Contents": [{"Key": "path/a"}, {"Key": "path-other/b"}],
+            }
+
+    store = MinIOObjectStore(bucket="corpus", client=EmptyFirstPage())
+    assert [k.root for k in store.iter_keys(prefix="path")] == ["path/a"]
+
+
+@pytest.mark.parametrize(
+    "markers",
+    [
+        (None,),
+        (("key", ""),),
+        (("", "id"),),
+        (("key", "id"), ("key", "id")),
+        (("a", "1"), ("b", "2"), ("a", "1")),
+    ],
+)
+def test_purge_refuses_broken_multipart_pagination(
+    markers: tuple[tuple[str, str] | None, ...],
+) -> None:
+    class BrokenUploads(_MemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.markers = iter(markers)
+
+        def list_multipart_uploads(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            KeyMarker: str = "",
+            UploadIdMarker: str = "",
+        ) -> _ListUploadsOutput:
+            page: _ListUploadsOutput = {"IsTruncated": True}
+            marker = next(self.markers)
+            if marker is not None:
+                page["NextKeyMarker"], page["NextUploadIdMarker"] = marker
+            return page
+
+    store = MinIOObjectStore(bucket="corpus", client=BrokenUploads())
+    with pytest.raises(RuntimeError, match="multipart listing continuation token"):
+        store.purge_objects(keys=(ObjectKey("missing"),), prefixes=())
+
+
+def test_purge_follows_both_multipart_markers() -> None:
+    """MinIO's single-disk listing does not paginate uploads; exercise S3 markers."""
+
+    class PagedUploads(_MemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.aborted: list[tuple[str, str]] = []
+
+        def list_multipart_uploads(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            KeyMarker: str = "",
+            UploadIdMarker: str = "",
+        ) -> _ListUploadsOutput:
+            if not KeyMarker:
+                return {
+                    "IsTruncated": True,
+                    "NextKeyMarker": "path/a",
+                    "NextUploadIdMarker": "first",
+                    "Uploads": [{"Key": "path/a", "UploadId": "first"}],
+                }
+            assert (KeyMarker, UploadIdMarker) == ("path/a", "first")
+            return {
+                "IsTruncated": False,
+                "Uploads": [
+                    {"Key": "path/a", "UploadId": "second"},
+                    {"Key": "path-other/b", "UploadId": "keep"},
+                ],
+            }
+
+        def abort_multipart_upload(
+            self, *, Bucket: str, Key: str, UploadId: str
+        ) -> object:
+            self.aborted.append((Key, UploadId))
+            return {}
+
+    client = PagedUploads()
+    store = MinIOObjectStore(bucket="corpus", client=client)
+    store.purge_objects(keys=(), prefixes=(ObjectKey("path"),))
+    assert client.aborted == [("path/a", "first"), ("path/a", "second")]
+
+
+@pytest.mark.parametrize("code", ["404", "NoSuchKey", "NotFound", "AccessDenied"])
+def test_exact_delete_accepts_only_absence_errors(code: str) -> None:
+    class DeleteError(_MemoryS3):
+        def delete_object(self, *, Bucket: str, Key: str) -> object:
+            raise _client_error(code=code, operation="DeleteObject")
+
+    store = MinIOObjectStore(bucket="corpus", client=DeleteError())
+    if code == "AccessDenied":
+        with pytest.raises(ClientError, match="AccessDenied"):
+            store.delete(key=ObjectKey("missing"))
+    else:
+        store.delete(key=ObjectKey("missing"))

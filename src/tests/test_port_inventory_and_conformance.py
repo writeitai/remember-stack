@@ -33,6 +33,7 @@ from rememberstack.ports import AuthPerimeterPort
 from rememberstack.ports import KGitRemotePort
 from rememberstack.ports import ModelProviderPort
 from rememberstack.ports import MountPublisherPort
+from rememberstack.ports import MutableObjectStorePort
 from rememberstack.ports import ObjectStorePort
 from rememberstack.ports import SystemOnePort
 from rememberstack.ports import TaskQueuePort
@@ -74,6 +75,7 @@ _PORT_EXPORTS = {
     "ModelProviderPort",
     "MeterReceiptPort",
     "MountPublisherPort",
+    "MutableObjectStorePort",
     "ObjectStorePort",
     "ObjectPurgePort",
     "PresignedReadPort",
@@ -258,11 +260,16 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_sixteen_defined_protocols() -> None:
-    """Keep D61/D74 seams, bounded PostgreSQL reads and D147 reads explicit."""
+def test_inventory_exports_exactly_seventeen_defined_protocols() -> None:
+    """Keep D61/D74 seams, D147 reads and D155 mutation explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 16
+    assert len(_defined_protocols()) == 17
+
+
+def test_immutable_store_does_not_require_mutable_operations() -> None:
+    """E0 consumers retain the narrow create-only capability."""
+    assert not isinstance(FakeObjectStore(), MutableObjectStorePort)
 
 
 def test_representative_fakes_conform_structurally() -> None:

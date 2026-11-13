@@ -686,11 +686,17 @@ mutable capability in `ports/object_store.py`, implemented by the same adapters:
 No rename, directory API, distributed transaction, CAS, or mandatory provider-side
 copy is needed. Copy across independently configured raw/artifact/corpus endpoints
 by streaming GET to replacement upload. Use multipart upload for large objects,
-complete only after successful input/hash validation, abort failed uploads and
-clean abandoned multipart parts on repair/forget through the adapter's purge
-capability. No whole-video buffering or durable worker-local state. A qualified
-adapter provides complete-object replacement and read/write/delete/list
-consistency; mount caches have a separate lifetime. Existing raw create-only
+complete only after successful input/hash validation and abort own failed uploads.
+On repair/forget, enumerate, abort and verify matching abandoned uploads when the
+provider serves `ListMultipartUploads`. If that listing returns `NotImplemented`/501,
+leave unfinished parts to the qualified provider's cleanup policy and return
+`multipart_uploads="provider_managed"` evidence plus a warning. This verifies
+published-object absence without claiming unfinished parts were checked or erased
+immediately. Mountable's gateway expires abandoned uploads after seven days;
+provider qualification records the deployed expiry/sweep guarantee. Other listing
+errors and all abort failures remain failures. No whole-video buffering or durable
+worker-local state. A qualified adapter provides complete-object replacement and
+read/write/delete/list consistency; mount caches have a separate lifetime. Existing raw create-only
 preconditions must also be qualified on each endpoint, not silently weakened.
 
 **Managed mount CLI contract.** `remember mount DIR` obtains a one-time mount
@@ -963,7 +969,7 @@ For each publish:
    the ready folder `_index.md`, with the same deterministic export identity.
 3. Delete every other folder carrying this document's suffix, including partial
    unindexed copies; if no reading survives, delete every matching folder. Missing
-   objects succeed. Include abandoned multipart uploads for those keys.
+   objects succeed. Handle abandoned multipart uploads under §5's provider rule.
 4. Regenerate affected old/new ancestors' `_index.md` bottom-up and root `llms.txt`
    **from the DB**, never by editing previous index contents. Membership, paths,
    counts and summaries come from current live served selections, not events or
@@ -1050,17 +1056,18 @@ paths, suffix reservations or a corpus-wide purge scope.
    mounted reads. D147 retains separately durable manifest storage.
 2. After lifecycle/authority scrub, the authorized coordinator takes the publication
    lock, pages through corpus keys and deletes **only** folders with the forgotten
-   document's suffix, including former moved folders, interrupted unindexed copies
-   and their abandoned multipart uploads. Clear that document's publication marker
-   and purge its controlled serving/cache copies. Never empty the corpus store or
-   recopy surviving documents' originals/derivatives.
+   document's suffix, including former moved folders and interrupted unindexed
+   copies. Handle abandoned multipart uploads under §5's provider rule. Clear that
+   document's publication marker and purge its controlled serving/cache copies.
+   Never empty the corpus store or recopy surviving documents' originals/derivatives.
 3. Regenerate affected navigation `_index.md` and root `llms.txt` from scrubbed DB
    authority. Enumerate navigation-index keys too: rebuild/prune them against DB
    membership to cover index-only remnants whose old folder was already deleted
    before a crash. This conservative metadata pass may revisit all shared indexes;
    it does not reset document folders or require a historic path list. Verify no
-   matching folder/upload, forgotten title/summary/member entry or controlled
-   serving copy remains. Reopen only after every D74 store acknowledges erasure.
+   matching folder, forgotten title/summary/member entry or controlled serving
+   copy remains; report unfinished-upload coverage under §5's provider rule.
+   Reopen only after every D74 store acknowledges erasure within that scope.
    Any error leaves the barrier closed and retries the same idempotent procedure.
 4. Before a restore serves traffic or controlled mounts, re-honor **every** portable
    manifest, even one locally marked complete. Scrub restored authority, repeat

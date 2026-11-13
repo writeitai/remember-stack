@@ -5,22 +5,28 @@ from typing import runtime_checkable
 from uuid import UUID
 
 from rememberstack.model import ObjectKey
+from rememberstack.model import ObjectPurgeEvidence
 
 
 @runtime_checkable
 class ObjectPurgePort(Protocol):
-    """Idempotently erase manifest-nominated immutable objects."""
+    """Erase nominated objects and report unfinished-upload coverage."""
 
     def purge_objects(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
-    ) -> None:
-        """Delete exact keys and every object below exact prefixes; absence succeeds."""
+    ) -> ObjectPurgeEvidence | None:
+        """Delete exact keys/prefixes; absence succeeds.
+
+        S3 returns unfinished-upload coverage; stores without multipart uploads
+        may return None. Unsupported listing delegates cleanup to the provider,
+        never attests that unfinished uploads are absent.
+        """
         ...
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
-    ) -> None:
-        """Raise unless every exact key and prefix is absent from the active store."""
+    ) -> ObjectPurgeEvidence | None:
+        """Verify object absence, returning the same unfinished-upload coverage."""
         ...
 
 

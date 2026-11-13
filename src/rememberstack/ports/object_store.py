@@ -1,5 +1,6 @@
-"""D61 byte/object-key seam for immutable raw inputs, artifacts, and snapshots."""
+"""D61 immutable E0 creation and the separate D155 mutable object capability."""
 
+from collections.abc import Iterable
 from collections.abc import Iterator
 from typing import Protocol
 from typing import runtime_checkable
@@ -25,6 +26,35 @@ class ObjectStorePort(Protocol):
         audit). Providers that have storage classes apply it; providers
         that do not record it, so the routing is observable either way.
         """
+        ...
+
+
+@runtime_checkable
+class MutableObjectStorePort(Protocol):
+    """D155 complete-object operations, separate from immutable E0 creation."""
+
+    def replace_stream(
+        self, *, key: ObjectKey, chunks: Iterable[bytes], storage_class: str
+    ) -> None:
+        """Create or atomically replace an object after exhausting bounded chunks.
+
+        The producer validates its expected size/hash before returning normally;
+        raising leaves the previous object intact. No whole-object buffering.
+        A closeable source iterator is closed on success or failure.
+        """
+        ...
+
+    def iter_keys(self, *, prefix: str) -> Iterator[ObjectKey]:
+        """Page through exact prefix and descendants, excluding sibling prefixes.
+
+        Empty prefix lists the entire bound store; ``path`` and ``path/`` both
+        match ``path`` and ``path/file``, never ``path-other/file``. An incomplete
+        or cycling provider listing raises instead of claiming completion.
+        """
+        ...
+
+    def delete(self, *, key: ObjectKey) -> None:
+        """Delete one exact object idempotently; missing objects succeed."""
         ...
 
 
