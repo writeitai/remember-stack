@@ -135,6 +135,28 @@ and control bytes remain in place. Include delete-marked old-folder keys and old
 shared-index versions in the retained-version fixture. Include session-cache acknowledgement and
 retained-version purge where enabled; do not mock the storage purge. No model calls.
 
+
+Implementation: [draft PR #610](https://github.com/writeitai/remember-stack/pull/610)
+activates the production class/pushed handlers and marker readiness together with
+synchronous public deletion and document-scoped D74 erasure. Retained versions,
+delete markers, upload-only folders and local metadata-only remnants participate
+in discovery. Navigation is erased/regenerated from scrubbed authority; surviving
+document files are never recopied. Completed portable manifests are re-armed before
+replay, and controlled sessions acknowledge quiescence and cache erasure.
+
+Periodic digest verification uses the existing delayed work ledger and its two
+delivery shells, with a configurable 24-hour starting cadence
+(`REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S`). Setup seeds it; successful
+verification seeds its successor. There is no new scheduler, reservation, receipt
+or progress table, and no paid-work identity/version change. Real PostgreSQL +
+MinIO coverage is in
+[`test_minio_corpus_forget.py`](../../src/tests/adapters/test_minio_corpus_forget.py);
+profile/readiness/delete coverage is in
+[`test_p3_corpusfs.py`](../../src/tests/workers/test_p3_corpusfs.py).
+The PR records check results and the managed companion's pushed-stage, restore/cache
+and storage-capture integration requirements; this worktree does not edit the cloud
+repository. Consumer path resolution and mount CLI work remain in slices 5–6.
+
 ## 5. Consumption paths, readiness and documentation
 
 Use the nullable-marker guard for MCP/API/SDK `p3_path` and readiness, including

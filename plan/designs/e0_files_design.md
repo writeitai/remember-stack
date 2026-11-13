@@ -175,8 +175,9 @@ the edit, not the document — full design: `evidence_lifecycle_design.md` §2/�
 **Deletion / forget (cascade).** Normal removal tombstones the lineage, purges its unshared **raw +
 artifacts** objects, ends its testimony currency, and reaches K through the citation tombstone path
 (lifecycle §8; schema §13.1). Irreversible hard-forget is D74's separate fail-closed workflow: it
-also scrubs retained source payloads, explicitly purges P1 and resets P3 and its controlled
-serving copies before repair, erases affected K history, and records a portable restore
+also scrubs retained source payloads, explicitly purges P1, erases the document’s P3
+copies and controlled serving caches, regenerates navigation, erases affected K history,
+and records a portable restore
 barrier. A rebuild alone is not erasure (§6.7; `hard_forget_design.md`).
 
 ## 3. The conversion module (raw → Markdown) — D38

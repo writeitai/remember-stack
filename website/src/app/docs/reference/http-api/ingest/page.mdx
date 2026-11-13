@@ -312,7 +312,7 @@ whether the capabilities you need are ready. It only reads; it never waits.
 | `require.pipeline` | boolean | yes | Every expected stage has finished for every version. |
 | `require.p1` | boolean | yes | The search index (claims, chunks, facts) is published. |
 | `require.live_graph` | boolean | yes | The live graph passes its health checks. |
-| `require.p3` | boolean | yes | A filesystem snapshot built after the versions finished has been published. |
+| `require.p3` | boolean | yes | Every requested served version's corpus publication marker matches its current export inputs. |
 
 Unknown fields are rejected (`422`).
 
@@ -338,7 +338,7 @@ Capability `reason` values:
 |---|---|---|
 | `pipeline` | `ready` | `stage_incomplete` |
 | `p1` | `ready` | `search_channel_incomplete` |
-| `p3` | `ready` | `corpus_snapshot_incomplete` |
+| `p3` | `ready` | `corpus_publication_incomplete`, `p3_version_not_served` |
 | `live_graph` | `ready` | `graph_server_version_mismatch`, `graph_extension_version_mismatch`, `graph_role_contract_mismatch`, `graph_helper_contract_mismatch`, `graph_catalog_mismatch`, `graph_role_runtime_limits_mismatch`, `graph_smoke_identifier_collision`, `graph_one_hop_guard_smoke_failed`, `graph_one_hop_smoke_failed`, `graph_neighborhood_smoke_failed`, `graph_path_smoke_failed`, `graph_citation_smoke_failed`, `graph_database_or_permission_failed`, `graph_smoke_contract_failed` |
 
 A version id the deployment does not know is not an error: every stage reads
@@ -514,14 +514,10 @@ newest version that did, with the others in `other_matching_version_ids`.
 Filters and names always use the returned version's own metadata. Deleted
 documents and deleted versions never match.
 
-Each result's `p3_path` is the document's stable path in the
-[filesystem view](/docs/self-hosting/filesystem-views), relative to its root:
-`documents/<doc_id>`. It exists there only when the deployment publishes the
-filesystem view; `source_path` is where the file came from instead. That
-path always shows the document's served version (its newest processed one),
-so `p3_path` is `null`, and `served_version` is `false`, when the result
-describes another version. Open the described version with `version_id` and
-`representation_id` instead.
+Live-corpus folder resolution through `p3_path` is not implemented yet. Use
+[suffix lookup](/docs/self-hosting/filesystem-views#layout) to find a served
+folder. The API's version-addressed source handles retain their exact-version
+meaning independently of the filesystem.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of

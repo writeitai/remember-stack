@@ -156,7 +156,7 @@ capabilities you need. It reports each capability separately and a single
 | `pipeline` | Every stage above has succeeded (or been skipped) for every version you asked about. | Claims and facts from those versions exist. |
 | `p1` | The deployment's search indexes are built for all seven channels: semantic search over chunks, claims, relations, observations and entities, and BM25 keyword search over chunks and claims. | Search-backed operations can find them. This is deployment-wide, not per version. |
 | `live_graph` | The deployment's PostgreSQL graph passes its health checks. | Graph traversal and the neighbourhood expansion in `facts_context`. Deployment-wide. |
-| `p3` | A filesystem snapshot of the corpus has been published after your versions finished. | The read-only filesystem views. Self-hosted only; see [Filesystem views](/docs/self-hosting/filesystem-views). |
+| `p3` | Each requested served version's corpus publication marker matches its current export inputs. | The read-only filesystem views. Self-hosted only; see [Filesystem views](/docs/self-hosting/filesystem-views). |
 
 For ordinary recall, require `pipeline`, `p1` and `live_graph`, and leave
 `p3` off unless you read the filesystem views.

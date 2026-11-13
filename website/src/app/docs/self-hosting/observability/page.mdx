@@ -59,7 +59,7 @@ Sentry, GlitchTip or Bugsink. It is off unless you set a DSN.
 
 `compose.yaml` passes all three. Set them in `.env` and run
 `docker compose up -d`. The `setup`, `api` and worker<Cloud> and `meter-receipts`</Cloud>
-processes report errors; the projection and mount commands do not.
+processes report errors; the one-shot projection command does not.
 
 Events are stripped to metadata before they leave the process: the
 exception type and stack trace stay; the exception message is replaced by

@@ -58,7 +58,7 @@ The report has five parts:
 | `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`), split by `defer_reason`: `no_route`, `admission` or `budget` for parked work, `scheduled` for work due later, `retry_backoff` for a failure waiting to retry, `null` otherwise. A large `pending` count with no reason on one stage shows where the pipeline is behind. |
 | `dead_letters` | Items that ran out of attempts: a total, groups by stage and error class, and individual items with their `processing_id`, attempts and `last_error`. |
 | `poison_targets` | Items that dead-lettered under two or more component versions: an upgrade did not fix them. |
-| `latest_projections` | The latest filesystem snapshot, if any. |
+| `latest_projections` | Historical projection metadata; live corpus readiness is checked per requested document through `/readiness`. |
 | `currency` | A consistency check between each claim's cached "current" flag and the ledger it is derived from. `mismatch_total` should be 0. |
 
 Lists in the report are capped at `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT`
@@ -170,15 +170,17 @@ It also checks the versions of `pgvector`,
 ## When a hard forget is in progress
 
 While a hard forget is running, the API answers `503` with
-`{"code": "forget_in_progress"}`, and `replay`, `resume-no-route`,
-`rebuild`, the projection build and `mounts` refuse to run. This protects
-data that is being removed from being served or copied mid-removal.
+`{"code": "forget_in_progress"}`. Ordinary claims, publication and reconcile
+refuse to run. The coordinator alone can erase source bytes and regenerate
+navigation under the closed barrier.
 
-A deployment started from `compose.yaml` has no command that starts a hard
-forget, so it does not enter this state on its own. The API also refuses to
-start if the `forget-manifests` volume holds hard-forget manifests for this
-deployment, as it would after restoring data from an installation that ran
-a hard forget; see [Upgrades and migrations](/docs/self-hosting/upgrades#back-up).
+The Python hard-forget coordinator and ordinary workers use the same purge path.
+There is no public CLI command that starts a hard forget. API startup and
+`project --plane p3` replay every portable manifest before serving or repairing
+restored data, including manifests previously marked complete. Any error keeps
+admission closed. A host with controlled mount sessions must acknowledge stopping
+them and erasing their caches; operator-managed FUSE mounts must be stopped and
+remounted. See [restore ordering](/docs/self-hosting/upgrades#hard-forget-manifests).
 
 <Cloud>
 

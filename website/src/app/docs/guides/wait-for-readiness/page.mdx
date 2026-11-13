@@ -43,7 +43,7 @@ points sized for single documents, where processing takes minutes. Raise
 
 It checks three capabilities for you: the pipeline stages for your
 versions, the search index (`p1`) and the live graph (`live_graph`). Pass
-`require_p3=True` only if you also read the published corpus snapshot
+`require_p3=True` only if you also read the published corpus folders
 (filesystem views on a self-hosted deployment).
 
 `wait_for_readiness` accepts version IDs as strings or UUIDs. A readiness
@@ -106,7 +106,8 @@ Capability reasons when not ready:
 | `pipeline` | `stage_incomplete` | At least one stage of one version has not finished. |
 | `p1` | `search_channel_incomplete` | The search index is not ready. |
 | `live_graph` | a `graph_…` reason, such as `graph_catalog_mismatch` | The live graph failed its catalog or health check. This is a deployment problem, not a problem with your document. |
-| `p3` | `corpus_snapshot_incomplete` | No published corpus snapshot newer than your versions. |
+| `p3` | `corpus_publication_incomplete` | A requested served version has no matching publication marker yet. |
+| `p3` | `p3_version_not_served` | A requested historical edition is not the corpus's served reading. |
 
 The check reads state; it never starts or speeds up work.
 
@@ -180,7 +181,7 @@ algorithm. Your agent's instructions should say the same:
    `stages[]`.
 
 Require `pipeline`, `p1` and `live_graph`, and set `p3` to `false` unless
-the agent also reads a published corpus snapshot. `ready: true` means the
+the agent also reads a published corpus folders. `ready: true` means the
 assured operations can see the content; whether a given question finds it
 still depends on relevance.
 
