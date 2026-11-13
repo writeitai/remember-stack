@@ -987,9 +987,10 @@ for erasure (§6.7). A lease expiry alone cannot prove IO stopped.
 For each publish:
 
 1. Clear the publication marker before any store mutation. Compute the desired
-   path and inventory from DB authority. Read nullable `documents.corpus_paths text[]`, the small set of folder paths this document may currently have objects
-   under. Before writing any object at a new path, add that path to the set and
-   **commit on the advisory-lock session**. Ordinary publication lists only these
+   path and inventory from DB authority. Read nullable
+   `documents.corpus_paths text[]`, the small set of folder paths this document
+   may currently have objects under. Before writing any object at a new path, add
+   that path to the set and **commit on the advisory-lock session**. Ordinary publication lists only these
    document prefixes, never the entire store to find a suffix. For example, a
    title/topic move records both the old and desired folders before the first new
    object write. The field is cleanup state, not desired authority, a history or
@@ -1063,8 +1064,8 @@ each served document's set to its desired path after cleanup/navigation, and cle
 sets for unselected/deleted documents after their objects are removed. This repairs
 paths that an independently restored bucket or incomplete DB state missed. Match
 the first complete `--<suffix>` document-folder component, never a similarly named
-asset below it. Reconcile has a verify mode: compare each desired object's stored SHA-256
-metadata with its desired digest, rewriting mismatches and missing metadata (or
+asset below it. Reconcile has a verify mode: compare each desired object's stored
+SHA-256 metadata with its desired digest, rewriting mismatches and missing metadata (or
 missing objects), including files whose document has a matching marker. Delete
 orphans through the same publication code path. Existing originals/derivatives
 whose paths and digest metadata match need not be recopied. Periodic verifying
