@@ -8222,10 +8222,10 @@ context operations agents use most accept no document filter at all.
    exact two-sided totals. A filter selects facts; it never re-adjudicates
    them. This applies to every `documents` filter and replaces D134 item 3's
    evidence limit for facts.
-6. **Honest empties.** Filtered envelopes say whether any live document
-   matched the filter, so "nothing matches this filter" is distinguishable
-   from "the matching documents say nothing about this". `known_empty` is
-   returned only for completed reads; work bounds keep their `boundary`.
+6. **Honest empties.** A completed empty filtered read's `known_empty`
+   explanation says whether no live document matched the filter or the
+   matching documents say nothing about the question. Incomplete reads keep
+   their `boundary`; ordinary responses carry no extra filter block.
 
 **Alternatives and consequences.** Free-text tags created by use, creation on
 first use, tag groups, copying tags onto claims, chunks or facts, tags on

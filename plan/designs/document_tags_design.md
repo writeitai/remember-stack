@@ -107,7 +107,8 @@ document follows it.
   vocabulary, and an unused tag is reported by the filtered read itself
   (§4.5).
 
-Wherever an operation takes a `tag`, it accepts the name or the `tag_id`.
+Wherever an operation takes a `tag`, it accepts the name or the `tag_id`
+(HTTP routes that address one tag take the `tag_id`; §6).
 
 **Limits** (starting points, to be measured): 10,000 tags per deployment;
 descriptions up to 2,000 characters; 64 tags per lineage; 32 tags in each
@@ -264,12 +265,16 @@ associated with a supplied entity, **and** coming from a matching document.
 | Claim | it has a live occurrence in a matching document version |
 | Relation or observation (fact) | at least one live **supporting** claim comes from a matching document |
 
-When a D140 time scope is also given, both conditions hold on the **same**
-occurrence: a claim qualifies through an occurrence in a version that both
-matches the filter and is selected by the time scope, and a fact qualifies
-through a supporting claim that does. Independent tests (a matching
-document in one version, an in-force version elsewhere) are not enough. The
-time scope keeps applying to out-of-filter evidence (§4.4) as it does today.
+When a D140 time scope is also given, the filter and the scope's existing
+per-occurrence test must hold on the **same** occurrence: a claim qualifies
+through an occurrence that both comes from a matching document and passes
+the time scope, and a fact qualifies through a supporting claim that does.
+Independent tests are not enough: tagged support that is out of force plus
+in-force support from an untagged document must not admit a fact. The time
+scope's own test is unchanged; for example, D140 still gates periodised
+lineages by their selected version while undeclared snapshot lineages keep
+their current-testimony rule. It keeps applying to out-of-filter evidence
+(§4.4) as it does today.
 
 The filter decides which items are **included**. It never re-decides
 anything: a fact's value, validity window, support state and contradiction
@@ -286,8 +291,8 @@ relations and observations:
 
 - **Supporting evidence** is drawn only from matching documents. That is
   what the scope asks for.
-- **Contradicting evidence** is drawn from **every** document the read's
-  time scope selects. Matching
+- **Contradicting evidence** is drawn from **every** document, under the
+  read's time scope as today. Matching
   documents are allocated first within the existing evidence budget, then
   the rest. Each evidence association states whether its document matches
   the filter (`in_documents_filter: true | false`).
@@ -316,18 +321,18 @@ claims and chunks return what matching documents **said**, so their results
 are strictly limited to matching documents. Claims are testimony, not
 verdicts; there is no "contradiction" of a claim to disclose.
 
-### 4.5 Saying what the filter matched
+### 4.5 Saying why a filtered read is empty
 
 Because every tag in a filter must be registered, a misspelled tag fails
 with `unknown_tag` instead of returning nothing. A registered tag can still
 legitimately match no live document (it was just created, or its documents
-were deleted), and D134's other fields can match nothing too. The envelope of
-every filtered read echoes the validated filter and states whether at least
-one live document matched it (`documents_filter: {filter, matched_any_document}`).
-An empty result therefore distinguishes "no document matches this filter"
-from "the matching documents say nothing about this". Either may return
-`known_empty`, with an explanation naming which case occurred, only when
-the read completed. A read stopped by a D142/D153 work bound, a D143 layer
+were deleted), and D134's other fields can match nothing too. When a
+filtered read completes with no results, its `known_empty` explanation says
+which case occurred: "no live document matches this filter" or "the
+matching documents say nothing about this". Only that completed-empty case
+checks whether any live document matches; ordinary responses carry no
+extra filter block. `known_empty` is returned only when the read
+completed. A read stopped by a D142/D153 work bound, a D143 layer
 exclusion or an unfinished page keeps its existing incomplete-result
 semantics (`boundary`, or a continuation), whatever the filter matched.
 
@@ -403,11 +408,11 @@ coordinate.
 
 | Surface | Change |
 |---|---|
-| HTTP | `GET /tags` (list, optional `query`); `POST /tags` (create); `PATCH /tags/{tag}` (rename/describe); `DELETE /tags/{tag}`. `POST /ingest` accepts `tags`. `POST /documents/{doc_id}/tags` with `{add?, remove?}` or `{set}`; returns `{doc_id, tags}`. `GET /documents` page items and `search_documents` results return `tags`. Every `documents` filter accepts `tags`. |
+| HTTP | `GET /tags` (list, optional `query`); `POST /tags` (create); `PATCH /tags/{tag_id}` (rename/describe); `DELETE /tags/{tag_id}` (names may contain `/`, so routes take the ID; SDK, CLI and MCP accept a name and resolve it first). `POST /ingest` accepts `tags`. `POST /documents/{doc_id}/tags` with `{add?, remove?}` or `{set}`; returns `{doc_id, tags}`. `GET /documents` page items and `search_documents` results return `tags`. Every `documents` filter accepts `tags`. |
 | Python SDK | `client.list_tags()`, `create_tag()`, `update_tag()`, `delete_tag()`; `client.ingest(..., tags=[...])`; `client.update_document_tags(doc_id, add=..., remove=...)` or `set=...`; `filters=DocumentSearchFilters(tags=...)` on `search_documents`; `documents={"tags": {"all": [...]}}` on `search` and the context methods. |
 | CLI | `remember tags list`, `remember tags create NAME --description TEXT`, `remember tags update TAG [--name] [--description]`, `remember tags delete TAG`; `remember ingest FILE --tag T` (repeatable); `remember documents tag DOC_ID --add T --remove T` or `--set T`; `--tag T` (all), `--any-tag T` and `--not-tag T` on query commands. |
 | MCP | Read tool `list_tags`; write tools `create_tag`, `update_tag`, `delete_tag` and `update_document_tags`; `ingest` gains `tags`; `search_documents` gains a flat `tags` field beside its other filter fields; `claims_and_sources_context`, `facts_context` and `combined_context` gain the `documents` argument. Each changed tool raises its `tool_version`. The context tools' descriptions tell agents to call `list_tags` before filtering by tag. |
-| Operations | `claims_and_sources_context@5`, `facts_context@5`, `combined_context@6` (new optional input and the §4.4/§4.5 response fields); `surface_manifest_hash` rolls. |
+| Operations | `claims_and_sources_context@5`, `facts_context@5`, `combined_context@6` (new optional input, the §4.4 evidence marks and totals, and the §4.5 explanations); `surface_manifest_hash` rolls. |
 
 ## 7. What tags are not
 

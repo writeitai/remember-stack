@@ -236,17 +236,18 @@ one after measurement requires an operation-version and manifest roll.
 | Operation | Inputs |
 |---|---|
 | `resolve_entity` | Existing v1 schema, unchanged |
-| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60) |
-| `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
-| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: the same closed fact-time union, default `{"mode":"current"}` |
+| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: optional D140 testimony time scope ([effective time design](effective_time_and_section_references_design.md)) |
+| `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–19 unique UUIDs; `hops`: integer 1–2, default 1, live-graph expansion from the anchors; `predicate`: optional string, length 1–200, restricting expansion edges; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
+| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–19 unique UUIDs; `hops` and `predicate` as for `facts_context`; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: the same closed fact-time union, default `{"mode":"current"}` |
 
 All objects forbid unknown fields. A present `entity_ids` array cannot be empty
 or contain duplicates. A present `documents` filter is validated by D134/D156's
 rules before retrieval; when it is combined with `entity_ids`, an item must
-satisfy both. A filter that matches no live document is not an error: the
-envelope's `documents_filter` block echoes the validated filter and says
-whether any live document matched, and an empty result is `known_empty` with
-an explanation naming which case occurred ([document tags design §4.5](document_tags_design.md#45-saying-what-the-filter-matched)). On every content operation, explicit `candidate_k` cannot
+satisfy both. A filter that matches no live document is not an error: a
+completed empty result is `known_empty` with an explanation naming whether no
+live document matched or the matching documents say nothing relevant
+([document tags design §4.5](document_tags_design.md#45-saying-why-a-filtered-read-is-empty)).
+Incomplete reads keep `boundary`. On every content operation, explicit `candidate_k` cannot
 be smaller than `k`. The resolved default is 50 results per grain and 200
 candidates per channel. Rationale and measurement limits are in
 [the retrieval-depth analysis](../analysis/configurable_context_retrieval_20261022.md). Malformed UUIDs, unknown fields, invalid bounds, an invalid time

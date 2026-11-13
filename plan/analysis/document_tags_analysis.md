@@ -144,7 +144,7 @@ caller's; it adds the column when, and if, it is accepted.
 **No document counts in `list_tags`.** Exact live counts would aggregate
 assignments across every live lineage on each vocabulary read. Agents need
 the names and descriptions to choose a filter; a tag that matches nothing is
-reported by the filtered read itself (`documents_filter.matched_any_document`).
+reported by the filtered read itself (its `known_empty` explanation).
 
 ## 6. Setting labels
 
