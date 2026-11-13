@@ -1269,7 +1269,6 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     profile = SelfHostProfile(
         settings=SelfHostSettings(
             deployment_id=_DEPLOYMENT,
-            projection_work_root=projection_work_root,
             forget_manifest_root=forget_manifest_root,
             migration_config=_ROOT / "alembic.ini",
         ),

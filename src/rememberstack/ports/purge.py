@@ -1,5 +1,7 @@
 """D74 erasure capabilities of the already-selected serving stores."""
 
+from collections.abc import Callable
+from collections.abc import Iterator
 from typing import Protocol
 from typing import runtime_checkable
 from uuid import UUID
@@ -12,8 +14,20 @@ from rememberstack.model import ObjectPurgeEvidence
 class ObjectPurgePort(Protocol):
     """Erase nominated objects and report unfinished-upload coverage."""
 
+    def iter_purge_keys(self) -> Iterator[ObjectKey]:
+        """Discover current, retained/deleted and unfinished object names.
+
+        Unlike a reader listing this includes keys hidden by delete markers.
+        Unsupported multipart listing keeps the provider-managed contract.
+        """
+        ...
+
     def purge_objects(
-        self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
+        self,
+        *,
+        keys: tuple[ObjectKey, ...],
+        prefixes: tuple[ObjectKey, ...],
+        before_write: Callable[[], None] | None = None,
     ) -> ObjectPurgeEvidence | None:
         """Delete exact keys/prefixes; absence succeeds.
 
@@ -32,18 +46,38 @@ class ObjectPurgePort(Protocol):
 
 @runtime_checkable
 class ProjectionPurgePort(Protocol):
-    """Erase old P3 durable prefixes and local serving copies."""
+    """Erase one document's corpus copies and repair scrubbed navigation."""
+
+    def quiesce_projections(self, *, deployment_id: UUID, forget_id: UUID) -> None:
+        """Stop controlled serving and acknowledge external-write drain before scrub."""
+        ...
 
     def purge_projections(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
-    ) -> None:
-        """Delete every nominated projection copy; absence succeeds."""
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
+    ) -> ObjectPurgeEvidence | None:
+        """Erase suffix folders/history/uploads and acknowledge controlled caches."""
         ...
 
     def verify_projections_purged(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
     ) -> None:
-        """Raise unless durable old prefixes and local serving copies are absent."""
+        """Verify suffix absence, regenerated navigation and cache acknowledgement."""
+        ...
+
+
+class CorpusCachePurgePort(Protocol):
+    """The composing host's controlled serving sessions, outside object storage."""
+
+    def quiesce(self, *, deployment_id: UUID, forget_id: UUID) -> None:
+        """Stop serving, drain external writes and acknowledge stopped sessions."""
+        ...
+
+    def purge(self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID) -> None:
+        """Acknowledge erasure of this document from every controlled cache."""
+        ...
+
+    def verify(self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID) -> None:
+        """Raise unless sessions are stopped and their caches acknowledge erasure."""
         ...
 
 

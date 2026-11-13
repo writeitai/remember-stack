@@ -119,6 +119,19 @@ class _MultipartUpload(TypedDict):
     Parts: list[_CompletedPart]
 
 
+class _ObjectVersion(TypedDict):
+    Key: str
+    VersionId: str
+
+
+class _ListVersionsOutput(TypedDict):
+    Versions: NotRequired[list[_ObjectVersion]]
+    DeleteMarkers: NotRequired[list[_ObjectVersion]]
+    IsTruncated: NotRequired[bool]
+    NextKeyMarker: NotRequired[str]
+    NextVersionIdMarker: NotRequired[str]
+
+
 class _S3Client(Protocol):
     """The narrow boto3 client subset the object-store adapter owns."""
 
@@ -178,9 +191,20 @@ class _S3Client(Protocol):
         """Read one object's metadata."""
         ...
 
-    def delete_object(self, *, Bucket: str, Key: str) -> object:
+    def delete_object(self, *, Bucket: str, Key: str, VersionId: str = ...) -> object:
         """Delete one object idempotently."""
         ...
+
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]: ...
+
+    def list_object_versions(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str,
+        KeyMarker: str = "",
+        VersionIdMarker: str = "",
+    ) -> _ListVersionsOutput: ...
 
     def list_objects_v2(
         self, *, Bucket: str, Prefix: str, ContinuationToken: str = ""
@@ -454,24 +478,46 @@ class MinIOObjectStore:
             seen.add(token)
 
     def purge_objects(
-        self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
+        self,
+        *,
+        keys: tuple[ObjectKey, ...],
+        prefixes: tuple[ObjectKey, ...],
+        before_write: Callable[[], None] | None = None,
     ) -> ObjectPurgeEvidence:
         """Delete exact keys/descendants and report unfinished-upload coverage."""
         # Validate all destructive inputs before touching the store.
-        for key in keys:
-            _validated_key(key=key)
+        exact = {_validated_key(key=key) for key in keys}
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         for key in keys:
+            if before_write:
+                before_write()
             self.delete(key=key)
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
+                if before_write:
+                    before_write()
                 self.delete(key=key)
-        try:
-            for name, upload_id in self._iter_uploads(prefix=""):
-                if name in {key.root for key in keys} or any(
+        # Suspended versioning still retains source-bearing history. Never
+        # confuse an empty current listing with erasure of those bytes.
+        if self._has_versions():
+            for name, version in self._iter_versions(prefix=""):
+                if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
                 ):
+                    if before_write:
+                        before_write()
+                    self._client.delete_object(
+                        Bucket=self._bucket, Key=name, VersionId=version
+                    )
+        try:
+            for name, upload_id in self._iter_uploads(prefix=""):
+                if name in exact or any(
+                    matches_object_prefix(name, prefix=boundary)
+                    for boundary in boundaries
+                ):
+                    if before_write:
+                        before_write()
                     self._abort_upload(name=name, upload_id=upload_id)
         except _UploadListingNotImplemented:
             return ObjectPurgeEvidence(multipart_uploads="provider_managed")
@@ -482,6 +528,7 @@ class MinIOObjectStore:
     ) -> ObjectPurgeEvidence:
         """Verify object absence and report whether unfinished uploads were checked."""
         remaining: list[str] = []
+        exact = {_validated_key(key=key) for key in keys}
         for key in keys:
             normalized = _validated_key(key=key)
             if self._exists(normalized=normalized):
@@ -489,10 +536,17 @@ class MinIOObjectStore:
         for prefix in prefixes:
             remaining.extend(key.root for key in self.iter_keys(prefix=prefix.root))
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
+        if self._has_versions():
+            for name, version in self._iter_versions(prefix=""):
+                if name in exact or any(
+                    matches_object_prefix(name, prefix=boundary)
+                    for boundary in boundaries
+                ):
+                    remaining.append(f"version:{name}:{version}")
         evidence = ObjectPurgeEvidence(multipart_uploads="checked")
         try:
             for name, _ in self._iter_uploads(prefix=""):
-                if name in {key.root for key in keys} or any(
+                if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
                 ):
@@ -504,6 +558,57 @@ class MinIOObjectStore:
                 f"object purge verification found: {sorted(remaining)!r}"
             )
         return evidence
+
+    def iter_purge_keys(self) -> Iterator[ObjectKey]:
+        """Include retained keys and uploads that no published object exposes."""
+        yield from self.iter_keys(prefix="")
+        if self._has_versions():
+            for name, _ in self._iter_versions(prefix=""):
+                yield ObjectKey(name)
+        try:
+            for name, _ in self._iter_uploads(prefix=""):
+                yield ObjectKey(name)
+        except _UploadListingNotImplemented:
+            pass  # purge/verification return provider_managed evidence as usual
+
+    def _has_versions(self) -> bool:
+        """Fail closed on an unknown bucket policy; no unsupported-listing waiver.
+
+        A provider that does not implement the versioning subresource at all
+        (mountable answers 501) serves no object versions to erase.
+        """
+        try:
+            status = self._client.get_bucket_versioning(Bucket=self._bucket).get(
+                "Status"
+            )
+        except ClientError as error:
+            if not _not_implemented(error=error):
+                raise
+            return False
+        return status in {"Enabled", "Suspended"}
+
+    def _iter_versions(self, *, prefix: str) -> Iterator[tuple[str, str]]:
+        key_marker = version_marker = ""
+        seen: set[tuple[str, str]] = set()
+        while True:
+            page = self._client.list_object_versions(
+                Bucket=self._bucket,
+                Prefix=prefix,
+                KeyMarker=key_marker,
+                VersionIdMarker=version_marker,
+            )
+            for item in (*page.get("Versions", ()), *page.get("DeleteMarkers", ())):
+                yield item["Key"], item["VersionId"]
+            if not page.get("IsTruncated", False):
+                return
+            key_marker = page.get("NextKeyMarker", "")
+            version_marker = page.get("NextVersionIdMarker", "")
+            marker = (key_marker, version_marker)
+            if not key_marker or not version_marker or marker in seen:
+                raise RuntimeError(
+                    "incomplete or repeated version listing continuation token"
+                )
+            seen.add(marker)
 
     def iter_bytes(self, *, key: ObjectKey, chunk_size: int) -> Iterator[bytes]:
         """Stream one object's body, at most ``chunk_size`` bytes at a time."""
@@ -588,11 +693,7 @@ class MinIOObjectStore:
                     UploadIdMarker=upload_marker,
                 )
             except ClientError as error:
-                if (
-                    _error_code(error=error) not in {"NotImplemented", "501"}
-                    and error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-                    != 501
-                ):
+                if not _not_implemented(error=error):
                     raise
                 # Mountable sweeps its own abandoned uploads. Existing callers
                 # may ignore returned evidence, so keep this limitation in logs too.
@@ -659,3 +760,11 @@ def _content_md5(content: bytes) -> str:
 def _error_code(*, error: ClientError) -> str:
     """Return the provider's stable error code without trimming the exception."""
     return str(error.response.get("Error", {}).get("Code", ""))
+
+
+def _not_implemented(*, error: ClientError) -> bool:
+    """Whether the provider does not serve this operation at all (HTTP 501)."""
+    return (
+        _error_code(error=error) in {"NotImplemented", "501"}
+        or error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 501
+    )

@@ -104,9 +104,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_MINIO_READ_TIMEOUT_S` | `30` | finite seconds, > 0 | Socket read timeout for each S3 request. Multipart uploads send at most 8 MiB per part. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for filesystem-view snapshots. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` | unset | path | Default `--raw-root` for `mounts`. |
-| `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | Default `--artifacts-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for live corpus folders and navigation. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | Working directory created by `setup`. |
 | `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | Where hard-forget manifests are read. |
 | `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` | unset | string | Keep hard-forget manifests in this dedicated bucket instead of the manifest root. Never one of the three data buckets. |
@@ -287,10 +285,8 @@ See [File formats and converters](/docs/self-hosting/converters).
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S` | `86400` | finite float > 0 | Cadence in seconds for digest-verifying corpus reconcile through the ordinary delayed-work ledger. |
 | `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT` | `20` | int 1–1000 | Cap on lists in `remember ops inspect`. |
-| `REMEMBERSTACK_P3_SNAPSHOT_PREFIX` | `corpusfs/snapshots` | string | Object prefix of filesystem-view snapshots. |
-| `REMEMBERSTACK_P3_FACETS` | `["by-source", "by-time", "by-topic"]` | JSON array | Top-level view directories of the corpus tree. |
-| `REMEMBERSTACK_P3_SHARD_THRESHOLD` | `150` | int ≥ 2 | Entries above which a directory is split. |
 | `REMEMBERSTACK_COST_EXPORT_BIND` | unset | `host:port`, `[ipv6]:port` or `unix:/path` | Address of the HTTP cost export. Unset: off. |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | unset | secret, ≥ 32 bytes | Bearer token for the cost export. |
 

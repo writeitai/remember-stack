@@ -173,3 +173,4 @@ src/tests/surfaces/test_per_request_perimeter.py
 src/tests/surfaces/test_request_embeddings.py
 src/tests/adapters/test_object_operations.py
 src/tests/surfaces/test_pagination_documentation.py
+src/tests/adapters/test_mount_provisioning.py

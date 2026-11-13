@@ -20,6 +20,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from rememberstack.core import chunker_version as packing_generation
 from rememberstack.core import ChunkerParams
+from rememberstack.core.corpus_export import CorpusDocument
+from rememberstack.core.corpus_export import CorpusPolicy
+from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
+from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.model import CapabilityReadiness
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import PipelineStage
@@ -27,13 +31,13 @@ from rememberstack.model import PipelineStageReadiness
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import VersionPipelineReadiness
 from rememberstack.model.client import ProcessingLayer
+from rememberstack.spine.corpus_export import _DOCUMENTS
 from rememberstack.spine.graph_catalog import graph_catalog_problems
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.processing_layers import layer_configuration_on
-from rememberstack.spine.projection import ProjectionCatalog
 
 
 class PipelineReadinessCatalog:
@@ -44,14 +48,14 @@ class PipelineReadinessCatalog:
         *,
         engine: Engine,
         expected_components: Mapping[PipelineStage, str],
-        projections: ProjectionCatalog,
+        corpus_policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
         model_bindings: Mapping[str, str] | None = None,
         build_revision: str = "",
     ) -> None:
         """Bind the spine and the component generations this process serves."""
         self._engine = engine
         self._expected = tuple(expected_components.items())
-        self._projections = projections
+        self._corpus_policy = corpus_policy
         self._model_bindings = dict(model_bindings or {})
         self._build_revision = build_revision
         self._graph_catalog_verified_at: float | None = None
@@ -217,6 +221,12 @@ class PipelineReadinessCatalog:
                 or time.monotonic() - self._graph_catalog_verified_at
                 >= self._graph_catalog_cache_seconds
             )
+            p3_ready, p3_reason, p3_revision = _corpus_readiness_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                version_ids=version_ids,
+                policy=self._corpus_policy,
+            )
             live_graph_ready, live_graph_reason = _live_graph_status(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -269,7 +279,6 @@ class PipelineReadinessCatalog:
             UUID(str(row["target_id"])): row for row in claims_reconcile_rows
         }
         versions: list[VersionPipelineReadiness] = []
-        terminal_at = None
         for version_id in version_ids:
             stages: list[PipelineStageReadiness] = []
             for stage, configured_version in self._expected:
@@ -311,10 +320,6 @@ class PipelineReadinessCatalog:
                         }
                     )
                 )
-                if finished_at is not None and (
-                    terminal_at is None or finished_at > terminal_at
-                ):
-                    terminal_at = finished_at
             versions.append(
                 VersionPipelineReadiness(
                     version_id=version_id,
@@ -327,22 +332,6 @@ class PipelineReadinessCatalog:
                 )
             )
         versions_ready = all(version.ready for version in versions)
-        latest_p3 = self._projections.latest_snapshot(
-            deployment_id=deployment_id, plane="P3_corpusfs"
-        )
-        raw_p3_built_at = None if latest_p3 is None else latest_p3["built_at"]
-        p3_built_at = raw_p3_built_at if isinstance(raw_p3_built_at, datetime) else None
-        raw_p3_published_at = None if latest_p3 is None else latest_p3["published_at"]
-        p3_published_at = (
-            raw_p3_published_at if isinstance(raw_p3_published_at, datetime) else None
-        )
-        p3_ready = (
-            latest_p3 is not None
-            and p3_published_at is not None
-            and terminal_at is not None
-            and p3_built_at is not None
-            and p3_built_at >= terminal_at
-        )
         capabilities: dict[
             Literal["pipeline", "p1", "live_graph", "p3"], CapabilityReadiness
         ] = {
@@ -368,10 +357,8 @@ class PipelineReadinessCatalog:
                 required=require.p3,
                 ready=p3_ready,
                 checked_at=checked_at,
-                reason="ready" if p3_ready else "corpus_snapshot_incomplete",
-                version=None if latest_p3 is None else str(latest_p3["version"]),
-                built_at=p3_built_at,
-                published_at=p3_published_at,
+                reason=p3_reason,
+                version=p3_revision,
             ),
         }
         ready = all(
@@ -386,6 +373,50 @@ class PipelineReadinessCatalog:
             model_bindings=self._model_bindings,
             build_revision=self._build_revision,
         )
+
+
+def _corpus_readiness_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    version_ids: tuple[UUID, ...],
+    policy: CorpusPolicy,
+) -> tuple[bool, str, str | None]:
+    """Per-selection success markers; unrelated publication proves nothing."""
+    version_documents = dict(
+        connection.execute(
+            text("""SELECT version_id, doc_id FROM document_versions
+        WHERE deployment_id = :d AND version_id = ANY(CAST(:ids AS uuid[]))
+        AND deleted_at IS NULL"""),
+            {"d": deployment_id, "ids": list(version_ids)},
+        )
+        .tuples()
+        .all()
+    )
+    # Readiness accepts 1,000 versions. Keep this a bounded batch rather than
+    # two round trips per version, within the same consistent authority cut.
+    documents = {
+        row["doc_id"]: CorpusDocument(**dict(row))
+        for row in connection.execute(
+            text(_DOCUMENTS + " AND d.doc_id = ANY(CAST(:ids AS uuid[]))"),
+            {
+                "deployment_id": deployment_id,
+                "ids": list(set(version_documents.values())),
+            },
+        ).mappings()
+    }
+    revisions: list[str] = []
+    for version_id in version_ids:
+        document = documents.get(version_documents.get(version_id))
+        if document is None:
+            return False, "corpus_publication_incomplete", None
+        if document.version_id != version_id:
+            return False, "p3_version_not_served", None
+        revision = desired_export_revision(document, policy=policy)
+        if document.corpus_published_revision != revision:
+            return False, "corpus_publication_incomplete", None
+        revisions.append(revision)
+    return True, "ready", revisions[0] if len(revisions) == 1 else None
 
 
 _VERSION_WORK = text(

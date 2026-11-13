@@ -175,8 +175,9 @@ the edit, not the document — full design: `evidence_lifecycle_design.md` §2/�
 **Deletion / forget (cascade).** Normal removal tombstones the lineage, purges its unshared **raw +
 artifacts** objects, ends its testimony currency, and reaches K through the citation tombstone path
 (lifecycle §8; schema §13.1). Irreversible hard-forget is D74's separate fail-closed workflow: it
-also scrubs retained source payloads, explicitly purges P1 and resets P3 and its controlled
-serving copies before repair, erases affected K history, and records a portable restore
+also scrubs retained source payloads, explicitly purges P1, erases the document’s P3
+copies and controlled serving caches, regenerates navigation, erases affected K history,
+and records a portable restore
 barrier. A rebuild alone is not erasure (§6.7; `hard_forget_design.md`).
 
 ## 3. The conversion module (raw → Markdown) — D38
@@ -969,8 +970,19 @@ index regeneration, normal removal, reconcile and forget's authorized internal
 calls. Reuse caller lock ownership for internal calls. Re-read authority after
 taking the lock. Keep the claim alive while streaming. Before each object write
 or delete, confirm ownership of that advisory lock on the same PostgreSQL session
-and that the work claim is still live; abort further mutations on loss. Check
-before each multipart request too, so one bounded part is the largest upload
+and that the work claim is still live; abort further mutations on loss.
+
+Hold D74's existing shared admission/drain fence on an independent PostgreSQL session through all issued requests and own-upload cleanup, acquiring
+it before the publication lock. Check that original session's identity and lock
+ownership too. If the publication backend dies, the admission fence still makes
+forget wait for IO; if the admission backend dies, the publication lock still
+prevents P3 erasure from completing before IO returns. These are the existing
+D74/P3 locks, with no new coordination table or lock namespace. Losing all DB
+sessions still requires D74's external-write quiescence acknowledgement; database
+or lease state alone never proves that requests stopped.
+
+Check both locks and the live claim before each multipart request too, so one
+bounded part is the largest upload
 unit. Configure bounded S3 connect/read timeouts and disable automatic write
 retries that could issue a new request after lock loss. No detached uploads
 survive a handler.

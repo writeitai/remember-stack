@@ -54,10 +54,12 @@ absent from the current release; nothing here has a date.
 
 ## Knowledge
 
-- **Self-contained document folders on mounted filesystems.** The current
-  [filesystem view](/docs/self-hosting/filesystem-views) links to originals
-  and converted artifacts; it does not place their bytes together in one
-  document folder.
+- **API corpus path resolution.** Resolving live document-folder paths through
+  `p3_path`, including moves and publication-marker checks, is not implemented yet.
+  Use [offline suffix lookup](/docs/self-hosting/filesystem-views#layout).
+- **Managed mount CLI wrapper.** Corpus folders contain copied originals and
+  reader derivatives, and self-hosters can mount the corpus bucket read-only.
+  `remember mount` / `remember unmount` and managed mount tickets do not ship yet.
 
 - **Compiled pages.** RememberStack does not write summary pages that
   combine what it knows about a topic; the envelope's `pages` field and the

@@ -46,6 +46,7 @@ _PIPELINE_STAGE_VALUES = (
     "hard_forget",
     "review_fact_windows",
     "publish_corpus",
+    "reconcile_corpus",
 )
 
 

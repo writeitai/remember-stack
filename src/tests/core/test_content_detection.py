@@ -11,7 +11,6 @@ from rememberstack.core.content_detection import detect_content_mime
 from rememberstack.core.storage_routing import storage_class_for
 from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.core.storage_routing import storage_class_for_internal
-from rememberstack.core.storage_routing import storage_class_for_snapshot
 from rememberstack.model import ContentDetectionError
 
 
@@ -237,7 +236,6 @@ def test_storage_policy_covers_each_object_kind() -> None:
     assert storage_class_for(mime="video/mp4") == "hot"
     assert storage_class_for(mime="application/pdf") == "cold"
     assert storage_class_for_derived() == "hot"
-    assert storage_class_for_snapshot() == "hot"
     assert storage_class_for_internal() == "cold"
 
 

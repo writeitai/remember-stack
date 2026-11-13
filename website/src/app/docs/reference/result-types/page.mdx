@@ -679,9 +679,9 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `ready` | boolean | |
 | `checked_at` | date-time | |
 | `reason` | string | `ready`, or why not (see [Ingest](/docs/reference/http-api/ingest#post-readiness)). |
-| `version` | string, nullable | `p3` only: the snapshot version. |
-| `built_at` | date-time, nullable | `p3` only. |
-| `published_at` | date-time, nullable | `p3` only. |
+| `version` | string, nullable | `p3`: the export digest for one ready requested document; null for multiple documents or incomplete publication. |
+| `built_at` | date-time, nullable | Null for the live corpus, which has no global snapshot build time. |
+| `published_at` | date-time, nullable | Null for the live corpus, which has no global snapshot publication time. |
 
 ## Documents
 
@@ -768,7 +768,7 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
-| `p3_path` | string, nullable | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. The path shows the served version, so it is `null` when `served_version` is `false`. |
+| `p3_path` | string, nullable | Live-corpus folder resolution through this field is not implemented yet. Locate folders using [suffix lookup](/docs/self-hosting/filesystem-views#layout). |
 | `served_version` | boolean | Whether `version_id` is the document's served version. Default `true`. |
 | `representation_id` | UUID, nullable | The described version's converted reading; with `version_id` it opens exactly that version. |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The described version's in-force intervals, for a document with declared effective periods. |

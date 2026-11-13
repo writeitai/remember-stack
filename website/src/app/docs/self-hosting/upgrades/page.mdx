@@ -216,10 +216,10 @@ A deployment's state lives in four Docker volumes:
 |---|---|
 | `rememberstack_postgres-data` | Yes: the database |
 | `rememberstack_object-store-data` | Yes: original files and derived artifacts |
-| `rememberstack_forget-manifests` | Yes, with the others: hard-forget manifests |
+| `rememberstack_forget-manifests` | Yes, separately durable: never roll portable intent back with an older data backup |
 | `rememberstack_app-state` | Optional: working directories and debug captures |
 
-Filesystem-view snapshots in the object store can be rebuilt; everything else in the
+Corpus folders in the object store can be reconciled; everything else in the
 first three volumes cannot. The database and the object store refer to
 each other, so back them up at the same moment.
 
@@ -242,13 +242,18 @@ docker compose start
 Keep the `backup/` directory and your `.env` together: a restore needs the
 same deployment id and the same database and object-store credentials.
 
-To restore it into an empty stack on the same or another machine, with the
-same `.env`:
+For a same-machine restore, retain the current `forget-manifests` volume.
+Restore only the ordinary data volumes from the older backup, with the same
+`.env`. On another machine, first provision the manifest volume from your latest
+separately durable intent store; the copy captured with an older data backup can
+be missing later forget requests.
 
 ```bash
-docker compose down -v          # deletes the current volumes
-docker compose create           # creates empty volumes and containers
-for volume in postgres-data object-store-data forget-manifests app-state; do
+docker compose down
+# Keep rememberstack_forget-manifests and its latest accepted intent.
+docker volume rm rememberstack_postgres-data rememberstack_object-store-data rememberstack_app-state
+docker compose create
+for volume in postgres-data object-store-data app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/target" \
     -v "$PWD/backup:/backup:ro" \
@@ -283,12 +288,22 @@ has not tested this path.
 
 ### Hard-forget manifests
 
-The `forget-manifests` volume holds the list of documents that were
-permanently removed, so a restore can remove them again from an older
-backup. A deployment started from `compose.yaml` has no command that
-creates such manifests. If the volume does hold manifests for your
-deployment, the API refuses to start: honouring them needs a recovery
-procedure the Compose deployment does not include.
+The `forget-manifests` volume holds portable, content-free intent for permanently
+removed documents. Keep it independently durable and carry all accepted intent
+into a restore. An older database or object bucket cannot undo that intent.
+
+Before any API or controlled mount reopens, startup rematerializes every manifest,
+scrubs restored authority, scans the corpus for the document's deterministic
+suffix, erases its copies/uploads and retained versions, and regenerates shared
+indexes. It repeats this even when PostgreSQL still says `complete`, covering
+bucket-only, database-only and combined restores. A failure leaves admission
+closed for retry. Other documents' originals and media remain in place.
+
+The PostgreSQL + real MinIO canary exercises these independent data restores;
+transporting production backups, backup expiry and provisioning remain operator
+responsibilities. Stop and remount operator-managed FUSE sessions. A composing
+host must supply cache acknowledgements for sessions it controls, and K purge and
+rebuild capabilities when K history exists.
 
 <Cloud>
 

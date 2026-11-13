@@ -439,6 +439,9 @@ class _BrokenStreamStore:
         yield b"partial"
         raise ValueError("invalid Content-Length")
 
+    def iter_purge_keys(self) -> Iterator[ObjectKey]:
+        raise AssertionError("registered ingest must not enumerate unrelated objects")
+
     def purge_objects(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
     ) -> None:

@@ -419,9 +419,9 @@ Every code is in [Errors and status codes](/docs/reference/errors#sql-query-code
 
 The API answers `503` with `{"code": "forget_in_progress"}` while a hard
 forget is running, and the operator commands that copy or replay data
-refuse to run. A deployment started from `compose.yaml` has no command that
-starts a hard forget, so it should not enter this state on its own. If
-you restored data from an installation that ran one, see
+refuse to run. There is no public CLI command that starts hard-forget. Startup
+also closes admission while replaying portable intent from a restore, and a
+failed replay leaves it closed for retry. See
 [Hard-forget manifests](/docs/self-hosting/upgrades#hard-forget-manifests) and
 [When a hard forget is in progress](/docs/self-hosting/operating#when-a-hard-forget-is-in-progress).
 

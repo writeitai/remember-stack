@@ -82,6 +82,7 @@ _PORT_EXPORTS = {
     "StreamingReadPort",
     "PostgresReadPoolPort",
     "ProjectionPurgePort",
+    "CorpusCachePurgePort",
     "SystemOnePort",
     "TaskQueuePort",
     "TelemetryPort",
@@ -260,11 +261,11 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_seventeen_defined_protocols() -> None:
+def test_inventory_exports_exactly_eighteen_defined_protocols() -> None:
     """Keep D61/D74 seams, D147 reads and D155 mutation explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 17
+    assert len(_defined_protocols()) == 18
 
 
 def test_immutable_store_does_not_require_mutable_operations() -> None:

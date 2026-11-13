@@ -8,8 +8,11 @@ Profile activation, lifecycle removal and scheduling are composed separately.
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
+import math
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -24,8 +27,10 @@ from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
+from rememberstack.model import ForgetInProgressError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
+from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.corpus_export import _DOCUMENTS
 from rememberstack.spine.work_ledger import enqueue_on
 
@@ -98,30 +103,41 @@ def document_on(
 
 @dataclass
 class CorpusPublicationLock:
-    """One checked-out connection; it must never reconnect and reacquire silently."""
+    """Publication ownership and D74 drain on independent checked-out sessions.
+
+    Neither may reconnect/reacquire silently. Losing either stops further IO;
+    the other lock still makes erasure wait for an already-issued request.
+    """
 
     connection: Connection
     deployment_id: UUID
     backend_pid: int
+    admission_connection: Connection
+    admission_pid: int
     work: ClaimedWork | None = None
+    forget_id: UUID | None = None
 
     def check(self) -> None:
         """Confirm actual lock ownership and live claim before a provider mutation."""
-        if self.connection.closed or self.connection.invalidated:
-            raise CorpusLockLostError("corpus publication lock session was lost")
+        if any(
+            session.closed or session.invalidated
+            for session in (self.connection, self.admission_connection)
+        ):
+            raise CorpusLockLostError(
+                "corpus publication or admission session was lost"
+            )
         try:
-            held = self.connection.execute(
-                text("""SELECT pg_backend_pid() = :pid AND EXISTS (
-                SELECT 1 FROM pg_locks WHERE locktype = 'advisory'
-                AND pid = pg_backend_pid() AND granted AND mode = 'ExclusiveLock'
-                AND classid = ((hashtextextended(:key, 0) >> 32) & 4294967295)::oid
-                AND objid = (hashtextextended(:key, 0) & 4294967295)::oid
-                AND objsubid = 1)"""),
-                {
-                    "key": f"corpus-publication:{self.deployment_id}",
-                    "pid": self.backend_pid,
-                },
-            ).scalar_one()
+            held = _holds_lock(
+                connection=self.connection,
+                pid=self.backend_pid,
+                key=f"corpus-publication:{self.deployment_id}",
+                mode="ExclusiveLock",
+            ) and _holds_lock(
+                connection=self.admission_connection,
+                pid=self.admission_pid,
+                key=f"hard-forget:{self.deployment_id}",
+                mode="ShareLock",
+            )
             if held and self.work is not None:
                 held = self.connection.execute(
                     text("""SELECT EXISTS (
@@ -140,6 +156,36 @@ class CorpusPublicationLock:
             ) from error
         if not held:
             raise CorpusLockLostError("corpus publication lost its lock or work claim")
+        active = active_forget_id_on(
+            connection=self.connection, deployment_id=self.deployment_id
+        )
+        if self.forget_id is None:
+            if active is not None:
+                raise ForgetInProgressError(
+                    f"deployment is honoring forget_id {active}"
+                )
+        elif not self.connection.execute(
+            text("""SELECT EXISTS (SELECT 1 FROM forget_manifests
+            WHERE deployment_id = :d AND forget_id = :f AND status = 'accepted')"""),
+            {"d": self.deployment_id, "f": self.forget_id},
+        ).scalar_one():
+            raise ForgetInProgressError(
+                "corpus erasure requires its accepted restore barrier"
+            )
+
+
+def _holds_lock(*, connection: Connection, pid: int, key: str, mode: str) -> bool:
+    return bool(
+        connection.execute(
+            text("""SELECT pg_backend_pid() = :pid AND EXISTS (
+        SELECT 1 FROM pg_locks WHERE locktype = 'advisory'
+        AND pid = pg_backend_pid() AND granted AND mode = :mode
+        AND classid = ((hashtextextended(:key, 0) >> 32) & 4294967295)::oid
+        AND objid = (hashtextextended(:key, 0) & 4294967295)::oid
+        AND objsubid = 1)"""),
+            {"pid": pid, "key": key, "mode": mode},
+        ).scalar_one()
+    )
 
 
 class CorpusPublicationCatalog:
@@ -148,41 +194,114 @@ class CorpusPublicationCatalog:
     def __init__(self, *, engine: Engine) -> None:
         self._engine = engine
 
+    def schedule_verification(
+        self,
+        *,
+        deployment_id: UUID,
+        interval_s: float,
+        policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
+    ) -> EnqueueOutcome:
+        """One delayed event per cadence slot, using D67/D147 delivery and retries.
+
+        Setup and each successful verification seed the next slot. Deterministic
+        targets make duplicate seeds harmless; no scheduler or mutable timer row.
+        """
+        interval_s = float(interval_s)
+        if not math.isfinite(interval_s) or interval_s <= 0:
+            raise ValueError("corpus verification interval must be positive")
+        with self._engine.begin() as connection:
+            now = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+            slot = int(now.timestamp() // interval_s) + 1
+            version = corpus_policy_version(policy)
+            return enqueue_on(
+                connection=connection,
+                work=EnqueueWork(
+                    deployment_id=deployment_id,
+                    target_kind=ProcessingTarget.CORPUS_PUBLICATION,
+                    target_id=uuid5(
+                        deployment_id, f"corpus-verify:{version}:{interval_s}:{slot}"
+                    ),
+                    stage=PipelineStage.RECONCILE_CORPUS,
+                    component_version=version,
+                    content_hash=version,
+                    lane=None,
+                    not_before=now + timedelta(seconds=interval_s),
+                ),
+            )
+
     @contextmanager
     def locked(
-        self, *, deployment_id: UUID, work: ClaimedWork | None = None
+        self,
+        *,
+        deployment_id: UUID,
+        work: ClaimedWork | None = None,
+        forget_id: UUID | None = None,
     ) -> Iterator[CorpusPublicationLock]:
         """Serialize publishers on a dedicated session, including all streamed IO."""
+        # The admission fence must outlive an issued request even if its
+        # publication backend dies. These are the existing D74/P3 locks, on
+        # separate sessions, not a lease, IO journal or new coordination table.
         with self._engine.connect().execution_options(
             isolation_level="AUTOCOMMIT"
-        ) as connection:
-            params = {"key": f"corpus-publication:{deployment_id}"}
-            connection.execute(
-                text("SELECT pg_advisory_lock(hashtextextended(:key, 0))"), params
-            )
-            lock = CorpusPublicationLock(
-                connection=connection,
-                deployment_id=deployment_id,
-                backend_pid=connection.execute(
-                    text("SELECT pg_backend_pid()")
-                ).scalar_one(),
-                work=work,
-            )
+        ) as admission:
+            fence = {"key": f"hard-forget:{deployment_id}"}
             try:
-                lock.check()
-                yield lock
-            finally:
-                if not connection.invalidated and not connection.closed:
+                admission.execute(
+                    text("SELECT pg_advisory_lock_shared(hashtextextended(:key, 0))"),
+                    fence,
+                )
+                if forget_id is None and active_forget_id_on(
+                    connection=admission, deployment_id=deployment_id
+                ):
+                    raise ForgetInProgressError(
+                        "corpus publication is blocked by hard forget"
+                    )
+                with self._engine.connect().execution_options(
+                    isolation_level="AUTOCOMMIT"
+                ) as connection:
+                    params = {"key": f"corpus-publication:{deployment_id}"}
                     try:
                         connection.execute(
-                            text(
-                                "SELECT pg_advisory_unlock(hashtextextended(:key, 0))"
-                            ),
+                            text("SELECT pg_advisory_lock(hashtextextended(:key, 0))"),
                             params,
                         )
+                        lock = CorpusPublicationLock(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            backend_pid=connection.execute(
+                                text("SELECT pg_backend_pid()")
+                            ).scalar_one(),
+                            admission_connection=admission,
+                            admission_pid=admission.execute(
+                                text("SELECT pg_backend_pid()")
+                            ).scalar_one(),
+                            work=work,
+                            forget_id=forget_id,
+                        )
+                        lock.check()
+                        yield lock
+                    finally:
+                        if not connection.invalidated and not connection.closed:
+                            try:
+                                connection.execute(
+                                    text(
+                                        "SELECT pg_advisory_unlock(hashtextextended(:key, 0))"
+                                    ),
+                                    params,
+                                )
+                            except DBAPIError:
+                                connection.invalidate()
+            finally:
+                if not admission.invalidated and not admission.closed:
+                    try:
+                        admission.execute(
+                            text(
+                                "SELECT pg_advisory_unlock_shared(hashtextextended(:key, 0))"
+                            ),
+                            fence,
+                        )
                     except DBAPIError:
-                        # A dead backend already released its session locks.
-                        connection.invalidate()
+                        admission.invalidate()
 
     def clear(
         self, *, lock: CorpusPublicationLock, doc_id: UUID

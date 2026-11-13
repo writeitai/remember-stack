@@ -42,6 +42,7 @@ class PipelineStage(StrEnum):
     HARD_FORGET = "hard_forget"
     REVIEW_FACT_WINDOWS = "review_fact_windows"  # appended by D140 WP-ET.7
     PUBLISH_CORPUS = "publish_corpus"
+    RECONCILE_CORPUS = "reconcile_corpus"
 
 
 class ProcessingLane(StrEnum):

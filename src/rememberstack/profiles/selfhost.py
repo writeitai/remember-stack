@@ -56,7 +56,6 @@ from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import DocumentDeletion
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
-from rememberstack.model import PublishedMounts
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
@@ -91,6 +90,8 @@ if TYPE_CHECKING:
     )
     from rememberstack.core import Converter
     from rememberstack.ports.forget import ForgetManifestPort
+    from rememberstack.ports.purge import CorpusCachePurgePort
+    from rememberstack.ports.purge import KGitPurgePort
     from rememberstack.ports.queue import TaskQueuePort
     from rememberstack.ports.telemetry import TelemetryPort
     from rememberstack.spine import WorkLedger
@@ -98,6 +99,8 @@ if TYPE_CHECKING:
     from rememberstack.workers import RunResult
     from rememberstack.workers import StageHandler
     from rememberstack.workers import Worker
+    from rememberstack.workers.corpus_publication import CorpusPublisher
+    from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 
 _SUPPORTED_WORKER_STAGES = (
     PipelineStage.CONVERT,
@@ -114,6 +117,9 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.RECONCILE,
     PipelineStage.LABEL_RELATION,
     PipelineStage.REVIEW_FACT_WINDOWS,
+    PipelineStage.PUBLISH_CORPUS,
+    PipelineStage.RECONCILE_CORPUS,
+    PipelineStage.HARD_FORGET,
 )
 
 #: The worker classes (D146). ``convert`` is the one input-size-dependent,
@@ -212,12 +218,8 @@ class SelfHostSettings(BaseSettings):
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
-    raw_mount_root: Path | None = None
-    artifacts_mount_root: Path | None = None
-    """Existing provider-mounted bucket roots; enforce read-only access and raw
-    data-access audit logging outside the process. Unset roots are placeholders.
-    Paths are bucket roots, so object keys from P3 append directly to them."""
-    projection_work_root: Path = Path("/var/lib/rememberstack/projection-work")
+    #: D155 digest verification through existing delayed work (default: daily).
+    corpus_verify_interval_s: float = Field(default=86_400, gt=0, allow_inf_nan=False)
     forget_manifest_root: Path = Path("/var/lib/rememberstack/forget-manifests")
     #: D147: keep hard-forget manifests in this dedicated bucket instead of
     #: ``forget_manifest_root``, so a process keeps no deployment state on
@@ -676,29 +678,6 @@ class SentrySettings(BaseSettings):
         return value or None
 
 
-class _FreshDeploymentReadiness:
-    """Fail closed if a fresh quickstart sees portable forget history.
-
-    WP-0.4c establishes a fresh-deployment Compose skeleton. It must never
-    silently serve a restored deployment whose D74 manifests require the full
-    hard-forget recovery composition; finding any manifest stops startup.
-    """
-
-    def __init__(self, *, store: ForgetManifestPort) -> None:
-        """Bind the separately durable manifest root."""
-        self._store = store
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept an empty root and refuse every non-empty restore."""
-        manifests = self._store.manifests(deployment_id=deployment_id)
-        if manifests:
-            raise RuntimeError(
-                "the Compose quickstart found portable hard-forget manifests;"
-                " restore requires the complete D74 self-host recovery profile"
-            )
-        return ()
-
-
 class _SelfHostSavedQueryReads:
     """Per-call registry reads over a short-lived spine connection.
 
@@ -948,7 +927,7 @@ class EngineSettings:
 
 
 class SelfHostProfile:
-    """Compose the continuous E/P1 path plus the aggregate P3 build.
+    """Compose the continuous E/P1 pipeline and live P3 corpus.
 
     One profile is one deployment's context: its settings, database engines,
     stores and model provider. Nothing it composes reads another deployment's
@@ -972,6 +951,9 @@ class SelfHostProfile:
         work_ledger_settings: WorkLedgerSettings | None = None,
         conversion_routes: Mapping[str, Converter] | None = None,
         forget_manifests: ForgetManifestPort | None = None,
+        corpus_caches: CorpusCachePurgePort | None = None,
+        k_git: KGitPurgePort | None = None,
+        knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process.
 
@@ -1000,6 +982,9 @@ class SelfHostProfile:
         self._work_ledger_settings = work_ledger_settings or WorkLedgerSettings()
         self._conversion_routes = conversion_routes
         self._forget_manifests = forget_manifests
+        self._corpus_caches = corpus_caches
+        self._k_git = k_git
+        self._knowledge_rebuilder = knowledge_rebuilder
 
     @classmethod
     def from_settings(
@@ -1010,6 +995,9 @@ class SelfHostProfile:
         task_queue: TaskQueuePort | None = None,
         engine_options: Mapping[str, Any] | None = None,
         conversion_routes: Mapping[str, Converter] | None = None,
+        corpus_caches: CorpusCachePurgePort | None = None,
+        k_git: KGitPurgePort | None = None,
+        knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
     ) -> Self:
         """Build one deployment's engine from its explicit settings (D147).
 
@@ -1058,6 +1046,9 @@ class SelfHostProfile:
             model_provider_settings=settings.model_provider,
             work_ledger_settings=settings.work_ledger,
             conversion_routes=conversion_routes,
+            corpus_caches=corpus_caches,
+            k_git=k_git,
+            knowledge_rebuilder=knowledge_rebuilder,
             forget_manifests=(
                 None
                 if forget_bucket is None
@@ -1075,14 +1066,13 @@ class SelfHostProfile:
             self._retrieval_engine.dispose()
         self._engine.dispose()
 
-    def _reconcile_processing_layers(self) -> bool:
+    def _reconcile_processing_layers(self) -> None:
         """D143 §3.4: write the configured layers, then seed any backfill.
 
         Seeding runs on every setup, so an interrupted backfill seed resumes
-        on the next start; it is idempotent. Returns whether the facts layer
-        changed, so setup publishes a P3 snapshot for the new served set.
+        on the next start; it is idempotent. P3 is sources-only and a layer
+        setting alone does not rebuild it.
         """
-        from rememberstack.model.client import ProcessingLayer  # noqa: PLC0415
         from rememberstack.spine.processing_layers import (  # noqa: PLC0415
             ProcessingLayerCatalog,
         )
@@ -1105,7 +1095,6 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             batch_size=self._settings.layer_seed_batch_size,
         )
-        return any(change.layer is ProcessingLayer.FACTS for change in changes)
 
     def setup(self) -> None:
         """Apply migrations, provision stores, bootstrap, and seed operations."""
@@ -1119,7 +1108,6 @@ class SelfHostProfile:
         self._corpusfs_store.ensure_bucket()
         if self._forget_manifests is None:
             self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
-        self._settings.projection_work_root.mkdir(parents=True, exist_ok=True)
         DeploymentBootstrapper(engine=self._engine).bootstrap_deployment(
             deployment_input=DeploymentBootstrapInput(
                 deployment_id=self._settings.deployment_id,
@@ -1132,7 +1120,8 @@ class SelfHostProfile:
             ),
             sole_deployment=True,
         )
-        facts_layer_changed = self._reconcile_processing_layers()
+        self.hard_forget().ensure_ready(deployment_id=self._settings.deployment_id)
+        self._reconcile_processing_layers()
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
         )
@@ -1238,10 +1227,7 @@ class SelfHostProfile:
         p1_index.configure_channels(
             deployment_id=self._settings.deployment_id, include_entity=True
         )
-        if facts_layer_changed:
-            # D143 §7.6: the mount must not keep serving entity files built
-            # for the previous served set.
-            self.run_projection(plane="p3")
+        self.seed_corpus_work()
 
     def api(self, *, ingest_scope_routes: Collection[tuple[str, str]] = ()) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph.
@@ -1282,7 +1268,7 @@ class SelfHostProfile:
             trusted_principal_source=self._settings.trusted_principal_source,
             browser_origins=_browser_origins(self._settings.browser_origins),
             ingest_scope_routes=ingest_scope_routes,
-            readiness=_FreshDeploymentReadiness(store=self._forget_manifest_store()),
+            readiness=self.hard_forget(),
         )
 
         if trust is not None:
@@ -1322,7 +1308,6 @@ class SelfHostProfile:
         from rememberstack.spine import DocumentSearch
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
-        from rememberstack.spine import ProjectionCatalog
         from rememberstack.spine import ReferenceCatalog
         from rememberstack.spine import SectionHistory
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
@@ -1341,7 +1326,6 @@ class SelfHostProfile:
 
         # D94 has one active vector space across every P1 target.
         p1_settings = P1Settings.model_validate({})
-        projection_catalog = ProjectionCatalog(engine=self._engine)
         embedding_model = p1_settings.embedding_model
         retrieval_reads = BoundedPostgresReadPool(
             engine=self._retrieval_engine,
@@ -1437,7 +1421,6 @@ class SelfHostProfile:
             pipeline_readiness=PipelineReadinessCatalog(
                 engine=self._engine,
                 expected_components=_expected_components(),
-                projections=projection_catalog,
                 model_bindings=self._model_bindings(),
                 build_revision=_build_revision(),
             ),
@@ -1452,6 +1435,7 @@ class SelfHostProfile:
                 engine=self._engine,
                 model_provider=self._model_provider,
                 embedding_model=embedding_model,
+                publisher=self.corpus_publisher(),
             ),
             effective_time=EffectiveTimeCatalog(engine=self._engine),
             graph=graph_queries,
@@ -1485,7 +1469,6 @@ class SelfHostProfile:
         from rememberstack.adapters.selfhost import ControlPlaneMeterReceipts
         from rememberstack.spine import ManagedMeterCatalog
         from rememberstack.spine import PipelineReadinessCatalog
-        from rememberstack.spine import ProjectionCatalog
 
         settings = self._settings
         if settings.meter_ingest_url is None or settings.meter_ingest_token is None:
@@ -1500,7 +1483,6 @@ class SelfHostProfile:
             readiness=PipelineReadinessCatalog(
                 engine=self._engine,
                 expected_components=_expected_components(),
-                projections=ProjectionCatalog(engine=self._engine),
                 model_bindings=self._model_bindings(),
                 build_revision=_build_revision(),
             ),
@@ -1632,58 +1614,93 @@ class SelfHostProfile:
 
     def run_worker(self, *, worker_class: str, concurrency: int) -> None:
         """Run one worker class until stopped or failed."""
+        self.hard_forget().ensure_ready(deployment_id=self._settings.deployment_id)
         loop = self.worker_loop(worker_class=worker_class, concurrency=concurrency)
         while True:
             loop.run_for(duration_s=self._settings.worker_session_s)
 
-    def run_projection(self, *, plane: str) -> dict[str, object]:
-        """Build the P3 CorpusFS snapshot after continuous ingestion settles."""
-        from rememberstack.spine import ForgetCatalog
-        from rememberstack.spine import ProjectionCatalog
-        from rememberstack.workers import CorpusFsBuilder
+    def corpus_publisher(self):  # noqa: ANN202
+        """One live corpus over this context's explicitly selected stores."""
+        from rememberstack.spine.corpus_export import CorpusReaderCatalog
+        from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
+        from rememberstack.workers.corpus_publication import CorpusPublisher
 
-        ForgetCatalog(engine=self._engine).assert_available(
-            deployment_id=self._settings.deployment_id
+        return CorpusPublisher(
+            catalog=CorpusPublicationCatalog(engine=self._engine),
+            readers=CorpusReaderCatalog(engine=self._engine),
+            raw_store=self._raw_store,
+            artifact_store=self._artifact_store,
+            corpus_store=self._corpusfs_store,
         )
-        catalog = ProjectionCatalog(engine=self._engine)
-        reports: dict[str, object] = {}
-        if plane == "p3":
-            reports["p3"] = CorpusFsBuilder(
-                catalog=catalog, snapshot_store=self._corpusfs_store
-            ).build(deployment_id=self._settings.deployment_id)
-        if not reports:
-            raise ValueError(f"unknown projection plane {plane!r}")
-        return reports
 
-    def publish_mounts(
-        self,
-        *,
-        root: Path,
-        raw_root: Path | None = None,
-        artifacts_root: Path | None = None,
-    ) -> PublishedMounts:
-        """Materialize the latest P3 snapshot under one local mount root."""
-        from rememberstack.adapters.selfhost import LocalMountPublisher
-        from rememberstack.spine import ForgetCatalog
-        from rememberstack.spine import ProjectionCatalog
+    def seed_corpus_work(self) -> None:
+        """Seed current-policy publication and the next ordinary delayed verify."""
+        from rememberstack.spine import WorkLedger
+        from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
+        from rememberstack.spine.new_work import announce_new_work
+        from rememberstack.spine.new_work import collect_new_work
 
-        return LocalMountPublisher(
-            root=root,
-            raw_root=raw_root
-            if raw_root is not None
-            else self._settings.raw_mount_root,
-            artifacts_root=(
-                artifacts_root
-                if artifacts_root is not None
-                else self._settings.artifacts_mount_root
+        catalog = CorpusPublicationCatalog(engine=self._engine)
+        with collect_new_work() as created:
+            catalog.seed_current_policy(deployment_id=self._settings.deployment_id)
+            catalog.schedule_verification(
+                deployment_id=self._settings.deployment_id,
+                interval_s=self._settings.corpus_verify_interval_s,
+            )
+        announce_new_work(
+            queue=self._queue(
+                ledger=WorkLedger(
+                    engine=self._engine, settings=self._work_ledger_settings
+                )
             ),
-            catalog=ProjectionCatalog(engine=self._engine),
-            corpusfs_store=self._corpusfs_store,
-            admission=ForgetCatalog(engine=self._engine),
-        ).publish(deployment_id=self._settings.deployment_id)
+            work=created,
+        )
+
+    def hard_forget(self):  # noqa: ANN202
+        """Use the same D74 coordinator for ordinary tasks and startup replay."""
+        from rememberstack.profiles.selfhost_forget import SelfHostHardForget
+        from rememberstack.workers import P1Settings
+
+        return SelfHostHardForget.from_stores(
+            engine=self._engine,
+            model_provider=self._model_provider,
+            embedding_model=P1Settings().embedding_model,
+            manifest_store=self._forget_manifest_store(),
+            object_purgers=(self._raw_store, self._artifact_store),
+            corpus_store=self._corpusfs_store,
+            publisher=self.corpus_publisher(),
+            caches=self._corpus_caches,
+            k_git=self._k_git,
+            knowledge_rebuilder=self._knowledge_rebuilder,
+        )
+
+    def run_projection(self, *, plane: str) -> dict[str, object]:
+        """Reconcile the live P3 tree, verifying even matching publication markers."""
+        if plane != "p3":
+            raise ValueError(f"unknown projection plane {plane!r}")
+        self.hard_forget().ensure_ready(deployment_id=self._settings.deployment_id)
+        return {
+            "p3": self.corpus_publisher().reconcile(
+                deployment_id=self._settings.deployment_id, verify=True
+            )
+        }
 
     def _handler(self, *, stage: PipelineStage) -> StageHandler:
         """Compose the handler of one implemented stage."""
+        from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
+        from rememberstack.workers.corpus_publication import PublishCorpusHandler
+        from rememberstack.workers.corpus_publication import ReconcileCorpusHandler
+
+        if stage is PipelineStage.PUBLISH_CORPUS:
+            return PublishCorpusHandler(publisher=self.corpus_publisher())
+        if stage is PipelineStage.RECONCILE_CORPUS:
+            return ReconcileCorpusHandler(
+                publisher=self.corpus_publisher(),
+                catalog=CorpusPublicationCatalog(engine=self._engine),
+                interval_s=self._settings.corpus_verify_interval_s,
+            )
+        if stage is PipelineStage.HARD_FORGET:
+            return self.hard_forget().handler
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams
@@ -1922,7 +1939,7 @@ def create_api() -> FastAPI:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run setup, API, a worker, projection, or local mount publication."""
+    """Run setup, API, ordinary workers or live corpus reconciliation."""
     parser = argparse.ArgumentParser(description="rememberstack self-host profile")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("setup", help="migrate and bootstrap the deployment")
@@ -1942,21 +1959,9 @@ def main(argv: list[str] | None = None) -> int:
     meter.add_argument("--once", action="store_true")
     meter.add_argument("--limit", type=int, default=100)
     projection = subparsers.add_parser(
-        "project", help="build aggregate projections once"
+        "project", help="verify and reconcile the live corpus once"
     )
     projection.add_argument("--plane", choices=("p3",), required=True)
-    mounts = subparsers.add_parser(
-        "mounts", help="publish the latest P3 snapshot under a local root"
-    )
-    mounts.add_argument("--root", type=Path, required=True)
-    mounts.add_argument(
-        "--raw-root",
-        type=Path,
-        help="existing read-only raw bucket mount with provider audit logging",
-    )
-    mounts.add_argument(
-        "--artifacts-root", type=Path, help="existing read-only artifacts bucket mount"
-    )
     args = parser.parse_args(argv)
     settings = SelfHostSettings.model_validate({})
     if args.command == "api":
@@ -1988,15 +1993,6 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "project":
             print(profile.run_projection(plane=args.plane))
-            return 0
-        if args.command == "mounts":
-            print(
-                profile.publish_mounts(
-                    root=args.root,
-                    raw_root=args.raw_root,
-                    artifacts_root=args.artifacts_root,
-                ).model_dump_json(exclude_none=True)
-            )
             return 0
         if args.command == "meter-receipts":
             profile.run_meter_receipts(once=args.once, limit=args.limit)
@@ -2086,20 +2082,27 @@ def _expected_components() -> dict[PipelineStage, str]:
 class _SelfHostDocumentDeletion:
     """Serve `DELETE /documents/{doc_id}` (D135) over this profile's spine.
 
-    The deletion is database work; the one provider call it can make is the
-    entity-profile re-embedding afterwards. That call is recorded on the
+    The tombstone and currency cascade commit with durable corpus retry work.
+    Corpus removal and navigation repair must succeed before the surface returns.
+    The one model call it can make is entity-profile re-embedding afterwards. That call is recorded on the
     surface cost ledger under its own call site, like a review verdict's
     profile refresh, rather than disappearing.
     """
 
     def __init__(
-        self, *, engine: Engine, model_provider: ModelProviderPort, embedding_model: str
+        self,
+        *,
+        engine: Engine,
+        model_provider: ModelProviderPort,
+        embedding_model: str,
+        publisher: CorpusPublisher,
     ) -> None:
         """Compose the lifecycle catalog and the profile projection it touches."""
         from rememberstack.spine import EntityProfileRefresher
         from rememberstack.workers import DocumentDeleter
 
         self._engine = engine
+        self._publisher = publisher
         self._deleter = DocumentDeleter(
             engine=engine,
             profile_refresher=EntityProfileRefresher(
@@ -2119,9 +2122,18 @@ class _SelfHostDocumentDeletion:
             call_site=SurfaceCallSite.PROFILE_DELETE,
         )
         with open_surface_scope(surface=SurfaceCostKind.OPERATION):
-            return self._deleter.delete_document(
+            result = self._deleter.delete_document(
                 deployment_id=deployment_id, doc_id=doc_id, meter=meter
             )
+            # The tombstone transaction retained ordinary retry work. Surface
+            # success only after this document's copies and indexes are removed.
+            if not self._publisher.publish_corpus(
+                deployment_id=deployment_id, doc_id=doc_id
+            ):
+                raise RuntimeError(
+                    "document changed during corpus deletion; retry work retained"
+                )
+            return result
 
 
 class _BuildInfo:

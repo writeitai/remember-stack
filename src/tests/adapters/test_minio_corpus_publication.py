@@ -752,21 +752,9 @@ class RecordingQueue:
 def runner(
     publication: Publication, monkeypatch: pytest.MonkeyPatch
 ) -> SelfHostProfile:
-    """Explicit test-only binding, leaving both production profiles unactivated."""
-    import rememberstack.profiles.selfhost as profile
-
+    """Use the activated production routes with this fixture's custom policy."""
     state = publication
     handler = PublishCorpusHandler(publisher=state.publisher)
-    monkeypatch.setattr(
-        profile,
-        "_SUPPORTED_WORKER_STAGES",
-        (*profile._SUPPORTED_WORKER_STAGES, PipelineStage.PUBLISH_CORPUS),
-    )
-    monkeypatch.setitem(
-        profile.WORKER_CLASSES,
-        "llm",
-        (*profile.WORKER_CLASSES["llm"], PipelineStage.PUBLISH_CORPUS),
-    )
     settings = SelfHostSettings(deployment_id=state.source.deployment_id)
     context = SelfHostProfile(
         settings=settings,
