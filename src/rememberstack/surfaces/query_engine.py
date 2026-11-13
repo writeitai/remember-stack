@@ -10,7 +10,6 @@ primitive calls an LLM; reads never trigger anything.
 
 import base64
 import binascii
-import json
 from collections import Counter
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -24,6 +23,7 @@ from datetime import datetime
 from datetime import UTC
 from functools import wraps
 from itertools import batched
+import json
 import math
 from time import monotonic
 from typing import Any
@@ -125,11 +125,11 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1EntityScopeTooBroadError
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchAccount
-from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import P1SearchIds
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma

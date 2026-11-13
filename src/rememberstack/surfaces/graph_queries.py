@@ -18,11 +18,11 @@ or a result slot.
 
 import base64
 import binascii
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import UTC
+import json
 from threading import BoundedSemaphore
 from time import monotonic
 from typing import cast
