@@ -134,6 +134,7 @@ from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
+from rememberstack.spine.effective_time import belief_watermark
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.processing_layers import admit_layers_on
 from rememberstack.spine.retrieval_eligibility import candidate_mention_coverage_ctes
@@ -297,6 +298,7 @@ def _decode_lookup_cursor(
 
 def _lookup_relations_scope_hash(
     *,
+    deployment_id: UUID,
     subject_entity_id: UUID | None,
     predicate: str | None,
     object_entity_id: UUID | None,
@@ -313,19 +315,21 @@ def _lookup_relations_scope_hash(
             if object_entity_id is None
             else str(object_entity_id),
             "valid_at": None if valid_at is None else valid_at.isoformat(),
-        }
+        },
+        deployment_id=deployment_id,
     )
 
 
 def _lookup_observations_scope_hash(
-    *, entity_id: UUID, valid_at: datetime | None
+    *, deployment_id: UUID, entity_id: UUID, valid_at: datetime | None
 ) -> str:
     """Scope of an observations browse listing."""
     return cursor_scope_hash(
         {
             "entity_id": str(entity_id),
             "valid_at": None if valid_at is None else valid_at.isoformat(),
-        }
+        },
+        deployment_id=deployment_id,
     )
 
 
@@ -2097,6 +2101,7 @@ class QueryEngine:
                 f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
             )
         scope_hash = _lookup_relations_scope_hash(
+            deployment_id=deployment_id,
             subject_entity_id=subject_entity_id,
             predicate=predicate,
             object_entity_id=object_entity_id,
@@ -2104,13 +2109,13 @@ class QueryEngine:
         )
         evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
         with self._engine.connect() as connection:
-            # One as-of predicate on every page (D154): page one is continuation
-            # with no position. Pin the DB clock and read inside one REPEATABLE
-            # READ so there is no window between the clock and the listing.
+            # Wait for stamped declarations before opening the page snapshot.
+            if keyset is None:
+                evaluated_at = belief_watermark(
+                    connection=connection, deployment_id=deployment_id
+                )
             connection = connection.execution_options(isolation_level="REPEATABLE READ")
             with connection.begin():
-                if keyset is None:
-                    evaluated_at = connection.execute(text("SELECT now()")).scalar_one()
                 as_of = valid_at or evaluated_at
                 rows = (
                     connection.execute(
@@ -2208,19 +2213,18 @@ class QueryEngine:
                     f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
                 )
             scope_hash = _lookup_observations_scope_hash(
-                entity_id=entity_id, valid_at=valid_at
+                deployment_id=deployment_id, entity_id=entity_id, valid_at=valid_at
             )
             evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
             with self._engine.connect() as connection:
-                # Same as-of predicate on every page; pin DB clock in one snapshot.
+                if keyset is None:
+                    evaluated_at = belief_watermark(
+                        connection=connection, deployment_id=deployment_id
+                    )
                 connection = connection.execution_options(
                     isolation_level="REPEATABLE READ"
                 )
                 with connection.begin():
-                    if keyset is None:
-                        evaluated_at = connection.execute(
-                            text("SELECT now()")
-                        ).scalar_one()
                     as_of = valid_at or evaluated_at
                     rows = (
                         connection.execute(

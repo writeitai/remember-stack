@@ -3525,7 +3525,7 @@
           "cursor": {
             "anyOf": [
               {
-                "maxLength": 200,
+                "maxLength": 2048,
                 "type": "string"
               },
               {

@@ -111,7 +111,7 @@ class SectionHistory:
         Raises ``ValueError`` for a malformed cursor or one minted for a
         different call.
         """
-        scope_hash = _scope_hash(request=request)
+        scope_hash = _scope_hash(request=request, deployment_id=deployment_id)
         cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
         if cursor is not None:
             evaluated_at, believed_at = cursor.evaluated_at, cursor.believed_at
@@ -589,14 +589,15 @@ def _amendments(
     )
 
 
-def _scope_hash(*, request: SectionHistoryRequest) -> str:
+def _scope_hash(*, request: SectionHistoryRequest, deployment_id: UUID) -> str:
     """Identify the call a cursor belongs to (lineage, key and time scope)."""
     return cursor_scope_hash(
         {
             "doc_id": str(request.doc_id),
             "section_key": request.section_key,
             "time": request.time.model_dump(mode="json", by_alias=True),
-        }
+        },
+        deployment_id=deployment_id,
     )
 
 

@@ -867,6 +867,20 @@ def test_paging_walks_every_row_once_with_pinned_instants(rig: _Rig) -> None:
         )
 
 
+def test_reference_cursor_is_null_at_exact_scan_cap_end(rig: _Rig) -> None:
+    """Ten out-of-force incoming candidates exactly fill the limit=1 scan cap."""
+    expense = rig.ingest(ref="policy/expense", body=_EXPENSE_1)
+    for index in range(10):
+        travel = rig.ingest(
+            ref=f"policy/travel-{index}", body=_TRAVEL, effective_from=_day(2100, 1)
+        )
+        rig.put(version=travel, body=_ndjson(_ref()))
+    rig.drain()
+    page = rig.read(doc_id=expense.doc_id, direction="incoming", limit=1)
+    assert page.rows == ()
+    assert page.next_cursor is None
+
+
 def test_amends_references_appear_in_section_history(rig: _Rig) -> None:
     expense = rig.ingest(ref="policy/expense", body=_EXPENSE_1)
     travel = rig.ingest(ref="policy/travel", body=_TRAVEL)

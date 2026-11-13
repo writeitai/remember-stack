@@ -1520,6 +1520,132 @@ def test_a_first_page_never_misses_a_correction_stamped_before_its_belief(
 # --- implementation review round 1 (P1-6): pending on an empty answer -------
 
 
+@pytest.mark.parametrize("kind", ["relation", "observation"])
+def test_lookup_pages_wait_for_a_stamped_uncommitted_correction(
+    rig: _Rig, kind: str
+) -> None:
+    """Both browse lookups pin only declarations visible to page one's snapshot."""
+    subject = None
+    expected = set()
+    lineages = []
+    for index in range(3):
+        lineage = _lineage(rig, label=f"lookup-pin-{index}", bodies=(("rule",),))
+        lineages.append(lineage)
+        _declare(rig, lineage, 0, (_FUTURE if index == 2 else _PAST, None))
+        claim = _claim(
+            rig,
+            lineage=lineage,
+            origin=lineage.chunk(0),
+            body="rule",
+            occurrences={lineage.chunk(0): (0, 4)},
+        )
+        fact = _relation(
+            rig,
+            label=f"lookup-pin-{index}",
+            support=((claim, lineage, lineage.chunk(0)),),
+            subject=subject,
+            fact_id=UUID(int=100 - index),
+        )
+        subject = _endpoint(rig, fact, "subject_entity_id")
+        expected.add(fact)
+    corrected = lineages[-1]
+    assert subject is not None
+    if kind == "observation":
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO observations (observation_id, deployment_id,"
+                    " subject_entity_id, statement, normalizer_version, ingested_at,"
+                    " valid_from, valid_precision, window_claim_ids) SELECT relation_id, deployment_id, subject_entity_id,"
+                    " fact_label, normalizer_version, ingested_at, valid_from, valid_precision, window_claim_ids"
+                    " FROM relations WHERE subject_entity_id = :subject"
+                ),
+                {"subject": subject},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO observation_evidence (deployment_id, observation_id,"
+                    " claim_id, doc_id, stance, normalizer_version)"
+                    " SELECT e.deployment_id, e.relation_id, e.claim_id, e.doc_id,"
+                    " e.stance, e.normalizer_version FROM relation_evidence e"
+                    " JOIN relations r ON r.relation_id = e.relation_id"
+                    " WHERE r.subject_entity_id = :subject"
+                ),
+                {"subject": subject},
+            )
+
+    def lookup(cursor: str | None = None):
+        if kind == "relation":
+            return rig.query.lookup_relations(
+                deployment_id=_DEPLOYMENT_ID,
+                subject_entity_id=subject,
+                limit=1,
+                cursor=cursor,
+            )
+        assert subject is not None
+        return rig.query.lookup_observations(
+            deployment_id=_DEPLOYMENT_ID, entity_id=subject, limit=1, cursor=cursor
+        )
+
+    stamped, release, reading = threading.Event(), threading.Event(), threading.Event()
+    pages = []
+
+    def write() -> None:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text("SELECT doc_id FROM documents WHERE doc_id = :doc FOR UPDATE"),
+                {"doc": corrected.doc_id},
+            )
+            declare_at_ingest_on(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=corrected.doc_id,
+                version_id=corrected.version(0),
+                versioning_mode="snapshot",
+                effective_from=_PAST,
+                effective_until=None,
+            )
+            stamped.set()
+            assert release.wait(timeout=10)
+
+    def read() -> None:
+        reading.set()
+        pages.append(lookup())
+
+    writer = threading.Thread(target=write)
+    reader = threading.Thread(target=read)
+    writer.start()
+    try:
+        assert stamped.wait(timeout=10)
+        reader.start()
+        assert reading.wait(timeout=10)
+        reader.join(timeout=0.5)
+        completed_before_commit = not reader.is_alive()
+    finally:
+        release.set()
+        writer.join(timeout=10)
+        if reader.ident is not None:
+            reader.join(timeout=10)
+    assert not writer.is_alive() and not reader.is_alive()
+    assert not completed_before_commit
+    while pages[-1].next_cursor is not None:
+        pages.append(lookup(pages[-1].next_cursor))
+    assert [len(page.facts) for page in pages] == [1, 1, 1]
+    assert {fact.fact_id for page in pages for fact in page.facts} == expected
+    assert len({page.temporal_scope.evaluated_at for page in pages}) == 1
+    with pytest.raises(ValueError, match="different listing"):
+        if kind == "relation":
+            rig.query.lookup_relations(
+                deployment_id=uuid4(),
+                subject_entity_id=subject,
+                cursor=pages[0].next_cursor,
+            )
+        else:
+            rig.query.lookup_observations(
+                deployment_id=uuid4(), entity_id=subject, cursor=pages[0].next_cursor
+            )
+
+
 def test_an_empty_answer_names_the_pending_lineage_the_query_reaches(rig: _Rig) -> None:
     """§3.7 without a document filter: unfiltered chunk, claim, compound and
     ranked document searches all say the in-force text is still processing."""

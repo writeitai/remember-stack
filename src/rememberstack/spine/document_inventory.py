@@ -140,7 +140,7 @@ class DocumentInventory:
         pages, dropping one and repeating the other.
         """
         size = max(1, min(int(limit), MAX_PAGE_SIZE))
-        scope = cursor_scope_hash({"status": status})
+        scope = cursor_scope_hash({"status": status}, deployment_id=deployment_id)
         cursor_at, cursor_doc = _decode_cursor(cursor=cursor, scope_hash=scope)
         with self._engine.connect() as connection:
             rows = (
@@ -222,6 +222,10 @@ def _decode_cursor(
     padding = "=" * (-len(cursor) % 4)
     try:
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode())
+        if not isinstance(payload, dict) or any(
+            not isinstance(payload.get(key), str) for key in ("a", "i", "s")
+        ):
+            raise ValueError("cursor fields must be strings")
         first_seen_at = datetime.fromisoformat(payload["a"])
         doc_id = UUID(payload["i"])
         payload_scope = payload["s"]

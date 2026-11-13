@@ -98,6 +98,22 @@ def _clean(database_engine: Engine) -> Iterator[None]:
             )
 
 
+def test_inventory_refuses_a_cursor_from_another_deployment(
+    database_engine: Engine,
+) -> None:
+    with database_engine.begin() as connection:
+        for index in range(2):
+            doc = _document(connection=connection, title=f"scope-{index}")
+            _version(
+                connection=connection, doc_id=doc, version_no=1, status="ready", at=_NOW
+            )
+    inventory = DocumentInventory(engine=database_engine)
+    first = inventory.list_documents(deployment_id=_DEPLOYMENT_ID, limit=1)
+    assert first.next_cursor is not None
+    with pytest.raises(ValueError, match="different listing"):
+        inventory.list_documents(deployment_id=uuid4(), cursor=first.next_cursor)
+
+
 def _document(
     *,
     connection: Connection,

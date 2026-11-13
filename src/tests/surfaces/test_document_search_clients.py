@@ -200,6 +200,20 @@ def test_cli_searches_with_filters(
     assert search.requests[-1].query == "audit report"
 
 
+def test_cli_refuses_ranked_search_with_cursor_without_a_request(
+    surface: tuple[MemoryClient, _Search],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client, search = surface
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
+    assert cli_main(["documents", "search", "foo", "--cursor", "foreign-cursor"]) == 2
+    assert search.requests == []
+    assert "cursor" in capsys.readouterr().err
+
+
 def test_remember_mcp_searches_even_when_read_only(
     surface: tuple[MemoryClient, _Search],
 ) -> None:
@@ -224,18 +238,33 @@ def test_cursor_round_trips_and_refuses_garbage() -> None:
     from rememberstack.core.cursor_scope import cursor_scope_hash
 
     earlier = datetime(2026, 9, 24, 11, 0, tzinfo=UTC)
-    scope = cursor_scope_hash({"filters": {}, "versions": "current", "time": None})
+    scope = cursor_scope_hash(
+        {"filters": {}, "versions": "current", "time": None},
+        deployment_id=_DEPLOYMENT_ID,
+    )
     decoded = _decode_cursor(
         cursor=_encode_cursor(
             scope_hash=scope, as_of=_AT, ingested_at=earlier, doc_id=_DOC
         ),
         scope_hash=scope,
     )
+    foreign = cursor_scope_hash(
+        {"filters": {}, "versions": "current", "time": None}, deployment_id=_DOC
+    )
+    with pytest.raises(ValueError, match="different"):
+        _decode_cursor(
+            cursor=_encode_cursor(
+                scope_hash=scope, as_of=_AT, ingested_at=_AT, doc_id=_DOC
+            ),
+            scope_hash=foreign,
+        )
     assert decoded is not None
     assert decoded.as_of == _AT
     assert decoded.ingested_at == earlier
     assert decoded.doc_id == _DOC
-    other = cursor_scope_hash({"filters": {}, "versions": "all", "time": None})
+    other = cursor_scope_hash(
+        {"filters": {}, "versions": "all", "time": None}, deployment_id=_DEPLOYMENT_ID
+    )
     with pytest.raises(ValueError, match="different listing"):
         _decode_cursor(
             cursor=_encode_cursor(

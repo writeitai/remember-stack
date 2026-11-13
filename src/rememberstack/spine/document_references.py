@@ -41,7 +41,7 @@ paged by a keyset cursor that pins the evaluation and belief instants. Each
 direction walks reference rows in that order in batches (the outgoing walk on
 ``ix_crossrefs_from``, the incoming one on ``ix_crossrefs_incoming``),
 evaluates scope for each batch at the pinned belief instant and stops after
-scanning 10 × ``k`` rows with a short page and a cursor rather than scanning
+scanning 10 × ``limit`` rows with a short page and a cursor rather than scanning
 on.
 
 The tables are private; this is a fixed, authorization-checked operation
@@ -90,7 +90,7 @@ from rememberstack.spine.effective_time import belief_watermark
 Direction = Literal["outgoing", "incoming"]
 
 SCAN_FACTOR: Final = 10
-"""A page scans at most ``SCAN_FACTOR × k`` reference rows (§3.6 starting point)."""
+"""A page scans at most ``SCAN_FACTOR × limit`` reference rows (§3.6 starting point)."""
 
 _DIRECTIONS: Final[tuple[Direction, ...]] = ("outgoing", "incoming")
 _ZERO: Final = UUID(int=0)
@@ -309,7 +309,7 @@ class DocumentReferences:
         ``ChunkNotFoundError`` for a chunk of no live version, and
         ``ValueError`` for a malformed cursor or one minted for another call.
         """
-        scope_hash = _scope_hash(request=request)
+        scope_hash = _scope_hash(request=request, deployment_id=deployment_id)
         cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
         if cursor is not None:
             evaluated_at, believed_at = cursor[0], cursor[1]
@@ -645,7 +645,19 @@ class _Reader:
                 if len(batch) < limit + 1:
                     break  # this direction is exhausted
                 if scanned >= cap:
-                    return [draft for _, draft in rows], after
+                    # At most one candidate per remaining direction: the cap
+                    # can coincide with the end of this direction or the walk.
+                    remaining = directions[directions.index(direction) :]
+                    more = any(
+                        self._candidates(
+                            direction=following,
+                            plan=plan,
+                            after=after if following == direction else None,
+                            limit=1,
+                        )
+                        for following in remaining
+                    )
+                    return [draft for _, draft in rows], after if more else None
         return [draft for _, draft in rows], None
 
     def _candidates(
@@ -1072,10 +1084,11 @@ def _window_order(window: Window) -> str:
     return _instant_key(window.lo)
 
 
-def _scope_hash(*, request: DocumentReferencesRequest) -> str:
+def _scope_hash(*, request: DocumentReferencesRequest, deployment_id: UUID) -> str:
     """Identify the call a cursor belongs to (everything but ``limit`` and ``cursor``)."""
     return cursor_scope_hash(
-        request.model_dump(mode="json", by_alias=True, exclude={"limit", "cursor"})
+        request.model_dump(mode="json", by_alias=True, exclude={"limit", "cursor"}),
+        deployment_id=deployment_id,
     )
 
 

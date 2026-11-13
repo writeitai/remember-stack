@@ -663,6 +663,16 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 def _run_documents(args: argparse.Namespace) -> int:
     """List, search, or delete the deployment's documents."""
+    if (
+        args.documents_command == "search"
+        and args.query is not None
+        and args.cursor is not None
+    ):
+        print(
+            "error: cursor pages filter-only searches; drop query or cursor",
+            file=sys.stderr,
+        )
+        return 2
     with _cli_memory_client(args) as client:
         if args.documents_command == "search":
             # Ranked searches take k; browse lists take limit + cursor (D154).

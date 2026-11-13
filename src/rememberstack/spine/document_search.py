@@ -121,7 +121,7 @@ class DocumentSearch:
         self, *, deployment_id: UUID, request: DocumentSearchRequest
     ) -> DocumentSearchPage:
         """Run one search; raises ``ValueError`` for a malformed cursor."""
-        scope_hash = _request_scope_hash(request=request)
+        scope_hash = _request_scope_hash(request=request, deployment_id=deployment_id)
         cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
         ranked = request.query is not None
         # One transaction: the trigram threshold below is transaction-local.
@@ -1213,7 +1213,7 @@ def _people_matched(
     )
 
 
-def _request_scope_hash(*, request: DocumentSearchRequest) -> str:
+def _request_scope_hash(*, request: DocumentSearchRequest, deployment_id: UUID) -> str:
     """Hash of filters, versions and time scope (everything but limit/cursor)."""
     return cursor_scope_hash(
         {
@@ -1222,7 +1222,8 @@ def _request_scope_hash(*, request: DocumentSearchRequest) -> str:
             "time": None
             if request.time is None
             else request.time.model_dump(mode="json", by_alias=True),
-        }
+        },
+        deployment_id=deployment_id,
     )
 
 

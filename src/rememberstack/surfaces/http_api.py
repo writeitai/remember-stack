@@ -437,7 +437,7 @@ class GraphNeighborhoodRequest(BaseModel):
     valid_at: UTCInstant | None = None
     believed_at: UTCInstant | None = None
     limit: int = Field(default=100, ge=1, le=500)
-    cursor: str | None = Field(default=None, max_length=200)
+    cursor: str | None = Field(default=None, max_length=2048)
     include_paths: bool = False
 
     @model_validator(mode="after")

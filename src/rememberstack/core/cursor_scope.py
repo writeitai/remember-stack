@@ -12,16 +12,20 @@ import hashlib
 import json
 from typing import Any
 from typing import Mapping
+from uuid import UUID
 
 
-def cursor_scope_hash(scope: Mapping[str, Any]) -> str:
+def cursor_scope_hash(scope: Mapping[str, Any], *, deployment_id: UUID) -> str:
     """Return a short, stable hash of the listing scope.
 
-    ``scope`` must include every request field that defines membership of the
-    result set (filters, ids, clocks, versions, time selectors).
+    The deployment is always part of the scope. ``scope`` includes every field
+    defining membership (filters, ids, clocks, versions, time selectors).
     """
     payload = json.dumps(
-        scope, sort_keys=True, separators=(",", ":"), default=_json_default
+        {"deployment_id": str(deployment_id), "scope": scope},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 

@@ -759,6 +759,7 @@ def test_lookup_page_one_keeps_fact_invalidated_after_pinned_instant(
     # Continuation with the pinned evaluated_at must still return the fact
     # (page one shares that SQL). Position the keyset before this row.
     scope_hash = query_engine_module._lookup_relations_scope_hash(
+        deployment_id=_DEPLOYMENT_ID,
         subject_entity_id=UUID(alice["entity_id"]),
         predicate="works_for",
         object_entity_id=None,

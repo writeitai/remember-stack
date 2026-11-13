@@ -255,7 +255,7 @@ def test_ndjson_parsing_names_the_failing_line_and_canonicalizes() -> None:
 
 def test_cursor_round_trips_and_refuses_other_calls() -> None:
     request = DocumentReferencesRequest(doc_id=_DOC, section_key="approvals")
-    scope_hash = _scope_hash(request=request)
+    scope_hash = _scope_hash(deployment_id=_DOC, request=request)
     position = Position(
         direction="incoming",
         triple=(str(_DOC), str(_V1), str(UUID(int=3))),
@@ -269,17 +269,23 @@ def test_cursor_round_trips_and_refuses_other_calls() -> None:
         _NOW,
         position,
     )
-    other = _scope_hash(request=DocumentReferencesRequest(doc_id=_DOC))
+    other = _scope_hash(
+        deployment_id=_DOC, request=DocumentReferencesRequest(doc_id=_DOC)
+    )
     with pytest.raises(ValueError, match="different"):
         _decode_cursor(cursor=cursor, scope_hash=other)
+    foreign = _scope_hash(deployment_id=_TARGET, request=request)
+    with pytest.raises(ValueError, match="different"):
+        _decode_cursor(cursor=cursor, scope_hash=foreign)
     with pytest.raises(ValueError, match="malformed"):
         _decode_cursor(cursor="!!", scope_hash=scope_hash)
     # limit does not change which call a cursor belongs to
     assert (
         _scope_hash(
+            deployment_id=_DOC,
             request=DocumentReferencesRequest(
                 doc_id=_DOC, section_key="approvals", limit=3
-            )
+            ),
         )
         == scope_hash
     )

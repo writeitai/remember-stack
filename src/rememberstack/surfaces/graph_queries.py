@@ -68,6 +68,8 @@ DEFAULT_GRAPH_WORK_MEM_KIB = 16_384
 DEFAULT_GRAPH_CONCURRENCY = 2
 DEFAULT_GRAPH_POOL_WAIT_SECONDS = 1.0
 
+_NeighborhoodKey = tuple[int, tuple[UUID, ...], tuple[UUID, ...]]
+
 
 class GraphBusyError(RuntimeError):
     """The bounded graph-expansion slots were unavailable in time."""
@@ -138,7 +140,10 @@ class GraphQueries:
                 f"neighborhood limit must be between 1 and {DEFAULT_NEIGHBORHOOD_CAP}"
             )
         scope_hash = _neighborhood_scope_hash(
-            entity_id=entity_id, hops=hops, predicates=predicates
+            deployment_id=self._deployment_id,
+            entity_id=entity_id,
+            hops=hops,
+            predicates=predicates,
         )
         parsed = _decode_cursor(cursor=cursor, scope_hash=scope_hash)
         if parsed is None:
@@ -146,7 +151,7 @@ class GraphQueries:
                 explanation="the neighborhood cursor is not a live-graph cursor",
                 workaround="restart the traversal without a cursor",
             )
-        offset, pinned_valid, pinned_believed = parsed
+        after, pinned_valid, pinned_believed = parsed
         if pinned_valid is not None and not _clocks_match(
             request_valid=valid_at,
             request_believed=believed_at,
@@ -176,20 +181,19 @@ class GraphQueries:
             else:
                 applied_valid = valid_at or evaluation
                 applied_believed = believed_at or evaluation
-            fetch = min(offset + limit + 1, DEFAULT_NEIGHBORHOOD_CAP)
             parameters: dict[str, object] = {
                 "deployment_id": self._deployment_id,
                 "max_depth": hops,
                 "predicates": list(predicates) or None,
                 "valid_at": applied_valid,
                 "believed_at": applied_believed,
-                "max_results": limit if hops == 1 else fetch,
+                "max_results": limit if hops == 1 else DEFAULT_NEIGHBORHOOD_CAP,
                 "expansion_budget": DEFAULT_EXPANSION_BUDGET,
                 "frontier_budget": DEFAULT_FRONTIER_BUDGET,
                 "time_budget_ms": DEFAULT_TIME_BUDGET_MS,
             }
             if hops == 1:
-                parameters.update({"anchor_id": entity_id, "result_offset": offset})
+                parameters.update({"anchor_id": entity_id, "after": after})
                 raw = _shallow_neighborhood_rows(
                     connection=connection, parameters=parameters
                 )
@@ -201,17 +205,12 @@ class GraphQueries:
                     parameters=parameters,
                 )
             data, status = _split_status(rows=raw)
-            selected = data[:limit] if hops == 1 else data[offset : offset + limit]
-            more_visible = (
-                len(data) > limit if hops == 1 else len(data) > offset + limit
-            )
-            next_offset = offset + len(selected)
-            # hops>1 keeps a 500-row fetch ceiling; when it blocks further
-            # paging, disclose via truncation.reason and leave next_cursor null.
-            ceiling_blocks_paging = hops > 1 and (
-                more_visible and next_offset >= DEFAULT_NEIGHBORHOOD_CAP
-            )
-            emit_cursor = more_visible and not ceiling_blocks_paging
+            if hops > 1 and after is not None:
+                data = [row for row in data if _neighborhood_key(row) > after]
+            selected = data[:limit]
+            more_visible = len(data) > limit
+            # Deep traversal only pages within the helper's bounded 500 rows.
+            # Its terminal status discloses any work or result ceiling.
             if include_paths:
                 paths = _hydrate_entity_paths(
                     connection=connection,
@@ -228,8 +227,8 @@ class GraphQueries:
                     deployment_id=self._deployment_id,
                     rows=selected,
                 )
-        truncated = bool(status["truncated"]) or more_visible or ceiling_blocks_paging
-        if not nodes and offset == 0 and not truncated:
+        truncated = bool(status["truncated"]) or more_visible
+        if not nodes and after is None and not truncated:
             return self._empty(
                 explanation=(
                     f"entity {entity_id} exists but no neighbor within {hops} hop(s) "
@@ -259,21 +258,19 @@ class GraphQueries:
                 truncated=truncated,
                 returned=len(nodes),
                 estimated_total=max(
-                    int(status["returned_paths"]),
-                    offset + len(nodes) + int(more_visible),
+                    int(status["returned_paths"]), len(nodes) + int(more_visible)
                 ),
                 total_is_exact=not truncated,
-                reason=status_reason
-                or ("result_budget" if more_visible or ceiling_blocks_paging else None),
+                reason=status_reason or ("result_budget" if more_visible else None),
             ),
             next_cursor=(
                 _encode_cursor(
                     scope_hash=scope_hash,
-                    offset=next_offset,
+                    after=_neighborhood_key(selected[-1]),
                     valid_at=applied_valid,
                     believed_at=applied_believed,
                 )
-                if emit_cursor
+                if more_visible
                 else None
             ),
         )
@@ -778,18 +775,13 @@ def _shallow_neighborhood_rows(
         if candidate_key < previous_key:
             representatives[endpoint] = row
 
-    ordered = sorted(
-        representatives.values(),
-        key=lambda row: (
-            int(row["hops"]),
-            tuple(cast(list[UUID], row["relation_ids"])),
-            tuple(cast(list[UUID], row["node_ids"])),
-        ),
-    )
+    ordered = sorted(representatives.values(), key=_neighborhood_key)
     result_cap = min(max(cast(int, parameters["max_results"]), 1), 500)
-    result_offset = max(cast(int, parameters["result_offset"]), 0)
-    page = ordered[result_offset : result_offset + result_cap + 1]
-    result_truncated = len(ordered) > result_offset + result_cap
+    after = cast(_NeighborhoodKey | None, parameters["after"])
+    if after is not None:
+        ordered = [row for row in ordered if _neighborhood_key(row) > after]
+    page = ordered[: result_cap + 1]
+    result_truncated = len(ordered) > result_cap
     returned_paths = min(len(page), result_cap)
     reason = "result_budget" if result_truncated else None
     data = [
@@ -1129,23 +1121,41 @@ def _temporal_scope(
 
 
 def _neighborhood_scope_hash(
-    *, entity_id: UUID, hops: int, predicates: tuple[str, ...]
+    *, deployment_id: UUID, entity_id: UUID, hops: int, predicates: tuple[str, ...]
 ) -> str:
     """Scope of a neighborhood listing (anchor, depth and predicate filter)."""
     return cursor_scope_hash(
-        {"entity_id": str(entity_id), "hops": hops, "predicates": list(predicates)}
+        {"entity_id": str(entity_id), "hops": hops, "predicates": list(predicates)},
+        deployment_id=deployment_id,
+    )
+
+
+def _neighborhood_key(row: RowMapping) -> _NeighborhoodKey:
+    """The helper's total order: hops, relation IDs, then node IDs."""
+    return (
+        int(row["hops"]),
+        tuple(UUID(str(value)) for value in row["relation_ids"]),
+        tuple(UUID(str(value)) for value in row["node_ids"]),
     )
 
 
 def _encode_cursor(
-    *, scope_hash: str, offset: int, valid_at: datetime, believed_at: datetime
+    *,
+    scope_hash: str,
+    after: _NeighborhoodKey,
+    valid_at: datetime,
+    believed_at: datetime,
 ) -> str:
-    """Encode a live neighborhood page offset with its pinned clocks (D154)."""
+    """Encode the last ordering tuple and pinned clocks (D154)."""
     raw = json.dumps(
         {
             "v": 1,
             "s": scope_hash,
-            "o": offset,
+            "k": [
+                after[0],
+                [str(value) for value in after[1]],
+                [str(value) for value in after[2]],
+            ],
             "valid_at": valid_at.isoformat(),
             "believed_at": believed_at.isoformat(),
         },
@@ -1156,10 +1166,10 @@ def _encode_cursor(
 
 def _decode_cursor(
     *, cursor: str | None, scope_hash: str
-) -> tuple[int, datetime | None, datetime | None] | None:
+) -> tuple[_NeighborhoodKey | None, datetime | None, datetime | None] | None:
     """Decode a live neighborhood cursor, or None when it is foreign/malformed."""
     if cursor is None:
-        return (0, None, None)
+        return (None, None, None)
     padding = "=" * (-len(cursor) % 4)
     try:
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode())
@@ -1167,14 +1177,30 @@ def _decode_cursor(
             return None
         if payload["s"] != scope_hash:
             return None
-        offset = max(int(payload["o"]), 0)
+        key = payload["k"]
+        if (
+            not isinstance(key, list)
+            or len(key) != 3
+            or type(key[0]) is not int
+            or not 1 <= key[0] <= MAX_NEIGHBORHOOD_DEPTH
+            or any(not isinstance(part, list) for part in key[1:])
+            or len(key[1]) != key[0]
+            or len(key[2]) != key[0] + 1
+            or any(not isinstance(value, str) for part in key[1:] for value in part)
+        ):
+            return None
+        after = (
+            key[0],
+            tuple(UUID(value) for value in key[1]),
+            tuple(UUID(value) for value in key[2]),
+        )
         pinned_valid = datetime.fromisoformat(payload["valid_at"])
         pinned_believed = datetime.fromisoformat(payload["believed_at"])
     except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error):
         return None
     if pinned_valid.tzinfo is None or pinned_believed.tzinfo is None:
         return None
-    return (offset, pinned_valid, pinned_believed)
+    return (after, pinned_valid, pinned_believed)
 
 
 def _clocks_match(
