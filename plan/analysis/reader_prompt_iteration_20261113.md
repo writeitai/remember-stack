@@ -460,7 +460,7 @@ they are close analogues of two cohort items. A recovery of those two items
 on the 29-item cohort therefore overstates how well the rule generalises. The
 full 178-question run is the real test.
 
-**Recovery ceiling on the 29-item cohort.** Each item is classed by what the
+**Recovery ceiling on the 29-item cohort.** (Revised qualitatively in "Conclusion after trials 4–6" below: several items counted here as source-supported are reclassified as well-grounded inferences that depend on choosing one of several defensible readings. Neither classification is a proven ceiling.) Each item is classed by what the
 fixed sources and judge allow:
 
 | Class | Items | Count |
@@ -664,7 +664,7 @@ The procedure paragraphs were also reflowed; that changes whitespace only.
 The template is 18,281 characters. All five placeholders and every pinned
 contract phrase are present, by static check only.
 
-**Calibrated ceiling.** These counts use the candidate 4 calibration table,
+**Calibrated ceiling.** (Revised qualitatively in "Conclusion after trials 4–6" below: several items counted here as source-supported are reclassified as well-grounded inferences that depend on choosing one of several defensible readings. Neither classification is a proven ceiling.) These counts use the candidate 4 calibration table,
 with two items reclassified from the trial 4 evidence:
 
 - The count item moves from ambiguous to source-supported, because the dated
@@ -815,3 +815,195 @@ pool, tool budgets and the eight workers are unchanged.
   after the trace, which may dilute the checklist.
 - Any score change also includes run-to-run variation, which this design
   does not measure.
+
+## Conclusion after trials 4–6: no further prompt candidate
+
+**Results.** The six development trials ran on the same 29 frozen misses with
+fixed source data, models, judge, retrieval pool and budgets. Their official
+raw scores, as graded by the unchanged judge, were:
+
+| Trial | Prompt | Correct (raw) |
+|---|---|---|
+| 1 | candidate 1 | 7 |
+| 2 | candidate 2 | 8 |
+| 3 | candidate 3 | 7 |
+| 4 | candidate 4 | 11 |
+| 5 | candidate 5 | 9 |
+| 6 | candidate 6 (candidate 5 with the procedure block moved) | 8 |
+
+The best whole-trial result is candidate 4 with **11/29 raw**, and that
+remains the official score. A source audit in this analysis flags one of its
+passes (0166, favorite book series) as conflicting with the source. The
+answer gives the named person a favorite that the dialogue states for the
+other speaker, and it rests on film fandom rather than a book preference. The
+flag is an analysis note only. It does not change the official score, and it
+does not imply that the judge or the reference should be modified. No manual
+regrade and no splicing of answers across trials were done.
+
+Every trial produced and judged all 29 items. Trial 5 had one technical
+interruption: a JSON-decoding failure in the controller. That interruption is
+preserved in GCS. The native resume path then kept all 22 answer records
+completed before it, unchanged. In every trial, all 29 final answer and judge
+records have zero failures. Each trial is one run of a different prompt, so
+the score differences do not measure run-to-run variation. Trial 6 changed
+only the position of the procedure block. In a single run it did not improve
+on trial 5, and no causal effect is inferred either way.
+
+**What was checked.** For trials 4, 5 and 6, the decisive source text was
+matched against the projected tool responses: fact labels, claim text and
+chunk text, never query arguments. This covered every item that flipped
+between those trials.
+
+**Finding 1: in the inspected traces, the relevant text was usually already
+visible.** For every item that flipped across trials 4–6, the decisive text
+appeared in the response text in all three trials:
+
+- the bookshelf praise and the "book series that I love" statement for the
+  book and author lists;
+- the earlier wish to work with a brand and the later unnamed deal;
+- the "college scholarship … after college" statement;
+- both recovery-period books;
+- the person's writing interests;
+- the Skype message;
+- the frequently-made dish;
+- the quoted title.
+
+The exception is the sports item in trial 5. Its query put the excluded topic
+back in ("besides basketball"), against the step 2 rule, and the surfing turn
+was not returned. Readers used a median of 3 of the 8 allowed calls. So
+missing evidence alone does not explain the inconsistent decisions on the
+other flipping items. This does not show that more calls or different
+retrieval wording would make no difference; that was not tested.
+
+**Finding 2: with the same visible evidence, the same kind of decision went
+different ways under candidates 4–6.** The relevant rule was present in all
+three of these prompts, yet:
+
+- The quoted literal title was given verbatim in trials 4 and 5 (in trial 5
+  as "likely Game of Thrones", noting the "That" reference). Trial 6 gave only
+  a guessed title.
+- The Skype premise was corrected in trial 4. Trials 5 and 6 answered with the
+  named person's own game report, with or without a note.
+- The brand item got the earlier-wish brand in trial 4. Trials 5 and 6 gave an
+  external guess (an outdoor brand never mentioned) and noted that the company
+  was unnamed.
+- The recovery book was given as one book or both books with dates, or as the
+  later book only.
+- The travel hobby was grounded in the person's writing in trial 5 but was a
+  generic option in trials 4 and 6.
+- The book and author lists dropped qualified items that were visible.
+
+The prompts differ, so this is evidence of inconsistent application, not a
+measurement of noise. Across six versions, no rule wording, consolidation or
+placement made these decisions stable.
+
+**Per-item pass counts, all 29 items.** The labels come from each trial's
+saved summary file (`conv43-trial0N-summary.json`), which matches the copies
+in the trial 6 summary. The six marks after each item are trials 1–6, where
+C means graded correct. Column totals per trial: 7, 8, 7, 11, 9, 8.
+
+| Passes out of 6 | Items |
+|---|---|
+| 6 | 0049 (CCCCCC) |
+| 5 | 0030 (CC-CCC), 0113 (-CCCCC) |
+| 4 | 0050 (C-CCC-), 0067 (CCC-C-), 0134 (-CCCC-) |
+| 3 | 0008 (CC-C--), 0017 (-C--CC), 0029 (--C-CC), 0128 (C--C-C), 0166 (-C-CC-, source-audit flag) |
+| 2 | 0011 (---C-C), 0086 (C--C--) |
+| 1 | 0004 (--C---), 0016 (-----C), 0018 (---C--) |
+| 0 | 0005, 0006, 0019, 0034, 0048, 0051, 0053, 0055, 0056, 0060, 0066, 0135, 0164 |
+
+That is 29 items: 16 passed at least once and 13 never passed. Excluding the
+flagged 0166, the items that passed at least once number 15. No single trial
+held more than 11 of them.
+
+**Finding 3: qualitative source assessment.** This is a qualitative reading of
+the sources, not a proven numeric ceiling. It does not show that 15 is
+impossible. It revises the calibrated 14 / 4 / 11 split from the candidate 4
+and 5 sections, which was also a hypothesis. The task allows answers from
+conversational implication and from plausible, well-grounded inference, so an
+answer does not need to be uniquely entailed to be valid. The point is how
+far each expected answer depends on the reader choosing one reading among
+several defensible ones:
+
+- **Stated or near-stated in the source:**
+  - the quoted title "That";
+  - surfing;
+  - the college stage ("college scholarship", "after college");
+  - the cities list, with one city implied by "one of my favorite cities to
+    explore".
+- **Strongly implied:** the book and author lists. "Based on a book series
+  that I love" strongly implies reading; praising a book on one's own
+  bookshelf implies it more weakly.
+- **Well-grounded inference, one of several possible readings:**
+  - *Brand.* An earlier wish to work with a sportswear brand, plus a later
+    deal with "a renowned outdoor gear company", makes that brand a reasonable
+    inference, better grounded than an unmentioned outdoor brand. It is not a
+    certain identification.
+  - *Team support.* It rests on agreement in a reply.
+  - *Injury count.* It rests on an anatomically ambiguous photo. The dataset
+    search tag says ankle; the image reading says "likely an arm".
+  - *Game count.* Five or six, depending on whether two retrospective games
+    are the same.
+  - *Recovery book.* Both books plausibly fall in the recovery window.
+  - *Slow-cooker dish.* The photographed dish and the stated frequent dish are
+    different items.
+  - *Travel hobby.* One of several reasonable proposals.
+- **Ambiguous or in conflict with the reference:**
+  - *Reconnect interval.* About 3.6–4.4 weeks from the event to the Skype
+    call, or 3.4 weeks between report dates. Trial 6's "about three weeks"
+    pass is not treated as a reliable fix.
+  - *Skype premise.* A labeled correction is legitimate, but the question
+    names the other speaker.
+  - *Injury date.* It depends on the ambiguous photo.
+  - *Shop, future role, new exercises and yoga style.* Each is one of several
+    reasonable proposals.
+  - *The remaining zero-pass items.* Their references conflict with the source
+    on date, instrument or speaker, or expect one outside-world option the
+    conversation never names.
+
+**Why no candidate 7.**
+
+- The prompt already states the general principles that bear on the flipping
+  items:
+  - complete lists that keep qualified items;
+  - named source candidates before external guesses;
+  - literal quoted titles;
+  - episode and owner alignment;
+  - proposals built from established strengths.
+- Readers applied these inconsistently with the relevant text visible, across
+  six prompt versions.
+- Rule additions (candidates 4–5) shifted which items passed in both
+  directions. The placement test (candidate 6) did not improve the result in
+  its single run.
+- This review identified no further restrained, general prompt change that
+  the evidence supports. Further wording aimed at the specific flipping items
+  would risk tuning to individual references and causing regressions in the
+  full 178-question confirmation.
+- This does not rule out that some other wording or retrieval change could
+  help; that was not tested.
+
+**Conclusion.**
+
+- No candidate 7 is proposed.
+- The best whole-trial result is candidate 4 at 11/29 raw. That is official,
+  with one source-audit flag noted here.
+- The 15-item gate is not met, and no fresh 178-question confirmation has
+  been run.
+- All fixed controls are unchanged: source data, models, judge, retrieval
+  pool, budgets and run settings.
+- If a 178-question confirmation is wanted anyway, it would use candidate 4.
+  It would report the official raw score, with any source-audit flags listed
+  separately, and with no manual regrade or splicing.
+
+**Options outside this experiment's fixed controls (recommendations only, not
+done here).**
+
+- *Answer-time aggregation.* For example, sample several answers and keep the
+  majority, or add a verification pass. This targets inconsistent application
+  directly. It changes the agent and run settings, so it needs the owner's
+  decision.
+- *A stronger reader model or a different reasoning setting.* This also
+  changes fixed controls.
+- *A repeated-run study of one prompt (for example candidate 4) on the 29
+  items.* It would measure run-to-run variation, which none of the trials
+  above can separate from prompt effects.
