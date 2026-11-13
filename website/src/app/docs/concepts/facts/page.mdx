@@ -9,7 +9,7 @@ export const metadata = {
 
 Claims tell you what each source said. An agent usually needs something
 else: what is true now, how sure the memory is, and what changed. Five
-meeting notes that each say Ravi works on the billing migration should be
+meeting notes that each say John works on the billing migration should be
 one piece of knowledge with five sources behind it, not five search hits.
 A retro that says he moved to the search team in June should close that
 knowledge, not sit next to it as an equal.
@@ -25,7 +25,7 @@ new evidence arrives. Claims never change; facts do.
 A **relation** connects two entities with a predicate:
 
 ```
-Ravi  works_on  billing migration
+John  works_on  billing migration
 Dana  reports_to  Head of Product
 ```
 
@@ -46,7 +46,7 @@ Observations carry values, properties and anything that does not fit a
 two-entity predicate: numbers, descriptions, states, stances. They are
 anchored on their entity and searchable, but they are not graph edges.
 
-An attributed claim ("Dana believes…", "Ravi said…") always becomes an
+An attributed claim ("Dana believes…", "John said…") always becomes an
 observation on the person who holds the view, never a fact about the thing
 they talked about.
 
@@ -163,7 +163,7 @@ fact is closed and the closure is recorded. See
 ## Labels
 
 Every fact has a readable `label`. A relation's label is built without a
-model, from its entity names and predicate ("Ravi works on billing
+model, from its entity names and predicate ("John works on billing
 migration"). An observation's label is its statement. Labels hold only the
 statement; the dates live in the `validity` fields, never in the text.
 

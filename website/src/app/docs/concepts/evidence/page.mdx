@@ -9,7 +9,7 @@ export const metadata = {
 
 An agent that cannot show where a statement came from cannot be checked,
 and an agent that cannot be checked will not be trusted with real work. "The
-cutover is on June 8" is useful. "The cutover is on June 8, per Ravi in the
+cutover is on June 8" is useful. "The cutover is on June 8, per John in the
 2026-04-28 standup, characters 1,204 to 1,262 of that transcript" is
 something a person can verify in ten seconds.
 
@@ -27,7 +27,7 @@ A [claim](/docs/concepts/claims) points to its source in two ways:
   statement. It never changes.
 - **All supporting spans**: `evidence_spans`, a list of `\{char_start,
   char_end\}` ranges. A coherent statement is often supported by several
-  sentences, sometimes in different passages ("Ravi owns the schema change"
+  sentences, sometimes in different passages ("John owns the schema change"
   in one paragraph, "it ships in June" two paragraphs later). The list
   holds every range the claim relies on, origin first.
 

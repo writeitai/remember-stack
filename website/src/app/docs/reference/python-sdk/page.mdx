@@ -924,7 +924,7 @@ both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
 `time` takes the same values as in `facts_context` and applies to both.
 
 ```python
-bundle = memory.combined_context("What did Ravi decide about invoicing?")
+bundle = memory.combined_context("What did John decide about invoicing?")
 print(len(bundle.facts.facts), len(bundle.claims_and_sources.evidence))
 ```
 

@@ -159,7 +159,7 @@ LIMIT 20
 ```
 
 `claims_live` holds every statement that is still current testimony.
-"Ravi owns the invoice exporter" from a May spec and "Dana took over the
+"John owns the invoice exporter" from a May spec and "Dana took over the
 exporter" from a September retro are both in it, and the newest one is not
 necessarily what the memory holds true: it may be one side of a
 disagreement, or a statement that did not change the facts at all. The
@@ -259,7 +259,7 @@ deployment_id = client.open_query("SELECT count(*) FROM documents_live")["deploy
 neighbours = client.open_query(
     "SELECT hops, relation_ids, node_ids FROM graph_neighborhood($1::uuid, $2::uuid, 2)"
     " ORDER BY hops",
-    parameters=[deployment_id, str(ravi_id)],
+    parameters=[deployment_id, str(john_id)],
 )
 ```
 

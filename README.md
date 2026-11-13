@@ -33,7 +33,7 @@ Your agents have easy access to the information - they remember!
 - **What each source said.** Every statement worth keeping is stored as a
   claim, with the exact passage it came from and the date it was said.
   Claims are never edited.
-- **Who and what it is about.** Names become entities. "Ravi", "Ravi S."
+- **Who and what it is about.** Names become entities. "John", "John S."
   and "our backend lead" can resolve to one person, while two people called
   Dana stay two. Each entity keeps every spelling the sources used and a
   short profile, and a merge can be undone.

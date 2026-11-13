@@ -232,8 +232,8 @@ The `path` body is off by default. To allow it, list the directories the
 server may read:
 
 ```bash
-export REMEMBERSTACK_MCP_INGEST_ROOTS='["/home/ravi/notes", "/srv/specs"]'
-# or: REMEMBERSTACK_MCP_INGEST_ROOTS=/home/ravi/notes,/srv/specs
+export REMEMBERSTACK_MCP_INGEST_ROOTS='["/home/john/notes", "/srv/specs"]'
+# or: REMEMBERSTACK_MCP_INGEST_ROOTS=/home/john/notes,/srv/specs
 ```
 
 | Variable | Default | Meaning |
@@ -641,7 +641,7 @@ rewritten, and a rewritten file keeps its permissions.
 {
   "mcpServers": {
     "remember": {
-      "command": "/Users/ravi/.local/bin/remember",
+      "command": "/Users/john/.local/bin/remember",
       "args": ["mcp"],
       "env": {
         "REMEMBER_API_URL": "http://127.0.0.1:8000"
@@ -702,7 +702,7 @@ after removing any earlier `remember` entry with
 `claude mcp remove --scope local remember`:
 
 ```bash
-claude mcp add --scope local remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
+claude mcp add --scope local remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/john/.local/bin/remember mcp
 ```
 
 A URL entry is added with
@@ -730,7 +730,7 @@ Restart Claude Desktop after the change.
 
 ```toml
 [mcp_servers.remember]
-command = "/Users/ravi/.local/bin/remember"
+command = "/Users/john/.local/bin/remember"
 args = ["mcp"]
 
 [mcp_servers.remember.env]
