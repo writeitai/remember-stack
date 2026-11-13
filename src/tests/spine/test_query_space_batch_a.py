@@ -313,7 +313,15 @@ class _Corpus:
                 },
             )
         # D156: a tag on live lineages and the forgotten one, a tag only the
-        # tombstoned lineage carries, and a registered-then-deleted tag
+        # tombstoned lineage carries, and a registered-then-deleted tag. Older
+        # heads (proofs that seed this corpus before D156) have no tag tables.
+        if connection.execute(
+            text("SELECT to_regclass('public.tags') IS NOT NULL")
+        ).scalar_one():
+            self._seed_tags(connection=connection)
+
+    def _seed_tags(self, *, connection: Connection) -> None:
+        """Seed D156 tags and their assignments."""
         for key, lineages in (
             ("corpus", ("primary", "second", "forgotten")),
             ("erased", ("erased",)),

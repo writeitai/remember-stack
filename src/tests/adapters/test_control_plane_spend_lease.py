@@ -886,6 +886,13 @@ def test_every_published_route_is_gated_or_named_ungated() -> None:
         # D140 supplied references are written by a deterministic E0 worker:
         # recording the set spends nothing, like the period routes above.
         ("PUT", "/documents/{doc_id}/versions/{version_id}/references"),
+        # D156: the tag registry and tag writes are metadata, like the period
+        # routes; they read no memory and cause no processing.
+        ("GET", "/tags"),
+        ("POST", "/tags"),
+        ("PATCH", "/tags/{tag_id}"),
+        ("DELETE", "/tags/{tag_id}"),
+        ("POST", "/documents/{doc_id}/tags"),
     }
     schema = json.loads(
         (Path(__file__).parents[3] / "openapi.json").read_text(encoding="utf-8")
