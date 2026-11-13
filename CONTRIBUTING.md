@@ -29,6 +29,11 @@ Start a disposable MinIO container (Docker, curl and Python 3.11+ required):
 .github/ci/start-minio.sh
 REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL=http://127.0.0.1:59000 \
   uv run pytest src/tests/adapters/test_minio_object_operations.py -q
+# Publication also needs the disposable PostgreSQL database configured as
+# REMEMBERSTACK_DATABASE_URL. Run all database suites sequentially:
+REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL=http://127.0.0.1:59000 \
+  uv run pytest src/tests/adapters/test_minio_corpus_publication.py \
+    src/tests/adapters/test_minio_corpus_lock_loss.py -q
 # After testing:
 docker rm --force rememberstack-minio-test
 ```

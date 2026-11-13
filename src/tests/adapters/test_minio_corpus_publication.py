@@ -294,9 +294,10 @@ def test_retry_after_each_publication_boundary(
         with pytest.raises(RuntimeError, match="injected crash"):
             state.publish()
     assert failed
-    assert (
-        state.marker() is None if boundary != "marker" else state.marker() is not None
-    )
+    if boundary == "marker":
+        assert state.marker() is not None
+    else:
+        assert state.marker() is None
     if boundary == "old_last":
         assert not list(state.bucket.store.iter_keys(prefix=old_path))
         assert list(state.bucket.store.iter_keys(prefix="pdf/finance")), (
@@ -525,8 +526,14 @@ def test_same_sources_export_for_every_layer_profile(
     state.assert_tree()
 
 
-def test_parked_new_upload_keeps_served_original(publication: Publication) -> None:
+@pytest.mark.parametrize("served", [False, True])
+def test_parked_new_upload_keeps_served_original(
+    publication: Publication, served: bool
+) -> None:
     state = publication
+    if not served:
+        with state.engine.begin() as connection:
+            connection.execute(text("UPDATE documents SET current_version_id = NULL"))
     state.publish()
     before = state.assert_tree()
     with state.engine.begin() as connection:
@@ -784,3 +791,410 @@ def test_canonical_title_transaction_enqueues_and_rolls_back(
     assert len(events) == 1 and state.marker() is None
     state.publish()
     state.assert_tree()
+
+
+def test_navigation_split_merge_preserves_survivor_files(
+    publication: Publication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = publication
+    state.publisher.policy = CorpusPolicy(member_limit=32)
+    extras = [
+        replace(
+            state.source,
+            doc_id=uuid4(),
+            version_id=uuid4(),
+            representation_id=uuid4(),
+            structure_generation_id=uuid4(),
+            title=f"Control {number}",
+        )
+        for number in range(33)
+    ]
+    for document in extras:
+        _seed(state.engine, document)
+    assert (
+        state.catalog.seed_current_policy(
+            deployment_id=state.source.deployment_id,
+            policy=state.publisher.policy,
+            batch_size=7,
+        )
+        == 34
+    )
+    assert (
+        state.catalog.seed_current_policy(
+            deployment_id=state.source.deployment_id,
+            policy=state.publisher.policy,
+            batch_size=7,
+        )
+        == 0
+    )
+    state.publisher.reconcile(deployment_id=state.source.deployment_id, verify=True)
+    before = state.assert_tree()
+    shard_keys = {key for key in before if "/~" in key}
+    assert shard_keys
+    removed = extras[:3]
+    with state.engine.begin() as connection:
+        for document in removed:
+            connection.execute(
+                text("UPDATE documents SET deleted_at = now() WHERE doc_id = :doc"),
+                {"doc": document.doc_id},
+            )
+            corpus_changed_on(
+                connection=connection,
+                deployment_id=document.deployment_id,
+                doc_id=document.doc_id,
+                policy=state.publisher.policy,
+            )
+    written = []
+    original = state.bucket.store.replace_stream
+
+    def record(**kwargs: Any) -> None:
+        written.append(kwargs["key"].root)
+        original(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(state.bucket.store, "replace_stream", record)
+        for document in removed:
+            state.publish(document.doc_id)
+    after = state.assert_tree()
+    assert shard_keys.isdisjoint(after)
+    assert not any(
+        key.endswith(("original.pdf", "document.md", "plot.png")) for key in written
+    )
+    for document in [state.source, *extras[3:]]:
+        assert (
+            after[document.path + "/original.pdf"]
+            == before[document.path + "/original.pdf"]
+        )
+
+
+@pytest.mark.parametrize("failure", ["session", "lease", "hash"])
+def test_multipart_publication_stops_and_cleans_on_owner_or_source_loss(
+    publication: Publication, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    state = publication
+    state.publish()
+    old_original = state.bucket.store.read_bytes(
+        key=ObjectKey(state.source.path + "/original.pdf")
+    )
+    content = b"%PDF-1.7\n" + b"v" * (18 * 1024 * 1024)
+    current = replace(
+        state.source,
+        version_id=uuid4(),
+        representation_id=uuid4(),
+        structure_generation_id=uuid4(),
+        version_no=2,
+        content_hash=digest(content),
+        raw_uri="new-large-original",
+    )
+    state.raw.write_bytes(
+        key=ObjectKey(current.raw_uri),
+        content=content if failure != "hash" else b"bad" + content[3:],
+        storage_class="cold",
+    )
+    _seed(state.engine, current)
+    state.source = current
+    event = state.change()
+    ledger = WorkLedger(engine=state.engine, settings=WorkLedgerSettings())
+    work = ledger.claim_one(
+        deployment_id=current.deployment_id,
+        stage=PipelineStage.PUBLISH_CORPUS,
+        lane=None,
+        processing_id=event,
+    )
+    assert isinstance(work, ClaimedWork)
+    parts = []
+    upload = state.bucket.client.upload_part
+    with state.catalog.locked(deployment_id=current.deployment_id, work=work) as lock:
+
+        def part(**kwargs: Any) -> Any:
+            result = upload(**kwargs)
+            parts.append(kwargs["PartNumber"])
+            if len(parts) == 1:
+                with state.engine.begin() as connection:
+                    if failure == "session":
+                        connection.execute(
+                            text("SELECT pg_terminate_backend(:pid)"),
+                            {"pid": lock.backend_pid},
+                        )
+                    elif failure == "lease":
+                        connection.execute(
+                            text(
+                                "UPDATE processing_state SET lease_until = now() - interval '1 second' WHERE processing_id = :p"
+                            ),
+                            {"p": event},
+                        )
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(state.bucket.client, "upload_part", part)
+            with pytest.raises(
+                ValueError if failure == "hash" else CorpusLockLostError
+            ):
+                state.publisher.publish_corpus(
+                    deployment_id=current.deployment_id,
+                    doc_id=current.doc_id,
+                    lock=lock,
+                )
+    assert parts == ([1, 2] if failure == "hash" else [1])
+    assert (
+        state.bucket.store.read_bytes(key=ObjectKey(current.path + "/original.pdf"))
+        == old_original
+    )
+    assert state.marker() is None
+    assert not state.bucket.client.list_multipart_uploads(Bucket=state.bucket.name).get(
+        "Uploads"
+    )
+    if failure == "hash":
+        state.raw.replace_stream(
+            key=ObjectKey(current.raw_uri), chunks=(content,), storage_class="cold"
+        )
+    state.publisher.reconcile(deployment_id=current.deployment_id, verify=True)
+    state.assert_tree()
+
+
+def test_ordinary_retry_and_dlq_preserve_attempts_and_replay(
+    publication: Publication, runner: SelfHostProfile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = publication
+    event = state.change()
+    with state.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_state SET max_attempts = 2 WHERE processing_id = :p"
+            ),
+            {"p": event},
+        )
+    original = state.bucket.store.replace_stream
+
+    def fail(**kwargs: Any) -> None:
+        original(**kwargs)
+        raise RuntimeError("store interrupted")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(state.bucket.store, "replace_stream", fail)
+        assert (
+            run_task(context=runner, processing_id=event).outcome
+            == RunResultOutcome.RETRY_SCHEDULED
+        )
+        with state.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE processing_state SET not_before = now() WHERE processing_id = :p"
+                ),
+                {"p": event},
+            )
+        assert (
+            run_task(context=runner, processing_id=event).outcome
+            == RunResultOutcome.DEAD_LETTERED
+        )
+    assert state.marker() is None
+    ledger = WorkLedger(engine=state.engine, settings=WorkLedgerSettings())
+    replayed = ledger.replay_dead_letter(
+        deployment_id=state.source.deployment_id, processing_id=event
+    )
+    assert replayed.attempts == 2 and replayed.max_attempts == 3
+    assert (
+        run_task(context=runner, processing_id=event).outcome
+        == RunResultOutcome.SUCCEEDED
+    )
+    state.assert_tree()
+
+
+def test_real_metadata_change_rolls_back_its_event_and_marker(
+    publication: Publication,
+) -> None:
+    from rememberstack.model.document_metadata import DocumentMetadata
+
+    state = publication
+    with state.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_metadata SET title = NULL, provenance = '{}' WHERE version_id = :v"
+            ),
+            {"v": state.source.version_id},
+        )
+    state.publish()
+    marker = state.marker()
+    with pytest.raises(RuntimeError, match="rollback"):
+        with state.engine.begin() as connection:
+            merge_converter_metadata_on(
+                connection=connection,
+                deployment_id=state.source.deployment_id,
+                version_id=state.source.version_id,
+                metadata=DocumentMetadata(title="Rolled back"),
+                mapping_version="test",
+            )
+            raise RuntimeError("rollback")
+    assert state.marker() == marker
+    with state.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM processing_state")
+            ).scalar_one()
+            == 0
+        )
+    state.assert_tree()
+
+
+def test_mime_repair_in_same_family_enqueues_served_lineages(
+    publication: Publication,
+) -> None:
+    from rememberstack.spine.document_metadata import refresh_family_on
+
+    state = publication
+    with state.engine.begin() as connection:
+        connection.execute(text("UPDATE content_objects SET mime = 'audio/mpeg'"))
+        connection.execute(text("UPDATE document_metadata SET family = 'media'"))
+    state.publish()
+    with state.engine.begin() as connection, collect_new_work() as events:
+        connection.execute(text("UPDATE content_objects SET mime = 'video/mp4'"))
+        refresh_family_on(
+            connection=connection,
+            deployment_id=state.source.deployment_id,
+            content_hash=state.source.content_hash,
+            mime="video/mp4",
+        )
+    assert len(events) == 1 and state.marker() is None
+    state.publish()
+    state.assert_tree()
+
+
+@pytest.mark.parametrize("loss", ["lock", "lease"])
+def test_owner_loss_between_deletes_refuses_the_next_request(
+    publication: Publication, monkeypatch: pytest.MonkeyPatch, loss: str
+) -> None:
+    state = publication
+    state.publish()
+    old_path = state.source.path
+    event = state.change(title="Moved")
+    ledger = WorkLedger(engine=state.engine, settings=WorkLedgerSettings())
+    work = ledger.claim_one(
+        deployment_id=state.source.deployment_id,
+        stage=PipelineStage.PUBLISH_CORPUS,
+        lane=None,
+        processing_id=event,
+    )
+    assert isinstance(work, ClaimedWork)
+    deleted = []
+    original = state.bucket.store.delete
+    with state.catalog.locked(
+        deployment_id=state.source.deployment_id, work=work
+    ) as lock:
+
+        def delete(**kwargs: Any) -> None:
+            original(**kwargs)
+            deleted.append(kwargs["key"].root)
+            if loss == "lock":
+                lock.connection.execute(text("SELECT pg_advisory_unlock_all()"))
+            else:
+                with state.engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "UPDATE processing_state SET lease_until = now() - interval '1 second' WHERE processing_id = :p"
+                        ),
+                        {"p": event},
+                    )
+
+        with monkeypatch.context() as patch:
+            patch.setattr(state.bucket.store, "delete", delete)
+            with pytest.raises(CorpusLockLostError):
+                state.publisher.publish_corpus(
+                    deployment_id=state.source.deployment_id,
+                    doc_id=state.source.doc_id,
+                    lock=lock,
+                )
+    assert len(deleted) == 1
+    assert list(state.bucket.store.iter_keys(prefix=old_path))
+    assert state.marker() is None
+    state.publish()
+    state.assert_tree()
+
+
+def test_structure_change_is_transactional_and_retry_does_not_enqueue_again(
+    publication: Publication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rememberstack.model import SectionTreeRecord
+    from rememberstack.model import SkeletonStats
+    from rememberstack.model import SnappedSection
+    from rememberstack.model import StructureRouteTag
+    import rememberstack.spine.corpus_publication as publication_spine
+    from rememberstack.spine.document_catalog import DocumentCatalog
+
+    state = publication
+    state.publish()
+    source = state.source
+    uri = "new-structure/active-pageindex.json"
+    state.artifacts.write_bytes(
+        key=ObjectKey(uri),
+        content=b'{"generation":"new","sections":[]}\n',
+        storage_class="hot",
+    )
+    stats = SkeletonStats.model_validate(
+        {field: None for field in SkeletonStats.model_fields}
+        | {"stats_version": "test", "section_count": 0}
+    )
+    record = SectionTreeRecord(
+        deployment_id=source.deployment_id,
+        doc_id=source.doc_id,
+        version_id=source.version_id,
+        representation_id=source.representation_id,
+        structure_generation_id=uuid4(),
+        sections=(
+            SnappedSection(
+                node_path="0",
+                parent_path=None,
+                title=source.title or "",
+                role="body",
+                block_start=0,
+                block_end=0,
+                char_start=0,
+                char_end=10,
+                summary="New stored summary",
+                ordinal=0,
+            ),
+        ),
+        placement_path="Reclassified",
+        structurer_name="test",
+        structurer_version="test",
+        skeleton_version="test",
+        skeleton_hash="test",
+        skeleton_producer_family="N/A",
+        skeleton_check_version=None,
+        roles_version="test",
+        summary_version="test",
+        placement_version="test",
+        selecting_check_id=None,
+        route_tag=StructureRouteTag.PARSER,
+        candidate_skeleton_hash="test",
+        stats_version="test",
+        stats=stats,
+        pageindex_uri=uri,
+    )
+    catalog = DocumentCatalog(engine=state.engine)
+    with collect_new_work() as events:
+        catalog.record_section_tree(record=record)
+    assert len(events) == 1 and state.marker() is None
+    with collect_new_work() as repeated:
+        catalog.record_section_tree(record=record)
+    assert repeated == []
+    state.publish()
+    before = state.assert_tree()
+    marker = state.marker()
+
+    def fail_enqueue(**kwargs: Any) -> Any:
+        raise RuntimeError("enqueue rolled back")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(publication_spine, "enqueue_on", fail_enqueue)
+        with pytest.raises(RuntimeError, match="enqueue rolled back"):
+            catalog.record_section_tree(
+                record=record.model_copy(
+                    update={
+                        "structure_generation_id": uuid4(),
+                        "placement_path": "Never committed",
+                    }
+                )
+            )
+    assert state.marker() == marker
+    assert state.selected()[0].structure_generation_id == record.structure_generation_id
+    assert state.assert_tree() == before
