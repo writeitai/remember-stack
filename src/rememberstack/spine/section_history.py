@@ -189,7 +189,7 @@ class SectionHistory:
                 after=None if cursor is None else cursor.after,
                 periodised=periodised,
             )
-            page = candidates[start : start + request.k]
+            page = candidates[start : start + request.limit]
             through = candidates[: start + len(page)]
             readable = tuple(candidate for candidate in through if candidate.selected)
             sections, unindexed = _keyed_sections(
@@ -241,7 +241,7 @@ class SectionHistory:
             periodised=periodised,
             rows=tuple(rows),
             amendments=amendments,
-            cursor=next_cursor,
+            next_cursor=next_cursor,
             evaluated_at=evaluated_at,
             believed_at=believed_at,
         )

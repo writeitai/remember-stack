@@ -277,7 +277,7 @@ def test_re_ingesting_mid_scroll_cannot_hide_an_unseen_document(
 
     first = inventory.list_documents(deployment_id=_DEPLOYMENT_ID, limit=1)
     assert len(first.documents) == 1
-    assert first.cursor is not None
+    assert first.next_cursor is not None
 
     # b.md is re-ingested between pages, which without the watermark moves it
     # above the cursor and out of the listing entirely.
@@ -298,13 +298,13 @@ def test_re_ingesting_mid_scroll_cannot_hide_an_unseen_document(
         )
 
     seen: list[str] = [d.title or "" for d in first.documents]
-    cursor = first.cursor
+    cursor = first.next_cursor
     for _ in range(5):
         page = inventory.list_documents(
             deployment_id=_DEPLOYMENT_ID, limit=1, cursor=cursor
         )
         seen.extend(d.title or "" for d in page.documents)
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             break
 
@@ -517,7 +517,7 @@ def test_tombstoning_a_version_mid_scroll_cannot_repeat_a_document(
             {"at": _NOW, "deployment": _DEPLOYMENT_ID},
         )
 
-    cursor = first.cursor
+    cursor = first.next_cursor
     for _ in range(5):
         if cursor is None:
             break
@@ -525,7 +525,7 @@ def test_tombstoning_a_version_mid_scroll_cannot_repeat_a_document(
             deployment_id=_DEPLOYMENT_ID, limit=1, cursor=cursor
         )
         seen.extend(d.title or "" for d in page.documents)
-        cursor = page.cursor
+        cursor = page.next_cursor
 
     assert sorted(seen) == ["a.md", "b.md", "c.md"], seen
     assert len(seen) == len(set(seen)), f"a document repeated: {seen}"
@@ -556,7 +556,7 @@ def test_paging_returns_every_document_exactly_once(database_engine: Engine) -> 
             deployment_id=_DEPLOYMENT_ID, limit=2, cursor=cursor
         )
         seen.extend(d.title or "" for d in page.documents)
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             break
 
@@ -587,7 +587,7 @@ def test_the_last_page_carries_no_cursor(database_engine: Engine) -> None:
     )
 
     assert len(page.documents) == 2
-    assert page.cursor is None
+    assert page.next_cursor is None
 
 
 def test_the_status_filter_asks_about_the_newest_version(

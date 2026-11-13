@@ -46,8 +46,10 @@ uses it as the evaluation and belief instant of the time scope: declarations
 are read as known then (``memory_v1.versions_in_scope`` with ``believed_at``,
 for each batch of walked lineages), so a later period correction, clear or
 redeclaration cannot move a lineage across pages. A page walks lineages in
-batches and stops after ``PAGE_SCAN_FACTOR × k`` lineages, returning a short
-page with a cursor rather than scanning further.
+batches and stops after ``PAGE_SCAN_FACTOR × limit`` lineages, returning a
+short page with a ``next_cursor`` rather than scanning further. With a query
+the response is the top ``k`` matches, ``next_cursor`` stays null, and
+``truncated`` is true when more than ``k`` matched.
 """
 
 from __future__ import annotations
@@ -97,7 +99,7 @@ CHANNEL_MAX_CANDIDATES: Final = 1000
 """Most documents each channel nominates before fusion."""
 
 PAGE_SCAN_FACTOR: Final = 10
-"""A filter-only page walks at most this many × ``k`` lineages (a starting
+"""A filter-only page walks at most this many × ``limit`` lineages (a starting
 point to measure, not a committed constant)."""
 
 MatchChannel = Literal["name", "content"]
@@ -150,18 +152,25 @@ class DocumentSearch:
                 time_scope=time_scope,
             )
             pending_complete = True
+            truncated = False
             if request.query is None:
                 picks, next_cursor, examined = _filtered_page(
                     connection=connection,
                     scope=scope,
-                    k=request.k,
+                    limit=request.limit,
                     cursor=cursor,
                     versions=request.versions,
                 )
             else:
-                picks = _ranked(
-                    connection=connection, scope=scope, query=request.query, k=request.k
+                # Fetch k+1 so truncated can disclose when the cap applied.
+                ranked_picks = _ranked(
+                    connection=connection,
+                    scope=scope,
+                    query=request.query,
+                    k=request.k + 1,
                 )
+                truncated = len(ranked_picks) > request.k
+                picks = ranked_picks[: request.k]
                 next_cursor = None
                 touched, pending_complete = _touched_pending(
                     connection=connection,
@@ -181,7 +190,8 @@ class DocumentSearch:
             )
         return DocumentSearchPage(
             documents=documents,
-            cursor=next_cursor,
+            next_cursor=next_cursor,
+            truncated=truncated,
             as_of=as_of,
             people_matched=people,
             scope_pending=pending,
@@ -377,28 +387,28 @@ def _filtered_page(
     *,
     connection: Connection,
     scope: _Scope,
-    k: int,
+    limit: int,
     cursor: _Cursor | None,
     versions: Literal["current", "all"],
 ) -> tuple[list[_Pick], str | None, tuple[UUID, ...]]:
     """Filter-only results: walk lineages newest first, judge them in batches.
 
-    Returns the page, its cursor and every lineage the page examined.
+    Returns the page, its ``next_cursor`` and every lineage the page examined.
     """
     as_of: datetime = scope.parameters["as_of"]
-    cap = PAGE_SCAN_FACTOR * k
+    cap = PAGE_SCAN_FACTOR * limit
     position = None if cursor is None else (cursor.ingested_at, cursor.doc_id)
     picks: list[tuple[_Pick, tuple[datetime, UUID]]] = []
     examined: list[UUID] = []
     exhausted = False
-    while len(picks) <= k and len(examined) < cap:
-        limit = min(k + 1, cap - len(examined))
+    while len(picks) <= limit and len(examined) < cap:
+        batch_limit = min(limit + 1, cap - len(examined))
         batch = _walk(
             connection=connection,
             deployment_id=scope.parameters["deployment_id"],
             as_of=as_of,
             after=position,
-            limit=limit,
+            limit=batch_limit,
         )
         judged = (
             _judge_batch(
@@ -416,15 +426,15 @@ def _filtered_page(
             pick = judged.get(doc_id)
             if pick is not None:
                 picks.append((pick, position))
-                if len(picks) > k:
+                if len(picks) > limit:
                     break
-        if len(picks) > k:
+        if len(picks) > limit:
             break
-        if len(batch) < limit:
+        if len(batch) < batch_limit:
             exhausted = True
             break
-    page = picks[:k]
-    if len(picks) > k:
+    page = picks[:limit]
+    if len(picks) > limit:
         resume = page[-1][1]
     elif exhausted or position is None:
         resume = None

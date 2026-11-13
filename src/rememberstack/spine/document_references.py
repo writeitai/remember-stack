@@ -340,12 +340,12 @@ class DocumentReferences:
                 plan=plan_or_broad,
                 directions=_directions(request=request),
                 position=position,
-                k=request.k,
+                limit=request.limit,
             )
             rows = reader.finish(drafts=drafts)
         return DocumentReferencesPage(
             rows=tuple(rows),
-            cursor=None
+            next_cursor=None
             if next_position is None
             else _encode_cursor(
                 scope_hash=scope_hash,
@@ -595,12 +595,12 @@ class _Reader:
         plan: SourcePlan,
         directions: tuple[Direction, ...],
         position: Position | None,
-        k: int,
+        limit: int,
     ) -> tuple[list[DraftRow], Position | None]:
-        """Walk the directions from ``position`` and take up to ``k`` rows."""
+        """Walk the directions from ``position`` and take up to ``limit`` rows."""
         rows: list[tuple[Position, DraftRow]] = []
         scanned = 0
-        cap = SCAN_FACTOR * k
+        cap = SCAN_FACTOR * limit
         for direction in directions:
             if position is not None and _DIRECTIONS.index(
                 direction
@@ -613,7 +613,7 @@ class _Reader:
             )
             while True:
                 batch = self._candidates(
-                    direction=direction, plan=plan, after=after, limit=k + 1
+                    direction=direction, plan=plan, after=after, limit=limit + 1
                 )
                 scanned += len(batch)
                 for candidate in batch:
@@ -639,9 +639,9 @@ class _Reader:
                     after = Position(
                         direction=direction, triple=batch[-1].triple, row=None
                     )
-                if len(rows) > k:
-                    return [draft for _, draft in rows[:k]], rows[k - 1][0]
-                if len(batch) < k + 1:
+                if len(rows) > limit:
+                    return [draft for _, draft in rows[:limit]], rows[limit - 1][0]
+                if len(batch) < limit + 1:
                     break  # this direction is exhausted
                 if scanned >= cap:
                     return [draft for _, draft in rows], after

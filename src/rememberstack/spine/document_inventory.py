@@ -175,7 +175,7 @@ class DocumentInventory:
             if more and page
             else None
         )
-        return DocumentPage(documents=documents, cursor=next_cursor)
+        return DocumentPage(documents=documents, next_cursor=next_cursor)
 
 
 def _encode_cursor(first_seen_at: datetime, doc_id: UUID) -> str:
