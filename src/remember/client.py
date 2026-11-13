@@ -752,7 +752,7 @@ class MemoryClient:
         """Return a typed bounded current or bitemporal neighborhood.
 
         Page with ``cursor`` / ``next_cursor`` (D154). The cursor pins the
-        request clocks.
+        request clocks and the neighborhood scope.
         """
         return _validated(
             Envelope,

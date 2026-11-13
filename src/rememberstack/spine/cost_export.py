@@ -28,10 +28,13 @@ from pydantic_settings import SettingsConfigDict
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
+
 COST_EXPORT_CONTRACT: Final = "rememberstack.cost_export.v1"
 COST_EXPORT_MIN_TOKEN_BYTES: Final = 32
-COST_EXPORT_DEFAULT_LIMIT: Final = 100
-COST_EXPORT_MAX_LIMIT: Final = 500
+COST_EXPORT_DEFAULT_LIMIT: Final = 50
+COST_EXPORT_MAX_LIMIT: Final = 200
 COST_EXPORT_SAFETY_LAG: Final = timedelta(seconds=60)
 
 COST_EXPORT_PAGE_FIELDS: Final[tuple[str, ...]] = (
@@ -191,7 +194,8 @@ class SqlCostExportReader:
             raise ValueError(
                 f"limit must be between 1 and {COST_EXPORT_MAX_LIMIT}, not {limit}"
             )
-        incoming = decode_cost_export_cursor(cursor=cursor)
+        scope = cursor_scope_hash({"deployment_id": str(deployment_id)})
+        incoming = decode_cost_export_cursor(cursor=cursor, scope_hash=scope)
         with self._engine.connect() as connection:
             connection = connection.execution_options(isolation_level="REPEATABLE READ")
             with connection.begin():
@@ -223,10 +227,10 @@ class SqlCostExportReader:
                             if incoming is not None
                             else _ZERO_COST_ID
                         ),
-                        "limit": limit,
+                        "limit": limit + 1,
                     },
                 ).mappings()
-                receipts = tuple(_receipt_from_row(row=dict(row)) for row in rows)
+                fetched = tuple(_receipt_from_row(row=dict(row)) for row in rows)
                 meter = (
                     connection.execute(
                         _SELECT_METER_STATE, {"deployment_id": deployment_id}
@@ -236,11 +240,14 @@ class SqlCostExportReader:
                 )
         persist_failures = int(meter["persist_failures"]) if meter is not None else 0
         scope_missing = int(meter["scope_missing"]) if meter is not None else 0
+        has_more = len(fetched) > limit
+        receipts = fetched[:limit]
         last_key = _last_key(receipts=receipts, incoming=incoming)
-        # A full page may have more; a short page is the end (D154).
+        # Emit a cursor only when the look-ahead row exists (D154).
         next_cursor: str | None = None
-        if len(receipts) >= limit:
+        if has_more and receipts:
             next_cursor = encode_cost_export_cursor(
+                scope_hash=scope,
                 last_occurred_at=last_key[0],
                 last_source=last_key[1],
                 last_cost_id=last_key[2],
@@ -263,6 +270,7 @@ class _CursorPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    scope_hash: str
     last_occurred_at: datetime
     last_source: str
     last_cost_id: UUID
@@ -271,6 +279,7 @@ class _CursorPayload(BaseModel):
     def encode(self) -> str:
         """Serialize this payload as an opaque cursor."""
         return encode_cost_export_cursor(
+            scope_hash=self.scope_hash,
             last_occurred_at=self.last_occurred_at,
             last_source=self.last_source,
             last_cost_id=self.last_cost_id,
@@ -296,13 +305,15 @@ def parse_rfc3339(*, value: str) -> datetime:
 
 def encode_cost_export_cursor(
     *,
+    scope_hash: str,
     last_occurred_at: datetime,
     last_source: str,
     last_cost_id: UUID,
     horizon_at_issue: datetime,
 ) -> str:
-    """Encode the opaque v1 cursor (key + frozen horizon)."""
+    """Encode the opaque v1 cursor (scope + key + frozen horizon)."""
     payload = {
+        "s": scope_hash,
         "last_occurred_at": rfc3339_utc(value=last_occurred_at),
         "last_source": last_source,
         "last_cost_id": str(last_cost_id),
@@ -312,7 +323,9 @@ def encode_cost_export_cursor(
     return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def decode_cost_export_cursor(*, cursor: str | None) -> _CursorPayload | None:
+def decode_cost_export_cursor(
+    *, cursor: str | None, scope_hash: str
+) -> _CursorPayload | None:
     """Decode a v1 cursor, or return ``None`` when the request has no cursor."""
     if cursor is None or cursor == "":
         return None
@@ -325,16 +338,19 @@ def decode_cost_export_cursor(*, cursor: str | None) -> _CursorPayload | None:
     if not isinstance(payload, dict):
         raise CostExportCursorError("cursor payload is not an object")
     try:
-        return _CursorPayload(
+        decoded = _CursorPayload(
+            scope_hash=str(payload["s"]),
             last_occurred_at=parse_rfc3339(value=str(payload["last_occurred_at"])),
             last_source=str(payload["last_source"]),
             last_cost_id=UUID(str(payload["last_cost_id"])),
             horizon_at_issue=parse_rfc3339(value=str(payload["horizon_at_issue"])),
         )
+        assert_cursor_scope(payload_scope=decoded.scope_hash, expected_scope=scope_hash)
     except (KeyError, TypeError, ValueError) as error:
         raise CostExportCursorError(
             "cursor fields are incomplete or invalid"
         ) from error
+    return decoded
 
 
 def parse_cost_export_bind(*, bind: str) -> tuple[str | None, int | None, str | None]:

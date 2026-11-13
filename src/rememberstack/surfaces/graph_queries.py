@@ -36,6 +36,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from remember.models import ReferenceBinding
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.model import AsOfTemporalScope
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
@@ -136,7 +137,10 @@ class GraphQueries:
             raise ValueError(
                 f"neighborhood limit must be between 1 and {DEFAULT_NEIGHBORHOOD_CAP}"
             )
-        parsed = _decode_cursor(cursor)
+        scope_hash = _neighborhood_scope_hash(
+            entity_id=entity_id, hops=hops, predicates=predicates
+        )
+        parsed = _decode_cursor(cursor=cursor, scope_hash=scope_hash)
         if parsed is None:
             return self._boundary(
                 explanation="the neighborhood cursor is not a live-graph cursor",
@@ -264,6 +268,7 @@ class GraphQueries:
             ),
             next_cursor=(
                 _encode_cursor(
+                    scope_hash=scope_hash,
                     offset=next_offset,
                     valid_at=applied_valid,
                     believed_at=applied_believed,
@@ -1123,11 +1128,23 @@ def _temporal_scope(
     )
 
 
-def _encode_cursor(*, offset: int, valid_at: datetime, believed_at: datetime) -> str:
+def _neighborhood_scope_hash(
+    *, entity_id: UUID, hops: int, predicates: tuple[str, ...]
+) -> str:
+    """Scope of a neighborhood listing (anchor, depth and predicate filter)."""
+    return cursor_scope_hash(
+        {"entity_id": str(entity_id), "hops": hops, "predicates": list(predicates)}
+    )
+
+
+def _encode_cursor(
+    *, scope_hash: str, offset: int, valid_at: datetime, believed_at: datetime
+) -> str:
     """Encode a live neighborhood page offset with its pinned clocks (D154)."""
     raw = json.dumps(
         {
             "v": 1,
+            "s": scope_hash,
             "o": offset,
             "valid_at": valid_at.isoformat(),
             "believed_at": believed_at.isoformat(),
@@ -1138,15 +1155,17 @@ def _encode_cursor(*, offset: int, valid_at: datetime, believed_at: datetime) ->
 
 
 def _decode_cursor(
-    value: str | None,
+    *, cursor: str | None, scope_hash: str
 ) -> tuple[int, datetime | None, datetime | None] | None:
     """Decode a live neighborhood cursor, or None when it is foreign/malformed."""
-    if value is None:
+    if cursor is None:
         return (0, None, None)
-    padding = "=" * (-len(value) % 4)
+    padding = "=" * (-len(cursor) % 4)
     try:
-        payload = json.loads(base64.urlsafe_b64decode(value + padding).decode())
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode())
         if int(payload["v"]) != 1:
+            return None
+        if payload["s"] != scope_hash:
             return None
         offset = max(int(payload["o"]), 0)
         pinned_valid = datetime.fromisoformat(payload["valid_at"])

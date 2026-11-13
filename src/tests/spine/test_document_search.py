@@ -468,6 +468,18 @@ def test_family_language_and_doc_id_filters(rig: _Rig) -> None:
         rig.search(cursor="not-a-cursor")
 
 
+def test_browse_cursor_from_another_filter_scope_is_refused(rig: _Rig) -> None:
+    """A browse cursor only continues the filter/time/versions listing it came from."""
+    for index in range(3):
+        rig.ingest(filename=f"scope-{index}.md", content=f"# Scope {index}\n")
+    page = rig.search(limit=1)
+    assert page.next_cursor is not None
+    with pytest.raises(ValueError, match="different listing"):
+        rig.search(versions="all", cursor=page.next_cursor)
+    with pytest.raises(ValueError, match="different listing"):
+        rig.search(family=["office"], cursor=page.next_cursor)
+
+
 def test_one_document_with_many_matching_chunks_cannot_crowd_out_others(
     rig: _Rig,
 ) -> None:

@@ -1056,7 +1056,12 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         )
         cost_export.add_argument("--deployment", type=UUID, required=True)
         cost_export.add_argument("--cursor", default=None)
-        cost_export.add_argument("--limit", type=int, default=100)
+        cost_export.add_argument(
+            "--limit",
+            type=int,
+            default=50,
+            help="receipts per page (1-200, default 50)",
+        )
         resume = ops_commands.add_parser(
             "resume-no-route",
             help="release parked conversion covered by current routes",

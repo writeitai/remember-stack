@@ -58,7 +58,6 @@ from dataclasses import field
 from dataclasses import replace
 from datetime import datetime
 from datetime import UTC
-import hashlib
 import json
 from typing import Final
 from typing import Literal
@@ -82,6 +81,8 @@ from remember.models import EffectiveInterval
 from remember.models import NamedReferenceTarget
 from remember.models import ReadTime
 from remember.models import ReferenceWindow
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.model import ChunkNotFoundError
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.spine.effective_time import belief_watermark
@@ -1073,12 +1074,9 @@ def _window_order(window: Window) -> str:
 
 def _scope_hash(*, request: DocumentReferencesRequest) -> str:
     """Identify the call a cursor belongs to (everything but ``limit`` and ``cursor``)."""
-    payload = json.dumps(
-        request.model_dump(mode="json", by_alias=True, exclude={"limit", "cursor"}),
-        sort_keys=True,
-        separators=(",", ":"),
+    return cursor_scope_hash(
+        request.model_dump(mode="json", by_alias=True, exclude={"limit", "cursor"})
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _encode_cursor(
@@ -1122,13 +1120,12 @@ def _decode_cursor(
             row = tuple(str(part) for part in row)
             if len(row) != 3:
                 raise ValueError("bad row key")
-        matches = payload["s"] == scope_hash
+        payload_scope = payload["s"]
     except (ValueError, KeyError, TypeError) as error:
         raise ValueError("cursor is malformed") from error
     if evaluated_at.tzinfo is None or believed_at.tzinfo is None:
         raise ValueError("cursor is malformed")
-    if not matches:
-        raise ValueError("cursor belongs to a different document_references call")
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
     return (
         evaluated_at,
         believed_at,

@@ -639,6 +639,17 @@ def test_lookup_relations_pages_via_cursor(rig: _ApiRig) -> None:
     assert len(unfiltered["facts"]) == 2
     assert unfiltered["next_cursor"] is None
 
+    mismatched = rig.client.get(
+        "/lookup/relations",
+        params={
+            "subject_entity_id": acme["entity_id"],
+            "limit": 1,
+            "cursor": capped["next_cursor"],
+        },
+    )
+    assert mismatched.status_code == 400
+    assert "different listing" in mismatched.json()["detail"]
+
 
 def test_lookup_observations_pages_without_a_property_query(rig: _ApiRig) -> None:
     """D154: browse observations page with limit/cursor → next_cursor."""
@@ -679,6 +690,20 @@ def test_lookup_observations_pages_without_a_property_query(rig: _ApiRig) -> Non
     ).json()
     assert len(whole["facts"]) == 2
     assert whole["next_cursor"] is None
+
+    alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
+        "entities"
+    ][0]
+    mismatched = rig.client.get(
+        "/lookup/observations",
+        params={
+            "entity_id": alice["entity_id"],
+            "limit": 1,
+            "cursor": capped["next_cursor"],
+        },
+    )
+    assert mismatched.status_code == 400
+    assert "different listing" in mismatched.json()["detail"]
 
 
 def test_s2_headcount_via_semantic_observation_lookup(rig: _ApiRig) -> None:

@@ -562,6 +562,21 @@ def test_one_hop_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None
         entity_id=ids["Acme"], hops=1, limit=1, cursor=first.next_cursor
     )
     assert _names(first).isdisjoint(_names(second))
+    # A cursor belongs to one (entity, hops, predicates) listing.
+    wrong_entity = graph.neighborhood(
+        entity_id=ids["Alice"], hops=1, limit=1, cursor=first.next_cursor
+    )
+    assert (
+        wrong_entity.negative is not None
+        and wrong_entity.negative.kind is NegativeKind.BOUNDARY
+    )
+    wrong_hops = graph.neighborhood(
+        entity_id=ids["Acme"], hops=2, limit=1, cursor=first.next_cursor
+    )
+    assert (
+        wrong_hops.negative is not None
+        and wrong_hops.negative.kind is NegativeKind.BOUNDARY
+    )
 
 
 def test_shared_graph_scope_restores_outer_transaction_settings(

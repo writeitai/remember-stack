@@ -221,17 +221,31 @@ def test_remember_mcp_searches_even_when_read_only(
 
 
 def test_cursor_round_trips_and_refuses_garbage() -> None:
+    from rememberstack.core.cursor_scope import cursor_scope_hash
+
     earlier = datetime(2026, 9, 24, 11, 0, tzinfo=UTC)
+    scope = cursor_scope_hash({"filters": {}, "versions": "current", "time": None})
     decoded = _decode_cursor(
-        _encode_cursor(as_of=_AT, ingested_at=earlier, doc_id=_DOC)
+        cursor=_encode_cursor(
+            scope_hash=scope, as_of=_AT, ingested_at=earlier, doc_id=_DOC
+        ),
+        scope_hash=scope,
     )
     assert decoded is not None
     assert decoded.as_of == _AT
     assert decoded.ingested_at == earlier
     assert decoded.doc_id == _DOC
+    other = cursor_scope_hash({"filters": {}, "versions": "all", "time": None})
+    with pytest.raises(ValueError, match="different listing"):
+        _decode_cursor(
+            cursor=_encode_cursor(
+                scope_hash=scope, as_of=_AT, ingested_at=earlier, doc_id=_DOC
+            ),
+            scope_hash=other,
+        )
     for garbage in ("not-base64!", "e30", "bm9wZQ"):
         with pytest.raises(ValueError, match="cursor is malformed"):
-            _decode_cursor(garbage)
+            _decode_cursor(cursor=garbage, scope_hash=scope)
 
 
 def _remote_names(*, document_search: bool, read_only: bool) -> list[str]:

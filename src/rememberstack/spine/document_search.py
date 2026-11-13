@@ -70,6 +70,8 @@ from sqlalchemy.engine import RowMapping
 
 from remember.models import SCOPE_PENDING_MAX_DOC_IDS
 from remember.models import ScopePending
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.core.document_filters import metadata_predicates
 from rememberstack.core.document_filters import people_terms
 from rememberstack.core.document_filters import person_matches
@@ -116,7 +118,8 @@ class DocumentSearch:
         self, *, deployment_id: UUID, request: DocumentSearchRequest
     ) -> DocumentSearchPage:
         """Run one search; raises ``ValueError`` for a malformed cursor."""
-        cursor = _decode_cursor(request.cursor)
+        scope_hash = _request_scope_hash(request=request)
+        cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
         ranked = request.query is not None
         # One transaction: the trigram threshold below is transaction-local.
         # D142 §8.2 (review r1 P1-3): one read-only REPEATABLE READ snapshot.
@@ -157,6 +160,7 @@ class DocumentSearch:
                 picks, next_cursor, examined = _filtered_page(
                     connection=connection,
                     scope=scope,
+                    scope_hash=scope_hash,
                     limit=request.limit,
                     cursor=cursor,
                     versions=request.versions,
@@ -387,6 +391,7 @@ def _filtered_page(
     *,
     connection: Connection,
     scope: _Scope,
+    scope_hash: str,
     limit: int,
     cursor: _Cursor | None,
     versions: Literal["current", "all"],
@@ -396,6 +401,7 @@ def _filtered_page(
     Returns the page, its ``next_cursor`` and every lineage the page examined.
     """
     as_of: datetime = scope.parameters["as_of"]
+    deployment_id = scope.parameters["deployment_id"]
     cap = PAGE_SCAN_FACTOR * limit
     position = None if cursor is None else (cursor.ingested_at, cursor.doc_id)
     picks: list[tuple[_Pick, tuple[datetime, UUID]]] = []
@@ -405,7 +411,7 @@ def _filtered_page(
         batch_limit = min(limit + 1, cap - len(examined))
         batch = _walk(
             connection=connection,
-            deployment_id=scope.parameters["deployment_id"],
+            deployment_id=deployment_id,
             as_of=as_of,
             after=position,
             limit=batch_limit,
@@ -436,13 +442,23 @@ def _filtered_page(
     page = picks[:limit]
     if len(picks) > limit:
         resume = page[-1][1]
-    elif exhausted or position is None:
+    elif exhausted or position is None or not page:
         resume = None
     else:
-        # The scan cap was reached: a short page, resumed after the walk.
-        resume = position
+        # Scan-cap or a full page that never confirmed a further match: emit a
+        # cursor only when another lineage exists past the walk position.
+        peek = _walk(
+            connection=connection,
+            deployment_id=deployment_id,
+            as_of=as_of,
+            after=position,
+            limit=1,
+        )
+        resume = position if peek else None
     next_cursor = (
-        _encode_cursor(as_of=as_of, ingested_at=resume[0], doc_id=resume[1])
+        _encode_cursor(
+            scope_hash=scope_hash, as_of=as_of, ingested_at=resume[0], doc_id=resume[1]
+        )
         if resume is not None
         else None
     )
@@ -1192,20 +1208,37 @@ def _people_matched(
     )
 
 
-def _encode_cursor(*, as_of: datetime, ingested_at: datetime, doc_id: UUID) -> str:
-    """Opaque keyset position plus the pinned as-of instant."""
+def _request_scope_hash(*, request: DocumentSearchRequest) -> str:
+    """Hash of filters, versions and time scope (everything but limit/cursor)."""
+    return cursor_scope_hash(
+        {
+            "filters": request.filters.model_dump(mode="json", by_alias=True),
+            "versions": request.versions,
+            "time": None
+            if request.time is None
+            else request.time.model_dump(mode="json", by_alias=True),
+        }
+    )
+
+
+def _encode_cursor(
+    *, scope_hash: str, as_of: datetime, ingested_at: datetime, doc_id: UUID
+) -> str:
+    """Opaque keyset position plus the pinned as-of instant and scope hash."""
     raw = json.dumps(
         {
+            "s": scope_hash,
             "as_of": as_of.isoformat(),
             "ingested_at": ingested_at.isoformat(),
             "doc_id": str(doc_id),
-        }
+        },
+        separators=(",", ":"),
     ).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _decode_cursor(cursor: str | None) -> _Cursor | None:
-    """Read a cursor back, refusing one that does not parse."""
+def _decode_cursor(*, cursor: str | None, scope_hash: str) -> _Cursor | None:
+    """Read a cursor back, refusing one that does not parse or fit this call."""
     if cursor is None:
         return None
     padding = "=" * (-len(cursor) % 4)
@@ -1215,8 +1248,11 @@ def _decode_cursor(cursor: str | None) -> _Cursor | None:
         ingested_at = datetime.fromisoformat(payload["ingested_at"])
         if as_of.tzinfo is None or ingested_at.tzinfo is None:
             raise ValueError("cursor instants must carry a timezone")
-        return _Cursor(
+        decoded = _Cursor(
             as_of=as_of, ingested_at=ingested_at, doc_id=UUID(payload["doc_id"])
         )
+        payload_scope = payload["s"]
     except (ValueError, KeyError, TypeError, UnicodeDecodeError) as error:
         raise ValueError("cursor is malformed") from error
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
+    return decoded

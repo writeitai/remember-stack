@@ -201,6 +201,43 @@ def test_full_page_next_cursor_replay_stays_past_prior_rows(
     assert [row.cost_id for row in replay.receipts] == [second_id]
 
 
+def test_exact_limit_page_has_null_next_cursor(database_engine: Engine) -> None:
+    """Fetch limit+1: an exactly-full corpus ends with next_cursor null (D154)."""
+    _bootstrap(database_engine)
+    reader = SqlCostExportReader(
+        engine=database_engine, safety_lag=timedelta(seconds=0)
+    )
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=1)
+    only = uuid4()
+    _insert_surface(database_engine, cost_id=only, occurred_at=stamp)
+    page = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=1)
+    assert [row.cost_id for row in page.receipts] == [only]
+    assert page.next_cursor is None
+
+
+def test_cost_export_cursor_rejects_other_deployment_scope(
+    database_engine: Engine,
+) -> None:
+    """A cursor only continues the deployment listing it came from."""
+    from rememberstack.spine.cost_export import CostExportCursorError
+
+    _bootstrap(database_engine)
+    reader = SqlCostExportReader(
+        engine=database_engine, safety_lag=timedelta(seconds=0)
+    )
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=1)
+    _insert_surface(database_engine, cost_id=uuid4(), occurred_at=stamp)
+    _insert_surface(
+        database_engine, cost_id=uuid4(), occurred_at=stamp + timedelta(milliseconds=1)
+    )
+    page = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=1)
+    assert page.next_cursor is not None
+    with pytest.raises(CostExportCursorError):
+        reader.read_page(
+            deployment_id=_OTHER_DEPLOYMENT, cursor=page.next_cursor, limit=1
+        )
+
+
 def test_persist_failures_appear_on_the_page(database_engine: Engine) -> None:
     """Meter-state counters are part of every page, including empty ones."""
     _bootstrap(database_engine)

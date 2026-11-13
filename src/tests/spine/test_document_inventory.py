@@ -655,6 +655,46 @@ def test_a_cursor_we_did_not_issue_is_refused(database_engine: Engine) -> None:
         )
 
 
+def test_a_cursor_from_another_status_filter_is_refused(
+    database_engine: Engine,
+) -> None:
+    """A cursor only continues the listing it came from (D154 scope hash)."""
+    with database_engine.begin() as connection:
+        # Three failed + one ready so a failed page of size 1 still yields a
+        # next_cursor (look-ahead needs a second matching row).
+        for index in range(3):
+            doc_id = _document(connection=connection, title=f"scope-failed-{index}.md")
+            _version(
+                connection=connection,
+                doc_id=doc_id,
+                version_no=1,
+                status="failed",
+                at=_NOW - timedelta(minutes=index),
+                error="x",
+            )
+        ready_id = _document(connection=connection, title="scope-ready.md")
+        _version(
+            connection=connection,
+            doc_id=ready_id,
+            version_no=1,
+            status="ready",
+            at=_NOW - timedelta(minutes=10),
+        )
+    inventory = DocumentInventory(engine=database_engine)
+    failed = inventory.list_documents(
+        deployment_id=_DEPLOYMENT_ID, status="failed", limit=1
+    )
+    assert failed.next_cursor is not None
+    with pytest.raises(ValueError, match="different listing"):
+        inventory.list_documents(
+            deployment_id=_DEPLOYMENT_ID, cursor=failed.next_cursor
+        )
+    with pytest.raises(ValueError, match="different listing"):
+        inventory.list_documents(
+            deployment_id=_DEPLOYMENT_ID, status="ready", cursor=failed.next_cursor
+        )
+
+
 def test_an_oversized_page_request_is_capped_not_refused(
     database_engine: Engine,
 ) -> None:

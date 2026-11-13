@@ -142,20 +142,27 @@ def test_cost_usd_serializes_as_decimal_string_not_float() -> None:
 
 
 def test_cursor_round_trips_and_rejects_garbage() -> None:
-    """Opaque cursors encode the key plus frozen horizon."""
+    """Opaque cursors encode the key plus frozen horizon and scope hash."""
+    from rememberstack.core.cursor_scope import cursor_scope_hash
+
+    scope = cursor_scope_hash({"deployment_id": str(_DEPLOYMENT)})
     encoded = encode_cost_export_cursor(
+        scope_hash=scope,
         last_occurred_at=_WHEN,
         last_source="surface",
         last_cost_id=_COST,
         horizon_at_issue=_WHEN,
     )
-    decoded = decode_cost_export_cursor(cursor=encoded)
+    decoded = decode_cost_export_cursor(cursor=encoded, scope_hash=scope)
     assert decoded is not None
     assert decoded.last_source == "surface"
     assert decoded.last_cost_id == _COST
-    assert decode_cost_export_cursor(cursor=None) is None
+    assert decode_cost_export_cursor(cursor=None, scope_hash=scope) is None
     with pytest.raises(CostExportCursorError):
-        decode_cost_export_cursor(cursor="%%%not-a-cursor")
+        decode_cost_export_cursor(cursor="%%%not-a-cursor", scope_hash=scope)
+    other = cursor_scope_hash({"deployment_id": str(_COST)})
+    with pytest.raises(CostExportCursorError):
+        decode_cost_export_cursor(cursor=encoded, scope_hash=other)
 
 
 def test_build_api_does_not_register_export() -> None:

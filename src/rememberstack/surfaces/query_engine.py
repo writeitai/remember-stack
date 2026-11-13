@@ -49,6 +49,8 @@ from remember.retrieval import DEFAULT_CONTEXT_K
 from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from remember.retrieval import MAX_CONTEXT_K
 from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -248,12 +250,13 @@ _BOUNDED_AGGREGATE_FORMS = frozenset(
 
 
 def _encode_lookup_cursor(
-    *, evaluated_at: datetime, ingested_at: datetime, fact_id: UUID
+    *, scope_hash: str, evaluated_at: datetime, ingested_at: datetime, fact_id: UUID
 ) -> str:
     """Pack a browse-lookup keyset position with its pinned belief instant."""
     raw = json.dumps(
         {
             "v": 1,
+            "s": scope_hash,
             "e": evaluated_at.isoformat(),
             "a": ingested_at.isoformat(),
             "i": str(fact_id),
@@ -264,7 +267,7 @@ def _encode_lookup_cursor(
 
 
 def _decode_lookup_cursor(
-    token: str | None,
+    token: str | None, *, scope_hash: str
 ) -> tuple[datetime, tuple[datetime, UUID] | None]:
     """Unpack a browse-lookup cursor, or raise when it is malformed."""
     if token is None:
@@ -277,6 +280,7 @@ def _decode_lookup_cursor(
         evaluated_at = datetime.fromisoformat(payload["e"])
         ingested_at = datetime.fromisoformat(payload["a"])
         fact_id = UUID(str(payload["i"]))
+        payload_scope = payload["s"]
     except (
         ValueError,
         KeyError,
@@ -287,7 +291,42 @@ def _decode_lookup_cursor(
         raise ValueError(f"invalid lookup cursor: {token!r}") from error
     if evaluated_at.tzinfo is None or ingested_at.tzinfo is None:
         raise ValueError(f"invalid lookup cursor: {token!r}")
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
     return evaluated_at, (ingested_at, fact_id)
+
+
+def _lookup_relations_scope_hash(
+    *,
+    subject_entity_id: UUID | None,
+    predicate: str | None,
+    object_entity_id: UUID | None,
+    valid_at: datetime | None,
+) -> str:
+    """Scope of a relations browse listing (filters that define membership)."""
+    return cursor_scope_hash(
+        {
+            "subject_entity_id": None
+            if subject_entity_id is None
+            else str(subject_entity_id),
+            "predicate": predicate,
+            "object_entity_id": None
+            if object_entity_id is None
+            else str(object_entity_id),
+            "valid_at": None if valid_at is None else valid_at.isoformat(),
+        }
+    )
+
+
+def _lookup_observations_scope_hash(
+    *, entity_id: UUID, valid_at: datetime | None
+) -> str:
+    """Scope of an observations browse listing."""
+    return cursor_scope_hash(
+        {
+            "entity_id": str(entity_id),
+            "valid_at": None if valid_at is None else valid_at.isoformat(),
+        }
+    )
 
 
 def _encode_feed_cursor(*, at: datetime, item_id: UUID) -> str:
@@ -2057,23 +2096,37 @@ class QueryEngine:
             raise ValueError(
                 f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
             )
-        evaluated_at, keyset = _decode_lookup_cursor(cursor)
-        as_of = valid_at or evaluated_at
+        scope_hash = _lookup_relations_scope_hash(
+            subject_entity_id=subject_entity_id,
+            predicate=predicate,
+            object_entity_id=object_entity_id,
+            valid_at=valid_at,
+        )
+        evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
+        pinned_belief = keyset is not None
         with self._engine.connect() as connection:
+            # Pin belief to the database clock on the first page so a cursor
+            # cannot lag rows just written with now() (Python clocks can).
+            if keyset is None:
+                evaluated_at = connection.execute(text("SELECT now()")).scalar_one()
+            as_of = valid_at or evaluated_at
             rows = (
                 connection.execute(
-                    _LOOKUP_RELATIONS,
+                    _lookup_relations_sql(pinned_belief=pinned_belief),
                     {
                         "deployment_id": deployment_id,
                         "subject_entity_id": subject_entity_id,
                         "predicate": predicate,
                         "object_entity_id": object_entity_id,
                         "as_of": as_of,
+                        "evaluated_at": evaluated_at,
                         "cursor_at": keyset[0] if keyset else None,
                         "cursor_id": keyset[1] if keyset else None,
                         "limit": limit + 1,
                         **_lookup_scope(
-                            valid_at=valid_at, evaluated_at=evaluated_at
+                            valid_at=valid_at,
+                            evaluated_at=evaluated_at,
+                            pinned_belief=pinned_belief,
                         ).parameters(),
                     },
                 )
@@ -2091,6 +2144,7 @@ class QueryEngine:
         if has_more and rows:
             last = rows[-1]
             next_cursor = _encode_lookup_cursor(
+                scope_hash=scope_hash,
                 evaluated_at=evaluated_at,
                 ingested_at=last["ingested_at"],
                 fact_id=last["fact_id"],
@@ -2153,21 +2207,30 @@ class QueryEngine:
                 raise ValueError(
                     f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
                 )
-            evaluated_at, keyset = _decode_lookup_cursor(cursor)
-            as_of = valid_at or evaluated_at
+            scope_hash = _lookup_observations_scope_hash(
+                entity_id=entity_id, valid_at=valid_at
+            )
+            evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
+            pinned_belief = keyset is not None
             with self._engine.connect() as connection:
+                if keyset is None:
+                    evaluated_at = connection.execute(text("SELECT now()")).scalar_one()
+                as_of = valid_at or evaluated_at
                 rows = (
                     connection.execute(
-                        _LOOKUP_OBSERVATIONS,
+                        _lookup_observations_sql(pinned_belief=pinned_belief),
                         {
                             "deployment_id": deployment_id,
                             "entity_id": entity_id,
                             "as_of": as_of,
+                            "evaluated_at": evaluated_at,
                             "cursor_at": keyset[0] if keyset else None,
                             "cursor_id": keyset[1] if keyset else None,
                             "limit": limit + 1,
                             **_lookup_scope(
-                                valid_at=valid_at, evaluated_at=evaluated_at
+                                valid_at=valid_at,
+                                evaluated_at=evaluated_at,
+                                pinned_belief=pinned_belief,
                             ).parameters(),
                         },
                     )
@@ -2179,6 +2242,7 @@ class QueryEngine:
             if has_more and rows:
                 last = rows[-1]
                 next_cursor = _encode_lookup_cursor(
+                    scope_hash=scope_hash,
                     evaluated_at=evaluated_at,
                     ingested_at=last["ingested_at"],
                     fact_id=last["fact_id"],
@@ -2188,16 +2252,38 @@ class QueryEngine:
                 raise ValueError("lookup k must be between 1 and 400")
             evaluated_at = datetime.now(tz=UTC)
             as_of = valid_at or evaluated_at
-            nominated = self._search_index.search_facts(
-                deployment_id=str(deployment_id),
-                vector=self._embed(
-                    query=property_query,
-                    call_site=SurfaceCallSite.LOOKUP_OBSERVATIONS,
-                    deployment_id=deployment_id,
-                ),
-                k=k + 1,
-                kind="observation",
+            # Restrict to this entity before the k+1 cut so truncated /
+            # known_empty describe this entity's matches, not the corpus.
+            search_scored = getattr(self._search_index, "search_facts_scored", None)
+            vector = self._embed(
+                query=property_query,
+                call_site=SurfaceCallSite.LOOKUP_OBSERVATIONS,
+                deployment_id=deployment_id,
             )
+            if search_scored is not None:
+                scored = search_scored(
+                    deployment_id=str(deployment_id),
+                    vector=vector,
+                    k=k + 1,
+                    kind="observation",
+                    entity_ids=(str(entity_id),),
+                    time=(
+                        CurrentFactTime()
+                        if valid_at is None
+                        else AtFactTime(at=valid_at)
+                    ),
+                    evaluated_at=evaluated_at,
+                )
+                nominated = tuple(item.item_id for item in scored)
+            else:
+                nominated = tuple(
+                    self._search_index.search_facts(
+                        deployment_id=str(deployment_id),
+                        vector=vector,
+                        k=k + 1,
+                        kind="observation",
+                    )
+                )
             confirmed, dropped = self._confirm_observations(
                 deployment_id=deployment_id,
                 entity_id=entity_id,
@@ -4218,8 +4304,10 @@ class QueryEngine:
                             "as_of": as_of,
                             # "at" the confirmed instant; for a current
                             # lookup that instant is the evaluation instant.
+                            # Ranked confirmation reads current belief through
+                            # the projection (same as a first browse page).
                             **_lookup_scope(
-                                valid_at=as_of, evaluated_at=as_of
+                                valid_at=as_of, evaluated_at=as_of, pinned_belief=False
                             ).parameters(),
                         },
                     )
@@ -4356,11 +4444,19 @@ class QueryEngine:
         return response.vectors[0]
 
 
-def _lookup_scope(*, valid_at: datetime | None, evaluated_at: datetime) -> TextScope:
-    """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current."""
+def _lookup_scope(
+    *, valid_at: datetime | None, evaluated_at: datetime, pinned_belief: bool
+) -> TextScope:
+    """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current.
+
+    A continued page pins ``believed_at`` to the cursor's evaluation clock so
+    the as-of evidence gate stays stable across pages (D154). The first page
+    reads current belief through the projection.
+    """
     return TextScope.of(
         time=None if valid_at is None else AtFactTime(at=valid_at),
         evaluated_at=evaluated_at,
+        believed_at=evaluated_at if pinned_belief else None,
     )
 
 
@@ -5501,15 +5597,37 @@ _RESOLVE_CONTEXT_HITS = text(
     """
 )
 
-_LOOKUP_RELATIONS = text(
-    f"""
+
+def _lookup_belief_predicate(*, pinned_belief: bool) -> str:
+    """Belief filter for browse lookups.
+
+    The first page reads current belief (``invalidated_at IS NULL``). A
+    continued page pins the cursor's evaluation instant so later pages keep
+    the same as-of view: rows ingested after that instant stay out, and rows
+    invalidated after it stay in (D154). The ingested bound is applied only
+    when pinned — on the first page a Python ``now()`` can lag the database
+    clock that stamped ``ingested_at``, which would drop just-written rows.
+    """
+    if pinned_belief:
+        return (
+            "ingested_at <= :evaluated_at"
+            " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+        )
+    return "invalidated_at IS NULL"
+
+
+def _lookup_relations_sql(*, pinned_belief: bool) -> TextClause:
+    """Browse-relations statement; continued pages use the as-of evidence gate."""
+    belief = _lookup_belief_predicate(pinned_belief=pinned_belief)
+    return text(
+        f"""
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
-      AND invalidated_at IS NULL
+      AND {belief}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (CAST(:subject_entity_id AS uuid) IS NULL
@@ -5522,21 +5640,25 @@ _LOOKUP_RELATIONS = text(
             OR ingested_at < :cursor_at
             OR (ingested_at = :cursor_at AND relation_id < CAST(:cursor_id AS uuid))
           )
-      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id")}
+      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id", pinned_belief=pinned_belief)}
     ORDER BY ingested_at DESC, relation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
-)
+    )
 
-_LOOKUP_OBSERVATIONS = text(
-    f"""
+
+def _lookup_observations_sql(*, pinned_belief: bool) -> TextClause:
+    """Browse-observations statement; continued pages use the as-of evidence gate."""
+    belief = _lookup_belief_predicate(pinned_belief=pinned_belief)
+    return text(
+        f"""
     SELECT observation_id AS fact_id, statement AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
       AND subject_entity_id = :entity_id
-      AND invalidated_at IS NULL
+      AND {belief}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (
@@ -5544,11 +5666,12 @@ _LOOKUP_OBSERVATIONS = text(
             OR ingested_at < :cursor_at
             OR (ingested_at = :cursor_at AND observation_id < CAST(:cursor_id AS uuid))
           )
-      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id")}
+      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id", pinned_belief=pinned_belief)}
     ORDER BY ingested_at DESC, observation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
-)
+    )
+
 
 _FACTS_CONTEXT_TIME_PREDICATE = """
       AND fact.ingested_at <= :evaluated_at
