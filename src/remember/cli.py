@@ -1308,8 +1308,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         ),
     )
     search_documents.add_argument(
-        "--cursor",
-        help="pass a previous page's next_cursor (only without a query)",
+        "--cursor", help="pass a previous page's next_cursor (only without a query)"
     )
     delete_document = documents_commands.add_parser(
         "delete",

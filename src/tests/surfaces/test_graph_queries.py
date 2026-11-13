@@ -559,10 +559,7 @@ def test_one_hop_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None
     assert first.truncation.truncated is True
     assert first.truncation.reason == "result_budget"
     second = graph.neighborhood(
-        entity_id=ids["Acme"],
-        hops=1,
-        limit=1,
-        cursor=first.next_cursor,
+        entity_id=ids["Acme"], hops=1, limit=1, cursor=first.next_cursor
     )
     assert _names(first).isdisjoint(_names(second))
 

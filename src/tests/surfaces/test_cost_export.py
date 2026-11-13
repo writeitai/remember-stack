@@ -152,9 +152,7 @@ def _insert_worker(
         )
 
 
-def test_empty_page_then_fresh_read_sees_row_after_lag(
-    database_engine: Engine,
-) -> None:
+def test_empty_page_then_fresh_read_sees_row_after_lag(database_engine: Engine) -> None:
     """An empty page ends (next_cursor null); a later first page sees aged rows."""
     _bootstrap(database_engine)
     reader = SqlCostExportReader(
@@ -188,9 +186,7 @@ def test_full_page_next_cursor_replay_stays_past_prior_rows(
     second_id = uuid4()
     _insert_surface(database_engine, cost_id=first_id, occurred_at=aged)
     _insert_surface(
-        database_engine,
-        cost_id=second_id,
-        occurred_at=aged + timedelta(milliseconds=1),
+        database_engine, cost_id=second_id, occurred_at=aged + timedelta(milliseconds=1)
     )
     start = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=1)
     assert [row.cost_id for row in start.receipts] == [first_id]
@@ -199,9 +195,7 @@ def test_full_page_next_cursor_replay_stays_past_prior_rows(
     first = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
     assert [row.cost_id for row in first.receipts] == [second_id]
     _insert_surface(
-        database_engine,
-        cost_id=uuid4(),
-        occurred_at=aged - timedelta(seconds=1),
+        database_engine, cost_id=uuid4(), occurred_at=aged - timedelta(seconds=1)
     )
     replay = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
     assert [row.cost_id for row in replay.receipts] == [second_id]

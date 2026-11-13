@@ -567,7 +567,7 @@ class _EmptyInventory:
 
     def list_documents(self, **_: object) -> DocumentPage:
         self.calls += 1
-        return DocumentPage(documents=(), cursor=None)
+        return DocumentPage(documents=(), next_cursor=None)
 
 
 def _embedding_probe(*, lease: _FakeLease, provider: FakeModelProvider) -> TestClient:

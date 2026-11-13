@@ -102,7 +102,7 @@ class _Inventory:
                     serving=True,
                 ),
             ),
-            cursor="next-page",
+            next_cursor="next-page",
         )
 
 

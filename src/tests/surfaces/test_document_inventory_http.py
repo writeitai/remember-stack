@@ -89,7 +89,7 @@ class _Inventory:
                     serving=True,
                 ),
             ),
-            cursor=None,
+            next_cursor=None,
         )
 
 
@@ -121,7 +121,7 @@ def test_the_route_answers_with_the_deployment_it_serves() -> None:
     body = response.json()
     assert body["documents"][0]["title"] == "notes.md"
     assert body["documents"][0]["latest"]["status"] == "ready"
-    assert body["cursor"] is None
+    assert body["next_cursor"] is None
 
 
 def test_the_page_size_is_bounded_by_the_route() -> None:

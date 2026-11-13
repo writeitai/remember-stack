@@ -274,10 +274,12 @@ def test_cursor_round_trips_and_refuses_other_calls() -> None:
         _decode_cursor(cursor=cursor, scope_hash=other)
     with pytest.raises(ValueError, match="malformed"):
         _decode_cursor(cursor="!!", scope_hash=scope_hash)
-    # k does not change which call a cursor belongs to
+    # limit does not change which call a cursor belongs to
     assert (
         _scope_hash(
-            request=DocumentReferencesRequest(doc_id=_DOC, section_key="approvals", k=3)
+            request=DocumentReferencesRequest(
+                doc_id=_DOC, section_key="approvals", limit=3
+            )
         )
         == scope_hash
     )

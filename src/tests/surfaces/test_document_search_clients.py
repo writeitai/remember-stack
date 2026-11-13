@@ -87,7 +87,7 @@ class _Search:
                     family="office",
                 ),
             ),
-            cursor="next-page",
+            next_cursor="next-page",
             as_of=_AT,
         )
 
@@ -187,10 +187,10 @@ def test_cli_searches_with_filters(
         == 0
     )
     printed = json.loads(capsys.readouterr().out)
-    assert printed["cursor"] == "next-page"
+    assert printed["next_cursor"] == "next-page"
     request = search.requests[-1]
     assert request.query is None
-    assert request.k == 3
+    assert request.limit == 3
     assert request.filters.family == ("pdf",)
     assert request.filters.authors == ("Alice", "bob@acme.com")
     assert request.filters.created_from == datetime(2025, 1, 1, tzinfo=UTC)

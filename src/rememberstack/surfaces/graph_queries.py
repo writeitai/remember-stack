@@ -1123,9 +1123,7 @@ def _temporal_scope(
     )
 
 
-def _encode_cursor(
-    *, offset: int, valid_at: datetime, believed_at: datetime
-) -> str:
+def _encode_cursor(*, offset: int, valid_at: datetime, believed_at: datetime) -> str:
     """Encode a live neighborhood page offset with its pinned clocks (D154)."""
     raw = json.dumps(
         {
@@ -1153,13 +1151,7 @@ def _decode_cursor(
         offset = max(int(payload["o"]), 0)
         pinned_valid = datetime.fromisoformat(payload["valid_at"])
         pinned_believed = datetime.fromisoformat(payload["believed_at"])
-    except (
-        ValueError,
-        KeyError,
-        TypeError,
-        json.JSONDecodeError,
-        binascii.Error,
-    ):
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError, binascii.Error):
         return None
     if pinned_valid.tzinfo is None or pinned_believed.tzinfo is None:
         return None

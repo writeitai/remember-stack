@@ -410,13 +410,13 @@ def test_engine_mcp_offers_section_history_only_when_composed() -> None:
     assert names[0] == "section_history"
     result = server.call_tool(
         name="section_history",
-        arguments={"doc_id": str(doc_id), "section_key": "per-diem", "k": 3},
+        arguments={"doc_id": str(doc_id), "section_key": "per-diem", "limit": 3},
     )
     assert result["isError"] is False
     call = history.section_history.call_args.kwargs
     assert call["deployment_id"] == _DEPLOYMENT
     assert call["request"] == SectionHistoryRequest(
-        doc_id=doc_id, section_key="per-diem", k=3
+        doc_id=doc_id, section_key="per-diem", limit=3
     )
 
     history.section_history.side_effect = DocumentNotFoundError(doc_id)

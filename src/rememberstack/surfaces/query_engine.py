@@ -247,7 +247,6 @@ _BOUNDED_AGGREGATE_FORMS = frozenset(
 `count` and `timeline` are naturally bounded (one row / one row per year)."""
 
 
-
 def _encode_lookup_cursor(
     *, evaluated_at: datetime, ingested_at: datetime, fact_id: UUID
 ) -> str:
