@@ -529,7 +529,7 @@ chase or extra mount is needed to open a whole source. K is a standalone git rep
 consumed through its own checkout/read surfaces, outside P3. Navigation starts at
 root `llms.txt` and deterministic type/topic member tables (S56, S59). Paths move:
 store `doc_id` and resolve via MCP `p3_path` or compute its deterministic 96-bit
-suffix and use `find <mount> -path '*-<suffix>/*'`. Verify the displayed version
+suffix and use `find <root> -type d -name '*--<suffix>'`. Verify the displayed version
 for exact-edition reads. `p3_path=null` is truthful when absent/updating; readiness
 `p3` compares the nullable publication marker with current DB-selected export inputs
 and path, rather than a recent tree timestamp. Managed `remember mount

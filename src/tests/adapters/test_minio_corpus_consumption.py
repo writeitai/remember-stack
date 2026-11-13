@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from typing import Any
+from typing import cast
 from urllib.parse import unquote
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from remember.models import ReadinessRequirements
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core.corpus_export import corpus_suffix
+from rememberstack.core.corpus_export import json_bytes
 from rememberstack.model import ObjectKey
 from rememberstack.profiles import SelfHostProfile
 from rememberstack.profiles import SelfHostSettings
@@ -37,6 +39,7 @@ from tests.adapters.test_minio_corpus_publication import (
 )
 from tests.adapters.test_minio_corpus_publication import Publication
 from tests.adapters.test_minio_corpus_publication import publication as publication
+from tests.corpus_export_support import digest
 from tests.workers.test_corpus_reader_export_pg import _seed as seed_reading
 
 
@@ -143,7 +146,10 @@ def test_path_and_readiness_remain_null_during_and_after_failure(
     )
     assert not response["isError"]
     assert (
-        json.loads(response["content"][0]["text"])["documents"][0]["p3_path"] == target
+        json.loads(cast(list[dict[str, str]], response["content"])[0]["text"])[
+            "documents"
+        ][0]["p3_path"]
+        == target
     )
 
 
@@ -212,6 +218,13 @@ def test_periodised_history_and_no_edition_preserve_exact_source_handles(
     state = publication
     client, _ = consumer
     old = state.source
+    raw = b"%PDF-1.7\nNew edition original\n"
+    markdown = b"# Current edition\n\n![Plot](media/nested/plot.png)\n"
+    inventory = json.loads(
+        state.artifacts.read_bytes(key=ObjectKey(old.conversion_uri))
+    )
+    inventory["markdown_sha256"] = digest(markdown)
+    manifest = json_bytes(inventory)
     current = replace(
         old,
         version_id=uuid4(),
@@ -219,8 +232,33 @@ def test_periodised_history_and_no_edition_preserve_exact_source_handles(
         structure_generation_id=uuid4(),
         version_no=2,
         title="Current edition",
+        family="word",
+        raw_uri="registered/current-edition",
+        content_hash=digest(raw),
+        markdown_uri="e0/current-edition.md",
+        markdown_hash=digest(markdown),
+        conversion_uri="e0/current-edition.json",
+        manifest_hash=digest(manifest),
     )
+    state.raw.write_bytes(
+        key=ObjectKey(current.raw_uri), content=raw, storage_class="hot"
+    )
+    for key, content in (
+        (current.markdown_uri, markdown),
+        (current.conversion_uri, manifest),
+    ):
+        state.artifacts.write_bytes(
+            key=ObjectKey(key), content=content, storage_class="hot"
+        )
     _seed(state.engine, current)
+    state.publish()
+    historical = client.search_documents(
+        filters=DocumentSearchFilters(doc_ids=(old.doc_id,), family=("pdf",)),
+        versions="all",
+        time={"mode": "history"},
+    ).documents[0]
+    assert historical.version_id == old.version_id
+    assert not historical.served_version and historical.p3_path is None
     client.set_effective_periods(
         doc_id=old.doc_id,
         version_id=old.version_id,
@@ -276,12 +314,70 @@ def test_periodised_history_and_no_edition_preserve_exact_source_handles(
         catalog.structure_source(representation_id=old.representation_id).markdown_uri
         == old.markdown_uri
     )
-    assert state.raw.read_bytes(key=ObjectKey(old.raw_uri)) == state.raw.read_bytes(
+    assert (
+        catalog.convert_source(version_id=current.version_id).raw_uri == current.raw_uri
+    )
+    assert (
+        catalog.structure_source(
+            representation_id=current.representation_id
+        ).markdown_uri
+        == current.markdown_uri
+    )
+    assert state.raw.read_bytes(key=ObjectKey(old.raw_uri)) != state.raw.read_bytes(
         key=ObjectKey(current.raw_uri)
     )
+    assert state.artifacts.read_bytes(key=ObjectKey(old.markdown_uri)) != markdown
     client.delete_document(doc_id=old.doc_id)
     assert _result(client, state, versions="all", time={"mode": "history"}) == ()
     assert not _ready(client, current.version_id).ready
+
+
+def test_matching_aggregate_and_frozen_local_attestation(
+    publication: Publication, consumer, tmp_path: Path
+) -> None:
+    """Real markers feed offline attestation; no benchmark or model is executed."""
+    from benchmarks.locomo.corpus import capture_publications
+    from benchmarks.locomo.retrieval import P3Mount
+    from benchmarks.locomo.retrieval import RetrievalInfrastructureError
+
+    state = publication
+    client, _ = consumer
+    versions = {state.source.doc_id: state.source.version_id}
+    with pytest.raises(ValueError, match="incomplete"):
+        capture_publications(client=client, versions=versions)
+    state.publish()
+    control = replace(
+        state.source,
+        doc_id=uuid4(),
+        version_id=uuid4(),
+        representation_id=uuid4(),
+        structure_generation_id=uuid4(),
+    )
+    _seed(state.engine, control)
+    state.publish(control.doc_id)
+    versions[control.doc_id] = control.version_id
+    report = _ready(client, *versions.values())
+    assert report.ready and report.capabilities["p3"].version is None
+    assert report.capabilities["p3"].built_at is None
+    assert report.capabilities["p3"].published_at is None
+    publications = capture_publications(client=client, versions=versions)
+    root = tmp_path / "attested"
+    for key in state.bucket.store.iter_keys(prefix=""):
+        target = root / key.root
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(state.bucket.store.read_bytes(key=key))
+    mount = P3Mount(root=root, publications=publications)
+    try:
+        mount.verify_inventory()
+        assert state.source.path + "/original.pdf" in mount.inventory
+        assert state.source.path + "/media/nested/plot.png" in mount.inventory
+        original = root / state.source.path / "original.pdf"
+        original.write_bytes(b"late stale bytes")
+        assert _ready(client, *versions.values()).ready
+        with pytest.raises(RetrievalInfrastructureError):
+            mount.verify_inventory()
+    finally:
+        mount.close()
 
 
 @pytest.mark.parametrize("claims,facts", [(True, True), (True, False), (False, False)])
@@ -321,7 +417,7 @@ def test_navigation_to_originals_and_derivatives_and_suffix_moves(
             for child in token.children or ():
                 if child.type == "link_open":
                     href = child.attrGet("href")
-                    assert href
+                    assert isinstance(href, str)
                     target = (path.parent / unquote(href)).resolve()
                     assert target.is_relative_to(root.resolve()) and target.exists()
                     walk(target)
@@ -346,7 +442,9 @@ def test_navigation_to_originals_and_derivatives_and_suffix_moves(
 
     shutil.rmtree(root)
     download()
-    moved = root / _result(client, state)[0].p3_path
+    moved_path = _result(client, state)[0].p3_path
+    assert moved_path is not None
+    moved = root / moved_path
     assert moved != folder and moved.name.endswith("--" + suffix)
     assert subprocess.check_output(
         ["find", str(root), "-name", f"*--{suffix}"], text=True

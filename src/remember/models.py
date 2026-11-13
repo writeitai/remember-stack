@@ -421,14 +421,20 @@ class DocumentSearchResult(BaseModel):
     file_name: str | None = None
     title: str | None = None
     source_path: str | None = None
-    p3_path: str | None = None
-    """Relative corpus folder for this served version, only when its nullable
-    publication marker matches the current export inputs. Null for historical,
-    raw-only, unpublished, updating or failed publications. Type/topic/title
-    changes move it: re-resolve by doc_id; only the folder suffix is stable.
-    Use version_id and representation_id with source_open for exact editions."""
-    served_version: bool = True
-    """Whether ``version_id`` is the lineage's served (current) version."""
+    p3_path: str | None = Field(
+        default=None,
+        description=(
+            "Relative corpus folder only for the served selected version with a "
+            "matching nullable publication marker. Null for historical, raw-only, "
+            "unpublished, updating or failed publications. Type/topic/title changes "
+            "move it: re-resolve by doc_id; only the folder suffix is stable. "
+            "Retain version_id and representation_id for exact source identity."
+        ),
+    )
+    served_version: bool = Field(
+        default=True,
+        description="Whether version_id is served, independently of corpus publication.",
+    )
     representation_id: UUID | None = None
     """The judged version's current reading; with ``version_id`` it opens
     exactly the version described."""
@@ -935,9 +941,18 @@ class CapabilityReadiness(BaseModel):
     ready: bool
     checked_at: datetime
     reason: str
-    version: str | None = None
-    built_at: datetime | None = None
-    published_at: datetime | None = None
+    version: str | None = Field(
+        default=None,
+        description="For p3, the export digest of one ready requested version; null for multiple versions or incomplete publication.",
+    )
+    built_at: datetime | None = Field(
+        default=None,
+        description="Null for p3: the live corpus has no global build time.",
+    )
+    published_at: datetime | None = Field(
+        default=None,
+        description="Null for p3: the live corpus has no global publication time.",
+    )
 
 
 class PipelineReadinessReport(BaseModel):

@@ -401,7 +401,8 @@ def _corpus_readiness_on(
     )
     revisions: list[str] = []
     for version_id in version_ids:
-        document = documents.get(version_documents.get(version_id))
+        doc_id = version_documents.get(version_id)
+        document = documents.get(doc_id) if doc_id is not None else None
         if document is None:
             return False, "corpus_publication_incomplete", None
         if document.version_id != version_id:

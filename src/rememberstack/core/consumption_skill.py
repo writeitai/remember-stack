@@ -336,7 +336,7 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
         "identities require a retry. The marker certifies current inputs were "
         "published once, not a whole-tree snapshot or an independently restored "
         "bucket. For exact historical editions, or when no edition is in force, "
-        "use version-addressed `source_open` and its immutable source handles. "
+        "retain exact `version_id` / `representation_id` source handles (`source_open` in the design). No public `source_open` operation ships yet. "
         "Suffix lookup may find the served folder even then; it never overrides "
         "the temporal selection."
     )

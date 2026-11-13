@@ -190,7 +190,7 @@ def test_corpus_navigation_resolution_and_exact_editions() -> None:
         "find <root> -type d -name '*--<suffix>'",
         "matching nullable publication marker",
         "only the suffix is stable",
-        "version-addressed `source_open`",
+        "No public `source_open` operation ships yet",
         "K is a standalone repository",
         "same shape with claims/facts on or off",
         "before and after a read",

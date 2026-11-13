@@ -2494,6 +2494,13 @@ capabilities you need. It reports each capability separately and a single
 | `live_graph` | The deployment's PostgreSQL graph passes its health checks. | Graph traversal and the neighbourhood expansion in `facts_context`. Deployment-wide. |
 | `p3` | Each requested served version's corpus publication marker matches its current export inputs. | The read-only filesystem views. Self-hosted only; see [Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views). |
 
+The `p3` check uses the same per-version guard as document search's
+`p3_path`. An unrelated publish cannot satisfy it. A ready single-version
+request exposes its export digest as `version`; multiple versions return
+`version: null`, and `built_at` / `published_at` are always null. A matching
+marker records publication once, not an atomic tree or an independently
+restored bucket. A missing local mount does not invalidate a remote publish.
+
 For ordinary recall, require `pipeline`, `p1` and `live_graph`, and leave
 `p3` off unless you read the filesystem views.
 
@@ -2579,7 +2586,7 @@ can fall behind.
 | The query space `memory_v1` for [SQL queries](https://remember.dev/docs/concepts/retrieval#sql-queries-over-the-query-space) | PostgreSQL views and functions | A read-only view of the authority. |
 | Original files | Object storage, bucket `remember-raw` | Authority. Identical bytes are stored once. |
 | Converted Markdown and the files produced with it | Object storage, bucket `remember-artifacts` | Derived from the original. Chunks point at positions in it, so it is kept, not rebuilt. |
-| Filesystem-view snapshots | Object storage, bucket `remember-corpusfs` | Derived. Rebuilt on demand. |
+| Live corpus folders | Object storage, bucket `remember-corpusfs` | Derived. Published per document; repaired by reconcile. |
 
 The bucket names are the defaults of a Compose deployment. Everything in
 PostgreSQL and the first two buckets belongs together: back them up at the
@@ -4529,6 +4536,13 @@ except remember.PipelineDeadLettered as error:
 `dead_lettered` lists every `(version_id, stage, status)` that is
 dead-lettered, and the message names them too. What to do next is under
 [When a version fails](#when-a-version-fails).
+
+The `p3` check uses the same per-version guard as document search's
+`p3_path`. An unrelated publish cannot satisfy it. A ready single-version
+request exposes its export digest as `version`; multiple versions return
+`version: null`, and `built_at` / `published_at` are always null. A matching
+marker records publication once, not an atomic tree or an independently
+restored bucket. A missing local mount does not invalidate a remote publish.
 
 ## Read the report
 
@@ -9702,16 +9716,34 @@ Start at `llms.txt`, follow type/topic indexes, then open a folder's `_index.md`
 inventory and deterministic publication identity. Pipeline manifests, extraction
 state and historical readings are excluded. Plane K is a separate repository.
 
-Title, topic or type changes can move the folder. Keep the `doc_id`; its suffix
+Resolve a folder through MCP `search_documents` with `doc_ids`, the SDK's
+`search_documents(filters=DocumentSearchFilters(doc_ids=(doc_id,)))`, or
+`POST /documents/search` with `filters.doc_ids`. `p3_path` is relative to the
+corpus root. It is non-null only when the selected version is served and its
+nullable publication marker matches its current export inputs. Raw-only,
+unpublished, updating, failed and historical results carry `null`.
+`served_version` describes authority currency independently of publication.
+
+Title, topic or type changes can move the folder. Re-resolve after a move;
+only the suffix is stable within its path. Keep the `doc_id`; its suffix
 is the first 24 hex characters of SHA-256 over the UUID's 16 bytes. For offline
 lookup, substitute that suffix in:
 
 ```bash
-find <mount> -path '*--<suffix>/*'
+find <root> -type d -name '*--<suffix>'
 ```
 
 Check `doc_id` and the displayed version in `document.json` before treating the
-folder as a particular edition.
+folder as a particular edition. The search can cost a full tree listing.
+A matching asset directory beneath another document folder is not a separate
+document: verify the first document-folder component and its `document.json`.
+A suffix match can locate the served folder even when a temporal query selects
+another edition or no edition is in force; it does not change that selection.
+There is no public `source_open` operation for whole historical files yet.
+
+The corpus is a sources-layer projection: switching claims or facts off does
+not change its layout. K remains a standalone repository and may be checked
+out separately.
 
 ## Publication and repair
 
@@ -9724,7 +9756,8 @@ publication identity before and after a read when consistency matters.
 requested served version's current publication marker. It reports
 `corpus_publication_incomplete` for missing or mismatching markers and
 `p3_version_not_served` for a historical edition. An unrelated publication cannot
-satisfy this check. Global snapshot version and publication-time fields are null.
+satisfy this check. `version` is the export digest for one ready requested version and null for
+multiple versions. `built_at` and `published_at` are null.
 
 Digest-verifying repair runs daily through the existing delayed-work ledger,
 leases, retries and delivery. Configure
@@ -10630,10 +10663,17 @@ newest version that did, with the others in `other_matching_version_ids`.
 Filters and names always use the returned version's own metadata. Deleted
 documents and deleted versions never match.
 
-Live-corpus folder resolution through `p3_path` is not implemented yet. Use
-[suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout) to find a served
-folder. The API's version-addressed source handles retain their exact-version
-meaning independently of the filesystem.
+`p3_path` is the relative corpus folder only when the described version is
+served and its nullable publication marker matches the current export inputs.
+It is `null` before publication, during updates, after a failed publication,
+for raw-only versions and for historical editions, including non-periodised
+history. `served_version` describes authority currency independently of P3.
+Re-resolve by `filters.doc_ids` after a type/topic/title move, or use
+[offline suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout).
+A newer pending upload leaves the served folder intact. A temporal query that
+selects no edition returns no document; suffix lookup does not override it.
+Keep `version_id` and `representation_id` for exact source identity; no public
+`source_open` operation returns whole historical files yet.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -10720,7 +10760,7 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
-      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "p3_path": "spreadsheet/sales/q3-sales-2025--2a43bb03e2c419e141d5fbd9",
       "served_version": true,
       "representation_id": "7c2e4b1a-9d3f-4e8a-b6c5-2f1a0e9d8c7b",
       "effective": [],
@@ -14510,8 +14550,8 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
-| `p3_path` | string, nullable | Live-corpus folder resolution through this field is not implemented yet. Locate folders using [suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout). |
-| `served_version` | boolean | Whether `version_id` is the document's served version. Default `true`. |
+| `p3_path` | string, nullable | Relative corpus folder, only for the served selected version with a matching nullable publication marker. Null for raw-only, unpublished, updating, failed and historical results. Type/topic/title changes move it; re-resolve by `doc_id` or use [suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout). |
+| `served_version` | boolean | Whether `version_id` is the document's served version, independently of P3 publication. Default `true`. |
 | `representation_id` | UUID, nullable | The described version's converted reading; with `version_id` it opens exactly that version. |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The described version's in-force intervals, for a document with declared effective periods. |
 | `matching_editions` | array of [`MatchingEdition`](#matchingedition) | Every candidate edition that matched, earliest period first, for a document with declared effective periods. |
@@ -16845,6 +16885,14 @@ in force now); it takes the same values as in [`search_chunks`](#search_chunks).
 What matches, and how, is in
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
+The result's `p3_path` is relative to the corpus root and non-null only when
+that version is served and its nullable publication marker matches current
+export inputs. Historical, raw-only, unpublished, updating and failed
+publications return `None`. `served_version` describes currency independently.
+Resolve again with `DocumentSearchFilters(doc_ids=(doc_id,))` after a
+folder move; [suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout) works
+offline. Only the suffix is stable within a folder path.
+
 ```python
 from remember import Client, DocumentSearchFilters
 
@@ -17866,6 +17914,17 @@ periods while retaining the document's declared effective-time mode.
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
+When requested, `p3` checks the nullable publication marker of each served
+version. An unrelated successful publication cannot satisfy it. A ready
+single-version request exposes its export digest as `version`; aggregate
+version and publication timestamps are null.
+
+Document search's `p3_path` is relative to the corpus root and non-null only
+for a served selected version with a matching marker. Raw-only, unpublished,
+updating, failed and historical results carry `null`; `served_version` describes
+currency independently. Re-resolve with `filters.doc_ids` after type/topic/title
+moves. Only the suffix is stable; [offline lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout)
+also works.
 A `failed` stage has a retry pending; polling continues. A `dead_letter` stage
 stops with PipelineDeadLettered and the full report. The readiness deadline
 covers routing, HTTP and polling waits, retaining the last validated report.
@@ -18909,6 +18968,15 @@ description tells the agent to narrow the filter instead of guessing. The
 token needs `read` scope. How matching and paging work:
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
+`p3_path` resolves the selected served version's corpus folder only behind a
+matching nullable publication marker. It is `null` for historical, raw-only,
+unpublished, updating and failed publications. `served_version` describes
+currency independently. After a type/topic/title move call `search_documents`
+again with `doc_ids`. Offline compute `sha256(UUID(doc_id).bytes).hexdigest()[:24]`
+and run `find <root> -type d -name '*--<suffix>'`; only the suffix is stable.
+Check `doc_id` and displayed version in `document.json`. See
+[Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views#layout).
+
 ### `section_history`
 
 Follows one section of a document across its versions. A section key is the
@@ -19917,6 +19985,13 @@ traces so they can be regraded without repeating ingestion or answering.
 
 ### How a LoCoMo run works
 
+The current Full-v47 protocol uses per-version publication markers, ready folder
+identities and frozen file inventories, including binary reader files and
+navigation. It rejects changed local bytes and requires the same evidence for
+resume and ablations. Global P3 version/timestamps are absent. This attestation
+change establishes no new score; earlier results remain tied to their recorded
+protocol and source revision.
+
 The harness lives in `benchmarks/locomo/` and runs as
 `python -m benchmarks.locomo`.
 
@@ -19932,7 +20007,7 @@ The harness lives in `benchmarks/locomo/` and runs as
    operations, eight lower-level lookups (`resolve`, `lookup_relations`,
    `transcript_relation`, `lookup_observations`, `search_claims`,
    `search_chunks`, `adjacent_chunks`, `hydrate_relation`), the seven SQL
-   query tools, and three tools over the filesystem view snapshot. It may
+   query tools, and three tools over the live corpus with frozen run inventories. It may
    make at most 8 tool calls and 9 model calls per question.
 4. **Judge**, per conversation. A judge model labels each answer `CORRECT`
    or not against the gold answer.
@@ -20215,7 +20290,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v46 \
+  --output .benchmark-runs/smoke --protocol full-v47 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -20223,9 +20298,8 @@ uv run python -m benchmarks.locomo ingest \
   --max-documents 100 --max-evaluator-cost-usd 5 \
   --execute --confirm-isolated-deployment conv-26
 
-# Wait until every document is processed. Then build and publish the
-# filesystem view snapshot (see Filesystem views) and pass its directory
-# as --p3-root below.
+# Wait for each served document's p3 readiness. Mount/copy the live corpus
+# read-only (see Filesystem views) and pass its directory as --p3-root below.
 
 uv run python -m benchmarks.locomo answer \
   --run .benchmark-runs/smoke --sample conv-26 \
@@ -20367,6 +20441,21 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## Unreleased — corpus consumption
+
+Document search's `p3_path` resolves a type/topic/title folder only when the
+selected version is served and its nullable publication marker matches current
+export inputs. Readiness uses the same guard per requested version. Pending,
+raw-only, updating, failed and historical results have no browse path.
+Only the suffix remains stable across folder moves; the consumption skill and
+MCP descriptions teach re-resolution and offline `find`. Corpus originals and
+reader derivatives remain independent of claims/facts switches, and K stays a
+separate repository. The managed mount CLI wrapper is not included.
+
+The benchmark harness's fresh Full-v47 protocol attests publication markers,
+ready-folder identities and frozen file inventories. This change establishes
+no new benchmark result and does not reinterpret stored evidence.
 
 ## Unreleased — retrieval SQL and online schema upgrade
 
@@ -20860,9 +20949,6 @@ absent from the current release; nothing here has a date.
 
 ## Knowledge
 
-- **API corpus path resolution.** Resolving live document-folder paths through
-  `p3_path`, including moves and publication-marker checks, is not implemented yet.
-  Use [offline suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout).
 - **Managed mount CLI wrapper.** Corpus folders contain copied originals and
   reader derivatives, and self-hosters can mount the corpus bucket read-only.
   `remember mount` / `remember unmount` and managed mount tickets do not ship yet.
@@ -20871,8 +20957,8 @@ absent from the current release; nothing here has a date.
   combine what it knows about a topic; the envelope's `pages` field and the
   `compiled` grain exist but stay empty, and the `k` install extra installs
   nothing.
-- **Opening a source from an agent.** No MCP tool returns a whole original
-  source file; agents read passages through search and `adjacent_chunks`
+- **Opening an exact source through a client.** No API/SDK/MCP `source_open`
+  operation returns a whole original or historical representation; agents read passages through search and `adjacent_chunks`
   (a self-hosted engine can publish its sources as files, see
   [Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views)).
 

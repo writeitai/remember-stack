@@ -224,6 +224,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "Null for p3: the live corpus has no global build time.",
           "title": "Built At"
         },
         "checked_at": {
@@ -242,6 +243,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "Null for p3: the live corpus has no global publication time.",
           "title": "Published At"
         },
         "ready": {
@@ -266,6 +268,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "For p3, the export digest of one ready requested version; null for multiple versions or incomplete publication.",
           "title": "Version"
         }
       },
@@ -2093,6 +2096,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "Relative corpus folder only for the served selected version with a matching nullable publication marker. Null for historical, raw-only, unpublished, updating or failed publications. Type/topic/title changes move it: re-resolve by doc_id; only the folder suffix is stable. Retain version_id and representation_id for exact source identity.",
           "title": "P3 Path"
         },
         "recipients": {
@@ -2130,6 +2134,7 @@ export default {
         },
         "served_version": {
           "default": true,
+          "description": "Whether version_id is served, independently of corpus publication.",
           "title": "Served Version",
           "type": "boolean"
         },

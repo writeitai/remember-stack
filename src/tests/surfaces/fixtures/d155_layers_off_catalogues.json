@@ -1,0 +1,1832 @@
+{
+  "claims_only": {
+    "deployment": {
+      "build_revision": "d143-defaults",
+      "document_binding_generation": null,
+      "model_bindings": {
+        "embedding": "fixture"
+      },
+      "tools": {
+        "adjacent_chunks": 1,
+        "claims_and_sources_context": 4,
+        "combined_context": 5,
+        "delete_document": 1,
+        "describe_query_space": 1,
+        "describe_saved_query": 1,
+        "document_references": 1,
+        "explain_sql": 1,
+        "ingest": 2,
+        "list_saved_queries": 1,
+        "pipeline_readiness": 1,
+        "query_sql": 1,
+        "run_saved_query": 1,
+        "search_documents": 3,
+        "search_query_space": 1,
+        "section_history": 1
+      }
+    },
+    "mcp_engine_tools": {
+      "http": [
+        {
+          "name": "ingest"
+        },
+        {
+          "name": "pipeline_readiness"
+        },
+        {
+          "name": "delete_document"
+        },
+        {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "cursor": {
+                "description": "Pass the previous page's next_cursor; only without query.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "k": {
+                "default": 20,
+                "description": "Ranked top-k when query is set.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "description": "Browse page size when query is omitted.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "query": {
+                "description": "Words from the file's name, title, path or text.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
+              },
+              "versions": {
+                "description": "current (default) or all live versions.",
+                "enum": [
+                  "current",
+                  "all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "search_documents"
+        },
+        {
+          "name": "section_history"
+        },
+        {
+          "name": "document_references"
+        },
+        {
+          "name": "claims_and_sources_context"
+        },
+        {
+          "name": "combined_context"
+        },
+        {
+          "name": "adjacent_chunks"
+        },
+        {
+          "name": "query_sql"
+        },
+        {
+          "name": "explain_sql"
+        },
+        {
+          "name": "describe_query_space"
+        },
+        {
+          "name": "search_query_space"
+        },
+        {
+          "name": "list_saved_queries"
+        },
+        {
+          "name": "describe_saved_query"
+        },
+        {
+          "name": "run_saved_query"
+        }
+      ],
+      "read_only": [
+        {
+          "name": "pipeline_readiness"
+        },
+        {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "cursor": {
+                "description": "Pass the previous page's next_cursor; only without query.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "k": {
+                "default": 20,
+                "description": "Ranked top-k when query is set.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "description": "Browse page size when query is omitted.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "query": {
+                "description": "Words from the file's name, title, path or text.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
+              },
+              "versions": {
+                "description": "current (default) or all live versions.",
+                "enum": [
+                  "current",
+                  "all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "search_documents"
+        },
+        {
+          "name": "section_history"
+        },
+        {
+          "name": "document_references"
+        },
+        {
+          "name": "claims_and_sources_context"
+        },
+        {
+          "name": "combined_context"
+        },
+        {
+          "name": "adjacent_chunks"
+        },
+        {
+          "name": "query_sql"
+        },
+        {
+          "name": "explain_sql"
+        },
+        {
+          "name": "describe_query_space"
+        },
+        {
+          "name": "search_query_space"
+        },
+        {
+          "name": "list_saved_queries"
+        },
+        {
+          "name": "describe_saved_query"
+        },
+        {
+          "name": "run_saved_query"
+        }
+      ],
+      "stdio": [
+        {
+          "name": "ingest"
+        },
+        {
+          "name": "pipeline_readiness"
+        },
+        {
+          "name": "delete_document"
+        },
+        {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "cursor": {
+                "description": "Pass the previous page's next_cursor; only without query.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "k": {
+                "default": 20,
+                "description": "Ranked top-k when query is set.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "description": "Browse page size when query is omitted.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "query": {
+                "description": "Words from the file's name, title, path or text.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
+              },
+              "versions": {
+                "description": "current (default) or all live versions.",
+                "enum": [
+                  "current",
+                  "all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "search_documents"
+        },
+        {
+          "name": "section_history"
+        },
+        {
+          "name": "document_references"
+        },
+        {
+          "name": "claims_and_sources_context"
+        },
+        {
+          "name": "combined_context"
+        },
+        {
+          "name": "adjacent_chunks"
+        },
+        {
+          "name": "query_sql"
+        },
+        {
+          "name": "explain_sql"
+        },
+        {
+          "name": "describe_query_space"
+        },
+        {
+          "name": "search_query_space"
+        },
+        {
+          "name": "list_saved_queries"
+        },
+        {
+          "name": "describe_saved_query"
+        },
+        {
+          "name": "run_saved_query"
+        }
+      ]
+    },
+    "mcp_in_process_tools": [
+      {
+        "name": "ingest"
+      },
+      {
+        "name": "pipeline_readiness"
+      },
+      {
+        "name": "delete_document"
+      },
+      {
+        "annotations": {
+          "destructiveHint": false,
+          "readOnlyHint": true
+        },
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "authors": {
+              "description": "Any of these authors.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "created_from": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "created_to": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "cursor": {
+              "description": "Pass the previous page's next_cursor; only without query.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "doc_ids": {
+              "description": "Only these documents (UUIDs).",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "family": {
+              "description": "Keep these format families.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "k": {
+              "default": 20,
+              "description": "Ranked top-k when query is set.",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "language": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "limit": {
+              "default": 50,
+              "description": "Browse page size when query is omitted.",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "modified_from": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "modified_to": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "query": {
+              "description": "Words from the file's name, title, path or text.",
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "recipients": {
+              "description": "Any of these recipients.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "thread_ref": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "time": {
+              "default": {
+                "mode": "current"
+              },
+              "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "mode": {
+                      "const": "current"
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "mode": {
+                      "const": "at"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "at"
+                  ]
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "from": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "mode": {
+                      "const": "overlap"
+                    },
+                    "to": {
+                      "format": "date-time",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "from",
+                    "to"
+                  ]
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "mode": {
+                      "const": "history"
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                }
+              ],
+              "type": "object"
+            },
+            "versions": {
+              "description": "current (default) or all live versions.",
+              "enum": [
+                "current",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "search_documents"
+      },
+      {
+        "name": "section_history"
+      },
+      {
+        "name": "document_references"
+      },
+      {
+        "name": "claims_and_sources_context"
+      },
+      {
+        "name": "combined_context"
+      },
+      {
+        "name": "adjacent_chunks"
+      },
+      {
+        "name": "query_sql"
+      },
+      {
+        "name": "explain_sql"
+      },
+      {
+        "name": "describe_query_space"
+      },
+      {
+        "name": "search_query_space"
+      },
+      {
+        "name": "list_saved_queries"
+      },
+      {
+        "name": "describe_saved_query"
+      },
+      {
+        "name": "run_saved_query"
+      }
+    ],
+    "operations": [
+      "claims_and_sources_context",
+      "combined_context"
+    ]
+  },
+  "sources_only": {
+    "deployment": {
+      "build_revision": "d143-defaults",
+      "document_binding_generation": null,
+      "model_bindings": {
+        "embedding": "fixture"
+      },
+      "tools": {
+        "adjacent_chunks": 1,
+        "claims_and_sources_context": 4,
+        "combined_context": 5,
+        "delete_document": 1,
+        "describe_query_space": 1,
+        "describe_saved_query": 1,
+        "document_references": 1,
+        "explain_sql": 1,
+        "ingest": 2,
+        "list_saved_queries": 1,
+        "pipeline_readiness": 1,
+        "query_sql": 1,
+        "run_saved_query": 1,
+        "search_documents": 3,
+        "search_query_space": 1,
+        "section_history": 1
+      }
+    },
+    "mcp_engine_tools": {
+      "http": [
+        {
+          "name": "ingest"
+        },
+        {
+          "name": "pipeline_readiness"
+        },
+        {
+          "name": "delete_document"
+        },
+        {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "cursor": {
+                "description": "Pass the previous page's next_cursor; only without query.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "k": {
+                "default": 20,
+                "description": "Ranked top-k when query is set.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "description": "Browse page size when query is omitted.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "query": {
+                "description": "Words from the file's name, title, path or text.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
+              },
+              "versions": {
+                "description": "current (default) or all live versions.",
+                "enum": [
+                  "current",
+                  "all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "search_documents"
+        },
+        {
+          "name": "section_history"
+        },
+        {
+          "name": "document_references"
+        },
+        {
+          "name": "claims_and_sources_context"
+        },
+        {
+          "name": "combined_context"
+        },
+        {
+          "name": "adjacent_chunks"
+        },
+        {
+          "name": "query_sql"
+        },
+        {
+          "name": "explain_sql"
+        },
+        {
+          "name": "describe_query_space"
+        },
+        {
+          "name": "search_query_space"
+        },
+        {
+          "name": "list_saved_queries"
+        },
+        {
+          "name": "describe_saved_query"
+        },
+        {
+          "name": "run_saved_query"
+        }
+      ],
+      "read_only": [
+        {
+          "name": "pipeline_readiness"
+        },
+        {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "cursor": {
+                "description": "Pass the previous page's next_cursor; only without query.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "k": {
+                "default": 20,
+                "description": "Ranked top-k when query is set.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "description": "Browse page size when query is omitted.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "query": {
+                "description": "Words from the file's name, title, path or text.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
+              },
+              "versions": {
+                "description": "current (default) or all live versions.",
+                "enum": [
+                  "current",
+                  "all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "search_documents"
+        },
+        {
+          "name": "section_history"
+        },
+        {
+          "name": "document_references"
+        },
+        {
+          "name": "claims_and_sources_context"
+        },
+        {
+          "name": "combined_context"
+        },
+        {
+          "name": "adjacent_chunks"
+        },
+        {
+          "name": "query_sql"
+        },
+        {
+          "name": "explain_sql"
+        },
+        {
+          "name": "describe_query_space"
+        },
+        {
+          "name": "search_query_space"
+        },
+        {
+          "name": "list_saved_queries"
+        },
+        {
+          "name": "describe_saved_query"
+        },
+        {
+          "name": "run_saved_query"
+        }
+      ],
+      "stdio": [
+        {
+          "name": "ingest"
+        },
+        {
+          "name": "pipeline_readiness"
+        },
+        {
+          "name": "delete_document"
+        },
+        {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "cursor": {
+                "description": "Pass the previous page's next_cursor; only without query.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "k": {
+                "default": 20,
+                "description": "Ranked top-k when query is set.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "description": "Browse page size when query is omitted.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "query": {
+                "description": "Words from the file's name, title, path or text.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
+              },
+              "versions": {
+                "description": "current (default) or all live versions.",
+                "enum": [
+                  "current",
+                  "all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "search_documents"
+        },
+        {
+          "name": "section_history"
+        },
+        {
+          "name": "document_references"
+        },
+        {
+          "name": "claims_and_sources_context"
+        },
+        {
+          "name": "combined_context"
+        },
+        {
+          "name": "adjacent_chunks"
+        },
+        {
+          "name": "query_sql"
+        },
+        {
+          "name": "explain_sql"
+        },
+        {
+          "name": "describe_query_space"
+        },
+        {
+          "name": "search_query_space"
+        },
+        {
+          "name": "list_saved_queries"
+        },
+        {
+          "name": "describe_saved_query"
+        },
+        {
+          "name": "run_saved_query"
+        }
+      ]
+    },
+    "mcp_in_process_tools": [
+      {
+        "name": "ingest"
+      },
+      {
+        "name": "pipeline_readiness"
+      },
+      {
+        "name": "delete_document"
+      },
+      {
+        "annotations": {
+          "destructiveHint": false,
+          "readOnlyHint": true
+        },
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "authors": {
+              "description": "Any of these authors.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "created_from": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "created_to": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "cursor": {
+              "description": "Pass the previous page's next_cursor; only without query.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "doc_ids": {
+              "description": "Only these documents (UUIDs).",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "family": {
+              "description": "Keep these format families.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "k": {
+              "default": 20,
+              "description": "Ranked top-k when query is set.",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "language": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "limit": {
+              "default": 50,
+              "description": "Browse page size when query is omitted.",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "modified_from": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "modified_to": {
+              "description": "An ISO 8601 instant with a timezone, inclusive.",
+              "format": "date-time",
+              "type": "string"
+            },
+            "query": {
+              "description": "Words from the file's name, title, path or text.",
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "recipients": {
+              "description": "Any of these recipients.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "thread_ref": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "time": {
+              "default": {
+                "mode": "current"
+              },
+              "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "mode": {
+                      "const": "current"
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "mode": {
+                      "const": "at"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "at"
+                  ]
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "from": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "mode": {
+                      "const": "overlap"
+                    },
+                    "to": {
+                      "format": "date-time",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "from",
+                    "to"
+                  ]
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "mode": {
+                      "const": "history"
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                }
+              ],
+              "type": "object"
+            },
+            "versions": {
+              "description": "current (default) or all live versions.",
+              "enum": [
+                "current",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "search_documents"
+      },
+      {
+        "name": "section_history"
+      },
+      {
+        "name": "document_references"
+      },
+      {
+        "name": "claims_and_sources_context"
+      },
+      {
+        "name": "combined_context"
+      },
+      {
+        "name": "adjacent_chunks"
+      },
+      {
+        "name": "query_sql"
+      },
+      {
+        "name": "explain_sql"
+      },
+      {
+        "name": "describe_query_space"
+      },
+      {
+        "name": "search_query_space"
+      },
+      {
+        "name": "list_saved_queries"
+      },
+      {
+        "name": "describe_saved_query"
+      },
+      {
+        "name": "run_saved_query"
+      }
+    ],
+    "operations": [
+      "claims_and_sources_context",
+      "combined_context"
+    ]
+  }
+}

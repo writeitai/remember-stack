@@ -565,7 +565,7 @@ class _TranscriptStore:
 
 
 class _MountPublisher:
-    """Return the exact four read-only memory locators for one deployment."""
+    """Return the read-only corpus and standalone K locations."""
 
     def publish(self, *, deployment_id: UUID) -> PublishedMounts:
         """Publish portable locators without granting writer-side mutations."""
@@ -1171,8 +1171,6 @@ def test_prose_compiler_archives_session_and_builds_mechanical_two_band_page(
     assert set(request.mounts.model_fields_set) == {
         "deployment_id",
         "p3",
-        "artifacts",
-        "raw",
         "knowledge",
         "read_only",
     }
