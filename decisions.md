@@ -8180,8 +8180,8 @@ identified inside those entries. D147's context/work/portable-store seams are re
 
 ## D156. Caller tags on documents; filter every grain through their documents
 
-**Status:** proposed 2026-11-13; accepted on this PR's merge. Implementation
-not started. **Date:** 2026-11-13.
+**Status:** accepted design (owner direction and GPT 6.1 sol review
+dispositions 2026-11-13); implementation is separate. **Date:** 2026-11-13.
 
 **Context.** One deployment often holds several bodies of work, such as the
 decision logs, designs and ticket outcomes of several products, kept together

@@ -1,6 +1,6 @@
 # Document tags (Design)
 
-**Status:** D156, proposed 2026-11-13; accepted and binding when its PR merges.
+**Status:** D156, accepted 2026-11-13 after GPT 6.1 sol review.
 Accepting the design does not mean it ships; the
 [delivery plan](../plans/document_tags.md) says what to build in which order.
 **Analysis:** [document tags](../analysis/document_tags_analysis.md).
