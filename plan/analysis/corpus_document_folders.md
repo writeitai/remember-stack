@@ -138,6 +138,69 @@ mount/cache copies must acknowledge purge before serving reopens; external clien
 downloads are outside library-controlled active stores. An expired worker lease
 alone does not prove that an object request stopped.
 
+## Slice 3 lock-loss counterexample (2026-11-13)
+
+**Implementation stopped under the owner's explicit instruction:** if a single
+idempotent recomputation is insufficient, report the concrete failure instead of
+adding coordination machinery. This finding does not amend D155 or its binding
+design. Slice 3's publisher, triggers and reconcile remain unimplemented.
+
+[The executable reproducer](../../src/tests/adapters/test_minio_corpus_lock_loss.py)
+uses the real PostgreSQL test database and real MinIO started with
+`.github/ci/start-minio.sh`. A small HTTP relay delays delivery of one complete
+signed PUT after boto3 has sent it. It forwards the request and MinIO's response
+without mocking storage. The test controls ordering with thread events, not
+timing sleeps:
+
+1. Writer A owns a deployment-scoped PostgreSQL advisory lock and sends the
+   ready document `_index.md` for the original export identity. The relay receives
+   its complete request and holds it in flight.
+2. The test terminates A's PostgreSQL backend with `pg_terminate_backend`. Writer
+   B now successfully acquires the same advisory lock. The test also confirms
+   A's next DB operation fails: lock loss is observable, but the issued PUT
+   cannot be retracted by that observation.
+3. A canonical title change from `Annual Report` to `ANNUAL REPORT` changes the
+   export identity while preserving its normalized physical path. B re-reads
+   authority, renders and writes every selected reader file and navigation index,
+   then locks the document row, confirms the desired digest and sets its marker.
+   The ready index contains B's identity and the old request is still in flight.
+4. The relay releases A's old PUT. Real MinIO atomically replaces B's ready index
+   with A's old bytes. The document marker still equals the current DB-derived
+   digest, but the ready-folder identity is from the previous export.
+
+The test passes by asserting this **failure state**. It is a characterization of
+the proposed primitives, not evidence that a shipped publisher passes the slice's
+safety contract. The upload thread is joined before exit: it does not require a
+detached upload, a new stale event, a lost announcement, or a stale final marker
+write from A. B may finish while A's synchronous request remains outside its
+control. A later recomputation could repair the index, but the last ordinary event
+can already have succeeded; the marker cannot certify that its files survived.
+
+This violates E0 §6.5's requirement that claim/lock loss settle or fence in-flight
+external IO **before another writer can proceed**. Renewing a lease, checking the
+DB before/after each operation, or joining IO before a handler returns does not
+keep the PostgreSQL lock held after its session is terminated. An HTTP timeout
+also does not establish that a remote request cannot commit. The same ordering
+can affect a file replacement or removal; delete/forget/restore have deliberately
+not been wired or exercised by this change.
+
+The test demonstrates a gap between the advisory-lock primitive and the required
+external-IO ordering. No fence, journal, extra table, provider precondition,
+weakened guarantee or alternative protocol is introduced here. The owner must
+resolve that contract before slice 3 implementation resumes. The experiment calls
+the existing selector, renderer and mutable adapter directly; it does not claim
+coverage of ordinary work, policy seeding, pushed classes or the rest of slice 3.
+It changes no ingestion identities or paid-work reuse boundaries (Rule 4).
+
+Reproduce with `REMEMBERSTACK_DATABASE_URL` pointing to a disposable PostgreSQL
+test database (the imported fixture resets its schema):
+
+```bash
+.github/ci/start-minio.sh
+REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL=http://127.0.0.1:59000 \
+  uv run pytest src/tests/adapters/test_minio_corpus_lock_loss.py -q
+```
+
 ## Provider facts checked on 2026-11-13
 
 Google documents an S3 interoperability path using its XML endpoint and HMAC
