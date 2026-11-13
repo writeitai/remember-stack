@@ -192,29 +192,31 @@ def test_lookup_refuses_a_naive_or_non_utc_instant(valid_at: str) -> None:
     assert engine.calls == []
 
 
-def test_lookup_accepts_a_utc_instant_and_forwards_k() -> None:
-    """A `Z` instant passes through; `k` defaults to 50 and bounds the read."""
+def test_lookup_accepts_a_utc_instant_and_forwards_limit() -> None:
+    """A `Z` instant passes through; browse limit defaults to 50."""
     engine = _Engine()
     client = _client(engine=engine)
     assert (
         client.get("/lookup/relations", params={"valid_at": "2026-01-01T00:00:00Z"})
     ).status_code == 200
     assert (
-        client.get("/lookup/observations", params={"entity_id": str(_ENTITY), "k": 3})
+        client.get(
+            "/lookup/observations", params={"entity_id": str(_ENTITY), "limit": 3}
+        )
     ).status_code == 200
     (_, relations), (_, observations) = engine.calls
     assert relations["valid_at"] == datetime(2026, 1, 1, tzinfo=UTC)
-    assert relations["k"] == 50
-    assert observations["k"] == 3
+    assert relations["limit"] == 50
+    assert observations["limit"] == 3
 
 
 @pytest.mark.parametrize("route", ["/lookup/relations", "/lookup/observations"])
-@pytest.mark.parametrize("k", [0, 401])
-def test_lookup_k_is_bounded(route: str, k: int) -> None:
-    """G28: no lookup can ask for an unbounded (or empty) result."""
+@pytest.mark.parametrize("limit", [0, 201])
+def test_lookup_browse_limit_is_bounded(route: str, limit: int) -> None:
+    """D154: browse lookups refuse a limit outside 1..200."""
     engine = _Engine()
     response = _client(engine=engine).get(
-        route, params={"entity_id": str(_ENTITY), "k": k}
+        route, params={"entity_id": str(_ENTITY), "limit": limit}
     )
     assert response.status_code == 422
     assert engine.calls == []

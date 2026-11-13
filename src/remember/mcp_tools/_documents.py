@@ -40,7 +40,7 @@ _FILTER_KEYS = frozenset(
         "doc_ids",
     }
 )
-_TOP_LEVEL_KEYS = frozenset({"query", "versions", "time", "k", "cursor"})
+_TOP_LEVEL_KEYS = frozenset({"query", "versions", "time", "k", "limit", "cursor"})
 
 
 class DocumentSearchBackend(Protocol):

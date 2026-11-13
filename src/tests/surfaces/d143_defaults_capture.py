@@ -10,8 +10,9 @@ and the query-surface manifest hashes.
 It runs unchanged against the pre-D143 base and the current branch: optional
 D143 ports are composed only when the code accepts them, and then report an
 unconfigured deployment (every layer ``enabled``). The checked-in fixture
-``src/tests/surfaces/fixtures/d143_defaults.json`` is this function's output on the
-pre-D143 base (fbcd489bd), with the explicit p9_42/p9_45 manifest identity update; ``test_d143_defaults_unchanged.py`` recomputes it.
+``src/tests/surfaces/fixtures/d143_defaults.json`` is this function's output,
+originally from the pre-D143 base (fbcd489bd) and refreshed for later accepted
+baseline moves (p9_42/p9_45/D153 views, D154 pagination); ``test_d143_defaults_unchanged.py`` recomputes it.
 Run as a script to print the JSON.
 """
 

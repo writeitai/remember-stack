@@ -2036,6 +2036,8 @@ Source: https://remember.dev/docs/concepts/contradictions
 
 # Contradictions, corroboration and supersession
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 Sources disagree. The spec says the cutover is on June 8; a standup
 transcript says June 15. A memory that quietly keeps one of them hands your
 agent a confident answer that is wrong half the time, and nobody finds out
@@ -2088,8 +2090,7 @@ Its `FactResult` carries:
     }
   ],
   "returned": 1,
-  "total": 1,
-  "continuation": null
+  "total": 1
 }
 ```
 
@@ -2634,6 +2635,8 @@ Source: https://remember.dev/docs/concepts/retrieval
 
 # Retrieval: operations, search, graph and SQL
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 An agent needs different things from memory at different moments: who a
 name refers to, what is currently true about a project, what exactly a
 source said, how two people are connected. One search box that returns
@@ -2763,7 +2766,7 @@ the table says which are.
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
 | Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |
 | Lookup observations | `lookup_observations(entity_id=, property_query=, k=10)` | One entity's observations, optionally by property text. |
-| Graph neighbourhood | `graph_neighborhood(entity_id=, hops=2, ...)` | The entities and relations within `hops` (up to 4), capped at `limit` (up to 500) with a continuation. |
+| Graph neighbourhood | `graph_neighborhood(entity_id=, hops=2, ...)` | The entities and relations within `hops` (up to 4), capped at `limit` (default 100, up to 500) and paged with `cursor` / `next_cursor`. |
 | Graph path | `graph_path(from_entity_id=, to_entity_id=, max_hops=4)` | Shortest connections between two entities (up to 6 hops). |
 | Citation path | `graph_citation_path(from_doc_id=, to_doc_id=, max_hops=6)` | How one document leads to another through citations. |
 | Hydrate relation | `hydrate_relation(relation_id=)` | A relation with all its claims and source documents. |
@@ -2916,6 +2919,8 @@ does not charge again when another channel uses the same vector.
 Source: https://remember.dev/docs/concepts/reading-results
 
 # Reading a result
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 A list of text snippets tells your agent nothing about itself. Is this
 everything, or the top ten of thousands? Is it current? Did the search find
@@ -3121,12 +3126,12 @@ with remember.Client() as memory:
     "p1_believed_at_horizon": null,
     "k": null
   },
+  "next_cursor": null,
   "truncation": {
     "truncated": false,
     "returned": 2,
     "estimated_total": 2,
     "total_is_exact": true,
-    "continuation": null,
     "reason": null
   },
   "dropped_by_hydration": 0,
@@ -3278,9 +3283,9 @@ written with the data (`true`) and have no belief-time horizon (`null`).
 
 `truncated` says whether more results exist than were returned. `returned`
 is how many came back, `estimated_total` how many were found, and
-`total_is_exact` whether that total is exact. `continuation` is an opaque
-cursor for reads that can page (the graph neighbourhood). A capped answer
-always says so.
+`total_is_exact` whether that total is exact. Browse paging uses the
+envelope's top-level `next_cursor`, not a field on `truncation`. A capped
+answer always says so.
 
 ### `dropped_by_hydration`
 
@@ -4245,6 +4250,8 @@ Source: https://remember.dev/docs/guides/keep-sources-current
 
 # Keep a source up to date
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 Specs get edited. The billing migration plan said June; now it says
 October. If you send the edited file as a new, unrelated document, the
 memory holds both plans and cannot tell which one the team still stands
@@ -4428,9 +4435,9 @@ while True:
     for document in page.documents:
         if document.source_kind == "file" and document.source_uri not in present:
             client.delete_document(doc_id=document.doc_id)
-    if page.cursor is None:
+    if page.next_cursor is None:
         break
-    cursor = page.cursor
+    cursor = page.next_cursor
 ```
 
 Deleting removes the document's claims from the evidence and closes the
@@ -5689,6 +5696,8 @@ Source: https://remember.dev/docs/guides/unknowns-and-ambiguity
 
 # Handle unknowns and ambiguity
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 When a model does not find the answer, it tends to make one up. A memory
 that returns an empty list gives it no reason not to. RememberStack says
 why a result is empty, when a name could mean two people, when a list was
@@ -5929,6 +5938,8 @@ the deployment side. On a self-hosted deployment, work through
 Source: https://remember.dev/docs/guides/sql
 
 # Explore memory with SQL
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 The assured operations answer the common questions in one call. Some
 questions do not fit them: "which documents mention both Dana and the
@@ -6204,9 +6215,25 @@ Queries sent over the API run in the interactive tier:
 | Concurrent queries | 2 per caller, 8 per deployment |
 | Statement time per minute | 30 seconds per caller, 120 per deployment |
 
-A `max_rows` above the cap is lowered to the cap, not refused. When rows
-were cut, `truncated` is `True` and `truncation_reason` says why. The
-`limits` field of every result states the caps it ran under.
+A `max_rows` above 1,000 is refused with `422` (D154); it is not silently
+clamped. When rows were cut at the cap, `truncated` is `True` and
+`truncation_reason` says why. The `limits` field of every result states the
+caps it ran under.
+
+For larger scans, page in the statement with your own keyset `WHERE` and
+`LIMIT` rather than raising `max_rows`:
+
+```sql
+SELECT fact_id, ingested_at, fact_label
+FROM facts_current
+WHERE (ingested_at, fact_id) < ($1::timestamptz, $2::uuid)
+ORDER BY ingested_at DESC, fact_id DESC
+LIMIT 200
+```
+
+Pass the last row's `ingested_at` and `fact_id` as the next page's
+parameters. See [Pagination and
+truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation).
 
 A second tier (analytical: 10,000 rows, 60 seconds) exists for operators;
 the API does not select it.
@@ -9984,20 +10011,68 @@ reads, so repeating it is safe.
 
 ## Pagination and truncation
 
-Results are bounded everywhere, and a bound is never silent.
+Results are bounded everywhere, and a bound is never silent (D154).
 
-- **`GET /documents`**, `POST /documents/search` (without a query),
-  `section_history` and `document_references` page with an opaque `cursor`.
-  Pass the `cursor` from one page to get the next; `null` means there is no
-  next page. A page of the last three can hold fewer rows than asked for and
-  still carry a `cursor`.
-- **Envelope results** carry a `truncation` block when a cap applied:
-  `truncated`, `returned`, `estimated_total`, `total_is_exact`, an optional
-  `continuation` and an optional `reason`. Only `POST /graph/neighborhood`
-  accepts a `continuation` back today.
-- **SQL query results** (`QueryResult/v1`) carry `truncated`,
-  `truncation_reason` (`row_cap`, `byte_cap`, or a graph budget) and the
-  `limits` the statement ran under.
+### Browse lists
+
+Filter-only, exhaustive listings request `limit` (default 50, max 200) and
+an opaque `cursor`. The response carries `next_cursor`: `null` exactly at
+the end — the only "more exists" signal. A short or empty page with a
+non-null `next_cursor` is legal (for example when a document-search browse
+page hits its lineage scan cap before finding another match). Keyset order
+uses an immutable key plus an id tiebreak. Every cursor binds to the
+request's listing scope (its filters); reusing a cursor with a different
+scope is rejected as an invalid cursor (`400`, or the route's existing typed
+error). There are no totals, offsets, or `has_more`.
+
+Where the source can honour an as-of read cheaply, the cursor also pins that
+instant (document search browse, section history, document references, graph
+neighborhood clocks, lookup browse). Lookup browse uses one as-of
+belief/ingest predicate on every page: page one acquires a commit-visible belief watermark before opening its
+snapshot and is simply continuation with no position. `GET /documents` always reads the
+current newest live version and serving flag, so its cursor carries no
+instant: unchanged rows are never repeated or skipped; a row whose filtered
+status changes between pages may enter or leave the listing.
+
+Applies to: `GET /documents`, `POST /documents/search` without a `query`,
+section history, document references, `GET /lookup/relations`, and
+`GET /lookup/observations` without `property_query`. Pass the previous
+page's `next_cursor` back as `cursor`.
+
+`GET /ops/cost-export/v1` is outside these list rules: it is a resumable
+feed with its own contract: an issued first-page `cursor`, echoed request
+`cursor` thereafter, and `next_cursor` carrying a fresh horizon even on empty
+batches (limits 1–500, default 100). See
+[Deployment — cost export](https://remember.dev/docs/reference/http-api/deployment#get-opscost-exportv1)
+and the binding design
+[`request_path_metering_and_cost_export_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/request_path_metering_and_cost_export_design.md).
+
+### Ranked results
+
+Any call with a `query`, `property_query`, or `name` requests top-`k` and
+takes no cursor (query + cursor is a validation error). The response always
+discloses the cap: Envelope routes set `truncation.truncated` whenever more
+than `k` matched; `DocumentSearchPage` in ranked mode sets `truncated` and
+leaves `next_cursor` null.
+
+### Envelope paging
+
+Envelope also carries top-level `next_cursor` for graph neighborhood and
+browse-mode lookups. The `truncation` block is disclosure only:
+`truncated`, `returned`, `estimated_total`, `total_is_exact`, and an
+optional `reason`. `POST /graph/neighborhood` pages with request `cursor`
+(pins `valid_at` / `believed_at`; default `limit` 100). Its keyset position
+survives deletion of already-returned edges. Browse cursors bind deployment
+identity and all membership filters; changing project or filters is an error,
+while page size may change. Deeper neighborhoods page within their 500-row
+ceiling and disclose any ceiling stop through `truncation.reason`.
+
+### SQL
+
+`POST /query/sql` and saved-query run keep `max_rows` with
+`truncated` / `truncation_reason` as a safety cap. `max_rows` above 1000 is
+`422`. For larger scans, page in the statement with your own
+`WHERE … LIMIT` (see [SQL](https://remember.dev/docs/guides/sql)).
 
 See [Result types](https://remember.dev/docs/reference/result-types).
 
@@ -10050,6 +10125,8 @@ the API is for programs, not browsers, so they are switched off. Use the
 Source: https://remember.dev/docs/reference/http-api/ingest
 
 # Ingest, readiness and documents
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 These routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
@@ -10398,7 +10475,7 @@ first.
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `limit` | query | integer | no | `50` | 1 to 200. |
-| `cursor` | query | string | no | | The `cursor` from the previous page. Opaque. |
+| `cursor` | query | string | no | | The `next_cursor` from the previous page. Opaque. |
 | `status` | query | `ingesting` \| `converting` \| `structuring` \| `ready` \| `failed` | no | | Filters on the newest version's status. |
 
 Documents are ordered by when each was first seen, then by id. Re-ingesting a
@@ -10442,11 +10519,11 @@ does not mean the document is searchable yet; use
       "serving": true
     }
   ],
-  "cursor": null
+  "next_cursor": null
 }
 ```
 
-`cursor` is `null` on the last page.
+`next_cursor` is `null` on the last page.
 
 ### Errors
 
@@ -10469,7 +10546,7 @@ memory = Client()
 page = memory.list_documents(status="failed", limit=20)
 for document in page.documents:
     print(document.doc_id, document.title, document.latest.error)
-# page.cursor is None on the last page; pass it back to read the next one.
+# page.next_cursor is None on the last page; pass it back to read the next one.
 ```
 
 `remember documents list` prints the same page as JSON.
@@ -10491,8 +10568,9 @@ A [`DocumentSearchRequest`](https://remember.dev/docs/reference/result-types#doc
 | `filters` | object | no | `{}` | See below. Every filter you give must hold. |
 | `versions` | `current` \| `all` | no | `current` | Which versions of each document may match. |
 | `time` | object | no | `{"mode": "current"}` | For documents with declared effective periods: which editions are candidates. `{"mode": "current"}`, `{"mode": "at", "at": …}`, `{"mode": "overlap", "from": …, "to": …}` or `{"mode": "history"}`; see [Editions in force](#editions-in-force). |
-| `k` | integer | no | `20` | 1 to 200 results. |
-| `cursor` | string | no | | The `cursor` from the previous page. Only without `query`. |
+| `k` | integer | no | `20` | Ranked results with `query`: 1 to 200. |
+| `limit` | integer | no | `50` | Browse page size without `query`: 1 to 200. |
+| `cursor` | string | no | | The `next_cursor` from the previous page. Only without `query`. |
 
 `filters`:
 
@@ -10582,12 +10660,12 @@ search without one examines every document it walked for the page.
 
 ### Order and paging
 
-With `query`, results are ranked, and there is no next page: `cursor` is
+With `query`, results are ranked, and there is no next page: `next_cursor` is
 `null`. Raise `k` for more.
 
 Without `query`, results are every document the filters match, newest first
-by when the judged version was ingested, then by `doc_id`; the `created_*`
-range is a filter, not the order. Pass `cursor` back for the next page. The
+by the newest version ingested at or before the pinned instant, then by `doc_id`; the `created_*`
+range is a filter, not the order. Pass `next_cursor` back as `cursor` for the next page. The
 first page fixes an instant, returned as `as_of`, and every later page judges
 each document by its newest version ingested by then. A document added, a
 version promoted to current, or a date filled in by processing while you
@@ -10595,8 +10673,8 @@ page therefore neither moves nor repeats a row. The same instant is used to
 read effective periods, so a period declared or corrected while you page
 does not move a row either. Start a new search to see what arrived since.
 
-A page stops after walking ten times `k` documents. It can then hold fewer
-than `k` results and still return a `cursor`: keep paging until `cursor` is
+A browse page stops after walking ten times `limit` documents. It can then hold fewer
+than `limit` results and still return a `next_cursor`: keep paging until `next_cursor` is
 `null`.
 
 ### Response
@@ -10634,7 +10712,7 @@ than `k` results and still return a `cursor`: keep paging until `cursor` is
       "score": 0.0328
     }
   ],
-  "cursor": null,
+  "next_cursor": null,
   "as_of": "2026-09-24T10:12:03.117Z",
   "people_matched": [],
   "scope_pending": null
@@ -11141,6 +11219,8 @@ Source: https://remember.dev/docs/reference/http-api/sections-and-references
 
 # Section history and references
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 Two reads work at the level of a document's sections rather than its
 passages. `GET /documents/{doc_id}/sections/{section_key}/history` lists
 what one [keyed section](https://remember.dev/docs/concepts/documents-and-sources#section-keys)
@@ -11190,8 +11270,8 @@ under one section key.
 | `mode` | query | `current` \| `at` \| `overlap` \| `history` | no | `history` | The time scope. |
 | `at` | query | date-time | with `mode=at` | | |
 | `from`, `to` | query | date-time | with `mode=overlap` | | `to` not before `from`. |
-| `k` | query | integer | no | `50` | 1 to 200 rows. |
-| `cursor` | query | string | no | | The previous page's `cursor`. |
+| `limit` | query | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | query | string | no | | The previous page's `next_cursor`. |
 
 ### Response
 
@@ -11230,7 +11310,7 @@ under one section key.
     }
   ],
   "amendments": [],
-  "cursor": null,
+  "next_cursor": null,
   "evaluated_at": "2027-07-01T08:00:00Z",
   "believed_at": "2027-07-01T08:00:00Z"
 }
@@ -11307,8 +11387,8 @@ A [`DocumentReferencesRequest`](https://remember.dev/docs/reference/result-types
 | `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
 | `kinds` | array of strings | no | all | 1 to 7 of the [reference kinds](https://remember.dev/docs/reference/http-api/ingest#reference-kinds). |
 | `time` | object | no | see below | The [time scope](#the-time-scope) of the source versions. |
-| `k` | integer | no | `50` | 1 to 200 rows. |
-| `cursor` | string | no | | The previous page's `cursor`. |
+| `limit` | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | string | no | | The previous page's `next_cursor`. |
 
 Unknown fields are rejected.
 
@@ -11365,8 +11445,8 @@ that contains the reference.
 
 **Order and paging.** Rows are ordered by direction (outgoing first), source
 document, source version, reference, then target version. A page reads at
-most ten times `k` references; it can come back shorter than `k` with a
-`cursor`. Keep paging until `cursor` is `null`.
+most ten times `limit` references; it can come back shorter than `limit` with a
+`next_cursor`. Keep paging until `next_cursor` is `null`.
 
 ### Response
 
@@ -11409,7 +11489,7 @@ most ten times `k` references; it can come back shorter than `k` with a
       }
     }
   ],
-  "cursor": null,
+  "next_cursor": null,
   "evaluated_at": "2026-03-02T09:00:00Z",
   "believed_at": "2026-03-02T09:00:00Z",
   "too_broad": null
@@ -11631,6 +11711,8 @@ Source: https://remember.dev/docs/reference/http-api/entities-and-facts
 
 # Entities and facts
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 These five routes are the direct, single-purpose reads behind the assured
 operations. Use them when you already know what you want: the entity ids for
 a name, the relations that match a pattern, or the evidence behind one fact.
@@ -11731,7 +11813,8 @@ now or at a past instant.
 | `predicate` | query | string | no | any | Exact predicate name. |
 | `object_entity_id` | query | UUID | no | any | |
 | `valid_at` | query | date-time | no | now | Must be UTC (`Z` or `+00:00`). |
-| `k` | query | integer | no | `50` | 1–400. The most relations to return. |
+| `limit` | query | integer | no | `50` | 1–200 relations per page. |
+| `cursor` | query | string | no | | The previous response's `next_cursor`. |
 
 Every filter is optional; the ones you send are combined with AND. A
 relation matches when it has not been invalidated and its validity window
@@ -11741,16 +11824,16 @@ as open on that side. A relation must also pass the
 `valid_at` (or now): a relation whose only supporting text is a version not
 in force at that instant is left out.
 
-At most `k` relations come back. When more match, `truncation` says so
-(`truncated: true`, `reason: "lookup_k_limit"`, `total_is_exact: false`):
-narrow the pattern or raise `k`.
+Pass `next_cursor` back as `cursor` until it is `null`. The cursor binds the
+deployment and filters and pins a commit-visible belief instant, so a
+declaration correction cannot first become visible on a later page.
 
 ### Response
 
 `200` with an `Envelope` of grain `fact`. `facts` holds one
 [`FactResult`](https://remember.dev/docs/reference/result-types#factresult) per relation (`kind:
-"relation"`), ordered by evidence count, highest first, then by when the
-memory learned it; `truncation` is set when the `k` cap left matches out.
+"relation"`), ordered by ingest time and relation ID descending.
+`next_cursor` is null exactly at the end.
 Each result carries its `validity`, its
 `temporal_match`, its `support` and, when the relation is part of a
 contradiction, the other sides in `contradiction`. With `valid_at`,
@@ -11761,7 +11844,8 @@ contradiction, the other sides in `contradiction`. With `valid_at`,
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `k` outside 1–400. |
+| `400` | cursor error | A malformed cursor or one from another deployment or filter scope. |
+| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `limit` outside 1–200. |
 
 ### Example
 
@@ -11795,13 +11879,17 @@ well they match a phrase.
 |---|---|---|---|---|---|
 | `entity_id` | query | UUID | yes | | |
 | `property_query` | query | string | no | | When present, observations are found by semantic similarity to this text. |
-| `k` | query | integer | no | `10` | 1–400. The most observations to return. |
+| `k` | query | integer | no | `10` | Ranked results with `property_query`: 1–400. |
+| `limit` | query | integer | no | `50` | Browse page size without `property_query`: 1–200. |
+| `cursor` | query | string | no | | The previous response's `next_cursor`; only without `property_query`. |
 
 Without `property_query`, the live observations on the entity whose validity
 covers now, and that pass the
-[evidence gate](https://remember.dev/docs/reference/assured-operations#text-in-force) now, are returned, strongest evidence first, at most `k`; when more
-exist, `truncation` says so (`reason: "lookup_k_limit"`). With
-`property_query`, up to `k` candidates are nominated by similarity and each is
+[evidence gate](https://remember.dev/docs/reference/assured-operations#text-in-force) now, are paged
+by ingest time and observation ID descending. `limit` / `cursor` continues
+through `next_cursor`, with the same commit-visible belief pin as relations.
+With `property_query`, `k` bounds ranked results and `truncation.truncated`
+discloses the cap; query plus cursor is refused. Candidates are nominated by similarity and each is
 re-checked against the database before it is returned; candidates that no
 longer hold are dropped and counted in `dropped_by_hydration`.
 
@@ -11815,7 +11903,8 @@ observation (`kind: "observation"`). No match gives `negative.kind`
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | `entity_id` missing or malformed, or `k` not an integer in 1–400. |
+| `400` | cursor error | A malformed cursor or one from another deployment or filter scope. |
+| `422` | validation list | `entity_id` missing or malformed, or `k` outside 1–400, `limit` outside 1–200, or `property_query` with `cursor`. |
 | `503` | `model provider unavailable` | The embedding call for `property_query` failed. Retry with back-off. |
 
 ### Example
@@ -11921,6 +12010,8 @@ for decision in envelope.transcript:
 Source: https://remember.dev/docs/reference/http-api/search
 
 # Search and adjacent chunks
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 Search returns evidence, not facts. A claim is what one source said; a chunk
 is a passage of a source document. Neither is a statement of what the memory
@@ -12256,6 +12347,8 @@ Source: https://remember.dev/docs/reference/http-api/graph
 
 # Graph
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 The live graph is the set of current relations seen as edges between
 entities (the nodes). Three routes walk it: the neighbourhood of one entity,
 the shortest paths between two entities, and citation chains between two
@@ -12317,8 +12410,8 @@ optionally with the path to each.
 | `predicates` | array of string | no | `[]` (all) | At most 100 items, each 1 to 200 characters. Only edges with these predicates are followed. |
 | `valid_at` | date-time | no | now | Send with `believed_at`. |
 | `believed_at` | date-time | no | now | Send with `valid_at`. |
-| `limit` | integer | no | `500` | 1 to 500 entities per page. |
-| `continuation` | string | no | | The `truncation.continuation` from the previous page. At most 200 characters. |
+| `limit` | integer | no | `100` | 1 to 500 entities per page. |
+| `cursor` | string | no | | The envelope `next_cursor` from the previous page. At most 2,048 characters. |
 | `include_paths` | boolean | no | `false` | Also return one path to each entity. |
 
 Unknown fields are rejected.
@@ -12333,14 +12426,19 @@ Unknown fields are rejected.
   [`GraphPath`](https://remember.dev/docs/reference/result-types#graphpath) per entity and the distinct
   [`GraphEdge`](https://remember.dev/docs/reference/result-types#graphedge) entries they use. Empty
   otherwise.
+- `next_cursor`: resumes after the last `(hops, relation_ids, node_ids)` tuple,
+  so deleting a returned edge does not skip surviving neighbors. It binds the
+  deployment and filters and pins both clocks. For hops greater than one, paging
+  stays within the 500-row computational ceiling; at that ceiling `next_cursor`
+  is null and `truncation.reason` discloses the stop.
 - `truncation`: always present. When more entities exist, `truncated` is
-  `true` and `continuation` holds the cursor for the next page.
+  `true` (disclosure only; page with `next_cursor`).
 
 | Situation | Result |
 |---|---|
 | `entity_id` not in the live graph | `negative.kind` `unknown_entity` |
 | The entity exists but no neighbour matches | `negative.kind` `known_empty` |
-| `continuation` is not a cursor this route issued | `negative.kind` `boundary` |
+| `cursor` is not a cursor this route issued, or belongs to a different scope | `negative.kind` `boundary` |
 
 ### Errors
 
@@ -12368,13 +12466,13 @@ page = memory.graph_neighborhood(entity_id=billing_migration_id, hops=2, limit=1
 while True:
     for node in page.nodes:
         print(node.hops, node.name)
-    if page.truncation is None or page.truncation.continuation is None:
+    if page.next_cursor is None:
         break
     page = memory.graph_neighborhood(
         entity_id=billing_migration_id,
         hops=2,
         limit=100,
-        continuation=page.truncation.continuation,
+        cursor=page.next_cursor,
     )
 ```
 
@@ -12499,6 +12597,8 @@ Source: https://remember.dev/docs/reference/http-api/query
 
 # SQL queries
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 SQL queries let you ask questions the assured operations do not cover: counts,
 joins across claims and documents, timelines, anything you can express as one
 read-only `SELECT`. They run over **the query space**, `memory_v1`: a fixed
@@ -12567,7 +12667,7 @@ Run one read-only SQL statement.
 |---|---|---|---|---|
 | `sql` | string | yes | | One statement: `SELECT`, `VALUES` or `WITH … SELECT`. At most 65,536 bytes. |
 | `parameters` | array | no | `[]` | Positional values for `$1`, `$2`, …. The count must equal the highest placeholder, and placeholders must be contiguous from `$1`. |
-| `max_rows` | integer | no | 200 | At least 0; values above 1,000 are clamped to 1,000. `0` returns no rows. |
+| `max_rows` | integer | no | 200 | 0 to 1,000; larger values are rejected with `422`. `0` returns no rows. |
 
 Unknown fields are rejected. Cast parameters in the SQL when the type matters
 (`$1::uuid`, `$2::timestamptz`). Graph functions must take `$1` as their first
@@ -12603,8 +12703,6 @@ any earlier `QueryResult` or `IngestedVersion` gives it to you.
   "limits": {"row_cap": 200, "byte_cap": 1048576, "statement_timeout_ms": 5000, "analytical_tier": false},
   "truncated": false,
   "truncation_reason": null,
-  "exact_total_known": false,
-  "exact_total": null,
   "ordered_result": true,
   "empty_result": false,
   "negative_kind": null,
@@ -12625,7 +12723,7 @@ any earlier `QueryResult` or `IngestedVersion` gives it to you.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | `sql` missing, `parameters` not an array, `max_rows` negative, or an unknown field. |
+| `422` | validation list | `sql` missing, `parameters` not an array, `max_rows` outside 0–1,000, or an unknown field. |
 
 Everything else about the statement is reported inside the `200` result.
 
@@ -12910,7 +13008,7 @@ validation and limits as `POST /query/sql`.
 |---|---|---|---|---|
 | `version` | integer | no | the active version | At least 1. |
 | `parameters` | array | no | `[]` | Positional values for the query's placeholders. |
-| `max_rows` | integer | no | the query's stored default, else 200 | At least 0; clamped to 1,000. |
+| `max_rows` | integer | no | the query's stored default, else 200 | 0 to 1,000; larger values are rejected with `422`. |
 
 Unknown fields are rejected. The query's stored `default_limits` apply
 (clamped to the interactive caps); your `max_rows` takes precedence over the
@@ -12929,7 +13027,7 @@ Statement problems are reported inside the result, as for `POST /query/sql`.
 | `404` | `saved_query_not_found` | No such query or version. |
 | `409` | `saved_query_disabled` | The query is disabled, or the version is not `active` (a draft, deprecated or broken version). |
 | `409` | `saved_query_revalidation_pending` | The query space changed since the version was validated, and it has not been revalidated. |
-| `422` | validation list | Malformed body, `version` below 1, `max_rows` negative, or an unknown field. |
+| `422` | validation list | Malformed body, `version` below 1, `max_rows` outside 0–1,000, or an unknown field. |
 | `500` | `execution_error` | The deployment could not read its saved-query registry state. |
 
 ### Example
@@ -13097,7 +13195,10 @@ listener, not on the API's address, and only when you configure it.
 
 Page through the deployment's cost receipts: one row per model call made by
 the pipeline workers or by a query route, with tokens, cost and latency. It
-never carries memory content.
+never carries memory content. This is a resumable feed with its own contract
+(outside the [browse-list pagination rules](https://remember.dev/docs/reference/http-api#pagination-and-truncation)):
+every page echoes the request `cursor`, `next_cursor` stays set whenever the
+batch has receipts, and stored cursors remain valid across deploys.
 
 The listener starts only when `REMEMBERSTACK_COST_EXPORT_BIND` is set
 (`host:port`, `[ipv6]:port` or `unix:/path/to.sock`). It then requires
@@ -13527,7 +13628,8 @@ A trimmed response (empty arrays and some fields left out):
     {"fact_kind": "relation", "fact_id": "c3d2…", "stance": "contradicts", "returned": 0, "total": 0}
   ],
   "freshness": {"pg_live_ts": "2026-09-23T10:00:00Z", "p1_written_inline": true, "p1_believed_at_horizon": null, "k": null},
-  "truncation": {"truncated": false, "returned": 3, "estimated_total": 3, "total_is_exact": true, "continuation": null, "reason": null},
+  "next_cursor": null,
+  "truncation": {"truncated": false, "returned": 3, "estimated_total": 3, "total_is_exact": true, "reason": null},
   "dropped_by_hydration": 0,
   "excluded_unstamped": 0,
   "negative": null
@@ -13622,6 +13724,8 @@ Source: https://remember.dev/docs/reference/result-types
 
 # Result types
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 This page lists every shape the HTTP API returns, and the request bodies that
 have a name. Field names are exactly as they appear on the wire. The same
 models exist in Python as `remember.models.<Name>` (the most used are also
@@ -13690,6 +13794,7 @@ route in this release fills `ranking`, `changes`, `aggregate` or `pages`.
 | `pages` | array of [`PageRef`](#pageref) | Compiled pages. |
 | `freshness` | [`Freshness`](#freshness) | How current the answer's sources are. |
 | `truncation` | [`Truncation`](#truncation), nullable | Present when a cap applied or the route always discloses one. |
+| `next_cursor` | string, nullable | Browse-page cursor; `null` exactly at the end. Used by graph neighborhood and browse-mode lookups. |
 | `dropped_by_hydration` | integer | Candidates that were nominated but no longer held when re-read. Default `0`. |
 | `excluded_unstamped` | integer ≥ 0 | Items left out because they carry no usable time. Default `0`. |
 | `negative` | [`Negative`](#negative), nullable | Set when the answer is a typed "no". |
@@ -13699,12 +13804,13 @@ Which fields each route fills:
 | Route or operation | Grain | Fields |
 |---|---|---|
 | `GET /resolve`, `resolve_entity` | `fact` | `entities`, `truncation`, `negative` |
-| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `truncation`, `dropped_by_hydration`, `negative` |
+| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `next_cursor` (browse), `truncation`, `dropped_by_hydration`, `negative` |
 | `GET /hydrate/relation/{relation_id}` | `composite` | `facts`, `evidence`, `sources`, `negative` |
 | `GET /transcript/relation/{relation_id}` | `composite` | `transcript`, `truncation`, `negative` |
 | Search routes | `evidence` | `evidence` or `chunks`, `dropped_by_hydration`, `negative` |
 | Adjacent chunks | `evidence` | `chunks`, `dropped_by_hydration`, `negative` |
-| Graph routes | `fact` | `nodes`, `paths`, `edges`, `truncation`, `negative` |
+| Graph neighborhood | `fact` | `nodes`, `paths`, `edges`, `next_cursor`, `truncation`, `negative` |
+| Other graph routes | `fact` | `nodes`, `paths`, `edges`, `truncation`, `negative` |
 | `claims_and_sources_context` | `evidence` | `evidence`, `chunks`, `truncation`, `dropped_by_hydration`, `negative` |
 | `facts_context` | `fact` | `facts`, `evidence`, `fact_evidence`, `evidence_totals`, `nodes`, `truncation`, `dropped_by_hydration`, `negative` |
 
@@ -13808,8 +13914,7 @@ A fact's live contradiction, returned with all its sides up to a cap.
 | `group_id` | UUID | |
 | `co_members` | array of [`CoMember`](#comember) | The other sides, up to 25 inline. |
 | `returned` | integer ≥ 0 | Sides returned. |
-| `total` | integer ≥ 0 | Sides that exist. |
-| `continuation` | string, nullable | Set when more sides exist than were returned. |
+| `total` | integer ≥ 0 | Sides that exist. When `returned` is less than `total`, the cap applied; co-member paging is out of scope. |
 
 ### CoMember
 
@@ -14081,8 +14186,7 @@ A cap is never silent: when one applies, this block says so.
 | `returned` | integer ≥ 0 | Items returned. |
 | `estimated_total` | integer ≥ 0 | Items seen before the cap. |
 | `total_is_exact` | boolean | `false` when the count itself hit a cap. Default `true`. |
-| `continuation` | string, nullable | A cursor to pass back. Only `POST /graph/neighborhood` accepts one. |
-| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). |
+| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). Follow-up paging uses `Envelope.next_cursor`, not a field here. |
 
 ### Negative
 
@@ -14141,8 +14245,6 @@ where the rows came from before giving them.
 | `limits` | [`ResultLimits`](#resultlimits) | The caps this statement ran under. |
 | `truncated` | boolean | |
 | `truncation_reason` | string, nullable | `row_cap`, `byte_cap`, or a graph budget (`depth_budget`, `expansion_budget`, `frontier_budget`, `result_budget`, `time_budget`). |
-| `exact_total_known` | boolean | Always `false` in this release. |
-| `exact_total` | integer, nullable | Always `null` in this release. |
 | `ordered_result` | boolean | The statement has a top-level `ORDER BY`. |
 | `empty_result` | boolean | No rows were returned (also `true` on every rejection or failure). |
 | `negative_kind` | null | Always `null`: SQL results never carry a typed negative. |
@@ -14303,7 +14405,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | Field | Type | Contents |
 |---|---|---|
 | `documents` | array of [`DocumentSummary`](#documentsummary) | |
-| `cursor` | string, nullable | Pass to the next request; `null` on the last page. |
+| `next_cursor` | string, nullable | Pass to the next request; `null` on the last page. |
 
 ### DocumentSummary
 
@@ -14341,7 +14443,8 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
 | `versions` | `current` \| `all` | no | `current` | |
 | `time` | [`ReadTime`](#readtime), nullable | no | `current` | Which editions of a document with declared effective periods are candidates. |
-| `k` | integer | no | `20` | 1 to 200. |
+| `k` | integer | no | `20` | Ranked results with `query`: 1 to 200. |
+| `limit` | integer | no | `50` | Browse page size without `query`: 1 to 200. |
 | `cursor` | string, nullable | no | | Only without `query`. |
 
 ### DocumentSearchFilters
@@ -14362,7 +14465,8 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | Field | Type | Contents |
 |---|---|---|
 | `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest ingested first without one. |
-| `cursor` | string, nullable | The next page; always `null` with a query. |
+| `next_cursor` | string, nullable | The next page; always `null` with a query. |
+| `truncated` | boolean | Ranked results exceeded `k`; false for browse pages. |
 | `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
 | `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
 | `scope_pending` | [`ScopePending`](#scopepending), nullable | Examined documents whose edition in force for `time` is still being processed. |
@@ -14537,7 +14641,7 @@ One line of the NDJSON body of
 | `periodised` | boolean | The document has declared effective periods; rows are then ordered by period start, otherwise by `version_no`. |
 | `rows` | array of [`SectionHistoryRow`](#sectionhistoryrow) | |
 | `amendments` | array of [`SectionAmendment`](#sectionamendment) | First page only. |
-| `cursor` | string, nullable | |
+| `next_cursor` | string, nullable | |
 | `evaluated_at`, `believed_at` | date-time | The instants the history was read at; a cursor keeps them. |
 
 ### SectionHistoryRow
@@ -14589,7 +14693,7 @@ Body of [`POST /documents/references`](https://remember.dev/docs/reference/http-
 | `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
 | `kinds` | array of strings, nullable | no | | 1 to 7 reference kinds. |
 | `time` | [`ReadTime`](#readtime), nullable | no | `current`; with `chunk_id`, the chunk's version's in-force time up to now | |
-| `k` | integer | no | `50` | 1 to 200. |
+| `limit` | integer | no | `50` | 1 to 200. |
 | `cursor` | string, nullable | no | | |
 
 ### DocumentReferencesPage
@@ -14597,7 +14701,7 @@ Body of [`POST /documents/references`](https://remember.dev/docs/reference/http-
 | Field | Type | Contents |
 |---|---|---|
 | `rows` | array of [`DocumentReference`](#documentreference) | |
-| `cursor` | string, nullable | A short page can still carry a cursor. |
+| `next_cursor` | string, nullable | A short page can still carry a cursor. |
 | `evaluated_at`, `believed_at` | date-time | |
 | `too_broad` | object, nullable | `{reason: "too_broad", descendant_keys, limit, explanation}` when the section has more than `limit` (1,000) keyed subsections; `rows` is then empty. |
 
@@ -16174,6 +16278,8 @@ Source: https://remember.dev/docs/reference/python-sdk
 
 # Python SDK
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 The `remember` package is the Python client for RememberStack. You use it to
 store documents, wait until they are processed, and ask the memory what it
 knows.
@@ -16662,7 +16768,7 @@ MemoryClient.list_documents(
 
 Returns one page of the deployment's documents, newest document first, as a
 [`DocumentPage`](https://remember.dev/docs/reference/result-types#documentpage). Pass the
-returned `cursor` to read the next page; it is `None` on the last page.
+returned `next_cursor` as `cursor` to read the next page; it is `None` on the last page.
 `status` keeps only documents whose newest version has that status. `limit`
 is 1 to 200; the deployment answers `422` outside that range. Deleted
 documents are not listed. See
@@ -16674,9 +16780,9 @@ while True:
     page = memory.list_documents(cursor=cursor)
     for document in page.documents:
         print(document.doc_id, document.title, document.serving)
-    if page.cursor is None:
+    if page.next_cursor is None:
         break
-    cursor = page.cursor
+    cursor = page.next_cursor
 ```
 
 #### `search_documents`
@@ -16688,6 +16794,7 @@ MemoryClient.search_documents(
     filters: DocumentSearchFilters | None = None,
     versions: Literal["current", "all"] = "current",
     k: int = 20,
+    limit: int = 50,
     cursor: str | None = None,
     time: ReadTime | None = None,
 ) -> DocumentSearchPage
@@ -16701,8 +16808,9 @@ and their text, and returns a
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
 `recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
 and `doc_ids`. With a `query` the results are ranked and not paged; without
-one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
-`query`, a date without a timezone, or `k` outside 1 to 200 raises
+one they are newest ingested first and `limit` (default 50) / `cursor` pages them.
+Read `next_cursor` for continuation; ranked responses disclose `truncated`. Passing `cursor` with a
+`query`, a date without a timezone, or `k` / `limit` outside 1 to 200 raises
 `pydantic.ValidationError` before any request. A malformed cursor raises
 `MemoryApiError` with `status_code` 400. `time` decides which editions of a
 document with declared effective periods are candidates (default: the ones
@@ -16716,7 +16824,7 @@ from remember import Client, DocumentSearchFilters
 memory = Client()
 page = memory.search_documents("audit report")
 emails = memory.search_documents(
-    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), limit=50
 )
 if len(emails.people_matched) > 1:
     print("several people matched:", emails.people_matched)
@@ -16830,7 +16938,7 @@ MemoryClient.section_history(
     doc_id: UUID | str,
     section_key: str,
     time: ReadTime | None = None,
-    k: int = 50,
+    limit: int = 50,
     cursor: str | None = None,
 ) -> SectionHistoryPage
 ```
@@ -16838,7 +16946,7 @@ MemoryClient.section_history(
 Follows one keyed section across the document's versions. `time` defaults
 to `{"mode": "history"}`. Each row is a version with its `effective`
 intervals and a `status` of `present`, `absent`, `not_indexed` or
-`processing`. Raises `pydantic.ValidationError` for a malformed key or `k`
+`processing`. Raises `pydantic.ValidationError` for a malformed key or `limit`
 outside 1 to 200, and `MemoryApiError` with `status_code` 404 for an
 unknown or deleted document. `section_history_request(request=…)` sends a
 prepared `SectionHistoryRequest`. See
@@ -16859,7 +16967,7 @@ MemoryClient.document_references(
     direction: Literal["outgoing", "incoming", "both"] = "both",
     kinds: Sequence[ReferenceKind] | None = None,
     time: ReadTime | None = None,
-    k: int = 50,
+    limit: int = 50,
     cursor: str | None = None,
 ) -> DocumentReferencesPage
 ```
@@ -17068,14 +17176,15 @@ MemoryClient.lookup_relations(
     predicate: str | None = None,
     object_entity_id: UUID | None = None,
     valid_at: datetime | None = None,
-    k: int = 50,
+    limit: int = 50,
+    cursor: str | None = None,
 ) -> Envelope
 ```
 
 Returns the relations (facts between two entities) that match the pattern.
 With `valid_at`, returns the relations that were valid at that instant;
-without it, the current ones. At most `k` (1–400) come back; the envelope's
-`truncation` says when more matched.
+without it, the current ones. `limit` is 1–200 (default 50). Pass the envelope's
+`next_cursor` as `cursor` until it is `None`.
 
 ```python
 memory.lookup_relations(subject_entity_id=dana_id, predicate="leads")
@@ -17085,12 +17194,15 @@ memory.lookup_relations(subject_entity_id=dana_id, predicate="leads")
 
 ```python
 MemoryClient.lookup_observations(
-    *, entity_id: UUID, property_query: str | None = None, k: int = 10
+    *, entity_id: UUID, property_query: str | None = None, k: int = 10,
+    limit: int = 50, cursor: str | None = None,
 ) -> Envelope
 ```
 
 Returns the current observations (facts about one entity), optionally
-narrowed by `property_query` text, at most `k`.
+narrowed by `property_query` text. With a property query, `k` bounds ranked results
+and `truncation.truncated` discloses the cap; a cursor is refused. Without a property
+query, `limit` (default 50, range 1–200) / `cursor` pages through `next_cursor`.
 
 ```python
 memory.lookup_observations(entity_id=dana_id, property_query="role")
@@ -17213,15 +17325,15 @@ MemoryClient.graph_neighborhood(
     predicates: tuple[str, ...] = (),
     valid_at: datetime | None = None,
     believed_at: datetime | None = None,
-    limit: int = 500,
-    continuation: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
     include_paths: bool = False,
 ) -> Envelope
 ```
 
 Returns the entities and relations around one entity. The engine accepts
 `hops` 1–4, `limit` 1–500 and at most 100 `predicates`. Pass the envelope's
-`truncation.continuation` back as `continuation` to read the next page.
+`next_cursor` back as `cursor` to read the next page.
 
 ```python
 around_dana = memory.graph_neighborhood(entity_id=dana_id, hops=1)
@@ -17278,7 +17390,7 @@ MemoryClient.query_sql(
 ```
 
 Runs one statement with positional parameters (`$1`, `$2`, …). Returns the
-`QueryResult/v1` object as a dict. `max_rows` must be 0 or more.
+`QueryResult/v1` object as a dict. `max_rows` must be between 0 and 1,000; larger values are refused.
 
 #### `open_query`
 
@@ -17554,6 +17666,8 @@ store and discovers its engine through its own issuer.
 Source: https://remember.dev/docs/reference/typescript-sdk
 
 # TypeScript SDK
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 `@rememberdev/client` is the asynchronous Node.js memory client. It stores
 and searches documents, queries facts and sources, reads graphs, checks pipeline
@@ -17908,6 +18022,8 @@ Source: https://remember.dev/docs/reference/cli
 
 # CLI
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 This page describes the `remember` CLI (v0.19.1), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
@@ -18078,7 +18194,7 @@ remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJ
 
 `list` prints one page of documents as JSON, newest document first, in the
 shape of [`DocumentPage`](https://remember.dev/docs/reference/result-types#documentpage). Pass the
-page's `cursor` to `--cursor` to read the next page; `cursor` is `null` on
+page's `next_cursor` to `--cursor` to read the next page; `next_cursor` is `null` on
 the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
 documents whose newest version has that status.
 
@@ -18092,7 +18208,9 @@ JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
 several; any listed value matches. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
 there is no next page; without one they are newest ingested first and
-`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 50), used as
+the ranked result count with a query and the page size without one. A query
+with `--cursor` is refused before sending a request. See
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
 ```bash
@@ -18363,7 +18481,7 @@ docker compose exec api \
 | Subcommand | Flags | What it does | Output |
 |---|---|---|---|
 | `inspect` | `--deployment ID` | A bounded report of the pipeline: work in progress, dead letters, projections and freshness. | JSON |
-| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
+| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100, max 500) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
 | `resume-no-route` | `--deployment ID` | Releases documents that were parked because no converter handled their media type, once a route now covers them. | `{"released": [...]}` |
 | `replay` | `PROCESSING_ID`, `--deployment ID`, `--attempts N` (default 1), `--lane {steady,backfill}`, `--not-before ISO8601` | Reopens one dead-lettered work item with N more attempts. | JSON |
 | `graph-catalog ensure` | none | Checks the database's graph metadata and repairs it when needed. | `{"ready", "changed", "problems_before", "problems_after", "definitions"}` |
@@ -18450,6 +18568,8 @@ Names are not case-sensitive. All client variables are in
 Source: https://remember.dev/docs/reference/mcp
 
 # MCP tools
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 MCP (Model Context Protocol) is how coding agents call external tools.
 **`remember mcp`** gives an agent access to your memory. It is part of the
@@ -18748,15 +18868,16 @@ Alice") rather than asking about its content.
 | `doc_ids` | array of strings | no | Document UUIDs. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
 | `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
-| `k` | integer | no | 1–200; default 20. |
-| `cursor` | string | no | The previous page's `cursor`; only without `query`. |
+| `k` | integer | no | Ranked results with `query`: 1–200; default 20. |
+| `limit` | integer | no | Browse page size without `query`: 1–200; default 50. |
+| `cursor` | string | no | The previous page's `next_cursor`; only without `query`. |
 
 Unknown keys are refused. The result is a
 [`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
 `family`, `status`, `authors`, `recipients`, dates, `p3_path`,
 `served_version`, `effective`, `matching_editions` and `overview`),
-`cursor`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
+`next_cursor`, `truncated`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The
 token needs `read` scope. How matching and paging work:
@@ -18773,8 +18894,8 @@ stable id a heading carries in the source: `per-diem` in
 | `doc_id` | string | yes | The document's UUID. |
 | `section_key` | string | yes | 1–200 characters from `A–Z a–z 0–9 _ . : / -`, without the `#`. |
 | `time` | object | no | Default `{"mode": "history"}`; the forms are under [`facts_context`](#facts_context). |
-| `k` | integer | no | 1–200; default 50. |
-| `cursor` | string | no | The previous page's `cursor`. |
+| `limit` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `next_cursor`. |
 
 The result is a [`SectionHistoryPage`](https://remember.dev/docs/reference/result-types#sectionhistorypage):
 one row per version with `status` `present`, `absent`, `not_indexed` or
@@ -18797,8 +18918,8 @@ source window.
 | `direction` | `"outgoing"`, `"incoming"` or `"both"` | no | Default `"both"`. |
 | `kinds` | array of strings | no | 1–7 of `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
 | `time` | object | no | Default `{"mode": "current"}`; with `chunk_id`, the chunk's version's in-force time up to now. |
-| `k` | integer | no | 1–200; default 50. |
-| `cursor` | string | no | The previous page's `cursor`. A short page with a cursor means keep paging. |
+| `limit` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `next_cursor`. A short page with a cursor means keep paging. |
 
 The result is a [`DocumentReferencesPage`](https://remember.dev/docs/reference/result-types#documentreferencespage).
 An unknown document is `document_not_found`, an unknown passage
@@ -18907,13 +19028,13 @@ string field), booleans in place of integers, and out-of-range numbers.
 
 | Tool | Parameters | Result |
 |---|---|---|
-| `query_sql` | `sql` (string, required); `parameters` (array of values for `$1`, `$2`, …); `max_rows` (integer ≥ 0) | `QueryResult/v1` |
+| `query_sql` | `sql` (string, required); `parameters` (array of values for `$1`, `$2`, …); `max_rows` (integer 0–1,000) | `QueryResult/v1` |
 | `explain_sql` | `sql` (string, required); `parameters` (array) | `QueryResult/v1` with the plan; the statement does not run |
 | `describe_query_space` | `pattern` (string, shell-style filter over view names); `include_examples` (boolean, default false) | The query space description |
 | `search_query_space` | `query` (string, required); `k` (integer 1–25, default 10) | A list of `{kind, name, score, purpose, tags}`; searches the query space's own documentation, never your data |
 | `list_saved_queries` | `namespace` (identifier); `status` (string) | Saved-query summaries; without `status`, active versions only |
 | `describe_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1) | One saved query: SQL, parameters, declared columns, validation state |
-| `run_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1); `parameters` (array); `max_rows` (integer ≥ 0) | `QueryResult/v1` |
+| `run_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1); `parameters` (array); `max_rows` (integer 0–1,000) | `QueryResult/v1` |
 
 Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
 [Saved queries](https://remember.dev/docs/guides/saved-queries).
@@ -19442,6 +19563,8 @@ them has no effect on a Compose deployment.
 Source: https://remember.dev/docs/reference/errors
 
 # Errors and status codes
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 This page collects every error a client can meet: HTTP statuses from a
 deployment, the codes SQL queries report,

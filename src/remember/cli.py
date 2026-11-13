@@ -663,8 +663,19 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 def _run_documents(args: argparse.Namespace) -> int:
     """List, search, or delete the deployment's documents."""
+    if (
+        args.documents_command == "search"
+        and args.query is not None
+        and args.cursor is not None
+    ):
+        print(
+            "error: cursor pages filter-only searches; drop query or cursor",
+            file=sys.stderr,
+        )
+        return 2
     with _cli_memory_client(args) as client:
         if args.documents_command == "search":
+            # Ranked searches take k; browse lists take limit + cursor (D154).
             page = client.search_documents(
                 args.query,
                 filters=DocumentSearchFilters(
@@ -680,16 +691,23 @@ def _run_documents(args: argparse.Namespace) -> int:
                     doc_ids=tuple(args.doc_id),
                 ),
                 versions=args.versions,
-                k=args.limit,
-                cursor=args.cursor,
+                **(
+                    {"k": args.limit}
+                    if args.query
+                    else {"limit": args.limit, "cursor": args.cursor}
+                ),
             )
             print(page.model_dump_json())
+            if page.next_cursor is not None:
+                print(f"# next_cursor={page.next_cursor}", file=sys.stderr)
             return 0
         if args.documents_command == "list":
             page = client.list_documents(
                 limit=args.limit, cursor=args.cursor, status=args.status
             )
             print(page.model_dump_json())
+            if page.next_cursor is not None:
+                print(f"# next_cursor={page.next_cursor}", file=sys.stderr)
             return 0
         deletion = client.delete_document(doc_id=args.doc_id)
     print(deletion.model_dump_json())
@@ -1289,10 +1307,16 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         help="judge each document by its current version (default) or any version",
     )
     search_documents.add_argument(
-        "--limit", type=int, default=20, help="documents per page (1-200, default 20)"
+        "--limit",
+        type=int,
+        default=50,
+        help=(
+            "browse page size without a query, or ranked top-k with a query"
+            " (1-200, default 50)"
+        ),
     )
     search_documents.add_argument(
-        "--cursor", help="the cursor a previous page returned (only without a query)"
+        "--cursor", help="pass a previous page's next_cursor (only without a query)"
     )
     delete_document = documents_commands.add_parser(
         "delete",

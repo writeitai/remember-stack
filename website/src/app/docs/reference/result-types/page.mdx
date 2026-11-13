@@ -5,6 +5,8 @@ export const metadata = {
 
 # Result types
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 This page lists every shape the HTTP API returns, and the request bodies that
@@ -77,6 +79,7 @@ route in this release fills `ranking`, `changes`, `aggregate` or `pages`.
 | `pages` | array of [`PageRef`](#pageref) | Compiled pages. |
 | `freshness` | [`Freshness`](#freshness) | How current the answer's sources are. |
 | `truncation` | [`Truncation`](#truncation), nullable | Present when a cap applied or the route always discloses one. |
+| `next_cursor` | string, nullable | Browse-page cursor; `null` exactly at the end. Used by graph neighborhood and browse-mode lookups. |
 | `dropped_by_hydration` | integer | Candidates that were nominated but no longer held when re-read. Default `0`. |
 | `excluded_unstamped` | integer ≥ 0 | Items left out because they carry no usable time. Default `0`. |
 | `negative` | [`Negative`](#negative), nullable | Set when the answer is a typed "no". |
@@ -86,12 +89,13 @@ Which fields each route fills:
 | Route or operation | Grain | Fields |
 |---|---|---|
 | `GET /resolve`, `resolve_entity` | `fact` | `entities`, `truncation`, `negative` |
-| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `truncation`, `dropped_by_hydration`, `negative` |
+| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `next_cursor` (browse), `truncation`, `dropped_by_hydration`, `negative` |
 | `GET /hydrate/relation/{relation_id}` | `composite` | `facts`, `evidence`, `sources`, `negative` |
 | `GET /transcript/relation/{relation_id}` | `composite` | `transcript`, `truncation`, `negative` |
 | Search routes | `evidence` | `evidence` or `chunks`, `dropped_by_hydration`, `negative` |
 | Adjacent chunks | `evidence` | `chunks`, `dropped_by_hydration`, `negative` |
-| Graph routes | `fact` | `nodes`, `paths`, `edges`, `truncation`, `negative` |
+| Graph neighborhood | `fact` | `nodes`, `paths`, `edges`, `next_cursor`, `truncation`, `negative` |
+| Other graph routes | `fact` | `nodes`, `paths`, `edges`, `truncation`, `negative` |
 | `claims_and_sources_context` | `evidence` | `evidence`, `chunks`, `truncation`, `dropped_by_hydration`, `negative` |
 | `facts_context` | `fact` | `facts`, `evidence`, `fact_evidence`, `evidence_totals`, `nodes`, `truncation`, `dropped_by_hydration`, `negative` |
 
@@ -195,8 +199,7 @@ A fact's live contradiction, returned with all its sides up to a cap.
 | `group_id` | UUID | |
 | `co_members` | array of [`CoMember`](#comember) | The other sides, up to 25 inline. |
 | `returned` | integer ≥ 0 | Sides returned. |
-| `total` | integer ≥ 0 | Sides that exist. |
-| `continuation` | string, nullable | Set when more sides exist than were returned. |
+| `total` | integer ≥ 0 | Sides that exist. When `returned` is less than `total`, the cap applied; co-member paging is out of scope. |
 
 ### CoMember
 
@@ -468,8 +471,7 @@ A cap is never silent: when one applies, this block says so.
 | `returned` | integer ≥ 0 | Items returned. |
 | `estimated_total` | integer ≥ 0 | Items seen before the cap. |
 | `total_is_exact` | boolean | `false` when the count itself hit a cap. Default `true`. |
-| `continuation` | string, nullable | A cursor to pass back. Only `POST /graph/neighborhood` accepts one. |
-| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). |
+| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). Follow-up paging uses `Envelope.next_cursor`, not a field here. |
 
 ### Negative
 
@@ -528,8 +530,6 @@ where the rows came from before giving them.
 | `limits` | [`ResultLimits`](#resultlimits) | The caps this statement ran under. |
 | `truncated` | boolean | |
 | `truncation_reason` | string, nullable | `row_cap`, `byte_cap`, or a graph budget (`depth_budget`, `expansion_budget`, `frontier_budget`, `result_budget`, `time_budget`). |
-| `exact_total_known` | boolean | Always `false` in this release. |
-| `exact_total` | integer, nullable | Always `null` in this release. |
 | `ordered_result` | boolean | The statement has a top-level `ORDER BY`. |
 | `empty_result` | boolean | No rows were returned (also `true` on every rejection or failure). |
 | `negative_kind` | null | Always `null`: SQL results never carry a typed negative. |
@@ -690,7 +690,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | Field | Type | Contents |
 |---|---|---|
 | `documents` | array of [`DocumentSummary`](#documentsummary) | |
-| `cursor` | string, nullable | Pass to the next request; `null` on the last page. |
+| `next_cursor` | string, nullable | Pass to the next request; `null` on the last page. |
 
 ### DocumentSummary
 
@@ -728,7 +728,8 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
 | `versions` | `current` \| `all` | no | `current` | |
 | `time` | [`ReadTime`](#readtime), nullable | no | `current` | Which editions of a document with declared effective periods are candidates. |
-| `k` | integer | no | `20` | 1 to 200. |
+| `k` | integer | no | `20` | Ranked results with `query`: 1 to 200. |
+| `limit` | integer | no | `50` | Browse page size without `query`: 1 to 200. |
 | `cursor` | string, nullable | no | | Only without `query`. |
 
 ### DocumentSearchFilters
@@ -749,7 +750,8 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | Field | Type | Contents |
 |---|---|---|
 | `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest ingested first without one. |
-| `cursor` | string, nullable | The next page; always `null` with a query. |
+| `next_cursor` | string, nullable | The next page; always `null` with a query. |
+| `truncated` | boolean | Ranked results exceeded `k`; false for browse pages. |
 | `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
 | `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
 | `scope_pending` | [`ScopePending`](#scopepending), nullable | Examined documents whose edition in force for `time` is still being processed. |
@@ -924,7 +926,7 @@ One line of the NDJSON body of
 | `periodised` | boolean | The document has declared effective periods; rows are then ordered by period start, otherwise by `version_no`. |
 | `rows` | array of [`SectionHistoryRow`](#sectionhistoryrow) | |
 | `amendments` | array of [`SectionAmendment`](#sectionamendment) | First page only. |
-| `cursor` | string, nullable | |
+| `next_cursor` | string, nullable | |
 | `evaluated_at`, `believed_at` | date-time | The instants the history was read at; a cursor keeps them. |
 
 ### SectionHistoryRow
@@ -976,7 +978,7 @@ Body of [`POST /documents/references`](/docs/reference/http-api/sections-and-ref
 | `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
 | `kinds` | array of strings, nullable | no | | 1 to 7 reference kinds. |
 | `time` | [`ReadTime`](#readtime), nullable | no | `current`; with `chunk_id`, the chunk's version's in-force time up to now | |
-| `k` | integer | no | `50` | 1 to 200. |
+| `limit` | integer | no | `50` | 1 to 200. |
 | `cursor` | string, nullable | no | | |
 
 ### DocumentReferencesPage
@@ -984,7 +986,7 @@ Body of [`POST /documents/references`](/docs/reference/http-api/sections-and-ref
 | Field | Type | Contents |
 |---|---|---|
 | `rows` | array of [`DocumentReference`](#documentreference) | |
-| `cursor` | string, nullable | A short page can still carry a cursor. |
+| `next_cursor` | string, nullable | A short page can still carry a cursor. |
 | `evaluated_at`, `believed_at` | date-time | |
 | `too_broad` | object, nullable | `{reason: "too_broad", descendant_keys, limit, explanation}` when the section has more than `limit` (1,000) keyed subsections; `rows` is then empty. |
 

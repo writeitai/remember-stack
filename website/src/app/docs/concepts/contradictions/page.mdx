@@ -5,6 +5,8 @@ export const metadata = {
 
 # Contradictions, corroboration and supersession
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 Sources disagree. The spec says the cutover is on June 8; a standup
@@ -59,8 +61,7 @@ Its `FactResult` carries:
     }
   ],
   "returned": 1,
-  "total": 1,
-  "continuation": null
+  "total": 1
 }
 ```
 

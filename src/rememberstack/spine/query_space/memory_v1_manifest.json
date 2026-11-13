@@ -881,7 +881,7 @@
               },
               "Contradiction": {
                 "additionalProperties": false,
-                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
                 "properties": {
                   "co_members": {
                     "default": [],
@@ -890,18 +890,6 @@
                     },
                     "title": "Co Members",
                     "type": "array"
-                  },
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
                   },
                   "group_id": {
                     "format": "uuid",
@@ -2155,20 +2143,8 @@
               },
               "Truncation": {
                 "additionalProperties": false,
-                "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+                "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
                 "properties": {
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
-                  },
                   "estimated_total": {
                     "minimum": 0,
                     "title": "Estimated Total",
@@ -2374,6 +2350,18 @@
                   }
                 ],
                 "default": null
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next Cursor"
               },
               "nodes": {
                 "default": [],
@@ -3051,7 +3039,7 @@
               },
               "Contradiction": {
                 "additionalProperties": false,
-                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
                 "properties": {
                   "co_members": {
                     "default": [],
@@ -3060,18 +3048,6 @@
                     },
                     "title": "Co Members",
                     "type": "array"
-                  },
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
                   },
                   "group_id": {
                     "format": "uuid",
@@ -3307,6 +3283,18 @@
                       }
                     ],
                     "default": null
+                  },
+                  "next_cursor": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Next Cursor"
                   },
                   "nodes": {
                     "default": [],
@@ -4530,20 +4518,8 @@
               },
               "Truncation": {
                 "additionalProperties": false,
-                "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+                "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
                 "properties": {
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
-                  },
                   "estimated_total": {
                     "minimum": 0,
                     "title": "Estimated Total",
@@ -5265,7 +5241,7 @@
               },
               "Contradiction": {
                 "additionalProperties": false,
-                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
                 "properties": {
                   "co_members": {
                     "default": [],
@@ -5274,18 +5250,6 @@
                     },
                     "title": "Co Members",
                     "type": "array"
-                  },
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
                   },
                   "group_id": {
                     "format": "uuid",
@@ -6539,20 +6503,8 @@
               },
               "Truncation": {
                 "additionalProperties": false,
-                "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+                "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
                 "properties": {
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
-                  },
                   "estimated_total": {
                     "minimum": 0,
                     "title": "Estimated Total",
@@ -6758,6 +6710,18 @@
                   }
                 ],
                 "default": null
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next Cursor"
               },
               "nodes": {
                 "default": [],
@@ -7333,7 +7297,7 @@
               },
               "Contradiction": {
                 "additionalProperties": false,
-                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+                "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
                 "properties": {
                   "co_members": {
                     "default": [],
@@ -7342,18 +7306,6 @@
                     },
                     "title": "Co Members",
                     "type": "array"
-                  },
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
                   },
                   "group_id": {
                     "format": "uuid",
@@ -8607,20 +8559,8 @@
               },
               "Truncation": {
                 "additionalProperties": false,
-                "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+                "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
                 "properties": {
-                  "continuation": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Continuation"
-                  },
                   "estimated_total": {
                     "minimum": 0,
                     "title": "Estimated Total",
@@ -8826,6 +8766,18 @@
                   }
                 ],
                 "default": null
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next Cursor"
               },
               "nodes": {
                 "default": [],
@@ -48400,5 +48352,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "6a5b81486cba3daccb109b3d1d936e048a6557afa7dd4eac1dbd6f9fde33578c"
+  "surface_manifest_hash": "3572a77e5db05f53cad6f7bb6845ab65dddecebc266b473aa776509f80a9b9e1"
 }

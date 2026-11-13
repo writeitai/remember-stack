@@ -123,7 +123,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
     }
     if(name===SECTION_HISTORY_TOOL_NAME||name===DOCUMENT_REFERENCES_TOOL_NAME)return {request:modelDump({name:name===SECTION_HISTORY_TOOL_NAME?'SectionHistoryRequest':'DocumentReferencesRequest',value:args})};
     if(name==='search_documents') {
-      const top=new Set(['query','versions','time','k','cursor']);const payload:Record<string,unknown>={filters:{}};
+      const top=new Set(['query','versions','time','k','limit','cursor']);const payload:Record<string,unknown>={filters:{}};
       for(const [key,value]of Object.entries(args)) if(top.has(key))payload[key]=value;else (payload.filters as Record<string,unknown>)[key]=value;
       return {request:modelDump({name:'DocumentSearchRequest',value:payload})};
     }

@@ -158,7 +158,7 @@ class _Reads:
                     status="target_unavailable",
                 ),
             ),
-            cursor="next",
+            next_cursor="next",
             evaluated_at=_AT,
             believed_at=_AT,
         )
@@ -288,7 +288,7 @@ def test_sdk_document_references_and_refusals(
         direction="outgoing",
         kinds=["refers_to", "amends"],
         time=AtReadTime(at=_AT),
-        k=5,
+        limit=5,
         cursor="abc",
     )
     assert page.rows[0].status == "target_unavailable"
@@ -299,7 +299,7 @@ def test_sdk_document_references_and_refusals(
         direction="outgoing",
         kinds=("refers_to", "amends"),
         time=AtReadTime(at=_AT),
-        k=5,
+        limit=5,
         cursor="abc",
     )
     client.document_references(chunk_id=_CHUNK)
@@ -392,12 +392,12 @@ def test_tool_definition_and_argument_validation() -> None:
     parsed = validate_arguments("document_references", {"doc_id": str(_DOC)})
     request = cast(DocumentReferencesRequest, parsed["request"])
     assert request.time is None
-    assert (request.k, request.direction) == (50, "both")
+    assert (request.limit, request.direction) == (50, "both")
     for bad in (
         {},
         {"doc_id": str(_DOC), "chunk_id": str(_CHUNK)},
         {"chunk_id": str(_CHUNK), "section_key": "k"},
-        {"doc_id": str(_DOC), "k": 201},
+        {"doc_id": str(_DOC), "limit": 201},
         {"doc_id": str(_DOC), "kinds": ["mentions"]},
         {"doc_id": str(_DOC), "project": "x"},
     ):

@@ -227,6 +227,31 @@ def test_validate_arguments_parses_every_family() -> None:
         validate_arguments("examples.top_entities", {})
 
 
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("query_sql", {"sql": "SELECT 1"}),
+        ("run_saved_query", {"namespace": "examples", "name": "safe"}),
+    ],
+)
+def test_local_mcp_enforces_sql_row_cap_at_runtime(
+    name: str, arguments: dict[str, object]
+) -> None:
+    surface = MagicMock(deployment_id=_DEPLOYMENT)
+    facade = MagicMock(deployment_id=_DEPLOYMENT)
+    execute = getattr(facade, name)
+    execute.return_value.model_dump.return_value = {"rows": []}
+    server = OperationMcpServer(surface=surface, open_query=facade)
+    accepted = server.call_tool(name=name, arguments={**arguments, "max_rows": 1000})
+    assert accepted["isError"] is False
+    assert execute.call_args.kwargs["max_rows"] == 1000
+    execute.reset_mock()
+    refused = server.call_tool(name=name, arguments={**arguments, "max_rows": 1001})
+    assert refused["isError"] is True
+    assert "max_rows" in str(refused["content"])
+    execute.assert_not_called()
+
+
 def test_engine_mcp_offers_no_path_and_refuses_it() -> None:
     """The engine does not run on the caller's machine, so `path` is unknown."""
     surface = MagicMock()
@@ -410,13 +435,13 @@ def test_engine_mcp_offers_section_history_only_when_composed() -> None:
     assert names[0] == "section_history"
     result = server.call_tool(
         name="section_history",
-        arguments={"doc_id": str(doc_id), "section_key": "per-diem", "k": 3},
+        arguments={"doc_id": str(doc_id), "section_key": "per-diem", "limit": 3},
     )
     assert result["isError"] is False
     call = history.section_history.call_args.kwargs
     assert call["deployment_id"] == _DEPLOYMENT
     assert call["request"] == SectionHistoryRequest(
-        doc_id=doc_id, section_key="per-diem", k=3
+        doc_id=doc_id, section_key="per-diem", limit=3
     )
 
     history.section_history.side_effect = DocumentNotFoundError(doc_id)

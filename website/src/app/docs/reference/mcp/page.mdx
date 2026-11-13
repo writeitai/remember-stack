@@ -5,6 +5,8 @@ export const metadata = {
 
 # MCP tools
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 MCP (Model Context Protocol) is how coding agents call external tools.
@@ -314,15 +316,16 @@ Alice") rather than asking about its content.
 | `doc_ids` | array of strings | no | Document UUIDs. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
 | `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
-| `k` | integer | no | 1–200; default 20. |
-| `cursor` | string | no | The previous page's `cursor`; only without `query`. |
+| `k` | integer | no | Ranked results with `query`: 1–200; default 20. |
+| `limit` | integer | no | Browse page size without `query`: 1–200; default 50. |
+| `cursor` | string | no | The previous page's `next_cursor`; only without `query`. |
 
 Unknown keys are refused. The result is a
 [`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
 `family`, `status`, `authors`, `recipients`, dates, `p3_path`,
 `served_version`, `effective`, `matching_editions` and `overview`),
-`cursor`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
+`next_cursor`, `truncated`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The
 token needs `read` scope. How matching and paging work:
@@ -339,8 +342,8 @@ stable id a heading carries in the source: `per-diem` in
 | `doc_id` | string | yes | The document's UUID. |
 | `section_key` | string | yes | 1–200 characters from `A–Z a–z 0–9 _ . : / -`, without the `#`. |
 | `time` | object | no | Default `{"mode": "history"}`; the forms are under [`facts_context`](#facts_context). |
-| `k` | integer | no | 1–200; default 50. |
-| `cursor` | string | no | The previous page's `cursor`. |
+| `limit` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `next_cursor`. |
 
 The result is a [`SectionHistoryPage`](/docs/reference/result-types#sectionhistorypage):
 one row per version with `status` `present`, `absent`, `not_indexed` or
@@ -363,8 +366,8 @@ source window.
 | `direction` | `"outgoing"`, `"incoming"` or `"both"` | no | Default `"both"`. |
 | `kinds` | array of strings | no | 1–7 of `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
 | `time` | object | no | Default `{"mode": "current"}`; with `chunk_id`, the chunk's version's in-force time up to now. |
-| `k` | integer | no | 1–200; default 50. |
-| `cursor` | string | no | The previous page's `cursor`. A short page with a cursor means keep paging. |
+| `limit` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `next_cursor`. A short page with a cursor means keep paging. |
 
 The result is a [`DocumentReferencesPage`](/docs/reference/result-types#documentreferencespage).
 An unknown document is `document_not_found`, an unknown passage
@@ -473,13 +476,13 @@ string field), booleans in place of integers, and out-of-range numbers.
 
 | Tool | Parameters | Result |
 |---|---|---|
-| `query_sql` | `sql` (string, required); `parameters` (array of values for `$1`, `$2`, …); `max_rows` (integer ≥ 0) | `QueryResult/v1` |
+| `query_sql` | `sql` (string, required); `parameters` (array of values for `$1`, `$2`, …); `max_rows` (integer 0–1,000) | `QueryResult/v1` |
 | `explain_sql` | `sql` (string, required); `parameters` (array) | `QueryResult/v1` with the plan; the statement does not run |
 | `describe_query_space` | `pattern` (string, shell-style filter over view names); `include_examples` (boolean, default false) | The query space description |
 | `search_query_space` | `query` (string, required); `k` (integer 1–25, default 10) | A list of `{kind, name, score, purpose, tags}`; searches the query space's own documentation, never your data |
 | `list_saved_queries` | `namespace` (identifier); `status` (string) | Saved-query summaries; without `status`, active versions only |
 | `describe_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1) | One saved query: SQL, parameters, declared columns, validation state |
-| `run_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1); `parameters` (array); `max_rows` (integer ≥ 0) | `QueryResult/v1` |
+| `run_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1); `parameters` (array); `max_rows` (integer 0–1,000) | `QueryResult/v1` |
 
 Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
 [Saved queries](/docs/guides/saved-queries).

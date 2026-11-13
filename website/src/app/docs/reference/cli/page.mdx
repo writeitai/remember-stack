@@ -5,6 +5,8 @@ export const metadata = {
 
 # CLI
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 This page describes the `remember` CLI (v0.19.1), installed by `pip install remember`.
@@ -225,7 +227,7 @@ remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJ
 
 `list` prints one page of documents as JSON, newest document first, in the
 shape of [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
-page's `cursor` to `--cursor` to read the next page; `cursor` is `null` on
+page's `next_cursor` to `--cursor` to read the next page; `next_cursor` is `null` on
 the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
 documents whose newest version has that status.
 
@@ -239,7 +241,9 @@ JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
 several; any listed value matches. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
 there is no next page; without one they are newest ingested first and
-`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 50), used as
+the ranked result count with a query and the page size without one. A query
+with `--cursor` is refused before sending a request. See
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
 
 ```bash
@@ -646,7 +650,7 @@ docker compose exec api \
 | Subcommand | Flags | What it does | Output |
 |---|---|---|---|
 | `inspect` | `--deployment ID` | A bounded report of the pipeline: work in progress, dead letters, projections and freshness. | JSON |
-| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
+| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100, max 500) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
 | `resume-no-route` | `--deployment ID` | Releases documents that were parked because no converter handled their media type, once a route now covers them. | `{"released": [...]}` |
 | `replay` | `PROCESSING_ID`, `--deployment ID`, `--attempts N` (default 1), `--lane {steady,backfill}`, `--not-before ISO8601` | Reopens one dead-lettered work item with N more attempts. | JSON |
 | `graph-catalog ensure` | none | Checks the database's graph metadata and repairs it when needed. | `{"ready", "changed", "problems_before", "problems_after", "definitions"}` |

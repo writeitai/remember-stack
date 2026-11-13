@@ -87,7 +87,7 @@ class _Search:
                     family="office",
                 ),
             ),
-            cursor="next-page",
+            next_cursor="next-page",
             as_of=_AT,
         )
 
@@ -187,10 +187,10 @@ def test_cli_searches_with_filters(
         == 0
     )
     printed = json.loads(capsys.readouterr().out)
-    assert printed["cursor"] == "next-page"
+    assert printed["next_cursor"] == "next-page"
     request = search.requests[-1]
     assert request.query is None
-    assert request.k == 3
+    assert request.limit == 3
     assert request.filters.family == ("pdf",)
     assert request.filters.authors == ("Alice", "bob@acme.com")
     assert request.filters.created_from == datetime(2025, 1, 1, tzinfo=UTC)
@@ -198,6 +198,20 @@ def test_cli_searches_with_filters(
     assert cli_main(["documents", "search", "audit report"]) == 0
     capsys.readouterr()
     assert search.requests[-1].query == "audit report"
+
+
+def test_cli_refuses_ranked_search_with_cursor_without_a_request(
+    surface: tuple[MemoryClient, _Search],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client, search = surface
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
+    assert cli_main(["documents", "search", "foo", "--cursor", "foreign-cursor"]) == 2
+    assert search.requests == []
+    assert "cursor" in capsys.readouterr().err
 
 
 def test_remember_mcp_searches_even_when_read_only(
@@ -221,17 +235,46 @@ def test_remember_mcp_searches_even_when_read_only(
 
 
 def test_cursor_round_trips_and_refuses_garbage() -> None:
+    from rememberstack.core.cursor_scope import cursor_scope_hash
+
     earlier = datetime(2026, 9, 24, 11, 0, tzinfo=UTC)
-    decoded = _decode_cursor(
-        _encode_cursor(as_of=_AT, ingested_at=earlier, doc_id=_DOC)
+    scope = cursor_scope_hash(
+        {"filters": {}, "versions": "current", "time": None},
+        deployment_id=_DEPLOYMENT_ID,
     )
+    decoded = _decode_cursor(
+        cursor=_encode_cursor(
+            scope_hash=scope, as_of=_AT, ingested_at=earlier, doc_id=_DOC
+        ),
+        scope_hash=scope,
+    )
+    foreign = cursor_scope_hash(
+        {"filters": {}, "versions": "current", "time": None}, deployment_id=_DOC
+    )
+    with pytest.raises(ValueError, match="different"):
+        _decode_cursor(
+            cursor=_encode_cursor(
+                scope_hash=scope, as_of=_AT, ingested_at=_AT, doc_id=_DOC
+            ),
+            scope_hash=foreign,
+        )
     assert decoded is not None
     assert decoded.as_of == _AT
     assert decoded.ingested_at == earlier
     assert decoded.doc_id == _DOC
+    other = cursor_scope_hash(
+        {"filters": {}, "versions": "all", "time": None}, deployment_id=_DEPLOYMENT_ID
+    )
+    with pytest.raises(ValueError, match="different listing"):
+        _decode_cursor(
+            cursor=_encode_cursor(
+                scope_hash=scope, as_of=_AT, ingested_at=earlier, doc_id=_DOC
+            ),
+            scope_hash=other,
+        )
     for garbage in ("not-base64!", "e30", "bm9wZQ"):
         with pytest.raises(ValueError, match="cursor is malformed"):
-            _decode_cursor(garbage)
+            _decode_cursor(cursor=garbage, scope_hash=scope)
 
 
 def _remote_names(*, document_search: bool, read_only: bool) -> list[str]:

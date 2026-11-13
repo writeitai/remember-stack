@@ -9,16 +9,21 @@ exists.
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from datetime import UTC
+import json
+from unittest.mock import MagicMock
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+import pytest
 
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.spine.document_inventory import DocumentInventory
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.route_scope import required_scope
 
@@ -89,7 +94,7 @@ class _Inventory:
                     serving=True,
                 ),
             ),
-            cursor=None,
+            next_cursor=None,
         )
 
 
@@ -121,7 +126,7 @@ def test_the_route_answers_with_the_deployment_it_serves() -> None:
     body = response.json()
     assert body["documents"][0]["title"] == "notes.md"
     assert body["documents"][0]["latest"]["status"] == "ready"
-    assert body["cursor"] is None
+    assert body["next_cursor"] is None
 
 
 def test_the_page_size_is_bounded_by_the_route() -> None:
@@ -132,6 +137,34 @@ def test_the_page_size_is_bounded_by_the_route() -> None:
     assert client.get("/documents", params={"limit": 201}).status_code == 422
     assert client.get("/documents", params={"limit": 0}).status_code == 422
     assert client.get("/documents", params={"limit": 200}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"a": _AT.isoformat(), "i": 123},
+        {"a": _AT.isoformat(), "i": None},
+        {"a": _AT.isoformat(), "i": []},
+        {"a": 123, "i": str(_DOC)},
+        {"a": [], "i": str(_DOC)},
+        [],
+        None,
+        "bad-base64",
+        "_w",  # non-UTF-8 bytes
+    ],
+)
+def test_malformed_inventory_cursor_is_a_client_error(payload: object) -> None:
+    engine = MagicMock()
+    inventory = DocumentInventory(engine=engine)
+    cursor = (
+        payload
+        if isinstance(payload, str)
+        else base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    )
+    response = _client(inventory).get("/documents", params={"cursor": cursor})  # type: ignore[arg-type]
+    assert response.status_code == 400
+    assert "cursor" in response.json()["detail"]
+    engine.connect.assert_not_called()
 
 
 def test_an_unknown_status_is_refused_rather_than_ignored() -> None:

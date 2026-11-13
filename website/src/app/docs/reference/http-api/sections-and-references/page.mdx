@@ -5,6 +5,8 @@ export const metadata = {
 
 # Section history and references
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["self-hosted"]} />
 
 Two reads work at the level of a document's sections rather than its
@@ -56,8 +58,8 @@ under one section key.
 | `mode` | query | `current` \| `at` \| `overlap` \| `history` | no | `history` | The time scope. |
 | `at` | query | date-time | with `mode=at` | | |
 | `from`, `to` | query | date-time | with `mode=overlap` | | `to` not before `from`. |
-| `k` | query | integer | no | `50` | 1 to 200 rows. |
-| `cursor` | query | string | no | | The previous page's `cursor`. |
+| `limit` | query | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | query | string | no | | The previous page's `next_cursor`. |
 
 ### Response
 
@@ -96,7 +98,7 @@ under one section key.
     }
   ],
   "amendments": [],
-  "cursor": null,
+  "next_cursor": null,
   "evaluated_at": "2027-07-01T08:00:00Z",
   "believed_at": "2027-07-01T08:00:00Z"
 }
@@ -173,8 +175,8 @@ A [`DocumentReferencesRequest`](/docs/reference/result-types#documentreferencesr
 | `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
 | `kinds` | array of strings | no | all | 1 to 7 of the [reference kinds](/docs/reference/http-api/ingest#reference-kinds). |
 | `time` | object | no | see below | The [time scope](#the-time-scope) of the source versions. |
-| `k` | integer | no | `50` | 1 to 200 rows. |
-| `cursor` | string | no | | The previous page's `cursor`. |
+| `limit` | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | string | no | | The previous page's `next_cursor`. |
 
 Unknown fields are rejected.
 
@@ -231,8 +233,8 @@ that contains the reference.
 
 **Order and paging.** Rows are ordered by direction (outgoing first), source
 document, source version, reference, then target version. A page reads at
-most ten times `k` references; it can come back shorter than `k` with a
-`cursor`. Keep paging until `cursor` is `null`.
+most ten times `limit` references; it can come back shorter than `limit` with a
+`next_cursor`. Keep paging until `next_cursor` is `null`.
 
 ### Response
 
@@ -275,7 +277,7 @@ most ten times `k` references; it can come back shorter than `k` with a
       }
     }
   ],
-  "cursor": null,
+  "next_cursor": null,
   "evaluated_at": "2026-03-02T09:00:00Z",
   "believed_at": "2026-03-02T09:00:00Z",
   "too_broad": null

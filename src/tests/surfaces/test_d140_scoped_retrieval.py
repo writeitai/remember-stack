@@ -770,12 +770,14 @@ def _walk_all(rig: _Rig, *, between=None, **arguments: object) -> list[UUID]:  #
     cursor: str | None = None
     first = True
     while True:
-        page = _search(rig, k=1, **arguments, **({"cursor": cursor} if cursor else {}))
+        page = _search(
+            rig, limit=1, **arguments, **({"cursor": cursor} if cursor else {})
+        )
         seen.extend(result.doc_id for result in page.documents)
         if first and between is not None:
             between()
         first = False
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             return seen
 
@@ -802,7 +804,7 @@ def test_paging_pins_belief_across_a_retroactive_correction(rig: _Rig) -> None:
     assert paged == baseline
     assert len(set(paged)) == len(paged)
     # a fresh first page sees the correction
-    fresh = {item.doc_id for item in _search(rig, k=50).documents}
+    fresh = {item.doc_id for item in _search(rig, limit=50).documents}
     assert fresh == {plain.doc_id}
 
 
@@ -819,9 +821,9 @@ def test_paging_returns_a_short_page_with_a_cursor_at_the_scan_cap(rig: _Rig) ->
             ),
             {"doc": kept.doc_id},
         )
-    page = _search(rig, k=1)
+    page = _search(rig, limit=1)
     assert page.documents == ()
-    assert page.cursor is not None
+    assert page.next_cursor is not None
     assert _walk_all(rig) == [kept.doc_id]
 
 
@@ -1080,7 +1082,7 @@ def test_facts_context_gates_confirmation_and_shows_in_scope_evidence(
 def test_relation_lookup_and_one_hop_graph_apply_the_gate(rig: _Rig) -> None:
     corpus = _gate_corpus(rig)
     lookup = rig.query.lookup_relations(
-        deployment_id=_DEPLOYMENT_ID, subject_entity_id=corpus.subject, k=20
+        deployment_id=_DEPLOYMENT_ID, subject_entity_id=corpus.subject, limit=20
     )
     assert {fact.fact_id for fact in lookup.facts} == {
         corpus.facts[key] for key in ("in_force", "mixed", "memo")
@@ -1089,7 +1091,7 @@ def test_relation_lookup_and_one_hop_graph_apply_the_gate(rig: _Rig) -> None:
         deployment_id=_DEPLOYMENT_ID,
         subject_entity_id=corpus.subject,
         valid_at=_LATER,
-        k=20,
+        limit=20,
     )
     assert corpus.facts["future"] in {fact.fact_id for fact in as_of.facts}
 
@@ -1367,7 +1369,7 @@ def test_a_fact_without_live_supporting_text_is_not_eligible(rig: _Rig) -> None:
     assert _support_function(rig, supported) is True
     assert _support_function(rig, deleted_only) is False
     assert _support_function(rig, unsupported) is False
-    lookup = rig.query.lookup_relations(deployment_id=_DEPLOYMENT_ID, k=50)
+    lookup = rig.query.lookup_relations(deployment_id=_DEPLOYMENT_ID, limit=50)
     assert contradicted_only in {fact.fact_id for fact in lookup.facts}
     assert _support_function(rig, contradicted_only) is True
 
@@ -1486,7 +1488,7 @@ def test_a_first_page_never_misses_a_correction_stamped_before_its_belief(
     pages: list[object] = []
 
     def read() -> None:
-        pages.append(_search(rig, k=1))
+        pages.append(_search(rig, limit=1))
 
     writer = threading.Thread(target=write)
     writer.start()
@@ -1516,6 +1518,132 @@ def test_a_first_page_never_misses_a_correction_stamped_before_its_belief(
 
 
 # --- implementation review round 1 (P1-6): pending on an empty answer -------
+
+
+@pytest.mark.parametrize("kind", ["relation", "observation"])
+def test_lookup_pages_wait_for_a_stamped_uncommitted_correction(
+    rig: _Rig, kind: str
+) -> None:
+    """Both browse lookups pin only declarations visible to page one's snapshot."""
+    subject = None
+    expected = set()
+    lineages = []
+    for index in range(3):
+        lineage = _lineage(rig, label=f"lookup-pin-{index}", bodies=(("rule",),))
+        lineages.append(lineage)
+        _declare(rig, lineage, 0, (_FUTURE if index == 2 else _PAST, None))
+        claim = _claim(
+            rig,
+            lineage=lineage,
+            origin=lineage.chunk(0),
+            body="rule",
+            occurrences={lineage.chunk(0): (0, 4)},
+        )
+        fact = _relation(
+            rig,
+            label=f"lookup-pin-{index}",
+            support=((claim, lineage, lineage.chunk(0)),),
+            subject=subject,
+            fact_id=UUID(int=100 - index),
+        )
+        subject = _endpoint(rig, fact, "subject_entity_id")
+        expected.add(fact)
+    corrected = lineages[-1]
+    assert subject is not None
+    if kind == "observation":
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO observations (observation_id, deployment_id,"
+                    " subject_entity_id, statement, normalizer_version, ingested_at,"
+                    " valid_from, valid_precision, window_claim_ids) SELECT relation_id, deployment_id, subject_entity_id,"
+                    " fact_label, normalizer_version, ingested_at, valid_from, valid_precision, window_claim_ids"
+                    " FROM relations WHERE subject_entity_id = :subject"
+                ),
+                {"subject": subject},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO observation_evidence (deployment_id, observation_id,"
+                    " claim_id, doc_id, stance, normalizer_version)"
+                    " SELECT e.deployment_id, e.relation_id, e.claim_id, e.doc_id,"
+                    " e.stance, e.normalizer_version FROM relation_evidence e"
+                    " JOIN relations r ON r.relation_id = e.relation_id"
+                    " WHERE r.subject_entity_id = :subject"
+                ),
+                {"subject": subject},
+            )
+
+    def lookup(cursor: str | None = None):
+        if kind == "relation":
+            return rig.query.lookup_relations(
+                deployment_id=_DEPLOYMENT_ID,
+                subject_entity_id=subject,
+                limit=1,
+                cursor=cursor,
+            )
+        assert subject is not None
+        return rig.query.lookup_observations(
+            deployment_id=_DEPLOYMENT_ID, entity_id=subject, limit=1, cursor=cursor
+        )
+
+    stamped, release, reading = threading.Event(), threading.Event(), threading.Event()
+    pages = []
+
+    def write() -> None:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text("SELECT doc_id FROM documents WHERE doc_id = :doc FOR UPDATE"),
+                {"doc": corrected.doc_id},
+            )
+            declare_at_ingest_on(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=corrected.doc_id,
+                version_id=corrected.version(0),
+                versioning_mode="snapshot",
+                effective_from=_PAST,
+                effective_until=None,
+            )
+            stamped.set()
+            assert release.wait(timeout=10)
+
+    def read() -> None:
+        reading.set()
+        pages.append(lookup())
+
+    writer = threading.Thread(target=write)
+    reader = threading.Thread(target=read)
+    writer.start()
+    try:
+        assert stamped.wait(timeout=10)
+        reader.start()
+        assert reading.wait(timeout=10)
+        reader.join(timeout=0.5)
+        completed_before_commit = not reader.is_alive()
+    finally:
+        release.set()
+        writer.join(timeout=10)
+        if reader.ident is not None:
+            reader.join(timeout=10)
+    assert not writer.is_alive() and not reader.is_alive()
+    assert not completed_before_commit
+    while pages[-1].next_cursor is not None:
+        pages.append(lookup(pages[-1].next_cursor))
+    assert [len(page.facts) for page in pages] == [1, 1, 1]
+    assert {fact.fact_id for page in pages for fact in page.facts} == expected
+    assert len({page.temporal_scope.evaluated_at for page in pages}) == 1
+    with pytest.raises(ValueError, match="different listing"):
+        if kind == "relation":
+            rig.query.lookup_relations(
+                deployment_id=uuid4(),
+                subject_entity_id=subject,
+                cursor=pages[0].next_cursor,
+            )
+        else:
+            rig.query.lookup_observations(
+                deployment_id=uuid4(), entity_id=subject, cursor=pages[0].next_cursor
+            )
 
 
 def test_an_empty_answer_names_the_pending_lineage_the_query_reaches(rig: _Rig) -> None:
@@ -1802,13 +1930,13 @@ def _walk_pending(rig: _Rig, *, between) -> set[UUID]:  # noqa: ANN001
     cursor: str | None = None
     first = True
     while True:
-        page = _search(rig, k=1, **({"cursor": cursor} if cursor else {}))
+        page = _search(rig, limit=1, **({"cursor": cursor} if cursor else {}))
         if page.scope_pending is not None:
             pending.update(page.scope_pending.doc_ids)
         if first:
             between()
         first = False
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             return pending
 
@@ -1838,7 +1966,7 @@ def test_pinned_pages_keep_reporting_pending_as_known_at_their_belief(
             _declare(rig, converting, 0, (_PAST, None))
 
     assert converting.doc_id in _walk_pending(rig, between=change_belief)
-    fresh = _search(rig, k=50)
+    fresh = _search(rig, limit=50)
     assert (
         fresh.scope_pending is None
         or converting.doc_id not in fresh.scope_pending.doc_ids

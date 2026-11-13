@@ -48,7 +48,7 @@ EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
 """Concise adjudication projector/response-adapter generation (D121/D123)."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "6a5b81486cba3daccb109b3d1d936e048a6557afa7dd4eac1dbd6f9fde33578c"
+    "3572a77e5db05f53cad6f7bb6845ab65dddecebc266b473aa776509f80a9b9e1"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",

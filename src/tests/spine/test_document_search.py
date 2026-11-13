@@ -41,6 +41,7 @@ from rememberstack.spine.document_metadata import merge_converter_metadata_on
 from rememberstack.spine.document_search import CHANNEL_MIN_CANDIDATES
 from rememberstack.spine.document_search import DocumentSearch
 from rememberstack.spine.document_search import NAMES_TRIGRAM
+from rememberstack.spine.document_search import PAGE_SCAN_FACTOR
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import UploadIngestor
 from tests.database_reset import reset_database
@@ -182,21 +183,24 @@ class _Rig:
         query: str | None = None,
         *,
         versions: str = "current",
-        k: int = 20,
+        k: int | None = None,
+        limit: int | None = None,
         cursor: str | None = None,
         **filters: object,
     ) -> DocumentSearchPage:
+        payload: dict[str, object] = {
+            "query": query,
+            "filters": DocumentSearchFilters.model_validate(filters),
+            "versions": versions,
+            "cursor": cursor,
+        }
+        if k is not None:
+            payload["k"] = k
+        if limit is not None:
+            payload["limit"] = limit
         return self.search_port.search_documents(
             deployment_id=_DEPLOYMENT_ID,
-            request=DocumentSearchRequest.model_validate(
-                {
-                    "query": query,
-                    "filters": DocumentSearchFilters.model_validate(filters),
-                    "versions": versions,
-                    "k": k,
-                    "cursor": cursor,
-                }
-            ),
+            request=DocumentSearchRequest.model_validate(payload),
         )
 
 
@@ -234,7 +238,8 @@ def test_names_match_exactly_partially_and_misspelled(rig: _Rig) -> None:
         page = rig.search(query)
         assert _doc_ids(page)[0] == sales.doc_id, query
         assert page.documents[0].matched_by == ("name",)
-        assert page.cursor is None
+        assert page.next_cursor is None
+        assert page.truncated is False
     misspelled = rig.search("quartely reprot")
     assert _doc_ids(misspelled)[0] == report.doc_id
     first = misspelled.documents[0]
@@ -273,9 +278,10 @@ def test_filters_only_order_by_ingestion_and_cursor_pins_as_of(rig: _Rig) -> Non
     second = rig.ingest(filename="second.md", content="# second\n")
     third = rig.ingest(filename="third.md", content="# third\n")
 
-    page_one = rig.search(k=2)
+    page_one = rig.search(limit=2)
     assert _doc_ids(page_one) == [third.doc_id, second.doc_id]
-    assert page_one.cursor is not None
+    assert page_one.next_cursor is not None
+    assert page_one.truncated is False
     assert page_one.documents[0].p3_path == f"documents/{third.doc_id}"
 
     # between pages: a new document arrives, the unseen document's version is
@@ -291,12 +297,12 @@ def test_filters_only_order_by_ingestion_and_cursor_pins_as_of(rig: _Rig) -> Non
         metadata=DocumentMetadata(created_at=datetime(2030, 1, 1, tzinfo=UTC)),
     )
 
-    page_two = rig.search(k=2, cursor=page_one.cursor)
+    page_two = rig.search(limit=2, cursor=page_one.next_cursor)
     assert _doc_ids(page_two) == [first.doc_id]
-    assert page_two.cursor is None
+    assert page_two.next_cursor is None
     assert page_two.as_of == page_one.as_of
     # a new search sees what arrived since
-    assert len(rig.search(k=20).documents) == 4
+    assert len(rig.search(limit=20).documents) == 4
 
 
 def test_a_version_arriving_while_paging_neither_moves_nor_repeats_a_row(
@@ -306,7 +312,7 @@ def test_a_version_arriving_while_paging_neither_moves_nor_repeats_a_row(
     rig.ingest(filename="notes.md", content="# notes\n")
     rig.ingest(filename="minutes.md", content="# minutes\n")
 
-    page_one = rig.search(k=2)
+    page_one = rig.search(limit=2)
     seen = _doc_ids(page_one)
     assert older.doc_id not in seen
 
@@ -319,7 +325,7 @@ def test_a_version_arriving_while_paging_neither_moves_nor_repeats_a_row(
             {"v": newer.version_id, "d": newer.doc_id},
         )
 
-    page_two = rig.search(k=2, cursor=page_one.cursor)
+    page_two = rig.search(limit=2, cursor=page_one.next_cursor)
     assert _doc_ids(page_two) == [older.doc_id]
     # judged as it was at the pinned instant: the older version
     assert page_two.documents[0].version_id == older.version_id
@@ -463,6 +469,50 @@ def test_family_language_and_doc_id_filters(rig: _Rig) -> None:
         rig.search(cursor="not-a-cursor")
 
 
+def test_browse_cursor_from_another_filter_scope_is_refused(rig: _Rig) -> None:
+    """A browse cursor only continues the filter/time/versions listing it came from."""
+    for index in range(3):
+        rig.ingest(filename=f"scope-{index}.md", content=f"# Scope {index}\n")
+    page = rig.search(limit=1)
+    assert page.next_cursor is not None
+    with pytest.raises(ValueError, match="different listing"):
+        rig.search(versions="all", cursor=page.next_cursor)
+    with pytest.raises(ValueError, match="different listing"):
+        rig.search(family=["office"], cursor=page.next_cursor)
+
+
+def test_browse_scan_cap_empty_page_carries_cursor_then_finds_match(rig: _Rig) -> None:
+    """Scan cap: empty page + non-null cursor; continuation returns the match.
+
+    Walk is newest-first. Ten newer non-matching lineages fill the cap
+    (``PAGE_SCAN_FACTOR × limit`` with limit=1); the older matching lineage
+    appears only on the next page.
+    """
+    assert PAGE_SCAN_FACTOR == 10
+    match = rig.ingest(filename="match-cs.md", content="# match\n")
+    rig.merge(version_id=match.version_id, metadata=DocumentMetadata(language="cs"))
+    for index in range(PAGE_SCAN_FACTOR):
+        rig.ingest(filename=f"noise-{index}.md", content=f"# noise {index}\n")
+
+    first = rig.search(limit=1, language="cs")
+    assert first.documents == ()
+    assert first.next_cursor is not None
+
+    second = rig.search(limit=1, language="cs", cursor=first.next_cursor)
+    assert _doc_ids(second) == [match.doc_id]
+    assert second.next_cursor is None
+
+
+def test_browse_scan_cap_at_exact_corpus_end_is_null(rig: _Rig) -> None:
+    """When the corpus ends exactly at the scan cap, next_cursor is null."""
+    for index in range(PAGE_SCAN_FACTOR):
+        rig.ingest(filename=f"only-{index}.md", content=f"# only {index}\n")
+
+    page = rig.search(limit=1, language="cs")
+    assert page.documents == ()
+    assert page.next_cursor is None
+
+
 def test_one_document_with_many_matching_chunks_cannot_crowd_out_others(
     rig: _Rig,
 ) -> None:
@@ -484,6 +534,12 @@ def test_one_document_with_many_matching_chunks_cannot_crowd_out_others(
     page = rig.search("zanzibar", k=10)
     assert set(_doc_ids(page)) == {crowded.doc_id, *others}
     assert all(result.matched_by == ("content",) for result in page.documents)
+    assert page.next_cursor is None
+    assert page.truncated is False
+    capped = rig.search("zanzibar", k=2)
+    assert len(capped.documents) == 2
+    assert capped.next_cursor is None
+    assert capped.truncated is True
 
 
 def test_the_trigram_name_channel_uses_the_indexable_operator(

@@ -51,7 +51,9 @@ from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DeploymentBuildInfo
-from remember.models import DOCUMENT_REFERENCES_DEFAULT_K
+from remember.models import DOCUMENT_REFERENCES_DEFAULT_LIMIT
+from remember.models import DOCUMENT_SEARCH_DEFAULT_K
+from remember.models import DOCUMENT_SEARCH_DEFAULT_LIMIT
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
 from remember.models import DocumentReferencesPage
@@ -77,7 +79,7 @@ from remember.models import ReferenceInput
 from remember.models import ReferenceKind
 from remember.models import ReferencesSet
 from remember.models import SearchRequest
-from remember.models import SECTION_HISTORY_DEFAULT_K
+from remember.models import SECTION_HISTORY_DEFAULT_LIMIT
 from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
 from remember.models import ToolDescriptor
@@ -561,10 +563,14 @@ class MemoryClient:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
-        k: int = 50,
+        limit: int = 50,
+        cursor: str | None = None,
     ) -> Envelope:
-        """Read current or valid-time relations matching an optional pattern."""
-        params: dict[str, str | int] = {"k": k}
+        """Page current or valid-time relations matching an optional pattern.
+
+        Browse list (D154): ``limit`` / ``cursor`` in, ``next_cursor`` out.
+        """
+        params: dict[str, str | int] = {"limit": limit}
         if subject_entity_id is not None:
             params["subject_entity_id"] = str(subject_entity_id)
         if predicate is not None:
@@ -573,6 +579,8 @@ class MemoryClient:
             params["object_entity_id"] = str(object_entity_id)
         if valid_at is not None:
             params["valid_at"] = valid_at.isoformat()
+        if cursor is not None:
+            params["cursor"] = cursor
         return _validated(
             Envelope,
             self._json("GET", "/lookup/relations", params=params),
@@ -588,12 +596,32 @@ class MemoryClient:
         )
 
     def lookup_observations(
-        self, *, entity_id: UUID, property_query: str | None = None, k: int = 10
+        self,
+        *,
+        entity_id: UUID,
+        property_query: str | None = None,
+        k: int = 10,
+        limit: int = 50,
+        cursor: str | None = None,
     ) -> Envelope:
-        """Read live observations for one entity, optionally by property text."""
-        params: dict[str, str | int] = {"entity_id": str(entity_id), "k": k}
+        """Read live observations for one entity (D154).
+
+        Without ``property_query`` this is a browse list (``limit`` /
+        ``cursor`` → ``next_cursor``). With ``property_query`` it is ranked
+        top-``k`` and must not take a cursor.
+        """
+        if property_query is not None and cursor is not None:
+            raise ValueError(
+                "cursor pages filter-only observation lookups; drop property_query or cursor"
+            )
+        params: dict[str, str | int] = {"entity_id": str(entity_id)}
         if property_query is not None:
             params["property_query"] = property_query
+            params["k"] = k
+        else:
+            params["limit"] = limit
+            if cursor is not None:
+                params["cursor"] = cursor
         return _validated(
             Envelope,
             self._json("GET", "/lookup/observations", params=params),
@@ -717,11 +745,15 @@ class MemoryClient:
         predicates: tuple[str, ...] = (),
         valid_at: datetime | None = None,
         believed_at: datetime | None = None,
-        limit: int = 500,
-        continuation: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
         include_paths: bool = False,
     ) -> Envelope:
-        """Return a typed bounded current or bitemporal neighborhood."""
+        """Return a typed bounded current or bitemporal neighborhood.
+
+        Page with ``cursor`` / ``next_cursor`` (D154). The cursor pins the
+        request clocks and the neighborhood scope.
+        """
         return _validated(
             Envelope,
             self._json(
@@ -736,7 +768,7 @@ class MemoryClient:
                         believed_at.isoformat() if believed_at is not None else None
                     ),
                     "limit": limit,
-                    "continuation": continuation,
+                    "cursor": cursor,
                     "include_paths": include_paths,
                 },
             ),
@@ -1011,8 +1043,8 @@ class MemoryClient:
     ) -> DocumentPage:
         """One page of the deployment's documents, newest lineage first.
 
-        Pass the returned ``cursor`` back to read the next page; ``None``
-        means there are no more. ``status`` filters on each document's newest
+        Pass the returned ``next_cursor`` back as ``cursor`` to read the next
+        page; ``None`` means there are no more. ``status`` filters on each document's newest
         version, for example ``"failed"``.
         """
         params: dict[str, str | int] = {"limit": limit}
@@ -1032,18 +1064,20 @@ class MemoryClient:
         *,
         filters: DocumentSearchFilters | None = None,
         versions: Literal["current", "all"] = "current",
-        k: int = 20,
+        k: int = DOCUMENT_SEARCH_DEFAULT_K,
+        limit: int = DOCUMENT_SEARCH_DEFAULT_LIMIT,
         cursor: str | None = None,
         time: ReadTime | None = None,
     ) -> DocumentSearchPage:
-        """Find documents by name, general metadata and content (D134).
+        """Find documents by name, general metadata and content (D134 / D154).
 
         ``query`` matches every name a document was stored under (file name,
         title, source path, old names after a rename; partial and misspelled
         names too) and its text. ``filters`` narrow by family, authors,
         recipients, date ranges, language, thread and doc ids. Without a
-        ``query`` results are newest first and ``cursor`` pages them; with one
-        they are ranked and not paged. ``time`` (D140) picks which editions of
+        ``query`` results are newest first and ``limit`` / ``cursor`` page
+        them (``next_cursor`` out); with one they are ranked by ``k`` and
+        ``truncated`` discloses a cap. ``time`` (D140) picks which editions of
         a document with declared effective periods are candidates (default
         current). Invalid combinations raise
         ``pydantic.ValidationError`` before any request is sent.
@@ -1055,6 +1089,7 @@ class MemoryClient:
                 versions=versions,
                 time=time,
                 k=k,
+                limit=limit,
                 cursor=cursor,
             )
         )
@@ -1079,7 +1114,7 @@ class MemoryClient:
         doc_id: UUID | str,
         section_key: str,
         time: ReadTime | None = None,
-        k: int = SECTION_HISTORY_DEFAULT_K,
+        limit: int = SECTION_HISTORY_DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> SectionHistoryPage:
         """Follow one keyed section across a document's versions (D140 §6.2).
@@ -1095,7 +1130,7 @@ class MemoryClient:
                 doc_id=UUID(str(doc_id)),
                 section_key=section_key,
                 time=time if time is not None else HistoryReadTime(),
-                k=k,
+                limit=limit,
                 cursor=cursor,
             )
         )
@@ -1105,7 +1140,7 @@ class MemoryClient:
     ) -> SectionHistoryPage:
         """Send one prepared :class:`SectionHistoryRequest`."""
         time = request.time
-        params: dict[str, str | int] = {"mode": time.mode, "k": request.k}
+        params: dict[str, str | int] = {"mode": time.mode, "limit": request.limit}
         if time.mode == "at":
             params["at"] = time.at.isoformat()
         elif time.mode == "overlap":
@@ -1181,7 +1216,7 @@ class MemoryClient:
         direction: Literal["outgoing", "incoming", "both"] = "both",
         kinds: Sequence[ReferenceKind] | None = None,
         time: ReadTime | None = None,
-        k: int = DOCUMENT_REFERENCES_DEFAULT_K,
+        limit: int = DOCUMENT_REFERENCES_DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> DocumentReferencesPage:
         """What a passage, section or document references, and what references it.
@@ -1199,7 +1234,7 @@ class MemoryClient:
                 direction=direction,
                 kinds=None if kinds is None else tuple(kinds),
                 time=time,
-                k=k,
+                limit=limit,
                 cursor=cursor,
             )
         )

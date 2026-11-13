@@ -554,16 +554,71 @@ def test_one_hop_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None
     assert full.freshness.pg_live_ts is not None
     assert full.truncation is not None and full.truncation.truncated is False
     first = graph.neighborhood(entity_id=ids["Acme"], hops=1, limit=1)
-    assert first.truncation is not None and first.truncation.continuation is not None
+    assert first.next_cursor is not None
+    assert first.truncation is not None
     assert first.truncation.truncated is True
     assert first.truncation.reason == "result_budget"
     second = graph.neighborhood(
-        entity_id=ids["Acme"],
-        hops=1,
-        limit=1,
-        continuation=first.truncation.continuation,
+        entity_id=ids["Acme"], hops=1, limit=1, cursor=first.next_cursor
     )
     assert _names(first).isdisjoint(_names(second))
+    # A cursor belongs to one (entity, hops, predicates) listing.
+    wrong_entity = graph.neighborhood(
+        entity_id=ids["Alice"], hops=1, limit=1, cursor=first.next_cursor
+    )
+    assert (
+        wrong_entity.negative is not None
+        and wrong_entity.negative.kind is NegativeKind.BOUNDARY
+    )
+    wrong_hops = graph.neighborhood(
+        entity_id=ids["Acme"], hops=2, limit=1, cursor=first.next_cursor
+    )
+    assert (
+        wrong_hops.negative is not None
+        and wrong_hops.negative.kind is NegativeKind.BOUNDARY
+    )
+    foreign = GraphQueries(engine=graph._engine, deployment_id=_OTHER_DEPLOYMENT_ID)
+    wrong_project = foreign.neighborhood(
+        entity_id=ids["Acme"], hops=1, cursor=first.next_cursor
+    )
+    assert wrong_project.negative is not None
+    assert wrong_project.negative.kind is NegativeKind.BOUNDARY
+
+
+@pytest.mark.parametrize("hops", [1, 2])
+def test_neighborhood_cursor_keeps_survivors_after_edge_deletion(
+    graph: GraphQueries, database_engine: Engine, hops: int
+) -> None:
+    """Deleting a returned edge must not shift an untouched neighbor past us."""
+    anchor = graph.ids["Acme"]  # type: ignore[attr-defined]
+    full = graph.neighborhood(entity_id=anchor, hops=hops, include_paths=True)
+    first = graph.neighborhood(entity_id=anchor, hops=hops, limit=1, include_paths=True)
+    assert first.next_cursor is not None
+    returned_edge = first.paths[0].edges[0].relation_id
+    # Leaves attached directly to Acme survive removal of another direct edge.
+    untouched = {
+        path.nodes[-1].entity_id
+        for path in full.paths
+        if returned_edge not in {edge.relation_id for edge in path.edges}
+    }
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM relation_evidence WHERE relation_id = :edge"),
+            {"edge": returned_edge},
+        )
+        connection.execute(
+            text("DELETE FROM relations WHERE relation_id = :edge"),
+            {"edge": returned_edge},
+        )
+    seen = {node.entity_id for node in first.nodes}
+    cursor = first.next_cursor
+    while cursor is not None:
+        page = graph.neighborhood(entity_id=anchor, hops=hops, limit=3, cursor=cursor)
+        identifiers = {node.entity_id for node in page.nodes}
+        assert seen.isdisjoint(identifiers)
+        seen.update(identifiers)
+        cursor = page.next_cursor
+    assert untouched <= seen
 
 
 def test_shared_graph_scope_restores_outer_transaction_settings(
@@ -773,7 +828,7 @@ def test_view_owner_cannot_bypass_invoker_source_acl(
         "believed_at": _JAN_2027,
         "max_results": 1,
         "expansion_budget": 8,
-        "result_offset": 0,
+        "after": None,
         "guard_examined_edges": 0,
     }
     with database_engine.connect() as connection:
@@ -816,7 +871,7 @@ def test_one_hop_read_matches_canonical_helper_under_budget(
             "expansion_budget": 2000,
             "frontier_budget": 1000,
             "time_budget_ms": 1000,
-            "result_offset": 0,
+            "after": None,
         }
         one_hop = graph_queries_module._shallow_neighborhood_rows(  # noqa: SLF001
             connection=connection, parameters=parameters
@@ -897,7 +952,7 @@ def test_dense_hub_refuses_one_hop_over_budget_and_helper_returns_whole_prefix(
             "expansion_budget": 1,
             "frontier_budget": 1000,
             "time_budget_ms": 1000,
-            "result_offset": 0,
+            "after": None,
         }
         guard = (
             connection.execute(text(HISTORY_NEIGHBORHOOD_GUARD), parameters)
@@ -1492,7 +1547,7 @@ def test_typed_absence_boundaries_and_hard_depth_limits(graph: GraphQueries) -> 
     assert (
         empty.negative is not None and empty.negative.kind is NegativeKind.KNOWN_EMPTY
     )
-    foreign = graph.neighborhood(entity_id=ids["Acme"], continuation="snapshot-v1:1")
+    foreign = graph.neighborhood(entity_id=ids["Acme"], cursor="snapshot-v1:1")
     assert (
         foreign.negative is not None and foreign.negative.kind is NegativeKind.BOUNDARY
     )

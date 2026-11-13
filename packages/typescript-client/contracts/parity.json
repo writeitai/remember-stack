@@ -113,7 +113,7 @@
         "returns": "dict[str, object]"
       },
       "document_references": {
-        "arguments": "self, *, chunk_id: UUID | str | None=None, doc_id: UUID | str | None=None, section_key: str | None=None, direction: Literal['outgoing', 'incoming', 'both']='both', kinds: Sequence[ReferenceKind] | None=None, time: ReadTime | None=None, k: int=DOCUMENT_REFERENCES_DEFAULT_K, cursor: str | None=None",
+        "arguments": "self, *, chunk_id: UUID | str | None=None, doc_id: UUID | str | None=None, section_key: str | None=None, direction: Literal['outgoing', 'incoming', 'both']='both', kinds: Sequence[ReferenceKind] | None=None, time: ReadTime | None=None, limit: int=DOCUMENT_REFERENCES_DEFAULT_LIMIT, cursor: str | None=None",
         "property": false,
         "returns": "DocumentReferencesPage"
       },
@@ -143,7 +143,7 @@
         "returns": "Envelope"
       },
       "graph_neighborhood": {
-        "arguments": "self, *, entity_id: UUID, hops: int=2, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None, limit: int=500, continuation: str | None=None, include_paths: bool=False",
+        "arguments": "self, *, entity_id: UUID, hops: int=2, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None, limit: int=100, cursor: str | None=None, include_paths: bool=False",
         "property": false,
         "returns": "Envelope"
       },
@@ -178,12 +178,12 @@
         "returns": "list[dict[str, object]]"
       },
       "lookup_observations": {
-        "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10",
+        "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10, limit: int=50, cursor: str | None=None",
         "property": false,
         "returns": "Envelope"
       },
       "lookup_relations": {
-        "arguments": "self, *, subject_entity_id: UUID | None=None, predicate: str | None=None, object_entity_id: UUID | None=None, valid_at: datetime | None=None, k: int=50",
+        "arguments": "self, *, subject_entity_id: UUID | None=None, predicate: str | None=None, object_entity_id: UUID | None=None, valid_at: datetime | None=None, limit: int=50, cursor: str | None=None",
         "property": false,
         "returns": "Envelope"
       },
@@ -248,7 +248,7 @@
         "returns": "Envelope"
       },
       "search_documents": {
-        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=20, cursor: str | None=None, time: ReadTime | None=None",
+        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=DOCUMENT_SEARCH_DEFAULT_K, limit: int=DOCUMENT_SEARCH_DEFAULT_LIMIT, cursor: str | None=None, time: ReadTime | None=None",
         "property": false,
         "returns": "DocumentSearchPage"
       },
@@ -263,7 +263,7 @@
         "returns": "list[dict[str, object]]"
       },
       "section_history": {
-        "arguments": "self, *, doc_id: UUID | str, section_key: str, time: ReadTime | None=None, k: int=SECTION_HISTORY_DEFAULT_K, cursor: str | None=None",
+        "arguments": "self, *, doc_id: UUID | str, section_key: str, time: ReadTime | None=None, limit: int=SECTION_HISTORY_DEFAULT_LIMIT, cursor: str | None=None",
         "property": false,
         "returns": "SectionHistoryPage"
       },

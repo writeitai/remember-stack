@@ -708,18 +708,6 @@ export default {
           "title": "Co Members",
           "type": "array"
         },
-        "continuation": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Continuation"
-        },
         "group_id": {
           "format": "uuid",
           "title": "Group Id",
@@ -1017,7 +1005,14 @@ export default {
     "DocumentPage": {
       "additionalProperties": false,
       "properties": {
-        "cursor": {
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/DocumentSummary"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "next_cursor": {
           "anyOf": [
             {
               "type": "string"
@@ -1027,14 +1022,7 @@ export default {
             }
           ],
           "default": null,
-          "title": "Cursor"
-        },
-        "documents": {
-          "items": {
-            "$ref": "#/$defs/DocumentSummary"
-          },
-          "title": "Documents",
-          "type": "array"
+          "title": "Next Cursor"
         }
       },
       "required": [
@@ -1411,14 +1399,19 @@ export default {
     },
     "DocumentReferencesPage": {
       "additionalProperties": false,
-      "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a cursor. ``too_broad`` is set (and\n``rows`` empty) when the section has too many descendant keys.",
+      "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``next_cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a non-null ``next_cursor``. Null means\nthe end. ``too_broad`` is set (and ``rows`` empty) when the section has\ntoo many descendant keys.",
       "properties": {
         "believed_at": {
           "format": "date-time",
           "title": "Believed At",
           "type": "string"
         },
-        "cursor": {
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string"
+        },
+        "next_cursor": {
           "anyOf": [
             {
               "type": "string"
@@ -1428,12 +1421,7 @@ export default {
             }
           ],
           "default": null,
-          "title": "Cursor"
-        },
-        "evaluated_at": {
-          "format": "date-time",
-          "title": "Evaluated At",
-          "type": "string"
+          "title": "Next Cursor"
         },
         "rows": {
           "items": {
@@ -1516,13 +1504,6 @@ export default {
           "default": null,
           "title": "Doc Id"
         },
-        "k": {
-          "default": 50,
-          "maximum": 200,
-          "minimum": 1,
-          "title": "K",
-          "type": "integer"
-        },
         "kinds": {
           "anyOf": [
             {
@@ -1548,6 +1529,13 @@ export default {
           ],
           "default": null,
           "title": "Kinds"
+        },
+        "limit": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
         },
         "section_key": {
           "anyOf": [
@@ -1762,7 +1750,14 @@ export default {
           "title": "As Of",
           "type": "string"
         },
-        "cursor": {
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/DocumentSearchResult"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "next_cursor": {
           "anyOf": [
             {
               "type": "string"
@@ -1772,14 +1767,7 @@ export default {
             }
           ],
           "default": null,
-          "title": "Cursor"
-        },
-        "documents": {
-          "items": {
-            "$ref": "#/$defs/DocumentSearchResult"
-          },
-          "title": "Documents",
-          "type": "array"
+          "title": "Next Cursor"
         },
         "people_matched": {
           "default": [],
@@ -1799,6 +1787,11 @@ export default {
             }
           ],
           "default": null
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1844,7 +1837,7 @@ export default {
     },
     "DocumentSearchRequest": {
       "additionalProperties": false,
-      "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches and\nthere is no cursor. Without one they are every document the filters\nmatch, newest declared creation date first, paged by ``cursor``.",
+      "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches (top\n``k``); there is no cursor. Without a query they are every document the\nfilters match, newest judged-version ingest time first, paged by\n``limit`` and ``cursor`` (D154).",
       "properties": {
         "cursor": {
           "anyOf": [
@@ -1879,6 +1872,13 @@ export default {
           "maximum": 200,
           "minimum": 1,
           "title": "K",
+          "type": "integer"
+        },
+        "limit": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Limit",
           "type": "integer"
         },
         "query": {
@@ -2633,6 +2633,18 @@ export default {
             }
           ],
           "default": null
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
         },
         "nodes": {
           "default": [],
@@ -4633,23 +4645,6 @@ export default {
           "default": null,
           "title": "Evaluated At"
         },
-        "exact_total": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Exact Total"
-        },
-        "exact_total_known": {
-          "default": false,
-          "title": "Exact Total Known",
-          "type": "boolean"
-        },
         "execution_started_at": {
           "format": "date-time",
           "title": "Execution Started At",
@@ -5795,7 +5790,7 @@ export default {
     },
     "SectionHistoryPage": {
       "additionalProperties": false,
-      "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``cursor`` pins ``evaluated_at`` and\n``believed_at`` for the following pages.",
+      "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``next_cursor`` pins ``evaluated_at``\nand ``believed_at`` for the following pages; null exactly at the end.",
       "properties": {
         "amendments": {
           "default": [],
@@ -5810,18 +5805,6 @@ export default {
           "title": "Believed At",
           "type": "string"
         },
-        "cursor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Cursor"
-        },
         "doc_id": {
           "format": "uuid",
           "title": "Doc Id",
@@ -5831,6 +5814,18 @@ export default {
           "format": "date-time",
           "title": "Evaluated At",
           "type": "string"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
         },
         "periodised": {
           "title": "Periodised",
@@ -5882,11 +5877,11 @@ export default {
           "title": "Doc Id",
           "type": "string"
         },
-        "k": {
+        "limit": {
           "default": 50,
           "maximum": 200,
           "minimum": 1,
-          "title": "K",
+          "title": "Limit",
           "type": "integer"
         },
         "section_key": {
@@ -6630,19 +6625,8 @@ export default {
     },
     "Truncation": {
       "additionalProperties": false,
+      "description": "Disclosure that a ranked or safety cap applied (D154).",
       "properties": {
-        "continuation": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Continuation"
-        },
         "estimated_total": {
           "minimum": 0,
           "title": "Estimated Total",

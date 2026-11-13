@@ -39,7 +39,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
-import hashlib
 import json
 from typing import Final
 from uuid import UUID
@@ -48,6 +47,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.model.client import EffectiveInterval
 from rememberstack.model.client import ReadTime
 from rememberstack.model.client import SectionAmendment
@@ -110,7 +111,7 @@ class SectionHistory:
         Raises ``ValueError`` for a malformed cursor or one minted for a
         different call.
         """
-        scope_hash = _scope_hash(request=request)
+        scope_hash = _scope_hash(request=request, deployment_id=deployment_id)
         cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
         if cursor is not None:
             evaluated_at, believed_at = cursor.evaluated_at, cursor.believed_at
@@ -189,7 +190,7 @@ class SectionHistory:
                 after=None if cursor is None else cursor.after,
                 periodised=periodised,
             )
-            page = candidates[start : start + request.k]
+            page = candidates[start : start + request.limit]
             through = candidates[: start + len(page)]
             readable = tuple(candidate for candidate in through if candidate.selected)
             sections, unindexed = _keyed_sections(
@@ -241,7 +242,7 @@ class SectionHistory:
             periodised=periodised,
             rows=tuple(rows),
             amendments=amendments,
-            cursor=next_cursor,
+            next_cursor=next_cursor,
             evaluated_at=evaluated_at,
             believed_at=believed_at,
         )
@@ -588,18 +589,16 @@ def _amendments(
     )
 
 
-def _scope_hash(*, request: SectionHistoryRequest) -> str:
+def _scope_hash(*, request: SectionHistoryRequest, deployment_id: UUID) -> str:
     """Identify the call a cursor belongs to (lineage, key and time scope)."""
-    payload = json.dumps(
+    return cursor_scope_hash(
         {
             "doc_id": str(request.doc_id),
             "section_key": request.section_key,
             "time": request.time.model_dump(mode="json", by_alias=True),
         },
-        sort_keys=True,
-        separators=(",", ":"),
+        deployment_id=deployment_id,
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _encode_cursor(
@@ -636,13 +635,12 @@ def _decode_cursor(*, cursor: str | None, scope_hash: str) -> _Cursor | None:
         )
         if start is not None:
             datetime.fromisoformat(start)
-        matches = payload["s"] == scope_hash
+        payload_scope = payload["s"]
     except (ValueError, KeyError, TypeError) as error:
         raise ValueError("cursor is malformed") from error
     if decoded.evaluated_at.tzinfo is None or decoded.believed_at.tzinfo is None:
         raise ValueError("cursor is malformed")
-    if not matches:
-        raise ValueError("cursor belongs to a different section_history call")
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
     return decoded
 
 

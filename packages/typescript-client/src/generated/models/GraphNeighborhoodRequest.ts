@@ -7,7 +7,7 @@
  */
 export type GraphNeighborhoodRequest = {
     believed_at?: string | null;
-    continuation?: string | null;
+    cursor?: string | null;
     entity_id: string;
     hops?: number;
     include_paths?: boolean;

@@ -401,6 +401,8 @@ a future range.
 
 Every scoped operation that pages records `evaluated_at` and `believed_at` in its cursor and
 reuses them for later pages. Ranked single-page searches evaluate both at the request instant.
+Browse cursors also bind the deployment identity and all membership filters;
+changing project or filters is a cursor error. Page size is not part of the scope.
 
 **The first page's belief instant must be commit-visible.** Ledger rows are stamped while
 their writer holds the lineage lock, before it commits. Pinning a plain `now()` would let a
@@ -411,6 +413,8 @@ exclusively on its own connection, reads the database clock, releases it and onl
 its snapshot. The returned instant is a watermark: every row stamped at or before it is
 committed and visible, and every later write stamps after it. Reads with no pinned belief use
 every committed declaration, exactly what the selection projection holds.
+Both relation and observation browse lookups acquire this same watermark before
+opening their first page's repeatable-read snapshot; `now()` alone is insufficient.
 
 The rule that keeps pages consistent is simple: **the page order never depends on belief;
 scope is evaluated at the pinned belief instant for the candidates of each page.** Candidates
@@ -421,10 +425,13 @@ cannot remove a candidate from the walk:
   lineage's newest version ingested at or before the cursor's `as_of`, then `doc_id` (ingest
   times are immutable) — takes candidates in batches, evaluates scope and filters at the pinned
   belief instant, and fills the page. A page may scan several batches; the scan is capped (10 ×
-  `k` candidates as a starting point) and returns a cursor with a short page rather than
+  `limit` candidates as a starting point) and returns a cursor with a short page rather than
   exceeding the cap;
 - `document_references` walks reference rows by the index order of §6.2 and `section_history`
   walks one lineage's versions, both immutable orders.
+At a reference scan cap, check one candidate in each remaining direction before
+returning a cursor. If none remains, `next_cursor` is null even when the last
+batch exactly filled the cap; an empty or short page may otherwise continue.
 
 ### 3.7 Results carry their period and pending lineages
 
@@ -698,7 +705,7 @@ query space.
 
 **`document_references`** — input: either `chunk_id`, or `doc_id` with an optional
 `section_key`; `direction` (`outgoing` | `incoming` | `both`, default `both`); optional `kinds`;
-`time`; `k` (default 50, max 200); `cursor`.
+`time`; `limit` (default 50, max 200); `cursor`. Responses use `next_cursor`.
 
 *Source side.* With `chunk_id`, the source version is the chunk's version (a chunk id pins its
 version) and the source section is the chunk's section; with `doc_id`, the source versions are
@@ -759,7 +766,7 @@ crossref_id, applies_during start, target version_id)` and paged by an opaque ke
 that also pins `evaluated_at` and `believed_at` (§3.6). The incoming query is an index range
 scan on `ix_crossrefs_incoming`; the outgoing query on `ix_crossrefs_from`.
 
-**`section_history`** — input: `doc_id`, `section_key`, `time` (default `history`), `k`,
+**`section_history`** — input: `doc_id`, `section_key`, `time` (default `history`), `limit` (default 50, max 200),
 `cursor`. Output, ordered by effective start (periodised) or `version_no` (undeclared): one row
 per selected version — version id and number, `version_key`, in-force intervals, and either the
 section (title, `own_content_hash`, `subtree_content_hash`, `changed` and `own_changed` relative
