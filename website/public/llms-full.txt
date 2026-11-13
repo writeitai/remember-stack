@@ -20336,7 +20336,12 @@ compares credible references across sessions before narrowing to one candidate,
 and retains relevant restrictions with their source qualifiers without adding
 unsupported denials. If resolved-entity filters leave required details missing,
 it searches claims and chunks without that semantic filter and verifies
-attribution from the source. Deployment, visibility and time boundaries remain
+attribution from the source. It reads returned chunk text as well as extracted
+claims, because claims can omit items mentioned only in a reply or attachment.
+List answers keep strongly implied items with a qualifier such as "likely"
+instead of dropping them. Repeated episodes are kept apart by when they
+happened. An answer names a different participant only when the event in the
+question belongs uniquely to them. Deployment, visibility and time boundaries remain
 in force. These rules do not change ingestion, ranking or the primary judge.
 The current full-profile comparison runner can read a source with an older
 prompt-only protocol name when its entire non-prompt contract still matches.
