@@ -89,7 +89,7 @@ that ledger. It contains no document text and no prompts.
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 
 docker compose exec -T api \
-  remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 100
+  remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 50
 ```
 
 Pass the page's `next_cursor` as `--cursor` to read the next page. The
@@ -130,12 +130,12 @@ the published port to reach it.
 
 ```bash
 curl -H "Authorization: Bearer $COST_EXPORT_TOKEN" \
-  "http://127.0.0.1:8001/ops/cost-export/v1?limit=100"
+  "http://127.0.0.1:8001/ops/cost-export/v1?limit=50"
 ```
 
 | Parameter | Default | Range |
 |---|---|---|
-| `limit` | `100` | 1–500 |
+| `limit` | `50` | 1–200 |
 | `cursor` | none (start from the beginning) | a `next_cursor` from an earlier page |
 
 | Status | Meaning |

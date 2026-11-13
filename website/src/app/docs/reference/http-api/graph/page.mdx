@@ -70,8 +70,8 @@ optionally with the path to each.
 | `predicates` | array of string | no | `[]` (all) | At most 100 items, each 1 to 200 characters. Only edges with these predicates are followed. |
 | `valid_at` | date-time | no | now | Send with `believed_at`. |
 | `believed_at` | date-time | no | now | Send with `valid_at`. |
-| `limit` | integer | no | `500` | 1 to 500 entities per page. |
-| `continuation` | string | no | | The `truncation.continuation` from the previous page. At most 200 characters. |
+| `limit` | integer | no | `100` | 1 to 500 entities per page. |
+| `cursor` | string | no | | The envelope `next_cursor` from the previous page. At most 200 characters. |
 | `include_paths` | boolean | no | `false` | Also return one path to each entity. |
 
 Unknown fields are rejected.
@@ -86,14 +86,15 @@ Unknown fields are rejected.
   [`GraphPath`](/docs/reference/result-types#graphpath) per entity and the distinct
   [`GraphEdge`](/docs/reference/result-types#graphedge) entries they use. Empty
   otherwise.
+- `next_cursor`: set when another page is available; `null` exactly at the end.
 - `truncation`: always present. When more entities exist, `truncated` is
-  `true` and `continuation` holds the cursor for the next page.
+  `true` (disclosure only; page with `next_cursor`).
 
 | Situation | Result |
 |---|---|
 | `entity_id` not in the live graph | `negative.kind` `unknown_entity` |
 | The entity exists but no neighbour matches | `negative.kind` `known_empty` |
-| `continuation` is not a cursor this route issued | `negative.kind` `boundary` |
+| `cursor` is not a cursor this route issued, or belongs to a different scope | `negative.kind` `boundary` |
 
 ### Errors
 
@@ -121,13 +122,13 @@ page = memory.graph_neighborhood(entity_id=billing_migration_id, hops=2, limit=1
 while True:
     for node in page.nodes:
         print(node.hops, node.name)
-    if page.truncation is None or page.truncation.continuation is None:
+    if page.next_cursor is None:
         break
     page = memory.graph_neighborhood(
         entity_id=billing_migration_id,
         hops=2,
         limit=100,
-        continuation=page.truncation.continuation,
+        cursor=page.next_cursor,
     )
 ```
 

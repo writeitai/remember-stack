@@ -7953,13 +7953,25 @@ No users yet: rename directly; no shims, aliases, deprecations or migrations.
 **A. Browse lists** (filter-only, exhaustive). Request `limit` (default 50,
 max 200) and opaque `cursor`; response `next_cursor` (null exactly at the end —
 the only "more exists" signal; a short page with a non-null `next_cursor` is
-legal). Keyset order on an immutable key plus id tiebreak; the cursor pins the
-read instant. Invalid cursor → 400 (or the existing typed error). No totals, no
+legal). Keyset order on an immutable key plus id tiebreak. Every cursor carries
+a short hash of the request's listing scope (the filters that define the
+result set); a cursor whose scope hash does not match the request is rejected
+with the existing typed invalid-cursor 400 (or the route's existing typed
+error). Invalid cursor → 400 (or the existing typed error). No totals, no
 offsets, no `has_more`. Applies to: `GET /documents`, `POST /documents/search`
 (browse mode), section history, document references, cost-export (drop its echo
 response `cursor`), and `GET /lookup/relations` plus `GET /lookup/observations`
-without `property_query` (keyset browse ordered by `(ingested_at DESC, id)`
-with the belief instant pinned in the cursor).
+without `property_query` (keyset browse ordered by `(ingested_at DESC, id)`).
+
+**Pinned read instant.** Where the source can honour an as-of read cheaply,
+the cursor also pins that instant and later pages reuse it: document search
+browse, section history, document references, graph neighborhood clocks, and
+lookup browse (belief via `invalidated_at` / ingested bounds and the as-of
+evidence gate). Where it cannot — `GET /documents` always reads the current
+newest live version and serving flag — the cursor carries no instant. The
+guarantee there is keyset stability only: unchanged rows are never repeated or
+skipped; a row whose filtered attribute (e.g. status) changes between pages
+may enter or leave the listing.
 
 **B. Ranked results** (any `query` / `property_query` / `name`). Request `k`
 (top-k), no cursor; a request with both a query and a cursor is a validation

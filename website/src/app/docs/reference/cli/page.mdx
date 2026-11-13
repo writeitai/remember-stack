@@ -648,7 +648,7 @@ docker compose exec api \
 | Subcommand | Flags | What it does | Output |
 |---|---|---|---|
 | `inspect` | `--deployment ID` | A bounded report of the pipeline: work in progress, dead letters, projections and freshness. | JSON |
-| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
+| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 50, max 200) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
 | `resume-no-route` | `--deployment ID` | Releases documents that were parked because no converter handled their media type, once a route now covers them. | `{"released": [...]}` |
 | `replay` | `PROCESSING_ID`, `--deployment ID`, `--attempts N` (default 1), `--lane {steady,backfill}`, `--not-before ISO8601` | Reopens one dead-lettered work item with N more attempts. | JSON |
 | `graph-catalog ensure` | none | Checks the database's graph metadata and repairs it when needed. | `{"ready", "changed", "problems_before", "problems_after", "definitions"}` |

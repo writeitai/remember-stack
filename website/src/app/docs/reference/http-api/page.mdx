@@ -362,8 +362,17 @@ Filter-only, exhaustive listings request `limit` (default 50, max 200) and
 an opaque `cursor`. The response carries `next_cursor`: `null` exactly at
 the end — the only "more exists" signal. A short page with a non-null
 `next_cursor` is legal. Keyset order uses an immutable key plus an id
-tiebreak; the cursor pins the read instant. An invalid cursor is `400` (or
-the existing typed error). There are no totals, offsets, or `has_more`.
+tiebreak. Every cursor binds to the request's listing scope (its filters);
+reusing a cursor with a different scope is rejected as an invalid cursor
+(`400`, or the route's existing typed error). There are no totals, offsets,
+or `has_more`.
+
+Where the source can honour an as-of read cheaply, the cursor also pins that
+instant (document search browse, section history, document references, graph
+neighborhood clocks, lookup browse). `GET /documents` always reads the
+current newest live version and serving flag, so its cursor carries no
+instant: unchanged rows are never repeated or skipped; a row whose filtered
+status changes between pages may enter or leave the listing.
 
 Applies to: `GET /documents`, `POST /documents/search` without a `query`,
 section history, document references, cost-export, `GET /lookup/relations`,

@@ -2090,8 +2090,7 @@ Its `FactResult` carries:
     }
   ],
   "returned": 1,
-  "total": 1,
-  "continuation": null
+  "total": 1
 }
 ```
 
@@ -2767,7 +2766,7 @@ the table says which are.
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
 | Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |
 | Lookup observations | `lookup_observations(entity_id=, property_query=, k=10)` | One entity's observations, optionally by property text. |
-| Graph neighbourhood | `graph_neighborhood(entity_id=, hops=2, ...)` | The entities and relations within `hops` (up to 4), capped at `limit` (up to 500) with a continuation. |
+| Graph neighbourhood | `graph_neighborhood(entity_id=, hops=2, ...)` | The entities and relations within `hops` (up to 4), capped at `limit` (default 100, up to 500) and paged with `cursor` / `next_cursor`. |
 | Graph path | `graph_path(from_entity_id=, to_entity_id=, max_hops=4)` | Shortest connections between two entities (up to 6 hops). |
 | Citation path | `graph_citation_path(from_doc_id=, to_doc_id=, max_hops=6)` | How one document leads to another through citations. |
 | Hydrate relation | `hydrate_relation(relation_id=)` | A relation with all its claims and source documents. |
@@ -3127,12 +3126,12 @@ with remember.Client() as memory:
     "p1_believed_at_horizon": null,
     "k": null
   },
+  "next_cursor": null,
   "truncation": {
     "truncated": false,
     "returned": 2,
     "estimated_total": 2,
     "total_is_exact": true,
-    "continuation": null,
     "reason": null
   },
   "dropped_by_hydration": 0,
@@ -3284,9 +3283,9 @@ written with the data (`true`) and have no belief-time horizon (`null`).
 
 `truncated` says whether more results exist than were returned. `returned`
 is how many came back, `estimated_total` how many were found, and
-`total_is_exact` whether that total is exact. `continuation` is an opaque
-cursor for reads that can page (the graph neighbourhood). A capped answer
-always says so.
+`total_is_exact` whether that total is exact. Browse paging uses the
+envelope's top-level `next_cursor`, not a field on `truncation`. A capped
+answer always says so.
 
 ### `dropped_by_hydration`
 
@@ -9181,7 +9180,7 @@ that ledger. It contains no document text and no prompts.
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 
 docker compose exec -T api \
-  remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 100
+  remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 50
 ```
 
 Pass the page's `next_cursor` as `--cursor` to read the next page. The
@@ -9222,12 +9221,12 @@ the published port to reach it.
 
 ```bash
 curl -H "Authorization: Bearer $COST_EXPORT_TOKEN" \
-  "http://127.0.0.1:8001/ops/cost-export/v1?limit=100"
+  "http://127.0.0.1:8001/ops/cost-export/v1?limit=50"
 ```
 
 | Parameter | Default | Range |
 |---|---|---|
-| `limit` | `100` | 1–500 |
+| `limit` | `50` | 1–200 |
 | `cursor` | none (start from the beginning) | a `next_cursor` from an earlier page |
 
 | Status | Meaning |
@@ -9996,8 +9995,17 @@ Filter-only, exhaustive listings request `limit` (default 50, max 200) and
 an opaque `cursor`. The response carries `next_cursor`: `null` exactly at
 the end — the only "more exists" signal. A short page with a non-null
 `next_cursor` is legal. Keyset order uses an immutable key plus an id
-tiebreak; the cursor pins the read instant. An invalid cursor is `400` (or
-the existing typed error). There are no totals, offsets, or `has_more`.
+tiebreak. Every cursor binds to the request's listing scope (its filters);
+reusing a cursor with a different scope is rejected as an invalid cursor
+(`400`, or the route's existing typed error). There are no totals, offsets,
+or `has_more`.
+
+Where the source can honour an as-of read cheaply, the cursor also pins that
+instant (document search browse, section history, document references, graph
+neighborhood clocks, lookup browse). `GET /documents` always reads the
+current newest live version and serving flag, so its cursor carries no
+instant: unchanged rows are never repeated or skipped; a row whose filtered
+status changes between pages may enter or leave the listing.
 
 Applies to: `GET /documents`, `POST /documents/search` without a `query`,
 section history, document references, cost-export, `GET /lookup/relations`,
@@ -12355,8 +12363,8 @@ optionally with the path to each.
 | `predicates` | array of string | no | `[]` (all) | At most 100 items, each 1 to 200 characters. Only edges with these predicates are followed. |
 | `valid_at` | date-time | no | now | Send with `believed_at`. |
 | `believed_at` | date-time | no | now | Send with `valid_at`. |
-| `limit` | integer | no | `500` | 1 to 500 entities per page. |
-| `continuation` | string | no | | The `truncation.continuation` from the previous page. At most 200 characters. |
+| `limit` | integer | no | `100` | 1 to 500 entities per page. |
+| `cursor` | string | no | | The envelope `next_cursor` from the previous page. At most 200 characters. |
 | `include_paths` | boolean | no | `false` | Also return one path to each entity. |
 
 Unknown fields are rejected.
@@ -12371,14 +12379,15 @@ Unknown fields are rejected.
   [`GraphPath`](https://remember.dev/docs/reference/result-types#graphpath) per entity and the distinct
   [`GraphEdge`](https://remember.dev/docs/reference/result-types#graphedge) entries they use. Empty
   otherwise.
+- `next_cursor`: set when another page is available; `null` exactly at the end.
 - `truncation`: always present. When more entities exist, `truncated` is
-  `true` and `continuation` holds the cursor for the next page.
+  `true` (disclosure only; page with `next_cursor`).
 
 | Situation | Result |
 |---|---|
 | `entity_id` not in the live graph | `negative.kind` `unknown_entity` |
 | The entity exists but no neighbour matches | `negative.kind` `known_empty` |
-| `continuation` is not a cursor this route issued | `negative.kind` `boundary` |
+| `cursor` is not a cursor this route issued, or belongs to a different scope | `negative.kind` `boundary` |
 
 ### Errors
 
@@ -12406,13 +12415,13 @@ page = memory.graph_neighborhood(entity_id=billing_migration_id, hops=2, limit=1
 while True:
     for node in page.nodes:
         print(node.hops, node.name)
-    if page.truncation is None or page.truncation.continuation is None:
+    if page.next_cursor is None:
         break
     page = memory.graph_neighborhood(
         entity_id=billing_migration_id,
         hops=2,
         limit=100,
-        continuation=page.truncation.continuation,
+        cursor=page.next_cursor,
     )
 ```
 
@@ -12643,8 +12652,6 @@ any earlier `QueryResult` or `IngestedVersion` gives it to you.
   "limits": {"row_cap": 200, "byte_cap": 1048576, "statement_timeout_ms": 5000, "analytical_tier": false},
   "truncated": false,
   "truncation_reason": null,
-  "exact_total_known": false,
-  "exact_total": null,
   "ordered_result": true,
   "empty_result": false,
   "negative_kind": null,
@@ -13154,7 +13161,7 @@ This token is separate from the API credential.
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `cursor` | query | string | no | start | The `next_cursor` from the previous page. |
-| `limit` | query | integer | no | `100` | 1 to 500. |
+| `limit` | query | integer | no | `50` | 1 to 200. |
 
 ### Response
 
@@ -13166,8 +13173,7 @@ This token is separate from the API credential.
 | `deployment_id` | UUID | |
 | `server_time` | date-time | When the page was read. |
 | `horizon` | date-time | The page covers receipts up to this instant. |
-| `cursor` | string | The cursor this page started from. |
-| `next_cursor` | string | Pass it back to continue. |
+| `next_cursor` | string or null | Pass it back to continue; `null` exactly at the end. |
 | `persist_failures` | integer | Receipts the engine failed to record. |
 | `scope_missing` | integer | Receipts recorded without an attribution scope. |
 | `receipts` | array | The receipts, below. |
@@ -13204,7 +13210,7 @@ Each receipt:
 ### Example
 
 ```bash
-curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=500" \
+curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=50" \
   -H "Authorization: Bearer $REMEMBERSTACK_COST_EXPORT_TOKEN"
 ```
 
@@ -13567,7 +13573,8 @@ A trimmed response (empty arrays and some fields left out):
     {"fact_kind": "relation", "fact_id": "c3d2…", "stance": "contradicts", "returned": 0, "total": 0}
   ],
   "freshness": {"pg_live_ts": "2026-09-23T10:00:00Z", "p1_written_inline": true, "p1_believed_at_horizon": null, "k": null},
-  "truncation": {"truncated": false, "returned": 3, "estimated_total": 3, "total_is_exact": true, "continuation": null, "reason": null},
+  "next_cursor": null,
+  "truncation": {"truncated": false, "returned": 3, "estimated_total": 3, "total_is_exact": true, "reason": null},
   "dropped_by_hydration": 0,
   "excluded_unstamped": 0,
   "negative": null
@@ -13732,6 +13739,7 @@ route in this release fills `ranking`, `changes`, `aggregate` or `pages`.
 | `pages` | array of [`PageRef`](#pageref) | Compiled pages. |
 | `freshness` | [`Freshness`](#freshness) | How current the answer's sources are. |
 | `truncation` | [`Truncation`](#truncation), nullable | Present when a cap applied or the route always discloses one. |
+| `next_cursor` | string, nullable | Browse-page cursor; `null` exactly at the end. Used by graph neighborhood and browse-mode lookups. |
 | `dropped_by_hydration` | integer | Candidates that were nominated but no longer held when re-read. Default `0`. |
 | `excluded_unstamped` | integer ≥ 0 | Items left out because they carry no usable time. Default `0`. |
 | `negative` | [`Negative`](#negative), nullable | Set when the answer is a typed "no". |
@@ -13741,12 +13749,13 @@ Which fields each route fills:
 | Route or operation | Grain | Fields |
 |---|---|---|
 | `GET /resolve`, `resolve_entity` | `fact` | `entities`, `truncation`, `negative` |
-| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `truncation`, `dropped_by_hydration`, `negative` |
+| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `next_cursor` (browse), `truncation`, `dropped_by_hydration`, `negative` |
 | `GET /hydrate/relation/{relation_id}` | `composite` | `facts`, `evidence`, `sources`, `negative` |
 | `GET /transcript/relation/{relation_id}` | `composite` | `transcript`, `truncation`, `negative` |
 | Search routes | `evidence` | `evidence` or `chunks`, `dropped_by_hydration`, `negative` |
 | Adjacent chunks | `evidence` | `chunks`, `dropped_by_hydration`, `negative` |
-| Graph routes | `fact` | `nodes`, `paths`, `edges`, `truncation`, `negative` |
+| Graph neighborhood | `fact` | `nodes`, `paths`, `edges`, `next_cursor`, `truncation`, `negative` |
+| Other graph routes | `fact` | `nodes`, `paths`, `edges`, `truncation`, `negative` |
 | `claims_and_sources_context` | `evidence` | `evidence`, `chunks`, `truncation`, `dropped_by_hydration`, `negative` |
 | `facts_context` | `fact` | `facts`, `evidence`, `fact_evidence`, `evidence_totals`, `nodes`, `truncation`, `dropped_by_hydration`, `negative` |
 
@@ -13850,8 +13859,7 @@ A fact's live contradiction, returned with all its sides up to a cap.
 | `group_id` | UUID | |
 | `co_members` | array of [`CoMember`](#comember) | The other sides, up to 25 inline. |
 | `returned` | integer ≥ 0 | Sides returned. |
-| `total` | integer ≥ 0 | Sides that exist. |
-| `continuation` | string, nullable | Set when more sides exist than were returned. |
+| `total` | integer ≥ 0 | Sides that exist. When `returned` is less than `total`, the cap applied; co-member paging is out of scope. |
 
 ### CoMember
 
@@ -14123,8 +14131,7 @@ A cap is never silent: when one applies, this block says so.
 | `returned` | integer ≥ 0 | Items returned. |
 | `estimated_total` | integer ≥ 0 | Items seen before the cap. |
 | `total_is_exact` | boolean | `false` when the count itself hit a cap. Default `true`. |
-| `continuation` | string, nullable | A cursor to pass back. Only `POST /graph/neighborhood` accepts one. |
-| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). |
+| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). Follow-up paging uses `Envelope.next_cursor`, not a field here. |
 
 ### Negative
 
@@ -14183,8 +14190,6 @@ where the rows came from before giving them.
 | `limits` | [`ResultLimits`](#resultlimits) | The caps this statement ran under. |
 | `truncated` | boolean | |
 | `truncation_reason` | string, nullable | `row_cap`, `byte_cap`, or a graph budget (`depth_budget`, `expansion_budget`, `frontier_budget`, `result_budget`, `time_budget`). |
-| `exact_total_known` | boolean | Always `false` in this release. |
-| `exact_total` | integer, nullable | Always `null` in this release. |
 | `ordered_result` | boolean | The statement has a top-level `ORDER BY`. |
 | `empty_result` | boolean | No rows were returned (also `true` on every rejection or failure). |
 | `negative_kind` | null | Always `null`: SQL results never carry a typed negative. |
@@ -17257,15 +17262,15 @@ MemoryClient.graph_neighborhood(
     predicates: tuple[str, ...] = (),
     valid_at: datetime | None = None,
     believed_at: datetime | None = None,
-    limit: int = 500,
-    continuation: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
     include_paths: bool = False,
 ) -> Envelope
 ```
 
 Returns the entities and relations around one entity. The engine accepts
 `hops` 1–4, `limit` 1–500 and at most 100 `predicates`. Pass the envelope's
-`truncation.continuation` back as `continuation` to read the next page.
+`next_cursor` back as `cursor` to read the next page.
 
 ```python
 around_dana = memory.graph_neighborhood(entity_id=dana_id, hops=1)
@@ -18411,7 +18416,7 @@ docker compose exec api \
 | Subcommand | Flags | What it does | Output |
 |---|---|---|---|
 | `inspect` | `--deployment ID` | A bounded report of the pipeline: work in progress, dead letters, projections and freshness. | JSON |
-| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
+| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 50, max 200) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
 | `resume-no-route` | `--deployment ID` | Releases documents that were parked because no converter handled their media type, once a route now covers them. | `{"released": [...]}` |
 | `replay` | `PROCESSING_ID`, `--deployment ID`, `--attempts N` (default 1), `--lane {steady,backfill}`, `--not-before ISO8601` | Reopens one dead-lettered work item with N more attempts. | JSON |
 | `graph-catalog ensure` | none | Checks the database's graph metadata and repairs it when needed. | `{"ready", "changed", "problems_before", "problems_after", "definitions"}` |

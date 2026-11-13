@@ -1123,15 +1123,15 @@ MemoryClient.graph_neighborhood(
     predicates: tuple[str, ...] = (),
     valid_at: datetime | None = None,
     believed_at: datetime | None = None,
-    limit: int = 500,
-    continuation: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
     include_paths: bool = False,
 ) -> Envelope
 ```
 
 Returns the entities and relations around one entity. The engine accepts
 `hops` 1–4, `limit` 1–500 and at most 100 `predicates`. Pass the envelope's
-`truncation.continuation` back as `continuation` to read the next page.
+`next_cursor` back as `cursor` to read the next page.
 
 ```python
 around_dana = memory.graph_neighborhood(entity_id=dana_id, hops=1)

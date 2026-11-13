@@ -168,7 +168,7 @@ This token is separate from the API credential.
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `cursor` | query | string | no | start | The `next_cursor` from the previous page. |
-| `limit` | query | integer | no | `100` | 1 to 500. |
+| `limit` | query | integer | no | `50` | 1 to 200. |
 
 ### Response
 
@@ -180,8 +180,7 @@ This token is separate from the API credential.
 | `deployment_id` | UUID | |
 | `server_time` | date-time | When the page was read. |
 | `horizon` | date-time | The page covers receipts up to this instant. |
-| `cursor` | string | The cursor this page started from. |
-| `next_cursor` | string | Pass it back to continue. |
+| `next_cursor` | string or null | Pass it back to continue; `null` exactly at the end. |
 | `persist_failures` | integer | Receipts the engine failed to record. |
 | `scope_missing` | integer | Receipts recorded without an attribution scope. |
 | `receipts` | array | The receipts, below. |
@@ -218,6 +217,6 @@ Each receipt:
 ### Example
 
 ```bash
-curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=500" \
+curl -s "http://127.0.0.1:8001/ops/cost-export/v1?limit=50" \
   -H "Authorization: Bearer $REMEMBERSTACK_COST_EXPORT_TOKEN"
 ```

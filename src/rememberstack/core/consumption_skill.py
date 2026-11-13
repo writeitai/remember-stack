@@ -274,7 +274,7 @@ def _envelope() -> str:
         "## Read the whole response\n\n"
         "For assured operations, check Envelope `grain`, required "
         "`temporal_scope`, identity regime, per-store freshness, "
-        "truncation/continuation, and `dropped_by_hydration`. A result inside a "
+        "`truncation` / `next_cursor`, and `dropped_by_hydration`. A result inside a "
         "live contradiction group must include or point to its co-members; "
         "report the competing sides instead of silently picking one.\n\n"
         "For open SQL, every answer is `QueryResult/v1`. Inspect "
