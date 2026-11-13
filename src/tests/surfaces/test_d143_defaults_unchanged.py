@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 
 from tests.surfaces.d143_defaults_capture import capture_defaults
+from tests.surfaces.d143_defaults_capture import capture_layers_off
 from tests.surfaces.d143_defaults_capture import render
 
 _FIXTURE = Path(__file__).with_name("fixtures") / "d143_defaults.json"
@@ -50,3 +51,18 @@ def test_fixture_pins_the_full_default_catalogue() -> None:
     assert len(baseline["mcp_engine_tools"]["stdio"]) == 18
     assert len(baseline["readiness_expected_components"]) == 12
     assert len(baseline["query_surface_manifest"]["surface_manifest_hash"]) == 64
+
+
+def test_layers_off_catalogues_equal_generated_capture() -> None:
+    """Source discovery and its D155 guard survive either higher-layer switch."""
+    fixture = _FIXTURE.with_name("d155_layers_off_catalogues.json")
+    current = capture_layers_off()
+    assert render(current) == fixture.read_text()
+    for profile in current.values():
+        for tools in (
+            profile["mcp_in_process_tools"],
+            *profile["mcp_engine_tools"].values(),
+        ):
+            search = next(tool for tool in tools if tool["name"] == "search_documents")
+            assert "matching publication marker" in search["description"]
+            assert "only the suffix is stable" in search["description"]

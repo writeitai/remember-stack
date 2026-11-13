@@ -8250,7 +8250,7 @@ There are no users requiring migration, aliases or a transition layout.
   never move document folders or recopy survivors. No Tier-1 `documents/`,
   facets, entities, K links or `_paths/` id index. Store `doc_id` and exact-version
   handles; resolve via MCP `p3_path` or compute the suffix and use
-  `find <mount> -path '*-<suffix>/*'`. P3 is sources-only under D143; K stays standalone.
+  `find <root> -type d -name '*--<suffix>'`. P3 is sources-only under D143; K stays standalone.
 - **S3 and one customer mount.** Reuse the S3 adapter for mountable.io (bucket =
   filesystem id), AWS S3, GCS XML API/HMAC and MinIO. Keep E0 writes immutable;
   add only streamed replacement, paged listing and idempotent deletion for P3.

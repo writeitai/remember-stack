@@ -92,3 +92,4 @@ src/tests/adapters/test_minio_object_operations.py
 src/tests/adapters/test_minio_corpus_lock_loss.py
 src/tests/adapters/test_minio_corpus_publication.py
 src/tests/adapters/test_minio_corpus_forget.py
+src/tests/adapters/test_minio_corpus_consumption.py

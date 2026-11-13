@@ -35,8 +35,9 @@ by the start of the version's in-force interval that meets the scope's window,
 then ``version_no``. Each such result lists its ``matching_editions`` with
 their intervals and the handle that opens each. Lineages without declarations
 are judged exactly as above. A result's ``p3_path`` opens the lineage's served
-version, so a periodised result carries it only when the described version is
-the served one; ``served_version`` says which.
+version, only after its current inputs have a matching publication marker.
+Historical results carry no path, including undeclared lineages;
+``served_version`` describes authority currency independently of publication.
 
 **Paging.** Without a query, lineages are walked newest first by when the
 lineage's newest live version that had arrived by the pinned as-of instant was
@@ -73,6 +74,9 @@ from sqlalchemy.engine import RowMapping
 
 from remember.models import SCOPE_PENDING_MAX_DOC_IDS
 from remember.models import ScopePending
+from rememberstack.core.corpus_export import CorpusPolicy
+from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
+from rememberstack.core.corpus_export import published_corpus_revision
 from rememberstack.core.cursor_scope import assert_cursor_scope
 from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.core.document_filters import metadata_predicates
@@ -89,6 +93,7 @@ from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import DocumentSearchResult
 from rememberstack.model.client import EffectiveInterval
 from rememberstack.model.client import MatchingEdition
+from rememberstack.spine.corpus_export import served_corpus_documents_on
 from rememberstack.spine.effective_time import belief_watermark
 
 TRIGRAM_MIN_SIMILARITY: Final = 0.3
@@ -113,9 +118,12 @@ MatchChannel = Literal["name", "content"]
 class DocumentSearch:
     """Read model behind ``search_documents``."""
 
-    def __init__(self, *, engine: Engine) -> None:
+    def __init__(
+        self, *, engine: Engine, corpus_policy: CorpusPolicy = DEFAULT_CORPUS_POLICY
+    ) -> None:
         """Bind the spine this search reads."""
         self._engine = engine
+        self._corpus_policy = corpus_policy
 
     def search_documents(
         self, *, deployment_id: UUID, request: DocumentSearchRequest
@@ -187,7 +195,12 @@ class DocumentSearch:
                     as_of=as_of,
                 )
                 examined = tuple(pick.doc_id for pick in picks) + touched
-            documents = _describe(connection=connection, scope=scope, picks=picks)
+            documents = _describe(
+                connection=connection,
+                scope=scope,
+                picks=picks,
+                policy=self._corpus_policy,
+            )
             people = _people_matched(connection=connection, scope=scope)
             pending = _scope_pending(
                 connection=connection,
@@ -881,17 +894,8 @@ _MATCHING_VERSIONS: Final = """
 """
 
 
-def p3_path(*, doc_id: UUID) -> str:
-    """The document's canonical Tier-1 P3 path, relative to the corpus root.
-
-    Stable across rebuilds and versions (``workers/p3.py``); it exists in a
-    published corpus snapshot only where the deployment builds P3.
-    """
-    return f"documents/{doc_id}"
-
-
 def _describe(
-    *, connection: Connection, scope: _Scope, picks: list[_Pick]
+    *, connection: Connection, scope: _Scope, picks: list[_Pick], policy: CorpusPolicy
 ) -> tuple[DocumentSearchResult, ...]:
     """Load each returned version's metadata, people, status and overview."""
     if not picks:
@@ -904,6 +908,11 @@ def _describe(
         row["version_id"]: row
         for row in connection.execute(_DETAILS, parameters).mappings()
     }
+    corpus = served_corpus_documents_on(
+        connection=connection,
+        deployment_id=scope.parameters["deployment_id"],
+        doc_ids=tuple(pick.doc_id for pick in picks),
+    )
     people: dict[UUID, dict[str, list[DocumentSearchPerson]]] = {}
     for row in connection.execute(_PEOPLE, parameters).mappings():
         people.setdefault(row["version_id"], {"author": [], "recipient": []})[
@@ -939,6 +948,7 @@ def _describe(
         row = rows[pick.version_id]
         version_people = people.get(pick.version_id, {"author": [], "recipient": []})
         served = row["current_version_id"] == pick.version_id
+        document = corpus.get(pick.doc_id)
         matching: tuple[MatchingEdition, ...] = ()
         if pick.periodised:
             matching = tuple(
@@ -969,12 +979,13 @@ def _describe(
                 file_name=row["file_name"],
                 title=row["title"],
                 source_path=row["source_path"],
-                # The P3 path opens the served version: a periodised result
-                # describing another edition carries none (§3.3); an
-                # undeclared lineage keeps D134's path unchanged.
                 p3_path=(
-                    p3_path(doc_id=pick.doc_id)
-                    if served or not pick.periodised
+                    document.path
+                    if document is not None
+                    and published_corpus_revision(
+                        document, version_id=pick.version_id, policy=policy
+                    )
+                    is not None
                     else None
                 ),
                 served_version=served,

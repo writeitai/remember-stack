@@ -920,7 +920,7 @@ directory summaries, facets, `documents/<doc_id>/`, `by-source/`, `by-time/`,
 Folder paths change only when their type, topic or title changes; index pagination
 does not move them. Consumers store `doc_id` (and a version/representation handle for a citation).
 Resolve through MCP `p3_path`; for offline browsing compute `corpus_suffix(doc_id)`
-and run `find <mount> -path '*-<suffix>/*'`, substituting its 24 hex characters.
+and run `find <root> -type d -name '*--<suffix>'`, substituting its 24 hex characters.
 This searches the mounted tree and may cost a full listing; there is no `_paths/`
 id index, alias directory or persistent path map. Verify the folder's `doc_id`
 and displayed version in `document.json` before opening it as a particular edition.

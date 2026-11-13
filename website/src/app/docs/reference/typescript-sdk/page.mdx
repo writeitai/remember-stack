@@ -179,6 +179,17 @@ periods while retaining the document's declared effective-time mode.
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
+When requested, `p3` checks the nullable publication marker of each served
+version. An unrelated successful publication cannot satisfy it. A ready
+single-version request exposes its export digest as `version`; aggregate
+version and publication timestamps are null.
+
+Document search's `p3_path` is relative to the corpus root and non-null only
+for a served selected version with a matching marker. Raw-only, unpublished,
+updating, failed and historical results carry `null`; `served_version` describes
+currency independently. Re-resolve with `filters.doc_ids` after type/topic/title
+moves. Only the suffix is stable; [offline lookup](/docs/self-hosting/filesystem-views#layout)
+also works.
 A `failed` stage has a retry pending; polling continues. A `dead_letter` stage
 stops with PipelineDeadLettered and the full report. The readiness deadline
 covers routing, HTTP and polling waits, retaining the last validated report.

@@ -24,10 +24,16 @@ export type OutputDocumentSearchResult = {
     modified_at: string | null;
     other_matching_version_ids: Array<string>;
     overview: string | null;
+    /**
+     * Relative corpus folder only for the served selected version with a matching nullable publication marker. Null for historical, raw-only, unpublished, updating or failed publications. Type/topic/title changes move it: re-resolve by doc_id; only the folder suffix is stable. Retain version_id and representation_id for exact source identity.
+     */
     p3_path: string | null;
     recipients: Array<OutputDocumentSearchPerson>;
     representation_id: string | null;
     score: number | null;
+    /**
+     * Whether version_id is served, independently of corpus publication.
+     */
     served_version: boolean;
     source_path: string | null;
     status: 'ingesting' | 'converting' | 'structuring' | 'ready' | 'failed' | 'deleted';

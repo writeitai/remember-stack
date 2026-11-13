@@ -84,6 +84,8 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
+from tests.benchmarks.corpus_support import publications
+from tests.benchmarks.corpus_support import write_corpus
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
@@ -481,7 +483,7 @@ def test_p3_io_failure_is_a_checkpointed_terminal_answer(
         }
 
     root = _published_p3(root=tmp_path)
-    mount = P3Mount(root=root, expected_version="test-v1")
+    mount = P3Mount(root=root, publications=publications("test-v1"))
     original_iterdir = Path.iterdir
 
     def unreadable(path: Path):  # noqa: ANN202
@@ -1125,7 +1127,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v46", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
+    (("full-v47", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -2008,7 +2010,7 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v46","protocol_fingerprint":'
+        '{"protocol_name":"RS-LoCoMo-Full-v47","protocol_fingerprint":'
         f'"{prepared.protocol_fingerprint}",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
@@ -2228,7 +2230,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v46"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v47"
     assert prepared.answer_agent_model == "openai/gpt-6-luna"
     assert prepared.answer_agent_reasoning_effort == "high"
     assert prepared.answer_reader_retry_budget == 2
@@ -2796,6 +2798,26 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
                 "versioning_mode": "snapshot",
             },
         )
+    if request.method == "POST" and request.url.path == "/documents/search":
+        publication = publications("test-v1")[0]
+        return httpx.Response(
+            200,
+            json={
+                "documents": [
+                    {
+                        "doc_id": str(publication.doc_id),
+                        "version_id": str(publication.version_id),
+                        "representation_id": str(publication.representation_id),
+                        "version_no": 1,
+                        "status": "ready",
+                        "family": "markdown",
+                        "p3_path": publication.path,
+                        "served_version": True,
+                    }
+                ],
+                "as_of": "2026-07-23T12:00:00Z",
+            },
+        )
     if request.method == "POST" and request.url.path == "/readiness":
         return httpx.Response(200, json=_complete_readiness_payload())
     if request.method == "GET" and request.url.path == "/processing-layers":
@@ -2854,11 +2876,7 @@ def _complete_readiness_payload() -> dict[str, object]:
                 "checked_at": timestamp,
                 "reason": "ready",
                 **(
-                    {
-                        "version": "test-v1",
-                        "built_at": timestamp,
-                        "published_at": timestamp,
-                    }
+                    {"version": "test-v1", "built_at": None, "published_at": None}
                     if capability == "p3"
                     else {}
                 ),
@@ -2881,7 +2899,7 @@ def _published_p3(*, root: Path) -> Path:
     """Create the smallest mount matching the synthetic readiness payload."""
     p3 = root / "p3"
     p3.mkdir(exist_ok=True)
-    (p3 / ".snapshot-version").write_text("test-v1", encoding="utf-8")
+    write_corpus(p3, "test-v1")
     (p3 / "llms.txt").write_text("# Synthetic P3\n", encoding="utf-8")
     return p3
 
@@ -3546,7 +3564,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v46"]
+    protocol = PROTOCOL_REGISTRY["full-v47"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",

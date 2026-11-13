@@ -158,6 +158,13 @@ capabilities you need. It reports each capability separately and a single
 | `live_graph` | The deployment's PostgreSQL graph passes its health checks. | Graph traversal and the neighbourhood expansion in `facts_context`. Deployment-wide. |
 | `p3` | Each requested served version's corpus publication marker matches its current export inputs. | The read-only filesystem views. Self-hosted only; see [Filesystem views](/docs/self-hosting/filesystem-views). |
 
+The `p3` check uses the same per-version guard as document search's
+`p3_path`. An unrelated publish cannot satisfy it. A ready single-version
+request exposes its export digest as `version`; multiple versions return
+`version: null`, and `built_at` / `published_at` are always null. A matching
+marker records publication once, not an atomic tree or an independently
+restored bucket. A missing local mount does not invalidate a remote publish.
+
 For ordinary recall, require `pipeline`, `p1` and `live_graph`, and leave
 `p3` off unless you read the filesystem views.
 

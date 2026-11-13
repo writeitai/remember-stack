@@ -282,7 +282,7 @@ def test_filters_only_order_by_ingestion_and_cursor_pins_as_of(rig: _Rig) -> Non
     assert _doc_ids(page_one) == [third.doc_id, second.doc_id]
     assert page_one.next_cursor is not None
     assert page_one.truncated is False
-    assert page_one.documents[0].p3_path == f"documents/{third.doc_id}"
+    assert page_one.documents[0].p3_path is None
 
     # between pages: a new document arrives, the unseen document's version is
     # promoted to current, and conversion fills its declared date

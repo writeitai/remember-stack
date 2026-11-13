@@ -22,11 +22,12 @@ _ROOT = Path(__file__).parents[3]
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 _PRE_D143_SHA256: Final = (
-    "8f404c9ce3a37b32791c54477be1d24d50450cddb7014216ada9ce470821d1ef"
+    "baae77c8e6e8b808ea0f2fccf2b768c54396df09424db4fe56ccc38653c19cf5"
 )
 """Canonical hash of ``openapi.json`` after stripping D143 additions.
 
-Pinned against the D154 pagination rename baseline (browse ``limit`` /
+Pinned after D155 slice 5 (``p3_path`` and p3 readiness field descriptions);
+before that, against the D154 pagination rename baseline (browse ``limit`` /
 ``next_cursor``, Envelope ``next_cursor``, Truncation without
 ``continuation``, QueryResult without ``exact_total*``, graph keyset
 cursor capacity 2,048). Earlier pin was

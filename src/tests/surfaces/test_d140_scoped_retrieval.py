@@ -707,9 +707,9 @@ def test_search_documents_representative_and_editions_per_versions_and_mode(
             lineage.version(1)
         ]
         assert result.effective[0].from_ == _REVISED
-        # an undeclared lineage keeps D134's judging and its P3 path
+        # an undeclared lineage keeps its judging; unpublished folders have no path
         assert by_doc[plain.doc_id].version_id == plain.version(1)
-        assert by_doc[plain.doc_id].p3_path == f"documents/{plain.doc_id}"
+        assert by_doc[plain.doc_id].p3_path is None
         assert by_doc[plain.doc_id].matching_editions == ()
 
         history_all = _search(
@@ -744,7 +744,7 @@ def test_search_documents_representative_and_editions_per_versions_and_mode(
         result = {item.doc_id: item for item in future.documents}[lineage.doc_id]
         assert result.version_id == lineage.version(2)
         assert result.served_version is True
-        assert result.p3_path == f"documents/{lineage.doc_id}"
+        assert result.p3_path is None
 
 
 def test_search_documents_all_versions_judges_only_matching_candidates(

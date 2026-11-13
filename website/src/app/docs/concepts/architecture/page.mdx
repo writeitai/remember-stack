@@ -47,7 +47,7 @@ can fall behind.
 | The query space `memory_v1` for [SQL queries](/docs/concepts/retrieval#sql-queries-over-the-query-space) | PostgreSQL views and functions | A read-only view of the authority. |
 | Original files | Object storage, bucket `remember-raw` | Authority. Identical bytes are stored once. |
 | Converted Markdown and the files produced with it | Object storage, bucket `remember-artifacts` | Derived from the original. Chunks point at positions in it, so it is kept, not rebuilt. |
-| Filesystem-view snapshots | Object storage, bucket `remember-corpusfs` | Derived. Rebuilt on demand. |
+| Live corpus folders | Object storage, bucket `remember-corpusfs` | Derived. Published per document; repaired by reconcile. |
 
 The bucket names are the defaults of a Compose deployment. Everything in
 PostgreSQL and the first two buckets belongs together: back them up at the
