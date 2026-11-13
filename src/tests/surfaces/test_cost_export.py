@@ -20,7 +20,6 @@ from sqlalchemy.engine import Engine
 
 from remember.cli import main as cli_main
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.spine.cost_export import decode_cost_export_cursor
 from rememberstack.spine.cost_export import SqlCostExportReader
 from rememberstack.spine.deployment_bootstrap import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
@@ -153,53 +152,59 @@ def _insert_worker(
         )
 
 
-def test_empty_page_then_forward_cursor_sees_row_after_lag(
+def test_empty_page_then_fresh_read_sees_row_after_lag(
     database_engine: Engine,
 ) -> None:
-    """NC1 stays frozen; NC2 carries a fresh horizon and the aged row."""
+    """An empty page ends (next_cursor null); a later first page sees aged rows."""
     _bootstrap(database_engine)
     reader = SqlCostExportReader(
         engine=database_engine, safety_lag=timedelta(milliseconds=80)
     )
     first = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=10)
     assert first.receipts == ()
+    assert first.next_cursor is None
     assert first.server_time.tzinfo is not None
-    nc1 = first.next_cursor
-    frozen = decode_cost_export_cursor(cursor=nc1)
-    assert frozen is not None
     _insert_surface(
         database_engine, cost_id=uuid4(), occurred_at=datetime.now(timezone.utc)
     )
     import time
 
     time.sleep(0.12)
-    replay = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=nc1, limit=10)
-    assert [row.cost_id for row in replay.receipts] == []
-    nc2 = replay.next_cursor
-    assert nc2 != nc1
-    forward = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=nc2, limit=10)
-    assert len(forward.receipts) == 1
-    assert forward.receipts[0].source == "surface"
+    later = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=10)
+    assert len(later.receipts) == 1
+    assert later.receipts[0].source == "surface"
 
 
-def test_same_cursor_replay_ignores_insert_between(database_engine: Engine) -> None:
-    """Replaying one cursor string returns the same receipt ids."""
+def test_full_page_next_cursor_replay_stays_past_prior_rows(
+    database_engine: Engine,
+) -> None:
+    """A full page's next_cursor continues after those receipts; inserts behind it stay out."""
     _bootstrap(database_engine)
     reader = SqlCostExportReader(
         engine=database_engine, safety_lag=timedelta(milliseconds=40)
     )
-    aged = datetime.now(timezone.utc) - timedelta(seconds=1)
+    aged = datetime.now(timezone.utc) - timedelta(seconds=2)
     first_id = uuid4()
+    second_id = uuid4()
     _insert_surface(database_engine, cost_id=first_id, occurred_at=aged)
-    start = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=10)
-    cursor = start.cursor
-    first = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
-    assert [row.cost_id for row in first.receipts] == [first_id]
     _insert_surface(
-        database_engine, cost_id=uuid4(), occurred_at=datetime.now(timezone.utc)
+        database_engine,
+        cost_id=second_id,
+        occurred_at=aged + timedelta(milliseconds=1),
+    )
+    start = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=1)
+    assert [row.cost_id for row in start.receipts] == [first_id]
+    assert start.next_cursor is not None
+    cursor = start.next_cursor
+    first = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
+    assert [row.cost_id for row in first.receipts] == [second_id]
+    _insert_surface(
+        database_engine,
+        cost_id=uuid4(),
+        occurred_at=aged - timedelta(seconds=1),
     )
     replay = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
-    assert [row.cost_id for row in replay.receipts] == [first_id]
+    assert [row.cost_id for row in replay.receipts] == [second_id]
 
 
 def test_persist_failures_appear_on_the_page(database_engine: Engine) -> None:

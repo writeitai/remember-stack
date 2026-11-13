@@ -1677,7 +1677,7 @@ def _mount_section_history(*, app: FastAPI) -> None:
         at: datetime | None = None,
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to: datetime | None = None,
-        k: Annotated[
+        limit: Annotated[
             int, Query(ge=1, le=SECTION_HISTORY_MAX_LIMIT)
         ] = SECTION_HISTORY_DEFAULT_LIMIT,
         cursor: Annotated[str | None, Query(min_length=1)] = None,
@@ -1690,8 +1690,8 @@ def _mount_section_history(*, app: FastAPI) -> None:
         section it holds under the key with ``changed``/``own_changed``
         against the previous row that held it — or ``absent``,
         ``not_indexed`` or ``processing``. Ordered by effective start for a
-        periodised document, else by version number; ``cursor`` pages and
-        pins the evaluation and belief instants.
+        periodised document, else by version number; ``limit`` / ``cursor``
+        page and pin the evaluation and belief instants (``next_cursor`` out).
         """
         time: dict[str, object] = {"mode": mode}
         if mode == "at":
@@ -1705,7 +1705,7 @@ def _mount_section_history(*, app: FastAPI) -> None:
                     "doc_id": doc_id,
                     "section_key": section_key,
                     "time": time,
-                    "k": k,
+                    "limit": limit,
                     "cursor": cursor,
                 }
             )

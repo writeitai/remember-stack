@@ -93,7 +93,6 @@ def _sample_page(**overrides: object) -> CostExportPage:
         "deployment_id": _DEPLOYMENT,
         "server_time": _WHEN,
         "horizon": _WHEN,
-        "cursor": "cursor-in",
         "next_cursor": "cursor-out",
         "persist_failures": 0,
         "scope_missing": 0,
