@@ -1,8 +1,0 @@
-enabled: true
-priority: 20
-run_every: 1
-must_follow: outer
-not_before_iteration: 1
-description: |
-  Implement the one leaf explicitly selected by outer, run relevant checks,
-  and return evidence for outer review.
