@@ -13361,7 +13361,7 @@
   ],
   "query_surface_manifest": {
     "built_manifest_sha256": "5a167010a1076324d692a446603c5d62ffd9f1c7a1831e921163455ee5c52899",
-    "checked_in_manifest_sha256": "b3d818e32839835caed21d4d90530def49070cc335870a25d07e17f84905149c",
+    "checked_in_manifest_sha256": "5a167010a1076324d692a446603c5d62ffd9f1c7a1831e921163455ee5c52899",
     "surface_manifest_hash": "3572a77e5db05f53cad6f7bb6845ab65dddecebc266b473aa776509f80a9b9e1"
   },
   "readiness_expected_components": [

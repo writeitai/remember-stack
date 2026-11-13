@@ -2036,6 +2036,8 @@ Source: https://remember.dev/docs/concepts/contradictions
 
 # Contradictions, corroboration and supersession
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 Sources disagree. The spec says the cutover is on June 8; a standup
 transcript says June 15. A memory that quietly keeps one of them hands your
 agent a confident answer that is wrong half the time, and nobody finds out
@@ -2634,6 +2636,8 @@ Source: https://remember.dev/docs/concepts/retrieval
 
 # Retrieval: operations, search, graph and SQL
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 An agent needs different things from memory at different moments: who a
 name refers to, what is currently true about a project, what exactly a
 source said, how two people are connected. One search box that returns
@@ -2916,6 +2920,8 @@ does not charge again when another channel uses the same vector.
 Source: https://remember.dev/docs/concepts/reading-results
 
 # Reading a result
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 A list of text snippets tells your agent nothing about itself. Is this
 everything, or the top ten of thousands? Is it current? Did the search find
@@ -4237,6 +4243,8 @@ ingest the Markdown.
 Source: https://remember.dev/docs/guides/keep-sources-current
 
 # Keep a source up to date
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 Specs get edited. The billing migration plan said June; now it says
 October. If you send the edited file as a new, unrelated document, the
@@ -5671,6 +5679,8 @@ Source: https://remember.dev/docs/guides/unknowns-and-ambiguity
 
 # Handle unknowns and ambiguity
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 When a model does not find the answer, it tends to make one up. A memory
 that returns an empty list gives it no reason not to. RememberStack says
 why a result is empty, when a name could mean two people, when a list was
@@ -5911,6 +5921,8 @@ the deployment side. On a self-hosted deployment, work through
 Source: https://remember.dev/docs/guides/sql
 
 # Explore memory with SQL
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 The assured operations answer the common questions in one call. Some
 questions do not fit them: "which documents mention both Dana and the
@@ -6186,9 +6198,25 @@ Queries sent over the API run in the interactive tier:
 | Concurrent queries | 2 per caller, 8 per deployment |
 | Statement time per minute | 30 seconds per caller, 120 per deployment |
 
-A `max_rows` above the cap is lowered to the cap, not refused. When rows
-were cut, `truncated` is `True` and `truncation_reason` says why. The
-`limits` field of every result states the caps it ran under.
+A `max_rows` above 1,000 is refused with `422` (D154); it is not silently
+clamped. When rows were cut at the cap, `truncated` is `True` and
+`truncation_reason` says why. The `limits` field of every result states the
+caps it ran under.
+
+For larger scans, page in the statement with your own keyset `WHERE` and
+`LIMIT` rather than raising `max_rows`:
+
+```sql
+SELECT fact_id, ingested_at, fact_label
+FROM facts_current
+WHERE (ingested_at, fact_id) < ($1::timestamptz, $2::uuid)
+ORDER BY ingested_at DESC, fact_id DESC
+LIMIT 200
+```
+
+Pass the last row's `ingested_at` and `fact_id` as the next page's
+parameters. See [Pagination and
+truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation).
 
 A second tier (analytical: 10,000 rows, 60 seconds) exists for operators;
 the API does not select it.
@@ -9960,20 +9988,44 @@ reads, so repeating it is safe.
 
 ## Pagination and truncation
 
-Results are bounded everywhere, and a bound is never silent.
+Results are bounded everywhere, and a bound is never silent (D154).
 
-- **`GET /documents`**, `POST /documents/search` (without a query),
-  `section_history` and `document_references` page with an opaque `cursor`.
-  Pass the `cursor` from one page to get the next; `null` means there is no
-  next page. A page of the last three can hold fewer rows than asked for and
-  still carry a `cursor`.
-- **Envelope results** carry a `truncation` block when a cap applied:
-  `truncated`, `returned`, `estimated_total`, `total_is_exact`, an optional
-  `continuation` and an optional `reason`. Only `POST /graph/neighborhood`
-  accepts a `continuation` back today.
-- **SQL query results** (`QueryResult/v1`) carry `truncated`,
-  `truncation_reason` (`row_cap`, `byte_cap`, or a graph budget) and the
-  `limits` the statement ran under.
+### Browse lists
+
+Filter-only, exhaustive listings request `limit` (default 50, max 200) and
+an opaque `cursor`. The response carries `next_cursor`: `null` exactly at
+the end — the only "more exists" signal. A short page with a non-null
+`next_cursor` is legal. Keyset order uses an immutable key plus an id
+tiebreak; the cursor pins the read instant. An invalid cursor is `400` (or
+the existing typed error). There are no totals, offsets, or `has_more`.
+
+Applies to: `GET /documents`, `POST /documents/search` without a `query`,
+section history, document references, cost-export, `GET /lookup/relations`,
+and `GET /lookup/observations` without `property_query`. Pass the previous
+page's `next_cursor` back as `cursor`.
+
+### Ranked results
+
+Any call with a `query`, `property_query`, or `name` requests top-`k` and
+takes no cursor (query + cursor is a validation error). The response always
+discloses the cap: Envelope routes set `truncation.truncated` whenever more
+than `k` matched; `DocumentSearchPage` in ranked mode sets `truncated` and
+leaves `next_cursor` null.
+
+### Envelope paging
+
+Envelope also carries top-level `next_cursor` for graph neighborhood and
+browse-mode lookups. The `truncation` block is disclosure only:
+`truncated`, `returned`, `estimated_total`, `total_is_exact`, and an
+optional `reason`. `POST /graph/neighborhood` pages with request `cursor`
+(pins `valid_at` / `believed_at`; default `limit` 100).
+
+### SQL
+
+`POST /query/sql` and saved-query run keep `max_rows` with
+`truncated` / `truncation_reason` as a safety cap. `max_rows` above 1000 is
+`422`. For larger scans, page in the statement with your own
+`WHERE … LIMIT` (see [SQL](https://remember.dev/docs/guides/sql)).
 
 See [Result types](https://remember.dev/docs/reference/result-types).
 
@@ -10026,6 +10078,8 @@ the API is for programs, not browsers, so they are switched off. Use the
 Source: https://remember.dev/docs/reference/http-api/ingest
 
 # Ingest, readiness and documents
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 These routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
@@ -11117,6 +11171,8 @@ Source: https://remember.dev/docs/reference/http-api/sections-and-references
 
 # Section history and references
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 Two reads work at the level of a document's sections rather than its
 passages. `GET /documents/{doc_id}/sections/{section_key}/history` lists
 what one [keyed section](https://remember.dev/docs/concepts/documents-and-sources#section-keys)
@@ -11607,6 +11663,8 @@ Source: https://remember.dev/docs/reference/http-api/entities-and-facts
 
 # Entities and facts
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 These five routes are the direct, single-purpose reads behind the assured
 operations. Use them when you already know what you want: the entity ids for
 a name, the relations that match a pattern, or the evidence behind one fact.
@@ -11897,6 +11955,8 @@ for decision in envelope.transcript:
 Source: https://remember.dev/docs/reference/http-api/search
 
 # Search and adjacent chunks
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 Search returns evidence, not facts. A claim is what one source said; a chunk
 is a passage of a source document. Neither is a statement of what the memory
@@ -12232,6 +12292,8 @@ Source: https://remember.dev/docs/reference/http-api/graph
 
 # Graph
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 The live graph is the set of current relations seen as edges between
 entities (the nodes). Three routes walk it: the neighbourhood of one entity,
 the shortest paths between two entities, and citation chains between two
@@ -12474,6 +12536,8 @@ envelope = memory.graph_citation_path(from_doc_id=spec_doc_id, to_doc_id=rfc_doc
 Source: https://remember.dev/docs/reference/http-api/query
 
 # SQL queries
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 SQL queries let you ask questions the assured operations do not cover: counts,
 joins across claims and documents, timelines, anything you can express as one
@@ -13597,6 +13661,8 @@ definition byte for byte.
 Source: https://remember.dev/docs/reference/result-types
 
 # Result types
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 This page lists every shape the HTTP API returns, and the request bodies that
 have a name. Field names are exactly as they appear on the wire. The same
@@ -16150,6 +16216,8 @@ Source: https://remember.dev/docs/reference/python-sdk
 
 # Python SDK
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 The `remember` package is the Python client for RememberStack. You use it to
 store documents, wait until they are processed, and ask the memory what it
 knows.
@@ -17531,6 +17599,8 @@ Source: https://remember.dev/docs/reference/typescript-sdk
 
 # TypeScript SDK
 
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 `@rememberdev/client` is the asynchronous Node.js memory client. It stores
 and searches documents, queries facts and sources, reads graphs, checks pipeline
 readiness, and includes methods for optional deployment-side connector configuration. It supports
@@ -17883,6 +17953,8 @@ Ingest lineage and schema fields marked UTC continue to require UTC.
 Source: https://remember.dev/docs/reference/cli
 
 # CLI
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 This page describes the `remember` CLI (v0.19.1), installed by `pip install remember`.
 
@@ -18426,6 +18498,8 @@ Names are not case-sensitive. All client variables are in
 Source: https://remember.dev/docs/reference/mcp
 
 # MCP tools
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 MCP (Model Context Protocol) is how coding agents call external tools.
 **`remember mcp`** gives an agent access to your memory. It is part of the
@@ -19418,6 +19492,8 @@ them has no effect on a Compose deployment.
 Source: https://remember.dev/docs/reference/errors
 
 # Errors and status codes
+
+Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
 This page collects every error a client can meet: HTTP statuses from a
 deployment, the codes SQL queries report,
