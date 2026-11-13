@@ -8,15 +8,21 @@
 **Memory engine for AI agents**
 
 Process anything relevant: email, chat, specs, meeting notes, tickets, images,
-video, audio. It reads them, keeps what matters, and answers your
-agent's questions with facts it can trace back to the source. It knows what
-is true now, what was true a month ago, and who said so.
+video, audio.
+
+The information is organized and stored.
+
+Your agents have easy access to the information - they remember!
 
 **[Read the docs](https://remember.dev/docs)** ·
 **[Quickstart](https://remember.dev/docs/start/quickstart)** ·
 **[What is a memory system?](https://remember.dev/docs/start/what-is-a-memory-system)**
 
-**89.94% accuracy on LoCoMo.**
+**89.94% accuracy on LoCoMo benchmark.**
+
+<p align="center">
+  <img src="website/public/brand/memory-graph.svg" alt="RememberStack memory graph: sources resolve into connected facts" width="720" />
+</p>
 
 ---
 
