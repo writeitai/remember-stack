@@ -14,6 +14,9 @@ conflicts,5 likely judge rejections and63 mixed/ambiguous cases. These labels
 are not a corrected score or exhaustive causal decomposition. The detailed
 private audit is [cloud PR1009](https://github.com/writeitai/ultimate-memory-cloud/pull/1009).
 This proposal addresses demonstrated mechanisms, not benchmark labels.
+The implementation scope is reader-only; the visual-label change is a separate
+PR, and calendar assistance is excluded because of the origin-identity
+coupling described below.
 
 Three mechanisms have ordinary uses outside conversational evaluation:
 
@@ -76,46 +79,53 @@ returned edge chunk only when a required owner/reply/detail is still missing,
 within the existing call budget. A full result list remains bounded; never call
 it exhaustive merely because it used the maximum k.
 
-## Costs, reuse and rollout
+## Date-correctness dependency found in review
 
-No additional ingestion model calls are introduced per normal attempt. A compact
-calendar reference adds at most eight dated weekday rows plus explanatory text
-when a source anchor exists; measure the actual rendered token delta. Its cost
-is `affected Claimify calls × added input tokens × configured input rate`.
-Vision may return more identifying text within its existing4,096-token and
-16,000-character limits. Do not infer semantic quality from mocked tests.
-Reader follow-up can consume existing tool/model-call allowance only when needed;
-no allowance or top-k increases are part of this scope.
+`core/text_origin.py:reuse_identity_hash` includes the extractor generation.
+D140 §5 therefore lets the first newly dated version after a toolchain bump
+assign that version's date to unchanged chunks. The earlier origin no longer
+matches; later versions can inherit the new origin. This affects relative-date
+correctness as well as paid work and happens on an ordinary edit, not only on
+an explicitly requested reprocess. The proposed calendar aid would amplify this
+incorrect anchor. No extractor bump or calendar aid belongs in this PR.
 
-Changing extraction instructions rolls `E2_EXTRACTOR_VERSION`. Because this
-existing generation participates in Selection and Claimify identities, an
-explicit new-generation reprocess can repeat both stages once. That cost is a
-real rollout boundary, not an undisclosed edit-related regression. Under the
-new stable generation, unchanged sections must retain paid reuse on the next
-version. Embedding/chunker generations are unchanged.
+Record this existing coupling in `CLAUDE.md`'s known gaps. Separating content
+origin from inference-generation identity requires its own design and proof;
+this analysis does not claim to solve it. An eventual upstream rollout must
+account for fresh downstream claim normalization/adjudication and embedding
+work where content changes, not just Selection/Claimify calls.
 
-Changing the vision prompt rolls `DESCRIPTION_PROMPT_VERSION`, the description
-checkpoint and the composed image-converter identity. Existing OCR checkpoints
-remain reusable. Existing representations/readings remain immutable; they are
-not relabelled or automatically reingested. The old full benchmark stays frozen.
-A new campaign claiming the new extraction/image profile would need to request
-those new products explicitly; answering old stores cannot demonstrate the new
-upstream behavior. This PR does not launch that campaign.
+## Reader-only costs, reuse and rollout
+
+Refine the consumption skill and benchmark reader only. Extraction, conversion,
+model bindings, image bundle and all processing generations stay identical,
+so the existing retained-ingestion path remains available. Do not change the
+protocol family name: source readiness resolves its saved v45 name through the
+single current registry. A name bump would retire that source name and break
+the very reuse comparison this change is intended to permit. New prompt content
+is already distinguished by the immutable protocol fingerprint in a new scoring
+fork; do not edit a completed run's fingerprint or answers.
+
+No ingestion cost is added. Reader follow-up may use existing tool/model-call
+allowance only when a necessary detail is missing. No budgets or k increase.
+The revised benchmark prompt must not be longer than the baseline prompt;
+the ordinary consumption skill gains the adjacency advice it currently lacks.
+Measure actual prompt size and verify fork/source immutability with existing
+retained-ingestion tests. This PR launches no scoring campaign.
 
 ## Boundaries and validation
 
-The fixes operate entirely inside the OSS engine and its ordinary consumption
+The reader fixes operate entirely inside the OSS engine and its ordinary consumption
 skill; the benchmark uses the same advice. No question IDs, reference answers,
 named dataset entities, new providers, SQL changes, judge changes or score
 adjustments belong in runtime logic or tests. Source contents stay untrusted.
-Calendar aids cannot supply names, events or facts, cannot anchor embedded
-historical/fictional speech, and are excluded from the grounding text union.
+The excluded calendar candidate must not be presented as implemented or safe to
+roll merely because it is deterministic.
 
-Use ordinary examples from notices, schedules, product labels and maps. Verify
-calendar arithmetic over all anchor weekdays, month/year/leap boundaries,
-UTC-offset and unknown-date cases, and the preserved D140 text-origin anchor.
-Check original pixel bytes and OCR provenance survive, and that only the
-changed description lane repeats after a prompt revision. Run real PostgreSQL
-D56 two-version reuse proofs in an isolated test database, alongside pure
-text-origin, extraction, converter, consumption-skill and protocol checks.
-Provider doubles prove wiring/reuse, not that a real model now answers better.
+Validate the unchanged processing profile and frozen-image identity, source
+checkpoint immutability, unchanged tool/model-call budgets, skill revision,
+reader prompt size and ordinary protocol rendering. Existing temporal,
+converter and D140 checks are baseline evidence, not proof that a real reader
+now answers better. Reader-only scoring can use the recorded retained stores
+without changing their source data. The separate visual PR must declare its
+own cache and downstream reprocessing boundary.

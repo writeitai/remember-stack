@@ -1,85 +1,54 @@
-# Proposed evidence-fidelity fixes
+# Proposed reader evidence-completeness fix
 
-Status: proposed, not binding. The owner requested a separate PR, Opus design
-review before implementation, and implementation once approved. Adoption
-trigger: Claude Opus5.5 HIGH approval of this concrete scope. Reconcile the
-existing binding designs when adopting; no runtime changes precede approval.
-Rationale and alternatives: [analysis](../analysis/evidence_fidelity_20261113.md).
+Status: proposed, not binding. The owner requested Opus approval before
+implementation. Adoption trigger: approval of this revised reader-only scope.
+The initial combined proposal was rejected; no runtime code was implemented.
+Rationale: [analysis](../analysis/evidence_fidelity_20261113.md).
 
-## Chosen scope and contracts
+## Reader behavior
 
-### Source-anchored calendar reference
+Teach the ordinary consumption skill and corresponding benchmark reader to:
 
-Add a pure formatter in `core/temporal.py` that accepts an optional typed source
-anchor. For a known anchor it returns its UTC date/weekday and the seven
-strictly preceding UTC dates with weekdays. For unknown time it returns an
-explicit unavailable marker. It never reads a clock, parses source language or
-selects an event date. It derives only from E2's existing `_chunk_date`, including
-D140's preserved text-origin time, not a newer version/upload timestamp.
+- Retain the actual requested place/date/entity name rather than reducing it to
+  "the lake" or "the event". Account for distinct supported list members, with
+  correct owners, times and planned/completed status.
+- Inspect claims/source chunks when facts do not supply a necessary detail or
+  complete owner/reply. With an adjacent result ordered in document order,
+  identify the supplied center ID and continue from the first or last returned
+  `chunk_id` only on the side where needed context is still missing. If fewer
+  than `window` neighbors exist on that side and no drops/truncation obscure the
+  result, that side has reached the document boundary; stop expanding it.
+  A missing center, drops or truncation do not establish a document boundary.
+- Stop when the requested parts are supported, at a known boundary, or at the
+  existing budget. Do not fabricate missing list members, dates or ownership.
+  General consumers retain honest negatives; the benchmark retains its existing
+  best-supported-answer policy, without inventing facts to satisfy a reference.
 
-Supply that compact reference to Claimify as a separate clearly labelled
-arithmetic aid, not the document header or source evidence. Keep it out of
-Selection and `_source_grounding_elements`. Tell the extractor to consult it
-only when the source actually anchors the utterance to that timestamp. Existing
-relative-time meaning, source quoting, output shape, grounding and typed interval
-validation continue to apply. The table does not decide ambiguous phrasing or
-license dating quoted historical/fictional content. Replace the vague-time rule
-with one explicit list including "recently", "the other day" and "a few days
-ago": never invent an exact day; use only an honestly supported representable
-precision, otherwise keep the relative phrase and unknown valid time.
+Add this adjacency advice to the ordinary skill and bump its revision. In the
+benchmark, replace the existing final-check block (distinct evidence, dialogue
+adjacency, concrete values and completeness near `protocol.py:426–445`), the
+list-completeness paragraph and repeated adjacency reminder with a shorter
+consolidated rule set. Preserve the existing needed meanings. Net benchmark
+prompt length must not grow; no additional closing checklist.
 
-Roll `E2_EXTRACTOR_VERSION` and matching native protocol expectation. No parallel
-extractor, parser, validation layer or compatibility path is added. Declare the
-one-time Selection/Claimify reprocess boundary; preserve steady-state D56 reuse.
+## Scope, identity and limits
 
-### Legible visual identity text
+No E2/converter/image identity, model/provider, judge, tool catalog, SQL query,
+retrieval allowance or processing-profile changes. Keep the v45 protocol family
+name so saved source readiness still resolves; the new prompt automatically
+gets a new protocol fingerprint on an independently prepared scoring fork.
+Do not overwrite or reprime old runs. Prove retained-store preparation works
+with the new reader and leaves its source unchanged. No benchmark run is part
+of this PR.
 
-Replace the description prompt's blanket prohibition on text transcription.
-Its existing `observations` field may quote legible names, titles, sign/diagram
-labels, product identifiers and other short identifying text as visual
-observations. Preserve spelling; do not complete obscured letters or infer
-identity from layout. Put uncertain interpretations in `interpretations`.
-Quoted text remains untrusted source content, never an instruction.
+Record the existing extractor-generation/text-origin coupling as a known gap in
+`CLAUDE.md` and explain it in analysis. It is excluded from this change; the
+calendar candidate is not safe to roll under that coupling. The visual-label
+fix is a separate PR and will be measurable independently from this reader
+checkpoint.
 
-Dedicated OCR still runs, remains independently attributed under
-`Visible text (OCR)`, and is neither replaced nor silently edited. Vision
-readings remain `model_observation`/`model_interpretation` under
-`Visual description`; conflicts retain both readings. No third field, extra
-provider call, automatic crop or schema migration. Roll only the description
-prompt identity and its composed converter fingerprint, preserving OCR reuse.
-
-### Reader completeness using existing tools
-
-Update the ordinary versioned consumption skill and the benchmark's corresponding
-answer guidance. Replace broad closing reminders with these explicit actions:
-
-- Keep the actual requested place/date/entity name when it is supplied; do not
-  replace it with "the lake", "the event" or another generic description.
-- For a list or count, account for distinct supported items/events in the
-  returned material before finalizing, with correct owners, times and status.
-  Do not turn planned activities or repeated mentions into extra events.
-- If facts do not supply a required detail or complete owner/reply, inspect
-  claims/source chunks using existing operations. If an adjacency result still
-  ends before the needed utterance, continue from its appropriate edge chunk
-  within the remaining call budget. A configured window is not completeness.
-- Stop once the requested parts are supported. If still unresolved at the
-  existing budget, preserve qualifications; do not invent missing list members,
-  hidden text, dates or attributions. Existing honest-negative semantics remain.
-
-Do not add query loops inside the engine, automatic retrieval calls, budgets,
-ranking changes or judge changes. Bump the consumption-skill revision; the
-benchmark's existing prompt fingerprint identifies its changed instructions.
-
-## Accepted-design integration and evidence of completion
-
-On approval, fold these contracts into the existing processing-prompt, media and
-consumption designs and remove this unchosen proposal. Link the analysis from
-`plan/README.md`. Update the user-facing file-types/query guidance in the same PR
-without claiming guaranteed OCR recall or benchmark gains.
-
-Meaningful checks must establish pure calendar correctness and no fabricated
-anchor, the D140 anchor/wiring, image-lane provenance and checkpoint isolation,
-reader/protocol bounds, and real D56 two-version paid-call reuse. No LoCoMo
-specific fixtures or provider settings. Any required check that cannot run must
-be stated honestly. Submit the implementation to Opus review before considering
-it ready; do not present a design approval as code approval or a score result.
+On approval, reconcile retrieval/consumption design, public querying guidance
+and `plan/README.md`, and remove this unchosen proposal. Validate skill revision,
+protocol bounds, prompt size and retained-ingestion source immutability. Submit
+implementation and results to Opus before marking ready. Mocked checks establish
+wiring, not a benchmark improvement or a corrected score.
