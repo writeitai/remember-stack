@@ -88,7 +88,7 @@ entity resolution, supersession, provenance, forgetting) is in this
 repository. Nothing that affects correctness is held back.
 
 - Docs: [remember.dev/docs](https://remember.dev/docs)
-- Current release: [v0.19.1](https://github.com/writeitai/remember-stack/releases/tag/v0.19.1) ·
+- Current release: [v0.20.0](https://github.com/writeitai/remember-stack/releases/tag/v0.20.0) ·
   [PyPI](https://pypi.org/project/remember/) ·
   [container](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack)
 - How it works inside: [architecture](https://remember.dev/docs/concepts/architecture) ·
