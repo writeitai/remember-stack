@@ -15,8 +15,9 @@ run must satisfy these gates:
 
 - exact dataset and manifests validate locally;
 - the stock self-host profile composes all eleven continuous handlers;
-- P3 can be built explicitly over the same stores the API reads, while graph
-  readiness and committed-edge visibility are verified directly in PostgreSQL;
+- D155 P3 publications for selected versions are complete over the same stores
+  the API reads; full reconcile is available as repair. Live-graph readiness and
+  committed-edge visibility are verified directly in PostgreSQL;
 - readiness is machine-verifiable through the public API;
 - the answer agent can use the complete shipped read plane: assured operations,
   direct primitives, open query, P1/live graph, and the published P3 mount;
@@ -360,25 +361,31 @@ All use the same deployment ID, PostgreSQL authority/P1 database, object stores,
 adapter. One route per process preserves the existing queue/rate-limit design; no workflow engine
 is introduced.
 
-### Aggregate projection
+### Corpus publication and repair (D155)
 
-P3 rebuilds after all selected session versions are E/P1-ready:
+Ordinary per-document `publish_corpus` work publishes source folders; answering
+waits for selected sessions' pipeline/P1 and matching per-document P3 receipts.
+An operator can run the existing one-shot projection service as full reconcile:
 
 ```bash
 docker compose --profile operations run --rm projections
 ```
 
-The one-shot service builds P3 into the corpusfs bucket. It does not run on
-every document and does not remain resident. The live graph is already
-queryable from PostgreSQL after the write commits; no graph build or snapshot
-bucket exists.
+This repairs the same live corpus store; it is not a prerequisite after each
+upload. The graph is already queryable from PostgreSQL after authority commits;
+no graph build or snapshot bucket exists.
 
-After the build, the ordinary self-host `mounts` command materializes the latest
-registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
-P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
-version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v20; no benchmark-specific
-object-store reader or HTTP endpoint exists.
+The answer adapter reads the ordinary read-only P3 directory/mount. Before model
+calls, verify selected folder `document.json`/ready-index identities and their
+bounded id-index membership against checkpointed public `p3` readiness. Freeze
+publication identities and a sorted file-inventory hash for the run; a mismatched
+or changing input refuses answering rather than mixing runs. No benchmark-only
+object-store reader, engine snapshot layout or HTTP endpoint is introduced.
+
+D155 P3 content/attestation is a protocol change and requires a fresh protocol
+identity and results. Historical source-pinned runs retain their original global
+snapshot marker/build evidence; no existing Full-v43 or earlier result is
+reinterpreted as a document-folder measurement.
 
 ### Plane K
 
@@ -783,7 +790,7 @@ zero-scored missing records unless the operator resumes with an explicitly highe
 Provider-side account limits remain the hard monetary boundary because a process can die after
 billing but before checkpointing.
 
-A missing, unreadable, or readiness-version-mismatched P3 mount is a terminal
+A missing, unreadable, updating, or publication/inventory-mismatched P3 mount is a terminal
 pre-answer failure for every remaining item. The command checkpoints those
 zeroes to preserve the denominator; a repaired mount therefore requires a
 fresh prepared run and fresh ingestion rather than resuming over those records.
@@ -804,10 +811,11 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All eleven workers are running.
 - Every prepared session has an ingest record.
-- P3 one-shot build completed; live-graph catalog/grant/helper readiness and a
-  committed-edge visibility probe passed.
-- The ordinary mount publisher completed and its P3 `.snapshot-version` equals
-  readiness.
+- Selected document P3 publication receipts are complete; live-graph
+  catalog/grant/helper readiness and a committed-edge visibility probe passed.
+- The ordinary corpus mount's folder/id-index publication identities and frozen
+  file inventory match checkpointed readiness; no global snapshot marker is used
+  for D155 runs.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
 - Public readiness reports `document_binding_generation=document-t0-v1`, and

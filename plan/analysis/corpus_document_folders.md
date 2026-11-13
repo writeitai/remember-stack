@@ -118,6 +118,6 @@ all D56/Rule-4 identities. Existing reusable summaries remain reusable; acceptan
 of `placement=null` must not be misclassified as degradation and retried forever.
 
 The amendment reconciles the binding E0, retrieval, media, layer, forget, overview,
-schema and requirement contracts. It does not implement them, design a hosted
+schema, benchmark-attestation and requirement contracts. It does not implement them, design a hosted
 control-plane route, change K's standalone repositories, or add a migration,
 compatibility alias, alternate view or native GCS adapter.

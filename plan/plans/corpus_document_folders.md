@@ -139,7 +139,9 @@ unrelated publication cannot satisfy readiness. Claims/facts switching changes
 neither P3 content nor topology, while K remains separately gated. Exercise the
 `llms.txt → indexes → actual original/derivatives` ladder with no raw/artifact
 mount. Update contract fixtures deliberately; test full default and layers-off
-catalogues. Preserve exact-version `source_open` parity.
+catalogues. Preserve exact-version `source_open` parity. Update benchmark P3
+attestation to per-document receipts/frozen inventory under a fresh protocol
+identity; historical source-pinned results retain their original evidence.
 
 ## 7. Mount wrapper and provider qualification
 

@@ -3144,6 +3144,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
+> **P3 attestation amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Runs using document-folder P3
+> verify selected publication receipts and mounted folder/id-index inventories,
+> not a global build timestamp or snapshot marker. This is a benchmark protocol
+> change; existing source-pinned results keep their original evidence unchanged.
+
 > **Current protocol amendment, 2026-11-11.** Execution uses only
 > `RS-LoCoMo-Full-v43` (`full-v43`): the Luna/Flex and Jev profile with native
 > OCR/Luna image inputs, the restored historical semantic judge, and the
@@ -3380,6 +3385,11 @@ fingerprint. Any changed tool inventory, call budget, model, prompt, schema, jud
 ingestion mapping, or K mode is a separately named protocol.
 
 ## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and orientation-only
+
+> **Placement/P3 clauses amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Successful root placement
+> may be null and remains cacheable; only its output/schema generation changes.
+> Committed structure changes enqueue incremental corpus work. The skeleton,
+> summary reuse and orientation-only rules remain; an explicit P3 build is repair.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The deterministic heading parser also reads a
 > trailing heading attribute block (`## Title {#key}`): the identifier becomes the
@@ -3765,6 +3775,12 @@ that bypass `processing_state` (D67); making normalize chunk-scoped in the
 same change; automatic skip of dead-lettered chunks for the barrier in v1.
 
 ## D85. The full-system LoCoMo answer seat gets the complete shipped read plane
+
+> **P3 consumption/attestation clauses amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** New folder
+> publications contain original copies as well as derivatives and have per-document
+> receipts, not `.snapshot-version`. Bounded answer tools still use the ordinary
+> filesystem. Historical pinned protocols/results retain their old evidence;
+> changing the P3 surface requires a fresh protocol identity.
 
 > **Refined by D98.** The current successor is v14 with four assured, seven
 > primitive, seven open-query, and three P3 tools (21 total). P2/Cypher and its
@@ -6322,6 +6338,11 @@ an [unchosen proposal](design/proposals/grouped_fact_adjudication.md).
 
 ## D124. Compare local P3 and the OSS MCP surface without reprocessing
 
+> **P3 identity clauses amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** A frozen local benchmark
+> input is attested by its source protocol: D155 uses per-document publication and
+> file-inventory evidence, not a new engine snapshot generation. Historical runs
+> retain their original marker evidence; no result is silently reinterpreted.
+
 **Answer-prompt amendment, 2026-11-09:** extend the same independent runner
 with a `full` profile over the exact source-pinned SDK/P3 surface. Freeze an
 optional answer template in each output and keep the source models, budgets,
@@ -6539,6 +6560,10 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 [analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
 
 ## D132. Decide ingest class from bytes and label every object write
+
+> **P3 class wording amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** All mutable corpus copies and
+> indexes, including original copies, are hot. Raw's MIME routing, byte-authoritative
+> admission and explicit class on every write remain unchanged.
 
 **Refined by D133 and D138.** The registry chooses a text format family
 from the filename and declaration only after bytes establish that the input
@@ -8128,7 +8153,9 @@ suffixes and reader metadata never enter paid-work identities (Rule 4/D56).
 **Amends/supersedes.** P3 lifecycle/layout and path guarantees in D7/D39/D40/D55;
 customer mounts/original-copy rules in D37/D51/D61/D65/D116; D117 browse version
 selection; D74 purge targets; D94 snapshot registry; D96 entity folders; D49 K
-status mirroring and D143 P3 served-set snapshots. Their other authority, reuse,
+status mirroring, D79 placement completion, D132 corpus classes and D143 P3
+served-set snapshots; D78/D85/D124 benchmark attestation follows publication
+receipts without reinterpreting old protocol evidence. Their other authority, reuse,
 retrieval, media and privacy contracts remain as identified inside those entries.
 D147's context/work/portable-store seams are reused, not replaced.
 
