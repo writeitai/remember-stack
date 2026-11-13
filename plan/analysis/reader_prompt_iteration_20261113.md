@@ -233,3 +233,101 @@ claimed more than ordinary conversation supports, so all three were narrowed:
 
 To stay within the 18,284-character guard, the attachment-description and
 limitations paragraphs were reworded more tightly. Their rules are unchanged.
+
+## Candidate 3: diagnosis of trial 2 and changes
+
+**Trial 2 result (measured by Codex).** Candidate 2 answered 8 of the 29 frozen
+misses correctly. It newly fixed four items, lost three that candidate 1 had
+recovered, and kept five recoveries. There were no execution errors. This
+counts only the development cohort.
+
+**Diagnosis from the projected traces.** For the remaining misses, the needed
+chunks were almost always retrieved. The failures happened when the answer
+was assembled:
+
+- **Answers are built from extracted claim rows, so facts that appear only in
+  chunk text are lost.** The book praised in a reply ("X is great, but have you
+  read Y? Also awesome", after a partner's "one of my favorites too") was in the
+  claims-and-sources response in both list questions. It exists only in chunk
+  text, with no claim row, and the answers omitted it although the prompt's own
+  example described this exact pattern. Likewise, the current injury's claim
+  rows never name the body part; only the same-turn photo caption and its search
+  text do. The retrospective injury's claim names it explicitly, so the reader
+  kept choosing the retrospective one.
+- **Query wording still narrows retrieval.** Queries kept using literal verbs
+  ("read, finished") and guessed instances (named sports). One query even built
+  the expected school stages into its wording. The reader typically stopped
+  after 3–4 of its 8 calls. A rule buried inside a long catalogue of patterns
+  did not change these habits.
+- **Strong implication was still dropped.** "Earned a college scholarship" and
+  "after college, I was drafted" were both claim rows, yet the answer omitted
+  college. The qualified-label rule existed but was not applied.
+- **The narrowed wrong-person rule misfires.** The call question correctly
+  said the other participant made the call, then answered with an unrelated
+  statement by the named person (a game report). The narrowing ("only when the
+  named person has no statement of their own on the subject") let any
+  statement by the named person count as being "on the subject". The question's
+  event should define the subject.
+- **Constraints split across items.** The slow-cooker question has two
+  answers that each satisfy one constraint. A photographed slow-cooker dish
+  matches "slow cooker", and a stated dish made "a lot" (photographed on a
+  stove) matches "often". Candidate 1 reported both and was graded correct;
+  candidate 2 chose the photo and was graded wrong. In the recovery-book
+  question, both books fall inside the recovery window: one finished days after
+  the injury, the other read while the person still reported recovering. The
+  source supports giving both with dates rather than choosing one.
+- **Source consistency of the new wins.**
+  - "At least five" games matches the five distinct wins in the sources.
+  - The verbatim quoted title is source-consistent.
+  - Team support ("likely; called them solid", in a team-support exchange) is
+    source-consistent.
+  - The favorite-series win is weakly supported. The only evidence for that
+    person is being "a fan too" of the film adaptation, and the series is
+    elsewhere explicitly the other speaker's favorite. Treat it as a probable
+    judge-lenient pass, not a source-backed recovery.
+
+**What candidate 3 changes.** The catalogue of separate pattern sections is
+replaced by one ordered answer procedure:
+
+1. **Frame the question:** relation, constraints and the kind of value.
+2. **Search** in plain class words. Scan the chunk text and captions, not
+   only claim rows, because claim rows omit passing mentions, reply-only items
+   and attachment details. Spend unused calls on unclear candidates.
+3. **Decide each candidate:** include it, include it with a qualifier, or
+   exclude it. The union keeps every qualified item.
+4. **Fit episodes and split constraints:** give each item with the constraint
+   it meets or its date instead of silently choosing.
+5. **Owner and premise:** the question's event defines the subject. The
+   answer switches to another participant only when the described event
+   uniquely matches that participant. When several participants have matching
+   generic events, the named person is kept and answered from their own
+   statements.
+6. **Infer:** earlier named candidates first, then grounded suggestions or
+   general-knowledge options.
+7. **Write:** the end checklist now asks whether every candidate seen in
+   chunk text was decided.
+
+After the final calibration (the "chunk" terminology and the unique-match
+condition in the owner step), the template is 17,818 characters. That is
+shorter than candidate 2 because repeated wording was removed.
+
+**Realistic limits.**
+
+- The sports question depends on retrieving an utterance that no trial has
+  returned so far.
+- Reference-conflict items stay out of scope.
+- The suggestion questions with one specific expected option, the
+  interval/count disagreements and the start-date question stay out of scope.
+- Between candidate 1 and candidate 2, four items were gained and three lost.
+  These are observed gains and regressions between two different prompts. They
+  mix the effect of the prompt change with run-to-run sampling, so they do not
+  measure noise. A variance estimate needs repeated runs of the same prompt.
+
+**Risks.**
+
+- Scanning chunk text may surface more peripheral items and lengthen
+  answers.
+- Reporting split constraints may read as hedging to the judge on questions
+  that have one clear answer.
+- A procedural format may reduce the attention given to the older specialised
+  sections (preferences, attachments, limitations).

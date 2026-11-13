@@ -281,84 +281,77 @@ related qualifying information affirmatively, without an unsolicited correction
 of the question's terminology. Do not include your retrieval process, taxonomy
 lesson or evidence limitations in the final answer.{answer_word_cap_instruction}
 
-Memory reasoning patterns (invented examples):
+Answer procedure (examples are invented):
 
-Lists. When evidence supports multiple distinct values that directly satisfy the
-question, return the complete union of all distinct matching values across
-sessions, chunks and facts. Do not stop after the first or highest-ranked match.
-Match the asked relation: "likes" covers anything described with enjoyment, even
-one season of it; "has read/visited" needs first-hand contact. Also query the
-class and relation in plain words without entity_ids ("activities she enjoys",
-"books he mentions or discusses"); guessed names or one literal verb in a query
-hide implied items. Contact is often implied: "just finished X", "a book series I
-love" (even said of its screen version), praising a work as someone who
-knows it ("X is great, but have you read Y? Also awesome"), or a partner's "one of
-my favorites too". Credit B with an activity only when B's words show it: after B
-"I ski every winter", A "I don't ski, but..." confirms it; after B "Do you ski?"
-it says nothing about B. Keep each supported item with an affirmative
-qualifier instead of dropping or overstating it: "Book C (likely)", "graduate school
-(admitted; attendance not stated)". Exclude hearsay, wishes and merely related facts;
-keep owners, chronology, and planned versus completed events distinct. Derive a
-requested attribute of each item with general knowledge (a title's author). Cover
-the whole span described, and answer the kind of value asked ("what kind of dance":
-a style, not a step; "which schools": stages when no institution is named).
-Example: "Lyon was amazing", "Porto is one of my favorite cities to explore", "I
-hope to see Oslo" -> visited: Lyon, Porto.
+1. Frame: the subject, the event or relation asked (read, visited, likes, supports,
+did during X), every constraint (year, period, place, medium, frequency) and the
+kind of value wanted. "What kind of dance" wants a style, not a step; "which
+schools" can be stages when no institution is named; "what could she do after her
+career" wants a concrete occupation (a chef who teaches weekend classes -> cooking
+instructor); "other", "new" or "pick up" wants options beyond what they already
+do; "which authors" wants the items first, then each item's author from general
+knowledge. "Likes" covers anything described with enjoyment, even one season of it;
+"has read/visited" needs first-hand contact.
 
-Episodes. Episodes repeat (injuries, trips, games). For "when",
-"during", "how many times" or "how long after", list the candidate episodes with
-their dates, then match the one the question specifies (year, place, companion,
-period). Count distinct episodes, not mentions; merge mentions only
-when details or wording ("that game", "still hurts") show one episode. A current
-report ("this injury") and one at a clearly earlier time ("last season") are
-separate occurrences unless the source says it is the same ongoing one; a
-recurrence ("hurt it again") is another. An unspecified "this" can be identified
-from the same turn's attachment reading or caption. For "during X", choose the
-item dated inside X's window; for "in <year>", prefer an episode described as
-current ("this injury") when reported in that year over a retrospective one of
-uncertain date; date a retrospective episode by its stated event time, not by
-when it was mentioned. Example: Mar 3 "rough week with
+2. Search the class and relation in plain words ("books she discusses", "activities
+he enjoyed"), never guessed names or one literal verb, including one
+claims_and_sources_context query without entity_ids. Extracted claim rows omit
+passing mentions, items named only in a reply, and attachment details, so scan
+the returned chunk text and same-turn captions for every candidate. Do not stop
+after the first or highest-ranked match. For lists, counts and dates, spend unused
+calls on a second plain phrasing or adjacent_chunks for candidates whose owner,
+date or wording is unclear.
+
+3. Decide each candidate, noting owner, wording and date:
+- include: stated directly by the owner;
+- include with a qualifier such as "(likely)": strongly implied, e.g. "just
+  finished X", "a book series I love" (even said of its screen version), praising a
+  work as someone who knows it ("X is great, but have you read Y? Also awesome"), a
+  partner's "one of my favorites too", "one of my favorite cities to explore", or a
+  step plus its outcome ("won a conservatory scholarship; after the conservatory
+  joined an opera" -> conservatory, likely);
+- exclude: hearsay, wishes, plans, another person's item, merely related facts.
+Credit B with an activity only when B's own words show it: after B "I ski every
+winter", A "I don't ski, but..." confirms it; after "Do you ski?" it does not.
+When evidence supports multiple distinct values that directly satisfy the
+question, return the complete union of all distinct matching values with their
+qualifiers; never silently drop a qualified item. Keep owners, chronology, and
+planned versus completed events distinct.
+
+4. Fit episodes and constraints. Episodes repeat (injuries, trips, games); count
+distinct episodes, not mentions, merging only when wording ("that game", "still
+hurts") shows one. A current report ("this injury") and one at a clearly earlier
+time ("last season") are separate unless the source says it is the same ongoing
+one. Identify an unspecified "this" from the same turn's caption. For "in <year>",
+prefer an episode described as current when reported in that year; date a
+retrospective one by its stated event time, not when mentioned. When different
+items meet different constraints (the trail she photographed vs. the trail she
+says she hikes "every weekend"), or two items fit the window, give each with what
+it meets or its date instead of silently choosing. Example: Mar 3 "rough week with
 this injury" (photo: knee brace); Mar 10 "two years ago I tore my knee" and "I
-recently finished rereading Book A"; Jun "fully healed"; Aug "just finished Book
-B" -> knee injuries: likely two; this year's: the week before Mar 3; read while
-recovering: Book A.
+recently finished rereading Book A"; Jun "fully healed" -> knee injuries: likely
+two; this year's: the week before Mar 3; read while recovering: Book A.
 
-Indirect references. When a later event gives only a description ("a big outdoor
-brand signed me", "that shop"), look for an earlier named candidate of that kind
-tied to the person, such as a stated wish, plan or favorite. Prefer it, qualified
-as likely, over an outside guess or an entity already tied to a different event.
-Example: Jan "I have a deal with Brand P; I'd love to work with Brand Q"; Jun "I just
-signed with a big sportswear company" -> likely Brand Q.
+5. Owner and premise. The question's event defines the subject. Switch owners only
+when the described event uniquely matches another participant; then say so and
+answer with that event's content: "Ben (not Ana) had the call; they discussed the
+cover", not a different statement by the named person. If several participants
+have matching generic events, keep the named person and answer from their own. In a talk about which team each supports, agreement in reply is
+the replier's likely preference (A "X is my club"; B "X is great too!"); mere
+praise is not affiliation.
 
-Suggestions. For what a person might enjoy, try, visit or do, ground the answer in
-the most specific thing they named and love in that domain (a creator, brand,
-author, team), connected by general knowledge (that creator's own shop, another book
-by that author). "Other", "new" or "pick up" asks beyond their current routine:
-combine a strength with the goal (a painter who longs for the coast -> plein-air
-trips). When memory names no fitting option, name common real options from general
-knowledge that serve their stated goal. For a future role, name a concrete
-occupation extending current activities (a chef who teaches weekend classes ->
-cooking instructor). Lead with the best-grounded option; one brief alternative is
-allowed.
+6. Infer when needed. Link an unnamed later counterpart to an earlier named
+candidate of that kind (Jan "I'd love to work with Brand Q"; Jun "a big sportswear
+company signed me" -> likely Brand Q) rather than an outside guess. Ground a
+suggestion in the most specific thing they love (that creator's own shop, another
+book by that author) or combine a strength with the goal (a painter who longs for
+the coast -> plein-air trips); when memory offers nothing fitting, name common real
+options from general knowledge that serve the goal. Lead with the best-grounded
+option; one brief alternative is allowed.
 
-Direct statements first. A spoken statement that answers the question's predicate
-outranks an inference from a photo's contents, OCR or branding: "often cooks" =
-"I make X a lot". Example: photo of muffins, then "I bake banana bread a lot" ->
-often bakes: banana bread. Use images when dialogue is silent or to identify an
-unspecified "this". Direct priority settles
-conflicts; it does not drop compatible items from a list.
-
-Wrong-person premises. Only when the named person has no statement of their own on
-the subject and another participant did or said what the question describes, say
-so briefly and answer with that content: "Ben (not Ana) had that call; they
-discussed the cover design." In a talk about which team each supports, agreement
-in reply is the replier's own likely preference: A "X is my club"; B "X is great
-too!" -> B likely supports X. Mere praise ("X played well") is not affiliation.
-
-Names verbatim. Keep names, titles, places, dates and values concrete and exactly as
-the source writes them. Give a quoted title first exactly as written, even when it
-looks like an ordinary word: "Later" (possibly another title). Do not reduce a
-named place to "the lake".
+7. Write. A spoken statement beats a photo inference when they conflict but never
+removes compatible items. Keep names concrete, not "the lake", and give quoted
+titles exactly as written: "Later" (possibly another title).
 
 For hypothetical or counterfactual questions, reason from causal or
 motivational relationships in the evidence. If the question asks whether an outcome
@@ -445,9 +438,10 @@ TOOL TRACE SO FAR:
 {guard_feedback}
 
 Before finalizing, check: every requested part has the requested kind of value; a
-duration has its start and end; a list keeps every supported item, qualified where
-needed; the episode matches the question; quoted titles are verbatim; a preference
-or ambiguous reference had an independent source search without entity_ids.
+duration has its start and end; every candidate seen in chunk text was decided,
+and qualified ones kept; the episode and its owner match the question; quoted
+titles are verbatim; a preference or ambiguous reference had an independent source
+search without entity_ids.
 
 If an unanswered question or reference directly relevant to the requested detail
 remains, inspect the initiating turn and reply together. Use adjacent_chunks for
