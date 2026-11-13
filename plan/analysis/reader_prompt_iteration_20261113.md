@@ -34,8 +34,10 @@ prompt within the existing 18,284-character size guard.
 Codex runs and records each trial through the existing native `retrieval-ablation
 --answer-prompt` option. It freezes the exact template bytes and SHA256 while
 using the already ingested v45 store, its existing P3 projections and the attested
-reader-serving revision. The prompt source is committed on latest main; its
-commit/hash is recorded separately from the unchanged evaluator/serving source.
+reader-serving revision. Each prompt candidate is committed on the feature
+branch of PR601. That branch was based on main at `3633134bf` when the
+experiment was created, and PR601 is not merged. The prompt commit and hash are
+recorded separately from the unchanged evaluator/serving source.
 No old input is relabelled as v46 and no visual product is regenerated. The
 merged visual-label change is outside this retained-data experiment.
 
@@ -472,7 +474,8 @@ fixed sources and judge allow:
 The faithful maximum is therefore 13 (7 + 4 + 2), plus whatever the five
 ambiguous items yield. **15 is achievable only if every source-backed item
 lands in the same run and at least two ambiguous items pass.** No trial has
-held more than 8, and the per-item flips show substantial sampling. A
+held more than 8. Per-item outcomes changed between trials, but each trial
+used a different prompt, so those flips do not measure sampling. A
 realistic single-run expectation for candidate 4 is about 10–13. If it falls
 short of 15, the gap should be reported as the ceiling above, not closed with
 gold-shaped rules. The confirmation target follows the same arithmetic. With
@@ -537,3 +540,187 @@ other was the checklist clause on preference searches, which the preference
 paragraph still requires. The template is 18,244 characters. All five
 placeholders and every pinned contract phrase are present, by static check
 only.
+
+## Candidate 5: diagnosis of trial 4 and changes
+
+**Trial 4 result (measured by Codex).** Candidate 4 (as calibrated) answered
+11 of the 29 frozen misses correctly. There were no execution errors or
+deadlines, and the source and ingestion were unchanged. Newly or again
+correct: the indirect brand link, surfing, the author list, the cities, the
+injury count, the recovery book, the Skype premise correction, team support,
+the slow-cooker meal, the quoted title, and the favorite-series item. The
+favorite-series pass is again a probable wrong-source pass. The answer gave a
+series to the named person whose evidence is film fandom and an unresolved
+"that other popular fantasy series". The raw favorite-book statement belongs to
+the other speaker. So 10 of the 11 passes are source-consistent. Three
+supported wins from trial 3 were lost: the book list, the school stages and
+the travel hobby. This is a development-cohort count only, not a full score.
+
+**Diagnosis from the trial 4 projected traces.**
+
+- **In all three reversions the evidence was visible and the answer omitted
+  it.** Every needed row was in the trace, so retrieval does not explain them.
+  - *Book list.* Both claims_and_sources responses contained the bookshelf
+    reply ("X is great, but have you read ...") in chunk text. The facts
+    response held the fact row "based on a book series that he loves". The
+    answer omitted both. Trial 3, which kept them, wrote them as a trailing
+    "Likely also ...". The trial 4 reader's last query again used literal verbs
+    ("finished, completed").
+  - *School stages.* The top evidence row was one statement: "through middle
+    and high school before earning a college scholarship". A second row said
+    "after college, I was drafted". The answer kept the clause that repeats the
+    question's words and dropped the later compatible clause. Trial 3 wrote
+    "then likely college".
+  - *Travel hobby.* Facts about the person's writing were in both trials:
+    articles for a magazine, writing a novel, "writing could create a whole new
+    world". Trial 3 joined that interest to the travel goal. Trial 4 named a
+    generic option (travel photography) that no evidence grounds.
+  - **What this does and does not establish.** The traces show that the
+    evidence was visible and omitted. They do not show why. Trials 3 and 4
+    used different prompts, so the difference between them cannot be
+    attributed to sampling, to the answer format or to any single wording
+    change. The candidate 5 changes below are proposed remedies. They have not
+    been tested.
+- **Open recommendations repeat what is stored (verified).** For "what could
+  he do after his career", the answer listed the stated foundation plan and
+  the current mentoring and seminars. It never named a role. For "what other
+  exercises can help", it repeated the person's existing strength training
+  and yoga, although step 1 said "other" wants new options.
+- **The count missed episodes (verified against the source turns, not the
+  gold count).** The trace held these reported wins, each with a resolvable
+  date:
+  - a July game;
+  - an August game;
+  - a win over a top team, reported on Dec 8;
+  - a close win "last week", reported on Dec 16, so in the week of Dec 9–15;
+  - a comeback from "last year";
+  - a favorite buzzer-beater after being down 10 in the 4th quarter. This may
+    be the same game as the comeback.
+
+  Trophy reports in October and December may be tournament wins rather than
+  single games. The answer said "at least four; possibly five". It treated
+  the two December wins as possibly one game, although their supported event
+  windows are disjoint: the first was before Dec 8, the second in Dec 9–15. It
+  also left out the retrospective games. A source-faithful answer is about five or six. The
+  sources do not pin down six.
+- **Ownership.** The Skype item is a uniquely identifiable event, so the
+  labeled correction ("Tim (not John) skyped ...") is legitimate. A favorite
+  series is a generic preference. It must not move to whoever's wording says
+  "favorite" more literally. An unresolved "that other series" must not be
+  named from another person's favorite, and film fandom is not a book
+  preference.
+
+**What candidate 5 changes.** It starts from calibrated candidate 4 and keeps
+every retrieval rule that produced the trial 4 wins: broad positive queries,
+continuation reads, meaning-over-words matching and the wish-versus-deal
+preference.
+
+- **Write (step 7).** A list gives the direct items, then "likely also ..."
+  for the qualified ones, including later clauses of a kept statement. This is
+  an untested remedy for the omitted items. It gives qualified items an
+  explicit place in the answer.
+- **Episodes (step 4).** Retrospective episodes are kept. Episodes are
+  compared by each event's supported time window, not by when they were
+  reported. Discrete events with disjoint windows are different. Stated
+  continuity ("that game", "still hurts"), overlapping or uncertain windows,
+  or one multi-day episode (a trip, an ongoing injury) can be one. This
+  window rule replaces the earlier sentence that separated a current report
+  from a clearly earlier one; the knee example still shows that case.
+- **Infer (step 6).**
+  - A suggestion carries the person's strongest established skill or
+    interest into the goal in a new setting, format or role. The painter who
+    longs for the coast still paints, but outdoors.
+  - For "other", "new" or "pick up", current routines are seeds and
+    constraints, not the answer. The reader proposes something the person
+    does not already do in that form, using general knowledge. The old clause
+    "when memory offers nothing fitting, name common real options" was
+    removed, because it could be read as allowing general knowledge only when
+    memory has nothing. This rule moved here from step 1, so it is no longer
+    stated twice.
+  - A future role is named as a role, not as a list of current activities; a
+    stated plan may follow briefly.
+- **Ownership (step 5 and the preference paragraph).** Matching generic
+  preferences, like matching generic events, keep the named person. An unnamed
+  item ("that other series") is named only from its own exchange, never from
+  another person's favorite.
+
+**What was trimmed to fit.** The following was shortened, with no rule
+change:
+
+- the open-query line;
+- the duplicate current/at/overlap sentence in 1.b (the temporal block keeps
+  the exact time filters);
+- the "do not leave 'last week' unresolved" clause (the sentence before it
+  already requires explicit dates);
+- the feelings scope sentence (the answer policy already preserves the
+  question's person and time);
+- the adjacent-boundary sentence;
+- the separate current-versus-earlier-report sentence in step 4 (now covered
+  by the event-window rule and the knee example);
+- the verbatim-terms and deductive examples;
+- the answer-format lead sentence.
+
+The procedure paragraphs were also reflowed; that changes whitespace only.
+The template is 18,281 characters. All five placeholders and every pinned
+contract phrase are present, by static check only.
+
+**Calibrated ceiling.** These counts use the candidate 4 calibration table,
+with two items reclassified from the trial 4 evidence:
+
+- The count item moves from ambiguous to source-supported, because the dated
+  source episodes support "about five or six" without using the gold count.
+- The favorite-series item stays among the 11 out-of-scope items, even though
+  it passed in trials 2 and 4.
+
+Source-consistent, recoverable items:
+
+- the 7 trial 3 wins (book list, school stages, injury count, recovery book,
+  travel hobby, team support, quoted title);
+- the 4 items lost in trial 3 and regained in trial 4 (brand link, cities,
+  slow cooker, Skype correction);
+- the author list and surfing;
+- the count.
+
+That makes 14. Four items remain ambiguous: the future role, the shop
+suggestion, the new exercises and the injury date. Each passes only if the
+judge accepts a grounded proposal or a qualified date. **The legitimate ceiling
+is therefore 14 to 18.** A single run should be expected to land a few below
+14, because this many qualified items have never all held at once. No trial so
+far has kept every earlier source-consistent win.
+
+Fixing the ownership rule will probably cost the favorite-series pass. That
+loss is correct, and it should be reported as such rather than counted as a
+regression. If candidate 5 scores, for example, 12 with the favorite series
+wrong, that is a better source-consistent result than 11 with it right.
+
+**Risks.**
+
+- The "likely also" list shape may add weak items to lists that have one
+  clear answer.
+- Requiring new options for "other" may push answers toward general-knowledge
+  proposals that a strict judge reads as unsupported. A proposal is a
+  suggestion, not a claimed personal fact.
+- Naming a role rather than listing activities may drop a stated plan the
+  judge expected.
+- The event-window rule needs the reader to resolve each event's window.
+  If it resolves windows loosely, it may still merge separate games or split
+  one trip.
+- Reflowing the procedure gives the reader the same words with different line
+  breaks. It should not change behaviour, but it is not byte-identical to
+  candidate 4.
+
+**Candidate 5 calibration, made before the first run.** The owner reviewed
+the candidate and asked for three runtime corrections and one correction to
+this analysis:
+
+- Different reported dates no longer imply different episodes. Event time
+  windows decide.
+- A new option may carry an existing strength into a new setting, format or
+  role.
+- For "other" or "new" questions, ordinary general knowledge may supply a
+  new option even when memory holds related routines.
+- This analysis no longer claims that sampling or the answer format caused
+  the omissions.
+
+The step 4 and step 6 changes described above already include these
+calibrations.
