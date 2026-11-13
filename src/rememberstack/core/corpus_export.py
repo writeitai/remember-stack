@@ -337,6 +337,12 @@ def render_document(
     copies = tuple(sorted(files, key=lambda file: file.path))
     facts = asdict(document)
     facts.pop("corpus_published_revision")
+    # A pending edition can change the lineage's best-effort title. Only the
+    # displayed reading's chosen title and normalized topic affect its export.
+    facts["title"] = document.display_title
+    facts.pop("file_name")
+    facts.pop("lineage_title")
+    facts["placement_path"] = corpus_topics(document.placement_path)
     revision = hashlib.sha256(
         json_bytes(
             {
