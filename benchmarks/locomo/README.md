@@ -5,7 +5,20 @@ reasoning, Luna 6 for answering and judging at high reasoning, and Jev
 for adjudication. All Luna seats prefer OpenAI Flex and allow normal OpenAI
 Luna as the only fallback; actual provider usage records the higher price when
 standard processing serves a call. Historical protocols are retained in saved run artifacts
-and Git, not as runnable branches. No new benchmark score is claimed.
+and Git, not as runnable branches.
+
+## Published result
+
+**89.94% LLM-judge accuracy: 1,385 / 1,540 correct**, across all category 1–4
+questions in ten conversations and 272 sessions, completed November 13, 2026.
+The publication run used `openai/gpt-6-luna-pro` at high reasoning for both
+answering and grading, Luna at low reasoning for ingestion and vision, and Jev
+for fact adjudication. It reused the frozen OCR/Luna image inputs and used
+`k=50`, `candidate_k=200` per search channel, with eight simultaneous questions
+per conversation. Serving revision: `1187ca0fbd84a43a15b152f4d79b0e641661b618`;
+ingestion revision: `13ce4a5224709b3e3cda65c429d5915d47e95e89`.
+
+## Reader protocol
 
 Full-v45 strengthens conversational context instructions: when a relevant
 reply lacks its initiating question, the answerer reads adjacent chunks even
