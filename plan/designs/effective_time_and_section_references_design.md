@@ -344,11 +344,15 @@ and every handle it carries opens that version:
   chunks); the new `memory_v1.chunks_all_versions_live` exposes the current-representation
   chunks of every non-deleted ready version for scoped reads.
 - **Source handles** use `source_open(version_id, representation_id)` (D115 already takes a
-  version). A **P3 path** names the lineage and opens its *served* version, so it is returned
-  only when the selected version is the served version; otherwise the result sets
-  `p3_path = null` and `served_version = false`. `DocumentSearchResult.p3_path` becomes
-  optional accordingly. This applies to periodised lineages; a lineage without declared periods
-  keeps D134's lineage path on every result, as today. An agent can never open a different edition than the one it was shown.
+  version). Under D155 a **P3 path** is the movable, applied corpus folder for
+  that selected version/representation. Return it only if the selection is served
+  **and** its nullable publication marker matches the computed current export
+  digest (including the desired path); otherwise
+  `p3_path = null`. `served_version` describes authority currency independently of
+  publication. This applies equally to periodised and undeclared lineages; no
+  unconditional `documents/<doc_id>` path survives. Persist `doc_id` and exact
+  source handles, resolving the folder again after moves. An agent must never be
+  directed to another edition than the one it was shown.
 
 ### 3.4 Claims under a time scope
 
