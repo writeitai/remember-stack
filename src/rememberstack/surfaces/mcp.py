@@ -6,7 +6,7 @@ listed; the seven open-query tools when an `OpenQueryFacade` is composed; the
 Layer 1 write tools (`ingest`, `pipeline_readiness`) when both their ports are
 composed; and `delete_document` when a deletion port is composed (D135). The
 engine does not run on the caller's machine, so `ingest` never offers the local
-`path` body source here. The eighteen `examples.*` identities are never
+`path` body source here. The nineteen `examples.*` identities are never
 top-level tools — they run only through `run_saved_query`.
 """
 

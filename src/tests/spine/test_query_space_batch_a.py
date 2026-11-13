@@ -137,6 +137,7 @@ class _Corpus:
         self.fact: dict[str, UUID] = {}
         self.crossref: dict[str, UUID] = {}
         self.period: dict[str, UUID] = {}
+        self.tag: dict[str, UUID] = {}
         self.artifact: dict[str, UUID] = {}
         self.currency_event: dict[str, UUID] = {}
         self.adjudication: dict[str, UUID] = {}
@@ -311,6 +312,42 @@ class _Corpus:
                     "retracted": _MID if retracted else None,
                 },
             )
+        # D156: a tag on live lineages and the forgotten one, a tag only the
+        # tombstoned lineage carries, and a registered-then-deleted tag
+        for key, lineages in (
+            ("corpus", ("primary", "second", "forgotten")),
+            ("erased", ("erased",)),
+            ("retired", ("primary",)),
+        ):
+            tag_id = uuid4()
+            self.tag[key] = tag_id
+            connection.execute(
+                text(
+                    "INSERT INTO tags (deployment_id, tag_id, name, description)"
+                    " VALUES (:deployment, :tag, :name, :description)"
+                ),
+                {
+                    "deployment": _DEPLOYMENT_ID,
+                    "tag": tag_id,
+                    "name": f"project:{key}",
+                    "description": f"Fixture tag {key}.",
+                },
+            )
+            for lineage in lineages:
+                connection.execute(
+                    text(
+                        "INSERT INTO document_tags (deployment_id, doc_id, tag_id)"
+                        " VALUES (:deployment, :doc, :tag)"
+                    ),
+                    {
+                        "deployment": _DEPLOYMENT_ID,
+                        "doc": self.doc[lineage],
+                        "tag": tag_id,
+                    },
+                )
+        connection.execute(
+            text("DELETE FROM tags WHERE tag_id = :tag"), {"tag": self.tag["retired"]}
+        )
 
     def _lineage(
         self,
@@ -1268,6 +1305,26 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             f"SELECT NOT EXISTS (SELECT 1 FROM"
             f" {schema}.document_effective_periods_live WHERE period_id = :period)",
             {"period": corpus.period["second.retracted"]},
+        ),
+        "tags_current.registered_tag_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.tags_current"
+            " WHERE tag_id = :tag AND name = 'project:corpus')",
+            {"tag": corpus.tag["corpus"]},
+        ),
+        "tags_current.deleted_tag_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.tags_current"
+            " WHERE tag_id = :tag)",
+            {"tag": corpus.tag["retired"]},
+        ),
+        "document_tags_live.live_lineage_tag_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.document_tags_live"
+            " WHERE doc_id = :doc AND tag_id = :tag AND name = 'project:corpus')",
+            {"doc": corpus.doc["primary"], "tag": corpus.tag["corpus"]},
+        ),
+        "document_tags_live.tombstoned_lineage_tag_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.document_tags_live"
+            " WHERE doc_id = :doc OR tag_id = :tag)",
+            {"doc": corpus.doc["erased"], "tag": corpus.tag["erased"]},
         ),
         "claims_visible_history.superseded_testimony_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_visible_history"

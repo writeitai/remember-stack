@@ -221,6 +221,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.contradiction_members_current",
             "memory_v1.document_crossrefs_live",
             "memory_v1.document_effective_periods_live",
+            "memory_v1.document_tags_live",
             "memory_v1.document_versions_visible",
             "memory_v1.documents_live",
             "memory_v1.entities_current",

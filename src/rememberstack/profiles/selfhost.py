@@ -1171,7 +1171,7 @@ class SelfHostProfile:
             registry=AssuredOperationRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
         )
-        # Install the eighteen examples.* saved-query identities (idempotent).
+        # Install the nineteen examples.* saved-query identities (idempotent).
         # Not an Alembic migration: deployment seed DML lives in setup/bootstrap.
         from rememberstack.spine.query_space.canonical import (  # noqa: PLC0415
             surface_manifest_hash,

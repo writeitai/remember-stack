@@ -24,6 +24,8 @@ VIEW_LAYERS: Final[dict[str, ProcessingLayer]] = {
     "chunks_all_versions_live": _SOURCES,
     "document_effective_periods_live": _SOURCES,
     "document_crossrefs_live": _SOURCES,
+    "tags_current": _SOURCES,
+    "document_tags_live": _SOURCES,
     "claims_visible_history": _CLAIMS,
     "claims_canonical": _CLAIMS,
     "claims_live": _CLAIMS,

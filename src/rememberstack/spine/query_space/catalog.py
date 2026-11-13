@@ -1514,6 +1514,65 @@ VIEW_CONTRACTS: Final = (
         negative_fixture="document_crossrefs_live.forgotten_target_absent",
     ),
     ViewContract(
+        name="tags_current",
+        grain="one registered document tag",
+        grain_tag="tag_registered",
+        clock_semantics="registry_maintenance_instants",
+        row_key=("deployment_id", "tag_id"),
+        join_keys=(),
+        not_null=frozenset(
+            {
+                "deployment_id",
+                "tag_id",
+                "name",
+                "description",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        enum_values={},
+        column_types={
+            "deployment_id": "uuid",
+            "tag_id": "uuid",
+            "name": "text",
+            "description": "text",
+            "created_at": "timestamp with time zone",
+            "updated_at": "timestamp with time zone",
+        },
+        indexes_used=("tags_pkey", "ux_tags_name"),
+        positive_fixture="tags_current.registered_tag_present",
+        negative_fixture="tags_current.deleted_tag_absent",
+    ),
+    ViewContract(
+        name="document_tags_live",
+        grain="one tag assignment on a live document lineage",
+        grain_tag="document_tag_live",
+        clock_semantics="registry_maintenance_instants",
+        row_key=("deployment_id", "doc_id", "tag_id"),
+        join_keys=(
+            JoinKey(
+                columns=("deployment_id", "doc_id"), target="memory_v1.documents_live"
+            ),
+            JoinKey(
+                columns=("deployment_id", "tag_id"), target="memory_v1.tags_current"
+            ),
+        ),
+        not_null=frozenset(
+            {"deployment_id", "doc_id", "tag_id", "name", "assigned_at"}
+        ),
+        enum_values={},
+        column_types={
+            "deployment_id": "uuid",
+            "doc_id": "uuid",
+            "tag_id": "uuid",
+            "name": "text",
+            "assigned_at": "timestamp with time zone",
+        },
+        indexes_used=("document_tags_pkey", "ix_document_tags_tag"),
+        positive_fixture="document_tags_live.live_lineage_tag_present",
+        negative_fixture="document_tags_live.tombstoned_lineage_tag_absent",
+    ),
+    ViewContract(
         name="pages_live",
         grain="one visible K artifact",
         grain_tag="k_artifact_compiled_grain",

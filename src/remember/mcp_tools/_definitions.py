@@ -6,7 +6,7 @@ assured-operation registry generates the agent-facing fields of its four
 operations from these definitions too, so ``GET /operations`` and MCP can never
 describe the same operation differently.
 
-The eighteen ``examples.*`` saved queries are never top-level tools: they run
+The nineteen ``examples.*`` saved queries are never top-level tools: they run
 only through ``run_saved_query`` (D83/D87).
 """
 
