@@ -237,6 +237,11 @@ def client(http: TestClient) -> MemoryClient:
     return MemoryClient(client=http)
 
 
+def _items(value: object) -> list[dict[str, object]]:
+    """A JSON list of objects, typed for the assertions."""
+    return cast("list[dict[str, object]]", value)
+
+
 def _payload(result: dict[str, object]) -> dict[str, object]:
     content = cast("list[dict[str, str]]", result["content"])
     decoded = json.loads(content[0]["text"])
@@ -411,7 +416,7 @@ def test_cli_manages_tags_and_tags_documents(
     run("tags", "create", "kind:decision", "--description", "Decisions.")
     assert created["name"] == "project:a"
     listed = run("tags", "list", "--query", "decision")
-    assert [tag["name"] for tag in listed["tags"]] == ["kind:decision"]
+    assert [tag["name"] for tag in _items(listed["tags"])] == ["kind:decision"]
     assert run("tags", "update", "project:a", "--name", "project:alpha")["name"] == (
         "project:alpha"
     )
@@ -475,7 +480,7 @@ def test_both_mcp_hosts_run_the_tag_tools(
             pipeline_readiness=_Readiness(),  # type: ignore[arg-type]
             tags=tags,
         )
-        listed = {entry["name"] for entry in server.list_tools()["tools"]}
+        listed = {entry["name"] for entry in _items(server.list_tools()["tools"])}
         assert set(TAG_TOOL_NAMES) <= listed
 
     def call(tool_name: str, /, **arguments: object) -> dict[str, object]:
@@ -485,7 +490,9 @@ def test_both_mcp_hosts_run_the_tag_tools(
     assert created["name"] == "project:a"
     conflict = _payload(call("create_tag", name="PROJECT:A", description=""))
     assert (conflict["code"], conflict["status_code"]) == ("conflict", 409)
-    assert [t["name"] for t in _payload(call("list_tags"))["tags"]] == ["project:a"]
+    assert [t["name"] for t in _items(_payload(call("list_tags"))["tags"])] == [
+        "project:a"
+    ]
     assert (
         _payload(call("update_tag", tag="Project:A", description="Alpha."))[
             "description"
@@ -533,7 +540,9 @@ def test_engine_mcp_lists_tag_tools_only_when_the_deployment_serves_them(
     served = MemoryClient(client=TestClient(app))
     writable = EngineMcpServer(client=served, read_only=False, path_ingest=False)
     read_only = EngineMcpServer(client=served, read_only=True, path_ingest=False)
-    assert {entry["name"] for entry in writable.list_tools()["tools"]} >= set(
+    assert {entry["name"] for entry in _items(writable.list_tools()["tools"])} >= set(
         TAG_TOOL_NAMES
     )
-    assert {entry["name"] for entry in read_only.list_tools()["tools"]} == {"list_tags"}
+    assert {entry["name"] for entry in _items(read_only.list_tools()["tools"])} == {
+        "list_tags"
+    }
