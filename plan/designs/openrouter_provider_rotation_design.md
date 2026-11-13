@@ -96,11 +96,15 @@ rotation, a split throttle budget, and per-call host recording.
   reply. It is neither a capacity rejection nor an invalid model answer.
   Examples are an empty body, whitespace only, non-JSON text such as an HTML
   page, a cut-off object, bytes that are not valid text, or a JSON array,
-  string, number, boolean or null. Every OpenRouter POST path (chat with or
-  without rotation, and embeddings) reads the body through one shared check.
-  That check raises the ordinary typed `OpenRouterProviderError` after the
-  capacity checks above have already declined the reply. On the rotation path
-  the error carries the targeted slug.
+  string, number, boolean or null. Every `OpenRouterModelProvider` POST path
+  (chat with or without rotation, and embeddings) reads the body through one
+  shared check. That check raises the ordinary typed `OpenRouterProviderError`
+  after the capacity checks above have already declined the reply. On the
+  rotation path the error carries the targeted slug. The image-description
+  converter (`adapters/converters/image_ocr_description.py`) also POSTs to
+  OpenRouter but does not use this check. It has its own equivalent guard: a
+  success reply that is not a JSON object becomes a typed `ProviderCallError`
+  with no usage events.
   - **Safe diagnostics.** The message holds only the endpoint, the status, the
     body size in bytes, a body class, and the JSON decoder's fixed reason and
     character offset. It never includes body text, headers or credentials,
@@ -113,8 +117,10 @@ rotation, a split throttle budget, and per-call host recording.
     stays unknown (`None`), never zero. The error is never classified as an
     unbilled rejection. The adapter does not retry it, rotate to another slug,
     or open a new retry budget. `generate()` records it once with
-    `outcome = transport_error`. Trying the work item again remains the work
-    ledger's ordinary decision.
+    `outcome = transport_error`. Callers handle it as an ordinary provider
+    error under their existing policy: stages that fail closed leave any
+    retry to the work ledger, and fail-open steps (such as E0 section
+    summaries) continue without the answer.
   - **Not an invalid response.** For embeddings, an invalid-response error
     marks a chunk as poison (content that can never embed). A broken reply
     says nothing about the chunk, so it is treated as a provider outage.

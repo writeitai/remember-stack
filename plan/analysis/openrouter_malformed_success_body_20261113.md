@@ -7,8 +7,12 @@ section 3.
 ## What prompted it
 
 A retained LoCoMo benchmark run (trial 5) stopped after 22 saved answers.
-The only error was `Expecting value: line 27 column 1 (char 143)`, the
-message Python's JSON decoder gives when the input ends before any value. The
+The only error was `Expecting value: line 27 column 1 (char 143)`. Python's
+JSON decoder gives this message when no JSON value starts at that offset:
+either the input ends there, or the character there cannot begin a JSON value
+(for example `<` or a letter). The message does not say which. It also does
+not show what the first 143 characters were, so it says nothing about whether
+the body was whitespace, a gateway page or something else. The
 raw HTTP body and the full stack trace were not recorded. This note therefore
 does **not** identify the cause of that stop. It describes an adapter gap found
 while investigating it. Closing the gap would make a similar event diagnosable.
@@ -53,8 +57,8 @@ a JSON object raises the ordinary `OpenRouterProviderError`:
 - `usage` is `None`, which means unknown, not zero. A success status does not
   prove the request was free. For the same reason the error is never marked
   `retryable_unbilled`, and the adapter does not retry, rotate or start a new
-  retry budget. Whether to try the work item again remains the work ledger's
-  decision, as for any other transport error.
+  retry budget. Callers handle it as an ordinary provider error under their
+  existing retry or fallback policy, as for any other transport error.
 - It is a plain provider error, not `OpenRouterInvalidResponseError`. For
   embeddings, an invalid-response error would mark a chunk as poison (content
   that can never embed). A broken reply says nothing about the chunk, so it is

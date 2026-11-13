@@ -205,9 +205,10 @@ The message never contains the body text, headers or your API key. A
 success status does not prove the request was free, so usage stays unknown
 rather than zero. The adapter does not treat this as a capacity rejection, so
 it does not retry, rotate to another provider, or start a new retry budget.
-The work item fails like any other provider error, and the engine's normal
-work retry decides whether to try again. Valid replies and the capacity
-retries above work as before.
+Callers handle it as an ordinary provider error, using their existing retry
+or fallback policy: some stages retry the work item, while optional steps,
+such as section summaries, continue without the model's answer. Valid replies
+and the capacity retries above work as before.
 
 Lowering reasoning effort makes extraction faster and cheaper; the comment
 in `.env.example` notes that `none` can reduce adjudication quality and
