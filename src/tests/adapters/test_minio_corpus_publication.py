@@ -4,6 +4,7 @@ Only the fixture binds the dormant publication handler to class/pushed runners;
 production profile activation and lifecycle delete/forget/restore stay separate.
 """
 
+from collections.abc import Callable
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -88,6 +89,16 @@ class Publication:
                 ),
                 {"id": self.source.doc_id},
             ).scalar_one()
+
+    def paths(self) -> set[str]:
+        with self.engine.connect() as connection:
+            return set(
+                connection.execute(
+                    text("SELECT corpus_paths FROM documents WHERE doc_id = :id"),
+                    {"id": self.source.doc_id},
+                ).scalar_one()
+                or ()
+            )
 
     def change(
         self,
@@ -213,6 +224,7 @@ def test_create_move_remove_and_duplicate_replay(
     state = publication
     assert state.publish()
     before = state.assert_tree()
+    assert state.paths() == {state.source.path}
     assert state.marker() == desired_export_revision(state.selected()[0])
     assert state.publish()
     assert state.assert_tree() == before
@@ -230,10 +242,12 @@ def test_create_move_remove_and_duplicate_replay(
     state.assert_tree()
     if change == "delete":
         assert state.marker() is None
+        assert state.paths() == set()
         assert not any(
             corpus_suffix(state.source.doc_id) in key for key in state.expected()
         )
     else:
+        assert state.paths() == {state.selected()[0].path}
         assert state.marker() == desired_export_revision(state.selected()[0])
 
 
@@ -294,6 +308,18 @@ def test_retry_after_each_publication_boundary(
         with pytest.raises(RuntimeError, match="injected crash"):
             state.publish()
     assert failed
+    assert state.paths() == (
+        {old_path}
+        if boundary == "clear"
+        else {new_path}
+        if boundary == "marker"
+        else {old_path, new_path}
+    )
+    if boundary == "ready":
+        assert list(state.bucket.store.iter_keys(prefix=old_path))
+        assert b"State: ready" in state.bucket.store.read_bytes(
+            key=ObjectKey(new_path + "/_index.md")
+        )
     if boundary == "marker":
         assert state.marker() is not None
     else:
@@ -304,7 +330,108 @@ def test_retry_after_each_publication_boundary(
             "stale index-only remnant must exist"
         )
     assert state.publish()
+    assert state.paths() == {new_path}
     state.assert_tree()
+
+
+@pytest.mark.parametrize("change", ["replay", "title", "topic", "type", "delete"])
+def test_ordinary_publish_lists_only_recorded_folders_and_ancestor_pages(
+    publication: Publication, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    state = publication
+    for topic, kind in (("Unrelated/Branch", "upload"), ("Other/Branch", "email")):
+        _seed(
+            state.engine,
+            replace(
+                state.source,
+                doc_id=uuid4(),
+                version_id=uuid4(),
+                representation_id=uuid4(),
+                structure_generation_id=uuid4(),
+                title="Control",
+                placement_path=topic,
+                source_kind=kind,
+            ),
+        )
+    state.publisher.reconcile(deployment_id=state.source.deployment_id)
+    old_path = state.source.path
+    if change != "replay":
+        state.change(
+            **{
+                "title": {"title": "Moved"},
+                "topic": {"topic": "New/Branch"},
+                "type": {"source_kind": "chat"},
+                "delete": {"deleted": True},
+            }[change]
+        )
+    paths = {
+        old_path,
+        *(doc.path for doc in state.selected() if doc.doc_id == state.source.doc_id),
+    }
+    ancestors = {""}
+    for path in paths:
+        parent = posixpath.dirname(path)
+        while parent:
+            ancestors.add(parent)
+            parent = posixpath.dirname(parent)
+    allowed_prefixes = paths | {posixpath.join(parent, "~") for parent in ancestors}
+    listed: list[str] = []
+    touched: list[str] = []
+    original_list = state.bucket.store.iter_keys
+
+    def listing(*, prefix: str) -> Iterator[ObjectKey]:
+        assert prefix in allowed_prefixes, f"unrelated/root listing: {prefix!r}"
+        listed.append(prefix)
+        yield from original_list(prefix=prefix)
+
+    def recording(operation: Callable[..., Any]) -> Callable[..., Any]:
+        def call(**kwargs: Any) -> Any:
+            key = kwargs["key"].root
+            touched.append(key)
+            if any(key.startswith(path + "/") for path in paths):
+                # A separate connection proves path state committed before IO.
+                assert any(key.startswith(path + "/") for path in state.paths())
+            return operation(**kwargs)
+
+        return call
+
+    with monkeypatch.context() as patch:
+        patch.setattr(state.bucket.store, "iter_keys", listing)
+        for name in ("sha256_of", "replace_stream", "delete"):
+            patch.setattr(
+                state.bucket.store, name, recording(getattr(state.bucket.store, name))
+            )
+        assert state.publish()
+    assert listed and "" not in listed
+    for key in touched:
+        assert (
+            key == "llms.txt"
+            or any(key.startswith(path + "/") for path in paths)
+            or posixpath.dirname(key) in ancestors
+            or any(
+                key.startswith(posixpath.join(parent, "~") + "/")
+                for parent in ancestors
+            )
+        ), f"unrelated object touched: {key}"
+    state.assert_tree()
+
+
+def test_first_publish_does_not_list_the_store_root(
+    publication: Publication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = publication.bucket.store.iter_keys
+    prefixes = []
+
+    def listing(*, prefix: str) -> Iterator[ObjectKey]:
+        assert prefix, "ordinary publish must not discover the full store"
+        prefixes.append(prefix)
+        yield from original(prefix=prefix)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(publication.bucket.store, "iter_keys", listing)
+        assert publication.publish()
+    assert publication.source.path in prefixes
+    publication.assert_tree()
 
 
 @pytest.mark.parametrize("damage", ["mismatch", "missing_metadata", "missing_object"])
@@ -413,6 +540,7 @@ def test_incremental_and_empty_store_reconcile_converge_and_clean_orphans(
     state.bucket.client.create_multipart_upload(Bucket=state.bucket.name, Key=orphan)
     state.publisher.reconcile(deployment_id=state.source.deployment_id, verify=True)
     assert state.assert_tree() == incremental
+
     assert not state.bucket.client.list_multipart_uploads(Bucket=state.bucket.name).get(
         "Uploads"
     )
@@ -420,6 +548,46 @@ def test_incremental_and_empty_store_reconcile_converge_and_clean_orphans(
         state.bucket.store.delete(key=key)
     state.publisher.reconcile(deployment_id=state.source.deployment_id, verify=True)
     assert state.assert_tree() == incremental
+
+
+def test_reconcile_repairs_path_state_missed_by_database(
+    publication: Publication,
+) -> None:
+    state = publication
+    state.publish()
+    other = replace(
+        state.source,
+        doc_id=uuid4(),
+        version_id=uuid4(),
+        representation_id=uuid4(),
+        structure_generation_id=uuid4(),
+        title="Deleted",
+    )
+    _seed(state.engine, other)
+    missed = f"pdf/former/old--{corpus_suffix(state.source.doc_id)}"
+    for path in (missed, other.path):
+        state.bucket.store.replace_stream(
+            key=ObjectKey(path + "/document.md"), chunks=(b"old",), storage_class="hot"
+        )
+    with state.engine.begin() as connection:
+        connection.execute(text("UPDATE documents SET corpus_paths = NULL"))
+        connection.execute(
+            text(
+                "UPDATE documents SET deleted_at = now(), corpus_paths = :paths WHERE doc_id = :doc"
+            ),
+            {"doc": other.doc_id, "paths": [other.path, "pdf/empty/former"]},
+        )
+    state.publisher.reconcile(deployment_id=state.source.deployment_id)
+    assert state.paths() == {state.source.path}
+    with state.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT corpus_paths FROM documents WHERE doc_id = :doc"),
+                {"doc": other.doc_id},
+            ).scalar_one()
+            is None
+        )
+    state.assert_tree()
 
 
 def test_shared_indexes_are_regenerated_without_recopying_unrelated_files(

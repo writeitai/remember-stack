@@ -1180,6 +1180,7 @@ CREATE TABLE documents (
   current_version_id uuid,                     -- → document_versions; the SERVED version: newest non-deleted version whose representation completed processing (real FK added after that table)
   title           text,                        -- best-effort current title; P3 friendly path can move
   corpus_published_revision text,              -- nullable D155 digest of successfully published DB inputs/path/policy; no desired counter
+  corpus_paths    text[],                      -- nullable D155 set of possibly written folders; commit before IO, reduce after cleanup/navigation
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
   deleted_at      timestamptz,                 -- lineage tombstone for hard-delete/forget (§13)
@@ -2265,9 +2266,9 @@ CREATE INDEX ix_obsadjud_live        ON observation_adjudications (observation_i
 ## 10. Corpus publication progress and live graph catalog (D155, D98)
 
 P1 and the live graph are current PostgreSQL-derived state, without immutable
-snapshot registries. D155 P3 is an idempotently maintained document tree; its only
-new per-document state is nullable `documents.corpus_published_revision` (§3).
-It records the deterministic digest of the successfully published DB-selected
+snapshot registries. D155 P3 is an idempotently maintained document tree with
+two nullable fields on `documents` (§3). `corpus_published_revision` records the
+deterministic digest of the successfully published DB-selected
 version/representation/structure, reader inventory/hashes, title/type/topic,
 desired folder path and builder policy. The desired digest is computed, never a
 stored lineage counter. There are no corpus request, receipt, pending-path,
@@ -2290,11 +2291,20 @@ A delayed handler always recomputes from the DB, including A→B→A and deletio
 No ingestion work identity or attempt semantics change.
 
 The [E0 procedure](e0_files_design.md#65-incremental-work-publication-order-and-reader-observations)
-uses a deployment advisory lock, paged suffix discovery, files-first writes,
-old-copy deletion and index regeneration from DB authority. Only after success
-and a final input check does it set the nullable marker. `p3_path` and readiness
-compare it with the computed current digest; no stored published path, inventory
-receipt or publication timestamp is needed. Shared-index membership and counts
+uses a deployment advisory lock and `corpus_paths text[]`, the small set of folder
+paths this document may currently have objects under. Commit the desired path's
+union with this set before any object write; ordinary publication lists only
+recorded prefixes. Write files first, remove other recorded folders and repair
+only affected ancestor indexes/root from DB membership. Keep old paths through
+index repair, so a crash after their last object deletion cannot lose the stale
+ancestors. Then reduce the set to `[desired]` (or null after removal). Full-store
+suffix discovery remains for reconcile and forget/restore; reconcile repairs the
+set and all navigation, including after independent restores. The set is cleanup
+state, never navigation membership or desired authority. Only after success and
+a final input check does publication set the nullable marker. `p3_path` and
+readiness
+compare it with the computed current digest; no inventory receipt or publication
+timestamp is needed. Shared-index membership and counts
 are SQL results over live served selections, not another projection table.
 Successful null topic has a non-null placement generation and null root placement
 path; failure has no complete placement generation.
@@ -3005,7 +3015,7 @@ Labs."*
 | D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_reference_generations.crossref_version` |
 | D140 effective periods, section keys, version-aware references | `document_effective_periods` (+ view `memory_v1.document_effective_periods_live`, function `memory_v1.versions_in_scope`); `document_effective_time_events`; `document_version_scope` (projection); `document_versions.version_key`; `document_sections.section_key`/`own_content_hash`/`subtree_content_hash`; `chunks.text_origin_at`/`reuse_identity_hash`; `document_crossrefs` (version-grain, generation, binding, origin, section keys) + `document_reference_generations` |
 | D39 PageIndex sections + placement | `document_sections` (path/role/span/summary/placement) |
-| D40/D155 P3 corpus filesystem | `documents.corpus_published_revision` + nullable root placement generation/path; ordinary `publish_corpus` work; suffix/path/membership computed from authority |
+| D40/D155 P3 corpus filesystem | `documents.corpus_published_revision`, small `corpus_paths text[]` cleanup set + nullable root placement generation/path; ordinary `publish_corpus` work; suffix/desired path/membership computed from authority |
 | D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); an ordinary SQL filter in `claims_as_of`, and a confirmation predicate in D142 ranked nomination |
 | D45 planned K compilation (planner/writer/driver; mechanical routing; manifest staleness) | `knowledge_page_rules`, `knowledge_rule_keys`, `knowledge_plan_decisions`, `knowledge_compilations`; `knowledge_artifacts.inputs_hash/page_summary/parent_artifact_id` |
 | D46 compiled vs authored pages; ownership + quarantine | `knowledge_artifacts.page_kind/curation_path/content_hash` (+ `status='quarantined'`); citations binding in `knowledge_artifact_evidence`; authored review flags via `knowledge_refresh_queue ('authored_review')` |

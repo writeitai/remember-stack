@@ -16,6 +16,7 @@ from uuid import UUID
 from rememberstack.core.corpus_export import CopyFile
 from rememberstack.core.corpus_export import corpus_policy_version
 from rememberstack.core.corpus_export import corpus_suffix
+from rememberstack.core.corpus_export import CORPUS_TYPES
 from rememberstack.core.corpus_export import CorpusPolicy
 from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
 from rememberstack.core.corpus_export import GeneratedFile
@@ -97,14 +98,20 @@ class CorpusPublisher:
         ) as held:
             if held.deployment_id != deployment_id:
                 raise ValueError("corpus lock belongs to another deployment")
-            folders, navigation = self._discover(lock=held)
-            revision = self._publish_document(
-                lock=held,
-                doc_id=doc_id,
-                folders=folders.get(corpus_suffix(doc_id), set()),
-                verify=verify,
+            folders = self._catalog.paths(lock=held, doc_id=doc_id)
+            revision, path = self._publish_document(
+                lock=held, doc_id=doc_id, folders=folders, verify=verify
             )
-            self._navigation(lock=held, existing=navigation)
+            ancestors = {""}
+            for folder in folders:
+                parent = posixpath.dirname(folder)
+                while parent:
+                    ancestors.add(parent)
+                    parent = posixpath.dirname(parent)
+            self._navigation(lock=held, ancestors=ancestors)
+            self._catalog.set_paths(
+                lock=held, doc_id=doc_id, paths={path} if path else set()
+            )
             return self._catalog.finish(
                 lock=held, doc_id=doc_id, revision=revision, policy=self.policy
             )
@@ -112,40 +119,41 @@ class CorpusPublisher:
     def reconcile(self, *, deployment_id: UUID, verify: bool = True) -> int:
         """Share one discovery pass; verify digests even behind matching markers."""
         with self._catalog.locked(deployment_id=deployment_id) as lock:
-            folders, navigation = self._discover(lock=lock, remove_loose=True)
+            folders, navigation = self._discover(lock=lock)
             self._store.abort_uploads(prefix="", before_write=lock.check)
-            published: list[tuple[UUID, str | None]] = []
+            published: list[tuple[UUID, str | None, str | None]] = []
             # Keep only one document inventory at a time. Discovery stores
             # folder paths, not asset keys, and is shared across this run.
             with self._readers.documents(deployment_id=deployment_id) as documents:
                 for document in documents:
-                    revision = self._publish_document(
-                        lock=lock,
-                        doc_id=document.doc_id,
-                        folders=folders.pop(corpus_suffix(document.doc_id), set()),
-                        verify=verify,
+                    paths = folders.pop(corpus_suffix(document.doc_id), set())
+                    paths.update(self._catalog.paths(lock=lock, doc_id=document.doc_id))
+                    revision, path = self._publish_document(
+                        lock=lock, doc_id=document.doc_id, folders=paths, verify=verify
                     )
-                    published.append((document.doc_id, revision))
+                    published.append((document.doc_id, revision, path))
             for paths in folders.values():
                 for path in paths:
                     self._remove_folder(lock=lock, path=path)
             self._navigation(lock=lock, existing=navigation)
             # Only small input identities survive the metadata pass; no stored
             # receipts or export inventories. Concurrent changes get fresh work.
-            for doc_id, revision in published:
+            self._catalog.clear_unselected_paths(
+                lock=lock, doc_ids=[doc_id for doc_id, _, _ in published]
+            )
+            for doc_id, revision, path in published:
+                self._catalog.set_paths(
+                    lock=lock, doc_id=doc_id, paths={path} if path else set()
+                )
                 self._catalog.finish(
                     lock=lock, doc_id=doc_id, revision=revision, policy=self.policy
                 )
             return len(published)
 
     def _discover(
-        self, *, lock: CorpusPublicationLock, remove_loose: bool = False
+        self, *, lock: CorpusPublicationLock
     ) -> tuple[dict[str, set[str]], set[str]]:
-        """Enumerate navigation even after a crash removed the last old-folder key.
-
-        Rebuilding all discovered navigation from DB membership covers stale
-        doc-id/suffix rows without parsing their escaped display text or links.
-        """
+        """Full-store repair only: recover paths/navigation missed by DB state."""
         folders: dict[str, set[str]] = defaultdict(set)
         navigation: set[str] = set()
         for key in self._store.iter_keys(prefix=""):
@@ -154,7 +162,7 @@ class CorpusPublisher:
                 folders[suffix].add(path)
             elif posixpath.basename(key.root) == "_index.md" or key.root == "llms.txt":
                 navigation.add(key.root)
-            elif remove_loose:
+            else:
                 self._delete(lock=lock, key=key)
         return folders, navigation
 
@@ -165,20 +173,18 @@ class CorpusPublisher:
         doc_id: UUID,
         folders: set[str],
         verify: bool,
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
         document = self._catalog.clear(lock=lock, doc_id=doc_id)
         if document is None:
             for path in folders:
                 self._remove_folder(lock=lock, path=path)
-            return None
+            return None, None
+        folders.add(document.path)
+        self._catalog.set_paths(lock=lock, doc_id=doc_id, paths=folders)
         export = load_document_export(
             document, artifact_store=self._artifacts, policy=self.policy
         )
-        existing = (
-            {key.root for key in self._store.iter_keys(prefix=export.path)}
-            if export.path in folders
-            else set()
-        )
+        existing = {key.root for key in self._store.iter_keys(prefix=export.path)}
         desired = {export.path + "/" + file.path for file in export.files}
         unchanged = not verify and document.corpus_published_revision == export.revision
         changed = [
@@ -217,7 +223,7 @@ class CorpusPublisher:
             self._put(lock=lock, path=export.path + "/_index.md", file=index)
         for old in folders - {export.path}:
             self._remove_folder(lock=lock, path=old)
-        return export.revision
+        return export.revision, export.path
 
     def _put(
         self, *, lock: CorpusPublicationLock, path: str, file: CopyFile | GeneratedFile
@@ -260,10 +266,30 @@ class CorpusPublisher:
         for key in self._store.iter_keys(prefix=path):
             self._delete(lock=lock, key=key)
 
-    def _navigation(self, *, lock: CorpusPublicationLock, existing: set[str]) -> None:
-        """Regenerate metadata only; no unrelated originals/media are ever touched."""
+    def _navigation(
+        self,
+        *,
+        lock: CorpusPublicationLock,
+        existing: set[str] | None = None,
+        ancestors: set[str] | None = None,
+    ) -> None:
+        """List only affected radix subtrees; full discovery belongs to reconcile."""
+        if ancestors is not None:
+            # Root links include all fixed types, even empty ones. Bootstrap
+            # that constant-size scaffold once, without inspecting other topics.
+            if self._store.sha256_of(key=ObjectKey("llms.txt")) is None:
+                ancestors.update(CORPUS_TYPES)
+            existing = {posixpath.join(parent, "_index.md") for parent in ancestors}
+            for parent in ancestors:
+                existing.update(
+                    key.root
+                    for key in self._store.iter_keys(prefix=posixpath.join(parent, "~"))
+                )
+        assert existing is not None
         with self._readers.documents(deployment_id=lock.deployment_id) as documents:
-            desired = render_navigation(documents, policy=self.policy)
+            desired = render_navigation(
+                documents, policy=self.policy, ancestors=ancestors
+            )
         for path in sorted(desired, key=lambda name: (-name.count("/"), name)):
             file = GeneratedFile(path, desired[path])
             if self._store.sha256_of(key=ObjectKey(path)) != file.sha256:

@@ -1,7 +1,7 @@
 """D155 publication transactions and the deployment's session advisory lock.
 
-Only the existing work ledger and nullable document marker are durable. Events
-carry a document id, never a desired revision/path; readers recompute authority.
+The existing work ledger, nullable marker and possibly written folder paths are
+durable. Events carry a document id, never a desired revision/path.
 Profile activation, lifecycle removal and scheduling are composed separately.
 """
 
@@ -143,7 +143,7 @@ class CorpusPublicationLock:
 
 
 class CorpusPublicationCatalog:
-    """Own lock lifetime, marker commits and restartable current-policy seeding."""
+    """Own lock lifetime, folder/marker commits and current-policy seeding."""
 
     def __init__(self, *, engine: Engine) -> None:
         self._engine = engine
@@ -199,6 +199,45 @@ class CorpusPublicationCatalog:
                 {"d": lock.deployment_id, "doc": doc_id},
             )
             return document
+
+    def paths(self, *, lock: CorpusPublicationLock, doc_id: UUID) -> set[str]:
+        """Read cleanup state even for a deleted or no-longer-served document."""
+        lock.check()
+        paths = lock.connection.execute(
+            text("""SELECT corpus_paths FROM documents
+            WHERE deployment_id = :d AND doc_id = :doc"""),
+            {"d": lock.deployment_id, "doc": doc_id},
+        ).scalar_one_or_none()
+        return set(paths or ())
+
+    def set_paths(
+        self, *, lock: CorpusPublicationLock, doc_id: UUID, paths: set[str]
+    ) -> None:
+        """Commit on the lock session before IO; never reconnect after lock loss.
+
+        Keep old paths until their navigation is repaired too, so a crash after
+        the last old object deletion still leaves its ancestors discoverable.
+        """
+        lock.check()
+        row = lock.connection.execute(
+            text("""UPDATE documents SET corpus_paths = :paths
+            WHERE deployment_id = :d AND doc_id = :doc RETURNING doc_id"""),
+            {"d": lock.deployment_id, "doc": doc_id, "paths": sorted(paths) or None},
+        ).scalar_one_or_none()
+        if paths and row is None:
+            raise RuntimeError("document disappeared before corpus path recording")
+
+    def clear_unselected_paths(
+        self, *, lock: CorpusPublicationLock, doc_ids: list[UUID]
+    ) -> None:
+        """Full reconcile removed all folders outside the served DB selection."""
+        lock.check()
+        lock.connection.execute(
+            text("""UPDATE documents SET corpus_paths = NULL
+            WHERE deployment_id = :d AND NOT (doc_id = ANY(CAST(:ids AS uuid[])))
+            AND corpus_paths IS NOT NULL"""),
+            {"d": lock.deployment_id, "ids": doc_ids},
+        )
 
     def finish(
         self,

@@ -57,6 +57,7 @@ def reset_database(*, config: Config) -> None:
                     "p9_48_0069",
                     "p9_49_0070",
                     "p9_50_0071",
+                    "p9_51_0072",
                 }
                 or connection.execute(
                     text("SELECT to_regclass('public.fact_applications') IS NOT NULL")
