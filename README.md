@@ -20,8 +20,10 @@ Your agents have easy access to the information - they remember!
 
 **89.94% accuracy on LoCoMo benchmark.**
 
+<br />
+
 <p align="center">
-  <img src="website/public/brand/memory-graph.svg" alt="RememberStack memory graph: sources resolve into connected facts" width="720" />
+  <img src="website/public/brand/memory-graph.svg" alt="RememberStack memory graph: sources resolve into connected facts" width="520" />
 </p>
 
 ---
