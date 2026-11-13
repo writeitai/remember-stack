@@ -486,8 +486,7 @@ class MinIOObjectStore:
     ) -> ObjectPurgeEvidence:
         """Delete exact keys/descendants and report unfinished-upload coverage."""
         # Validate all destructive inputs before touching the store.
-        for key in keys:
-            _validated_key(key=key)
+        exact = {_validated_key(key=key) for key in keys}
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         for key in keys:
             if before_write:
@@ -502,7 +501,7 @@ class MinIOObjectStore:
         # confuse an empty current listing with erasure of those bytes.
         if self._has_versions():
             for name, version in self._iter_versions(prefix=""):
-                if name in {key.root for key in keys} or any(
+                if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
                 ):
@@ -513,7 +512,7 @@ class MinIOObjectStore:
                     )
         try:
             for name, upload_id in self._iter_uploads(prefix=""):
-                if name in {key.root for key in keys} or any(
+                if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
                 ):
@@ -529,6 +528,7 @@ class MinIOObjectStore:
     ) -> ObjectPurgeEvidence:
         """Verify object absence and report whether unfinished uploads were checked."""
         remaining: list[str] = []
+        exact = {_validated_key(key=key) for key in keys}
         for key in keys:
             normalized = _validated_key(key=key)
             if self._exists(normalized=normalized):
@@ -538,7 +538,7 @@ class MinIOObjectStore:
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         if self._has_versions():
             for name, version in self._iter_versions(prefix=""):
-                if name in {key.root for key in keys} or any(
+                if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
                 ):
@@ -546,7 +546,7 @@ class MinIOObjectStore:
         evidence = ObjectPurgeEvidence(multipart_uploads="checked")
         try:
             for name, _ in self._iter_uploads(prefix=""):
-                if name in {key.root for key in keys} or any(
+                if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
                 ):

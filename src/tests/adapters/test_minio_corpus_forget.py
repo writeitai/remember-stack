@@ -520,3 +520,98 @@ def test_independent_restore_replays_before_api_startup(
         with TestClient(forget.profile.api()) as api:
             assert api.get("/healthz").status_code == 200
         forget.assert_clean()
+
+
+@pytest.mark.parametrize("lost_session", ["publication", "admission"])
+def test_forget_waits_for_issued_io_after_either_session_dies(
+    forget: _Forget, monkeypatch: pytest.MonkeyPatch, lost_session: str
+) -> None:
+    """A lease/DB-session loss is not proof that the old process stopped IO.
+
+    Exercise the synchronous no-claim caller too: the other existing lock must
+    keep erasure from completing until the real MinIO request returns.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import time
+
+    from rememberstack.spine.corpus_publication import CorpusLockLostError
+
+    state = forget.state
+    state.change(title="In-flight reading")
+    entered, release = Event(), Event()
+    held = []
+    put = state.publisher._put  # noqa: SLF001
+
+    def capture(**kwargs: Any):
+        held.append(kwargs["lock"])
+        return put(**kwargs)
+
+    with forget.untouched_control(monkeypatch), monkeypatch.context() as patch:
+        original_put = state.bucket.client.put_object
+
+        def paused_put(**kwargs: Any):
+            if (
+                not entered.is_set()
+                and kwargs["Key"].endswith("/original.pdf")
+                and corpus_suffix(state.source.doc_id) in kwargs["Key"]
+            ):
+                entered.set()
+                if not release.wait(timeout=10):
+                    raise TimeoutError("test did not release its issued request")
+            return original_put(**kwargs)
+
+        patch.setattr(state.publisher, "_put", capture)
+        patch.setattr(state.bucket.client, "put_object", paused_put)
+
+        def erase() -> None:
+            forget.accept()
+            forget.replay()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            publisher = pool.submit(state.publish)
+            try:
+                assert entered.wait(timeout=5)
+                lock = held[0]
+                pid = (
+                    lock.backend_pid
+                    if lost_session == "publication"
+                    else lock.admission_pid
+                )
+                assert lock.backend_pid != lock.admission_pid
+                with state.engine.begin() as connection:
+                    connection.execute(
+                        text("SELECT pg_terminate_backend(:pid)"), {"pid": pid}
+                    )
+                eraser = pool.submit(erase)
+                # Observe the actual PostgreSQL lock wait, not thread timing.
+                name = (
+                    "hard-forget"
+                    if lost_session == "publication"
+                    else "corpus-publication"
+                )
+                deadline = time.monotonic() + 5
+                waiting = False
+                while time.monotonic() < deadline:
+                    with state.engine.connect() as connection:
+                        waiting = connection.execute(
+                            text("""SELECT EXISTS (
+                            SELECT 1 FROM pg_locks WHERE locktype='advisory'
+                            AND NOT granted AND mode='ExclusiveLock'
+                            AND classid=((hashtextextended(:key, 0) >> 32) & 4294967295)::oid
+                            AND objid=(hashtextextended(:key, 0) & 4294967295)::oid
+                            AND objsubid=1)"""),
+                            {"key": f"{name}:{state.source.deployment_id}"},
+                        ).scalar_one()
+                    if waiting or eraser.done():
+                        break
+                    release.wait(timeout=0.01)
+                assert waiting and not eraser.done(), (
+                    "erasure must await actual issued IO"
+                )
+            finally:
+                release.set()
+            with pytest.raises((CorpusLockLostError, FileNotFoundError)):
+                publisher.result(timeout=10)
+            eraser.result(timeout=10)
+        forget.assert_clean()

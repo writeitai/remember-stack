@@ -970,8 +970,19 @@ index regeneration, normal removal, reconcile and forget's authorized internal
 calls. Reuse caller lock ownership for internal calls. Re-read authority after
 taking the lock. Keep the claim alive while streaming. Before each object write
 or delete, confirm ownership of that advisory lock on the same PostgreSQL session
-and that the work claim is still live; abort further mutations on loss. Check
-before each multipart request too, so one bounded part is the largest upload
+and that the work claim is still live; abort further mutations on loss.
+
+Hold D74's existing shared admission/drain fence on an independent PostgreSQL session through all issued requests and own-upload cleanup, acquiring
+it before the publication lock. Check that original session's identity and lock
+ownership too. If the publication backend dies, the admission fence still makes
+forget wait for IO; if the admission backend dies, the publication lock still
+prevents P3 erasure from completing before IO returns. These are the existing
+D74/P3 locks, with no new coordination table or lock namespace. Losing all DB
+sessions still requires D74's external-write quiescence acknowledgement; database
+or lease state alone never proves that requests stopped.
+
+Check both locks and the live claim before each multipart request too, so one
+bounded part is the largest upload
 unit. Configure bounded S3 connect/read timeouts and disable automatic write
 retries that could issue a new request after lock loss. No detached uploads
 survive a handler.

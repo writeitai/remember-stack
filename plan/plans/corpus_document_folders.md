@@ -141,7 +141,10 @@ activates the production class/pushed handlers and marker readiness together wit
 synchronous public deletion and document-scoped D74 erasure. Retained versions,
 delete markers, upload-only folders and local metadata-only remnants participate
 in discovery. Navigation is erased/regenerated from scrubbed authority; surviving
-document files are never recopied. Completed portable manifests are re-armed before
+document files are never recopied. The existing D74 admission fence and publication
+lock use independent sessions, so either single-session loss still leaves erasure
+waiting for an issued request; real MinIO covers both losses, including a caller
+with no work claim. Completed portable manifests are re-armed before
 replay, and controlled sessions acknowledge quiescence and cache erasure.
 
 Periodic digest verification uses the existing delayed work ledger and its two
