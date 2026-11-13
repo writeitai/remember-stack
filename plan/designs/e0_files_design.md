@@ -695,9 +695,14 @@ published-object absence without claiming unfinished parts were checked or erase
 immediately. Mountable's gateway expires abandoned uploads after seven days;
 provider qualification records the deployed expiry/sweep guarantee. Other listing
 errors and all abort failures remain failures. No whole-video buffering or durable
-worker-local state. Every provider request has bounded connect/read timeouts; one multipart part
-is the largest upload unit. A qualified adapter provides complete-object replacement and
-read/write/delete/list consistency; mount caches have a separate lifetime. Existing raw create-only
+worker-local state. Replacement accepts the expected SHA-256 for object metadata
+and exposes a metadata read for digest verification. A caller-supplied guard runs immediately
+before each provider mutation, including multipart create/part/complete requests;
+cleanup may abort its own failed upload even after losing ownership. Every
+provider request has bounded connect/read timeouts; one multipart part
+is the largest upload unit. A qualified adapter provides complete-object
+replacement and read/write/delete/list consistency; mount caches have a separate
+lifetime. Existing raw create-only
 preconditions must also be qualified on each endpoint, not silently weakened.
 
 **Managed mount CLI contract.** `remember mount DIR` obtains a one-time mount

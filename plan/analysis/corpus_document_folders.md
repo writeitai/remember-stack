@@ -169,9 +169,10 @@ timing sleeps:
    with A's old bytes. The document marker still equals the current DB-derived
    digest, but the ready-folder identity is from the previous export.
 
-The test passes by asserting this **failure state**. It is a characterization of
-the proposed primitives, not evidence that a shipped publisher passes the slice's
-safety contract. The upload thread is joined before exit: it does not require a
+The original counterexample passed by asserting this **failure state**. It
+characterized the proposed primitives; the current regression extends it with
+the accepted repair and refusal of further writes described below. The upload
+thread is joined before exit: it does not require a
 detached upload, a new stale event, a lost announcement, or a stale final marker
 write from A. B may finish while A's synchronous request remains outside its
 control. A later recomputation could repair the index, but the last ordinary event
