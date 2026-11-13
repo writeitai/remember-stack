@@ -770,12 +770,14 @@ def _walk_all(rig: _Rig, *, between=None, **arguments: object) -> list[UUID]:  #
     cursor: str | None = None
     first = True
     while True:
-        page = _search(rig, k=1, **arguments, **({"cursor": cursor} if cursor else {}))
+        page = _search(
+            rig, limit=1, **arguments, **({"cursor": cursor} if cursor else {})
+        )
         seen.extend(result.doc_id for result in page.documents)
         if first and between is not None:
             between()
         first = False
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             return seen
 
@@ -802,7 +804,7 @@ def test_paging_pins_belief_across_a_retroactive_correction(rig: _Rig) -> None:
     assert paged == baseline
     assert len(set(paged)) == len(paged)
     # a fresh first page sees the correction
-    fresh = {item.doc_id for item in _search(rig, k=50).documents}
+    fresh = {item.doc_id for item in _search(rig, limit=50).documents}
     assert fresh == {plain.doc_id}
 
 
@@ -819,9 +821,9 @@ def test_paging_returns_a_short_page_with_a_cursor_at_the_scan_cap(rig: _Rig) ->
             ),
             {"doc": kept.doc_id},
         )
-    page = _search(rig, k=1)
+    page = _search(rig, limit=1)
     assert page.documents == ()
-    assert page.cursor is not None
+    assert page.next_cursor is not None
     assert _walk_all(rig) == [kept.doc_id]
 
 
@@ -1080,7 +1082,7 @@ def test_facts_context_gates_confirmation_and_shows_in_scope_evidence(
 def test_relation_lookup_and_one_hop_graph_apply_the_gate(rig: _Rig) -> None:
     corpus = _gate_corpus(rig)
     lookup = rig.query.lookup_relations(
-        deployment_id=_DEPLOYMENT_ID, subject_entity_id=corpus.subject, k=20
+        deployment_id=_DEPLOYMENT_ID, subject_entity_id=corpus.subject, limit=20
     )
     assert {fact.fact_id for fact in lookup.facts} == {
         corpus.facts[key] for key in ("in_force", "mixed", "memo")
@@ -1089,7 +1091,7 @@ def test_relation_lookup_and_one_hop_graph_apply_the_gate(rig: _Rig) -> None:
         deployment_id=_DEPLOYMENT_ID,
         subject_entity_id=corpus.subject,
         valid_at=_LATER,
-        k=20,
+        limit=20,
     )
     assert corpus.facts["future"] in {fact.fact_id for fact in as_of.facts}
 
@@ -1486,7 +1488,7 @@ def test_a_first_page_never_misses_a_correction_stamped_before_its_belief(
     pages: list[object] = []
 
     def read() -> None:
-        pages.append(_search(rig, k=1))
+        pages.append(_search(rig, limit=1))
 
     writer = threading.Thread(target=write)
     writer.start()
@@ -1802,13 +1804,13 @@ def _walk_pending(rig: _Rig, *, between) -> set[UUID]:  # noqa: ANN001
     cursor: str | None = None
     first = True
     while True:
-        page = _search(rig, k=1, **({"cursor": cursor} if cursor else {}))
+        page = _search(rig, limit=1, **({"cursor": cursor} if cursor else {}))
         if page.scope_pending is not None:
             pending.update(page.scope_pending.doc_ids)
         if first:
             between()
         first = False
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             return pending
 
@@ -1838,7 +1840,7 @@ def test_pinned_pages_keep_reporting_pending_as_known_at_their_belief(
             _declare(rig, converting, 0, (_PAST, None))
 
     assert converting.doc_id in _walk_pending(rig, between=change_belief)
-    fresh = _search(rig, k=50)
+    fresh = _search(rig, limit=50)
     assert (
         fresh.scope_pending is None
         or converting.doc_id not in fresh.scope_pending.doc_ids
