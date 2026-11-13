@@ -52,12 +52,14 @@ Your agents have easy access to the information - they remember!
 
 ## Built for agents
 
+- **CLI.** `pip install remember` gives you the `remember` command: send
+  documents (`remember ingest`), ask (`remember query`) and connect your
+  agent (`remember setup`). [CLI →](https://remember.dev/docs/reference/cli)
 - **MCP.** `remember mcp` gives Claude Code, Cursor, Codex, Claude Desktop and
   other MCP clients the memory tools; `remember setup` configures them in one
   command. [Connect your agent →](https://remember.dev/docs/start/connect-your-agent)
-- **Python SDK and CLI.** `pip install remember`.
-  [SDK →](https://remember.dev/docs/reference/python-sdk) ·
-  [CLI →](https://remember.dev/docs/reference/cli)
+- **Python SDK.** The same package as a Python client, `remember.Client`.
+  [SDK →](https://remember.dev/docs/reference/python-sdk)
 - **HTTP API.** The same operations over plain HTTP.
   [API →](https://remember.dev/docs/reference/http-api)
 - **Your files.** Markdown, text, HTML, Word, PowerPoint and Excel convert out
@@ -66,24 +68,18 @@ Your agents have easy access to the information - they remember!
 
 ## Quickstart
 
-You need Docker (Engine 28 or later for the tokenless local setup) and an
-[OpenRouter](https://openrouter.ai) API key.
+**[Quickstart →](https://remember.dev/docs/start/quickstart)**
 
-```bash
-git clone https://github.com/writeitai/remember-stack && cd remember-stack
-cp .env.example .env
-printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
-  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
-  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
-# edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
-docker compose up -d --build
+Or paste this into your coding agent:
 
-uvx remember setup --self-hosted   # connect your coding agent
+```text
+Set up RememberStack memory for me. Follow the quickstart at
+https://remember.dev/docs/start/quickstart (all docs for agents:
+https://remember.dev/llms.txt). Ask me whether to use remember.dev or a
+self-hosted instance, install the `remember` client, connect yourself with
+`remember setup`, then send one document and answer a question from it,
+citing the source.
 ```
-
-Then send a document and ask your first question:
-**[Quickstart →](https://remember.dev/docs/start/quickstart)** ·
-**[Self-hosting →](https://remember.dev/docs/self-hosting/install)**
 
 ## Open source, all of it
 

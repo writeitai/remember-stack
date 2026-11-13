@@ -15,6 +15,8 @@ htmlcov/
 /.loopy_loop/
 /.eval-banana/
 /.team-harness/
+/_claude_prompts/
+/_prompts/
 /loopy_loop_config.yaml
 /loopy_loop_goal.txt
 /loopy_loop_runbook.md
