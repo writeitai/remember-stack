@@ -76,7 +76,6 @@ from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.managed_metering import ManagedMeterCatalog
 from rememberstack.spine.processing_layers import ProcessingLayerCatalog
-from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
@@ -713,9 +712,7 @@ def _readiness(*, engine: Engine) -> PipelineReadinessCatalog:
     from rememberstack.profiles.selfhost import _expected_components
 
     return PipelineReadinessCatalog(
-        engine=engine,
-        expected_components=_expected_components(),
-        projections=ProjectionCatalog(engine=engine),
+        engine=engine, expected_components=_expected_components()
     )
 
 

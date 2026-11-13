@@ -1,4 +1,4 @@
-"""Read-only D155 selection. Publication and the existing P3 profile are separate."""
+"""Read-only D155 served-reading selection, with no object-store IO."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager

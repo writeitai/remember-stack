@@ -1,763 +1,275 @@
-"""WP-4.5 acceptance: the P3 corpus filesystem (e0 §6, D40).
-
-The tree rebuilds whole, publishes as an immutable snapshot, and satisfies
-the two contracts that make it worth having: **Tier-1 paths never move
-across rebuilds** (S44's durable targets), and **one `_index.md` read tells
-an agent what every file in the directory is about** — navigation cheaper
-than search, with zero LLM inside the builder.
-"""
+"""D155 activation: actual profile, ledger, readiness and normal deletion, no models."""
 
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
-from alembic import command
-from alembic.config import Config
-from pydantic import ValidationError
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import LocalFSObjectStore
-from rememberstack.adapters.selfhost import LocalMountPublisher
-from rememberstack.adapters.selfhost.mounts import EMPTY_CORPUS_NOTE
-from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.adapters.testing.model_provider import FakeModelProvider
+from rememberstack.core.corpus_export import CorpusDocument
+from rememberstack.model import ForgetInProgressError
 from rememberstack.model import ObjectKey
-from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine import ProjectionCatalog
+from rememberstack.model import ReadinessRequirements
+from rememberstack.model import RunResultOutcome
+from rememberstack.profiles import SelfHostProfile
+from rememberstack.profiles import SelfHostSettings
+from rememberstack.spine import PipelineReadinessCatalog
 from rememberstack.spine.processing_layers import ProcessingLayerCatalog
-from rememberstack.spine.settings import load_database_settings
-from rememberstack.workers import CorpusFsBuilder
-from rememberstack.workers import CorpusFsSettings
-from rememberstack.workers.p3 import _tier_one_entities_index
-from tests.database_reset import reset_database
-
-_ROOT = Path(__file__).resolve().parents[3]
-_DEPLOYMENT_ID = UUID("45000000-0000-0000-0000-000000000001")
+from tests.workers.test_corpus_reader_export_pg import corpus as corpus
+from tests.workers.test_corpus_reader_export_pg import engine as engine
 
 
-@pytest.fixture(scope="module")
-def database_engine() -> Iterator[Engine]:
-    """Apply structural head and expose the accepted PostgreSQL engine."""
-    try:
-        database_url = load_database_settings().sqlalchemy_url()
-    except ValidationError:
-        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real corpus-fs proofs")
-    config = Config(str(_ROOT / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", database_url)
-    reset_database(config=config)
-    command.upgrade(config=config, revision="head")
-    engine = create_engine(database_url)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
+@pytest.fixture
+def active(
+    engine: Engine, corpus, tmp_path: Path
+) -> Iterator[tuple[SelfHostProfile, CorpusDocument, LocalFSObjectStore]]:
+    source, artifacts, raw = corpus
+    stores = [
+        LocalFSObjectStore(root=tmp_path / name)
+        for name in ("raw", "artifacts", "corpus")
+    ]
+    for store, authority in zip(stores, (raw, artifacts), strict=False):
+        for key, content in authority.objects.items():
+            store.write_bytes(key=ObjectKey(key), content=content, storage_class="hot")
+    manifests = tmp_path / "portable-intent"
+    manifests.mkdir()
+    profile = SelfHostProfile(
+        settings=SelfHostSettings(
+            deployment_id=source.deployment_id, forget_manifest_root=manifests
+        ),
+        engine=engine,
+        raw_store=stores[0],  # type: ignore[arg-type]
+        artifact_store=stores[1],  # type: ignore[arg-type]
+        corpusfs_store=stores[2],  # type: ignore[arg-type]
+        model_provider=FakeModelProvider(),
+        model_provider_settings=OpenRouterSettings(api_key="unused"),
+    )
+    yield profile, source, stores[2]
 
 
-class _Corpus:
-    """A small corpus with summaries, placements, entities, and mentions."""
+def _ready(engine: Engine, source: CorpusDocument, *versions):
+    return PipelineReadinessCatalog(engine=engine, expected_components={}).inspect(
+        deployment_id=source.deployment_id,
+        version_ids=versions or (source.version_id,),
+        require=ReadinessRequirements(
+            pipeline=False, p1=False, live_graph=False, p3=True
+        ),
+    )
 
-    def __init__(self, *, engine: Engine) -> None:
-        """Seed documents (with root-section summaries) and one entity."""
-        self.engine = engine
-        self.docs: dict[str, UUID] = {}
-        self.entity_id = uuid4()
-        with engine.begin() as connection:
+
+def test_readiness_matches_only_current_document_digest(active, engine: Engine) -> None:
+    profile, source, store = active
+    assert (
+        _ready(engine, source).capabilities["p3"].reason
+        == "corpus_publication_incomplete"
+    )
+    assert profile.run_projection(plane="p3") == {"p3": 1}
+    ready = _ready(engine, source)
+    assert ready.ready
+    with engine.connect() as connection:
+        assert (
+            ready.capabilities["p3"].version
+            == connection.execute(
+                text(
+                    "SELECT corpus_published_revision FROM documents WHERE doc_id=:doc"
+                ),
+                {"doc": source.doc_id},
+            ).scalar_one()
+        )
+    assert ready.capabilities["p3"].built_at is None
+    assert ready.capabilities["p3"].published_at is None
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_metadata SET title = 'A new title' WHERE version_id=:v"
+            ),
+            {"v": source.version_id},
+        )
+    assert not _ready(engine, source).ready
+    profile.run_projection(plane="p3")
+    assert _ready(engine, source).ready
+    assert not list(store.iter_keys(prefix=source.path))
+
+
+@pytest.mark.parametrize("claims,facts", [(True, True), (True, False), (False, False)])
+def test_profile_publication_and_synchronous_delete_in_every_layer(
+    active, engine: Engine, claims: bool, facts: bool
+) -> None:
+    profile, source, store = active
+    ProcessingLayerCatalog(engine=engine).reconcile_settings(
+        deployment_id=source.deployment_id, claims_enabled=claims, facts_enabled=facts
+    )
+    profile.seed_corpus_work()
+    results = profile.worker_loop(worker_class="llm", concurrency=1).drain_due()
+    assert results and all(row.outcome == RunResultOutcome.SUCCEEDED for row in results)
+    assert _ready(engine, source).ready
+    assert store.read_bytes(key=ObjectKey(source.path + "/original.pdf"))
+    result = profile.api_deployment().deletion
+    assert result is not None
+    assert (
+        result.delete_document(
+            deployment_id=source.deployment_id, doc_id=source.doc_id
+        ).doc_id
+        == source.doc_id
+    )
+    assert not list(store.iter_keys(prefix=source.path))
+    assert not _ready(engine, source).ready
+    assert (
+        str(source.doc_id).encode()
+        not in store.read_bytes(key=ObjectKey("pdf/finance/annual-reports/_index.md"))
+        if list(store.iter_keys(prefix="pdf/finance"))
+        else True
+    )
+
+
+@pytest.mark.parametrize("failure", ["delete", "index"])
+def test_delete_failure_reports_failure_and_retains_durable_retry(
+    active, engine: Engine, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    profile, source, store = active
+    profile.run_projection(plane="p3")
+
+    def fail(**kwargs: Any) -> None:
+        raise RuntimeError("injected storage failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            store, "delete" if failure == "delete" else "replace_stream", fail
+        )
+        deletion = profile.api_deployment().deletion
+        assert deletion is not None
+        with pytest.raises(RuntimeError, match="injected"):
+            deletion.delete_document(
+                deployment_id=source.deployment_id, doc_id=source.doc_id
+            )
+    with engine.connect() as connection:
+        event = connection.execute(
+            text(
+                "SELECT processing_id FROM processing_state WHERE stage='publish_corpus' AND status='pending' ORDER BY enqueued_at DESC LIMIT 1"
+            )
+        ).scalar_one()
+        assert connection.execute(
+            text(
+                "SELECT deleted_at IS NOT NULL AND corpus_published_revision IS NULL FROM documents WHERE doc_id=:doc"
+            ),
+            {"doc": source.doc_id},
+        ).scalar_one()
+    assert profile.run_task(processing_id=event).outcome == RunResultOutcome.SUCCEEDED
+    assert not list(store.iter_keys(prefix=source.path))
+
+
+@pytest.mark.parametrize("delivery", ["class", "pushed"])
+def test_periodic_verification_repairs_behind_marker_and_schedules_next(
+    active, engine: Engine, delivery: str
+) -> None:
+    profile, source, store = active
+    profile.run_projection(plane="p3")
+    profile.seed_corpus_work()
+    profile.seed_corpus_work()
+    profile.worker_loop(worker_class="llm", concurrency=1).drain_due()
+    with engine.begin() as connection:
+        rows = (
             connection.execute(
                 text(
-                    "INSERT INTO entities (entity_id, deployment_id,"
-                    " canonical_name, normalized_name, profile_summary,"
-                    " mention_count)"
-                    " VALUES (:e, :d, 'Acme', 'acme',"
-                    " 'A manufacturer of anvils.', 3)"
-                ),
-                {"e": self.entity_id, "d": _DEPLOYMENT_ID},
-            )
-            for title, placement, summary in (
-                (
-                    "Annual Report",
-                    "/finance/annual-reports/2023/",
-                    "Acme's 2023 results.",
-                ),
-                ("Design Note", "/research/anvils/", "How the anvil is shaped."),
-                ("Loose Memo", None, "An unfiled memo."),
-            ):
-                self.docs[title] = self._document(
-                    connection, title=title, placement=placement, summary=summary
-                )
-
-    def _document(
-        self, connection: object, *, title: str, placement: str | None, summary: str
-    ) -> UUID:
-        """One lineage with a ready version, representation, and root section."""
-        doc_id, version_id, representation_id = uuid4(), uuid4(), uuid4()
-        structure_generation_id = uuid4()
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
-                " source_ref, title) VALUES (:doc, :d, 'upload', :ref, :title)"
-            ),
-            {"doc": doc_id, "d": _DEPLOYMENT_ID, "ref": title.lower(), "title": title},
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO content_objects (deployment_id, content_hash, mime,"
-                " byte_size, raw_uri) VALUES (:d, :h, 'text/markdown', 10, :uri)"
-                " ON CONFLICT DO NOTHING"
-            ),
-            {"d": _DEPLOYMENT_ID, "h": f"hash-{title}", "uri": f"raw/{doc_id}"},
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
-                " content_hash, version_no, status, source_modified_at)"
-                " VALUES (:v, :d, :doc, :h, 1, 'ready', :modified)"
-            ),
-            {
-                "v": version_id,
-                "d": _DEPLOYMENT_ID,
-                "doc": doc_id,
-                "h": f"hash-{title}",
-                "modified": datetime(2024, 3, 15, tzinfo=UTC),
-            },
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO document_representations (representation_id,"
-                " deployment_id, version_id, route, converter_name,"
-                " converter_version, blockizer_version, markdown_uri, blocks_uri,"
-                " conversion_uri, meta_uri, markdown_hash, manifest_hash, status)"
-                " VALUES (:r, :d, :v, 'markdown', 'passthrough', '1', '1',"
-                " :md, 'b', 'c', 'm', 'mh', 'sh', 'ready')"
-            ),
-            {
-                "r": representation_id,
-                "d": _DEPLOYMENT_ID,
-                "v": version_id,
-                "md": f"{doc_id}/document.md",
-            },
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO document_structure_generations"
-                " (structure_generation_id, deployment_id, doc_id, version_id,"
-                " representation_id, skeleton_version, skeleton_hash,"
-                " skeleton_producer_family, roles_version, summary_version,"
-                " placement_version, route_tag, candidate_skeleton_hash,"
-                " stats_version, stats)"
-                " VALUES (:generation, :d, :doc, :v, :r, 'test-skeleton',"
-                " :hash, 'N/A', 'test-role', 'test-summary', 'test-placement',"
-                " 'parser', :hash, 'test-stats',"
-                " jsonb_build_object('stats_version', 'test-stats',"
-                " 'section_count', 0))"
-            ),
-            {
-                "generation": structure_generation_id,
-                "d": _DEPLOYMENT_ID,
-                "doc": doc_id,
-                "v": version_id,
-                "r": representation_id,
-                "hash": f"test-skeleton-{doc_id}",
-            },
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO document_sections (section_id, deployment_id, doc_id,"
-                " version_id, representation_id, structure_generation_id, node_path,"
-                " block_start, block_end, title, role, char_start, char_end, ordinal, summary,"
-                " placement_path, structurer_version)"
-                " VALUES (:s, :d, :doc, :v, :r, :generation, '0', 0, 1, :title,"
-                " 'body', 0, 10, 0, :summary, :placement, 'test')"
-            ),
-            {
-                "s": uuid4(),
-                "d": _DEPLOYMENT_ID,
-                "doc": doc_id,
-                "v": version_id,
-                "r": representation_id,
-                "generation": structure_generation_id,
-                "title": title,
-                "summary": summary,
-                "placement": placement,
-            },
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "UPDATE document_versions SET current_representation_id = :r"
-                " WHERE version_id = :v"
-            ),
-            {"r": representation_id, "v": version_id},
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "UPDATE document_representations"
-                " SET current_structure_generation_id = :generation"
-                " WHERE representation_id = :r"
-            ),
-            {"generation": structure_generation_id, "r": representation_id},
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"),
-            {"v": version_id, "doc": doc_id},
-        )
-        mention_id = uuid4()
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO mentions (mention_id, deployment_id, surface_form,"
-                " normalized_lemma, doc_id) VALUES (:m, :d, 'Acme', 'acme', :doc)"
-            ),
-            {"m": mention_id, "d": _DEPLOYMENT_ID, "doc": doc_id},
-        )
-        connection.execute(  # type: ignore[attr-defined]
-            text(
-                "INSERT INTO resolution_decisions (decision_id, deployment_id,"
-                " mention_id, entity_id, method, confidence, resolver_version)"
-                " VALUES (:id, :d, :m, :e, 'T0', 1.0, 'test')"
-            ),
-            {"id": uuid4(), "d": _DEPLOYMENT_ID, "m": mention_id, "e": self.entity_id},
-        )
-        return doc_id
-
-
-@pytest.fixture()
-def corpus(database_engine: Engine) -> _Corpus:
-    """A fresh deployment carrying the seeded corpus."""
-    with database_engine.begin() as connection:
-        connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
-        for table in ("mentions", "resolution_decisions"):
-            connection.execute(statement=text(f"TRUNCATE TABLE {table} CASCADE"))
-    DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
-        deployment_input=DeploymentBootstrapInput(
-            deployment_id=_DEPLOYMENT_ID,
-            slug="p3-test",
-            name="P3 corpus filesystem proofs",
-            default_language="en",
-            raw_bucket="mem://raw",
-            artifacts_bucket="mem://artifacts",
-            corpusfs_bucket="mem://corpusfs",
-        )
-    )
-    return _Corpus(engine=database_engine)
-
-
-class _Tree:
-    """Read a published snapshot the way an agent's mount would."""
-
-    def __init__(self, *, store: LocalFSObjectStore, prefix: str) -> None:
-        """Bind to one snapshot's prefix."""
-        self._store = store
-        self._prefix = prefix
-
-    def read(self, path: str) -> str:
-        """`cat` one file."""
-        return self._store.read_bytes(key=ObjectKey(f"{self._prefix}/{path}")).decode()
-
-    def paths(self) -> set[str]:
-        """Every file in the snapshot (from its manifest)."""
-        import json
-
-        manifest = json.loads(self.read("MANIFEST.json"))
-        return set(manifest["files"])
-
-
-def _build(corpus: _Corpus, tmp_path: Path, **kwargs: object) -> tuple[_Tree, dict]:
-    """Build one snapshot and return a reader plus the build result."""
-    catalog = ProjectionCatalog(engine=corpus.engine)
-    store = LocalFSObjectStore(root=tmp_path / "corpusfs")
-    builder = CorpusFsBuilder(
-        catalog=catalog,
-        snapshot_store=store,
-        settings=CorpusFsSettings(**kwargs),  # type: ignore[arg-type]
-    )
-    result = builder.build(deployment_id=_DEPLOYMENT_ID)
-    latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P3_corpusfs")
-    assert latest is not None
-    return _Tree(store=store, prefix=str(latest["gcs_uri"])), result
-
-
-def test_the_navigation_ladder_is_walkable(corpus: _Corpus, tmp_path: Path) -> None:
-    """S44: root orientation → facet → directory member table → stub, each
-    step one `cat`, and the member table tells an agent what every file is
-    about without opening one."""
-    tree, result = _build(corpus, tmp_path)
-    assert result["published"] is True
-
-    root = tree.read("llms.txt")
-    assert "documents/" in root and "entities/" in root  # the durable tiers
-    assert "by-source/" in root  # a view facet
-
-    facet = tree.read("by-source/_index.md")
-    assert "upload/" in facet  # the facet lists its subdirectories
-
-    directory = tree.read("by-source/upload/_index.md")
-    assert "3 document(s)" in directory
-    # the load-bearing property: every member's meaning is IN the index
-    assert "Acme's 2023 results." in directory
-    assert "How the anvil is shaped." in directory
-    assert "An unfiled memo." in directory
-
-    stub_name = next(
-        path.rsplit("/", 1)[1]
-        for path in tree.paths()
-        if path.startswith("by-source/upload/")
-        and path.endswith(".md")
-        and "annual-report" in path
-    )
-    stub = tree.read(f"by-source/upload/{stub_name}")
-    assert 'canonical_path: "documents/' in stub  # every view stub names Tier 1
-    assert "document.md" in stub  # and points at the artifact
-    assert "raw_uri" in stub  # D51: raw is off-path, never unreachable
-
-
-def test_tier_one_paths_survive_rebuilds(corpus: _Corpus, tmp_path: Path) -> None:
-    """The path contract (F6): canonical document and entity leaves never
-    move across rebuilds — even when the corpus grows and views reshuffle."""
-    first, _ = _build(corpus, tmp_path)
-    canonical = {
-        path for path in first.paths() if path.startswith(("documents/", "entities/"))
-    }
-    assert f"documents/{corpus.docs['Annual Report']}/_index.md" in canonical
-    assert any(str(corpus.entity_id) in path for path in canonical)
-
-    with corpus.engine.begin() as connection:  # the corpus grows
-        connection.execute(
-            text(
-                "INSERT INTO entities (entity_id, deployment_id,"
-                " canonical_name, normalized_name)"
-                " VALUES (:e, :d, 'Wile E', 'wile e')"
-            ),
-            {"e": uuid4(), "d": _DEPLOYMENT_ID},
-        )
-    second, _ = _build(corpus, tmp_path / "again")
-    assert canonical <= second.paths()  # every old Tier-1 path still there
-
-
-def test_placement_hints_drive_topic_views(corpus: _Corpus, tmp_path: Path) -> None:
-    """The structurer's placement hint (D39) becomes a topic view — and a
-    document without one is still fully navigable."""
-    tree, _ = _build(corpus, tmp_path)
-    paths = tree.paths()
-    assert any(
-        path.startswith("by-topic/finance/annual-reports/2023/") for path in paths
-    )
-    assert any(path.startswith("by-topic/research/anvils/") for path in paths)
-    # the unplaced memo appears in the source and time views regardless
-    memo_stubs = [
-        path for path in paths if "loose-memo" in path and path.endswith(".md")
-    ]
-    assert any(path.startswith("by-source/") for path in memo_stubs)
-    assert any(path.startswith("by-time/2024/03/") for path in memo_stubs)
-
-
-def test_entity_pages_carry_their_evidencing_documents(
-    corpus: _Corpus, tmp_path: Path
-) -> None:
-    """`entities/<id>/_index.md`: profile plus the documents that
-    mention it — the evidence side of understanding ↔ evidence."""
-    tree, _ = _build(corpus, tmp_path)
-    page = tree.read(f"entities/{corpus.entity_id}/_index.md")
-    assert "# Acme" in page
-    assert "A manufacturer of anvils." in page
-    assert "3 mention(s)" in page
-    assert "annual-report" in page  # the member table lists its documents
-
-
-def test_oversized_directories_shard_deterministically(
-    corpus: _Corpus, tmp_path: Path
-) -> None:
-    """Bounded fan-out: a directory under the threshold stays flat, one
-    above it shards — and a rebuild puts each document in the same shard."""
-    flat, _ = _build(corpus, tmp_path / "flat")
-    assert "by-source/upload/_index.md" in flat.paths()  # 3 members: no shards
-
-    with corpus.engine.begin() as connection:  # grow past a low threshold
-        for index in range(6):
-            corpus._document(  # noqa: SLF001 — the fixture's own seeder
-                connection,
-                title=f"Bulk {index}",
-                placement=None,
-                summary=f"Bulk document {index}.",
-            )
-    sharded, _ = _build(corpus, tmp_path / "sharded", shard_threshold=4)
-    shard_indexes = {
-        path
-        for path in sharded.paths()
-        if path.startswith("by-source/upload/") and path.endswith("/_index.md")
-    }
-    assert len(shard_indexes) > 1  # the oversized view split
-    again, _ = _build(corpus, tmp_path / "again", shard_threshold=4)
-    assert sharded.paths() == again.paths()  # same document, same shard
-
-
-def test_the_builder_calls_no_model(corpus: _Corpus, tmp_path: Path) -> None:
-    """The projection builder is fully deterministic: two builds of an
-    unchanged corpus render byte-identical trees (a directory-level LLM
-    summary is a rejected alternative — that is a K page's job)."""
-    first, _ = _build(corpus, tmp_path)
-    second, _ = _build(corpus, tmp_path / "again")
-    assert first.paths() == second.paths()
-    for path in sorted(first.paths()):
-        assert first.read(path) == second.read(path)
-
-
-def test_every_level_carries_orientation(corpus: _Corpus, tmp_path: Path) -> None:
-    """Codex review: e0 §6's contract is that EACH level carries an index —
-    an intermediate directory named as a parent but missing its own index
-    is a dead end in the navigation ladder."""
-    tree, _ = _build(corpus, tmp_path)
-    paths = tree.paths()
-    directories = {path.rsplit("/", 1)[0] for path in paths if "/" in path}
-    for directory in directories:
-        assert f"{directory}/_index.md" in paths, f"{directory} has no index"
-    # intermediates of a deep topic path exist in their own right
-    assert "by-topic/finance/_index.md" in paths
-    assert "by-topic/finance/annual-reports/_index.md" in paths
-    # and the declared facet skeleton exists whether or not documents landed
-    for facet in ("by-source", "by-time", "by-topic"):
-        assert f"{facet}/_index.md" in paths
-        assert f"{facet}/llms.txt" in paths
-
-
-def test_tier_one_roots_carry_member_tables(corpus: _Corpus, tmp_path: Path) -> None:
-    """Codex review: `documents/_index.md` and `entities/_index.md` are member
-    tables, not bare counts — and every member row links to a path that
-    actually exists."""
-    tree, _ = _build(corpus, tmp_path)
-    documents_index = tree.read("documents/_index.md")
-    assert "| File |" in documents_index
-    assert "Annual Report".lower().replace(" ", "-") in documents_index
-    entities_index = tree.read("entities/_index.md")
-    assert "| Entity |" in entities_index
-    assert "Acme" in entities_index
-    assert str(corpus.entity_id) in entities_index
-
-    # an entity page's member rows link to canonical paths that resolve
-    page = tree.read(f"entities/{corpus.entity_id}/_index.md")
-    assert "../../documents/" in page  # a real relative link, not a dead name
-
-
-def test_empty_entity_root_keeps_three_column_table_shape() -> None:
-    """The empty sentinel must match the post-D96 three-column header."""
-    index = _tier_one_entities_index(entities=())
-    assert "| Entity | Mentions | Canonical |" in index
-    assert "| — | — | — |" in index
-    assert "| — | — | — | — |" not in index
-
-
-def test_pathological_titles_and_refs_are_contained(
-    corpus: _Corpus, tmp_path: Path
-) -> None:
-    """Codex review: one hostile or merely verbose document must not break a
-    publish — long names are capped, and a source ref carrying a newline
-    cannot inject or override frontmatter."""
-    with corpus.engine.begin() as connection:
-        corpus._document(  # noqa: SLF001 — the fixture's own seeder
-            connection,
-            title="X" * 300,
-            placement="/" + "/".join("deep" for _ in range(20)) + "/",
-            summary="A very long title.",
-        )
-        connection.execute(
-            text("UPDATE documents SET source_ref = :ref WHERE title = :title"),
-            {
-                "ref": 'evil\ncanonical_path: "documents/attacker-controlled"',
-                "title": "X" * 300,
-            },
-        )
-    tree, _ = _build(corpus, tmp_path)
-    # a slug caps at 60 chars; a stub adds "-<uuid>.md" — comfortably under
-    # the 255-byte component limit common filesystems enforce
-    assert all(len(part) <= 110 for path in tree.paths() for part in path.split("/"))
-    # and a 20-deep placement hint is capped, not honored blindly
-    assert all(path.count("/") <= 8 for path in tree.paths())
-    hostile = next(
-        tree.read(path)
-        for path in tree.paths()
-        if path.startswith("by-source/") and "xxxxx" in path
-    )
-    # the injected text survives as part of a JSON-escaped VALUE (harmless)
-    # but never becomes a second frontmatter FIELD — only one line declares
-    # canonical_path, and it names the real document
-    field_lines = [
-        line for line in hostile.splitlines() if line.startswith("canonical_path:")
-    ]
-    assert len(field_lines) == 1
-    assert "attacker-controlled" not in field_lines[0]
-    assert "\\n" in hostile  # the newline was escaped, not emitted raw
-
-
-def test_non_current_generations_never_leak_into_the_tree(
-    corpus: _Corpus, tmp_path: Path
-) -> None:
-    """P3 reads ONLY the representation's current generation: a second,
-    non-current generation with a poison section must leave the built tree
-    byte-identical (review: nothing proved the join excludes history)."""
-    before, _ = _build(corpus, tmp_path / "before")
-    with corpus.engine.begin() as connection:
-        representation = connection.execute(
-            text(
-                "SELECT r.representation_id, r.version_id, v.doc_id"
-                " FROM document_representations r"
-                " JOIN document_versions v ON v.version_id = r.version_id LIMIT 1"
-            )
-        ).one()
-        stale_generation = uuid4()
-        connection.execute(
-            text(
-                "INSERT INTO document_structure_generations ("
-                " structure_generation_id, deployment_id, doc_id, version_id,"
-                " representation_id, skeleton_version, skeleton_hash,"
-                " skeleton_producer_family, route_tag, candidate_skeleton_hash,"
-                " stats_version, stats) VALUES ("
-                " :generation, :d, :doc, :v, :r, 'stale-v', 'stale-hash', 'N/A',"
-                " 'parser', 'stale-hash', 'stale-stats', CAST('{}' AS jsonb))"
-            ),
-            {
-                "generation": stale_generation,
-                "d": _DEPLOYMENT_ID,
-                "doc": representation.doc_id,
-                "v": representation.version_id,
-                "r": representation.representation_id,
-            },
-        )
-        connection.execute(
-            text(
-                "INSERT INTO document_sections (section_id, deployment_id, doc_id,"
-                " version_id, representation_id, structure_generation_id, node_path,"
-                " block_start, block_end, title, role, char_start, char_end,"
-                " ordinal, structurer_version)"
-                " VALUES (:s, :d, :doc, :v, :r, :generation, '0', 0, 1,"
-                " 'POISON NON-CURRENT SECTION', 'body', 0, 10, 0, 'stale-v')"
-            ),
-            {
-                "s": uuid4(),
-                "d": _DEPLOYMENT_ID,
-                "doc": representation.doc_id,
-                "v": representation.version_id,
-                "r": representation.representation_id,
-                "generation": stale_generation,
-            },
-        )
-    after, _ = _build(corpus, tmp_path / "after")
-    assert before.paths() == after.paths()
-    for path in sorted(after.paths()):
-        content = after.read(path)
-        assert "POISON" not in content
-        assert after.read(path) == before.read(path)
-
-
-def _store_unprocessed_version(*, corpus: _Corpus, doc_id: UUID) -> UUID:
-    """Add a durable newer original without changing processed currency."""
-    version_id = uuid4()
-    with corpus.engine.begin() as connection:
-        connection.execute(
-            text(
-                "INSERT INTO content_objects (deployment_id, content_hash, mime, byte_size, raw_uri) VALUES (:d, :h, 'audio/example', 9, :uri)"
-            ),
-            {
-                "d": _DEPLOYMENT_ID,
-                "h": str(version_id),
-                "uri": f"{doc_id}/{version_id}/original.bin",
-            },
-        )
-        connection.execute(
-            text(
-                "INSERT INTO document_versions (version_id, deployment_id, doc_id, content_hash, version_no, status) VALUES (:v, :d, :doc, :h, 2, 'converting')"
-            ),
-            {"v": version_id, "d": _DEPLOYMENT_ID, "doc": doc_id, "h": str(version_id)},
-        )
-    return version_id
-
-
-def test_new_raw_version_does_not_replace_processed_evidence(
-    corpus: _Corpus, tmp_path: Path
-) -> None:
-    """P3 keeps v1's evidence distinct from stored v2 and falls back on deletion."""
-    doc_id = corpus.docs["Annual Report"]
-    version_id = _store_unprocessed_version(corpus=corpus, doc_id=doc_id)
-    catalog = ProjectionCatalog(engine=corpus.engine)
-    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
-        document = next(row for row in export.documents() if row["doc_id"] == doc_id)
-    assert document["stored_version_id"] == version_id
-    assert document["version_id"] != version_id
-    assert document["root_summary"] == "Acme's 2023 results."
-    assert document["raw_uri"] != document["stored_raw_uri"]
-    tree, _ = _build(corpus=corpus, tmp_path=tmp_path)
-    stub = tree.read(f"documents/{doc_id}/_index.md")
-    assert f"Current processed version: `{document['version_id']}`" in stub
-    assert "Latest stored original" in stub
-    assert str(document["stored_raw_uri"]) in stub
-    assert "This original is not the current processed version" in stub
-    assert "newer/different original stored" in tree.read("documents/_index.md")
-    with corpus.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE document_versions SET deleted_at = now() WHERE version_id = :v"
-            ),
-            {"v": version_id},
-        )
-    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
-        surviving = next(row for row in export.documents() if row["doc_id"] == doc_id)
-    assert surviving["stored_version_id"] == document["version_id"]
-    with corpus.engine.begin() as connection:
-        connection.execute(
-            text("UPDATE documents SET deleted_at = now() WHERE doc_id = :d"),
-            {"d": doc_id},
-        )
-    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
-        assert doc_id not in {row["doc_id"] for row in export.documents()}
-
-
-def test_purged_originals_are_not_advertised(corpus: _Corpus) -> None:
-    """Catalog metadata for purged bytes cannot create raw links."""
-    doc_id = corpus.docs["Annual Report"]
-    version_id = _store_unprocessed_version(corpus=corpus, doc_id=doc_id)
-    catalog = ProjectionCatalog(engine=corpus.engine)
-    with corpus.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE content_objects SET purged_at = now() WHERE deployment_id = :d AND content_hash = :h"
-            ),
-            {"d": _DEPLOYMENT_ID, "h": str(version_id)},
-        )
-    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
-        row = next(row for row in export.documents() if row["doc_id"] == doc_id)
-        assert row["stored_version_id"] != version_id
-    with corpus.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE content_objects SET purged_at = NULL WHERE deployment_id = :d AND content_hash = :h"
-            ),
-            {"d": _DEPLOYMENT_ID, "h": str(version_id)},
-        )
-    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
-        row = next(row for row in export.documents() if row["doc_id"] == doc_id)
-        assert row["stored_version_id"] == version_id
-    with catalog.corpus_export(deployment_id=uuid4()) as export:
-        assert export.documents() == ()
-
-
-class _OpenAdmission:
-    """D74 never fences these proofs."""
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Always available."""
-        del deployment_id
-
-
-def test_a_facts_off_snapshot_omits_entities_and_mounts_serve_only_matching_ones(
-    corpus: _Corpus, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """§9.13 mounts: after an all-on publication facts are switched off. The
-    all-on snapshot is never activated for the new served set (placeholder,
-    no knowledge mount); the matching build omits ``entities/`` and every
-    line linking to it and records ``facts=False``; a build that started
-    under facts-on and publishes after the switch is not activated."""
-    catalog = ProjectionCatalog(engine=corpus.engine)
-    store = LocalFSObjectStore(root=tmp_path / "corpusfs")
-    knowledge = tmp_path / "knowledge"
-    knowledge.mkdir()
-    publisher = LocalMountPublisher(
-        root=tmp_path / "mounts",
-        catalog=catalog,
-        corpusfs_store=store,
-        knowledge_root=knowledge,
-        admission=_OpenAdmission(),
-    )
-    layers = ProcessingLayerCatalog(engine=corpus.engine)
-
-    CorpusFsBuilder(catalog=catalog, snapshot_store=store).build(
-        deployment_id=_DEPLOYMENT_ID, version="a-all-on"
-    )
-    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
-    assert (Path(mounts.p3) / "entities" / "_index.md").exists()
-    assert mounts.knowledge is not None
-    latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P3_corpusfs")
-    assert latest is not None and "facts" not in dict(latest["validation"])  # type: ignore[arg-type]
-
-    # A slow build starts while facts are served; before it publishes, setup
-    # switches facts off and publishes the matching snapshot.
-    stale_catalog = ProjectionCatalog(engine=corpus.engine)
-    publish_stale = stale_catalog.publish
-    published: dict[str, object] = {}
-
-    def switch_then_publish(**kwargs: object) -> bool:
-        layers.reconcile_settings(
-            deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=False
-        )
-        placeholder = publisher.publish(deployment_id=_DEPLOYMENT_ID)
-        published["placeholder"] = (Path(placeholder.p3) / "llms.txt").read_text()
-        published["placeholder_entities"] = (Path(placeholder.p3) / "entities").exists()
-        published["placeholder_knowledge"] = placeholder.knowledge
-        published["matching"] = CorpusFsBuilder(
-            catalog=catalog, snapshot_store=store
-        ).build(deployment_id=_DEPLOYMENT_ID, version="b-no-facts")
-        return publish_stale(**kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(stale_catalog, "publish", switch_then_publish)
-    stale = CorpusFsBuilder(catalog=stale_catalog, snapshot_store=store).build(
-        deployment_id=_DEPLOYMENT_ID, version="c-stale-all-on"
-    )
-
-    # the all-on snapshot was never activated for the facts-off set
-    assert published["placeholder"] == EMPTY_CORPUS_NOTE
-    assert published["placeholder_entities"] is False
-    assert published["placeholder_knowledge"] is None
-    # the stale build is recorded for its own configuration and not activated
-    assert stale["published"] is False
-    with corpus.engine.connect() as connection:
-        stale_row = (
-            connection.execute(
-                text(
-                    "SELECT status::text AS status, validation"
-                    " FROM projection_snapshots WHERE version = 'c-stale-all-on'"
+                    "SELECT processing_id, not_before, status FROM processing_state WHERE stage='reconcile_corpus'"
                 )
             )
             .mappings()
-            .one()
+            .all()
         )
-    assert stale_row["status"] == "superseded"
-    assert "facts" not in stale_row["validation"]
-
-    latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P3_corpusfs")
-    assert latest is not None and latest["version"] == "b-no-facts"
-    assert dict(latest["validation"])["facts"] is False  # type: ignore[arg-type]
-    tree = _Tree(store=store, prefix=str(latest["gcs_uri"]))
-    paths = tree.paths()
-    assert paths and not any(path.startswith("entities/") for path in paths)
-    assert not any("entities/" in tree.read(path) for path in paths)
-    assert "Acme's 2023 results." in tree.read("by-source/upload/_index.md")
-
-    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
-    served = Path(mounts.p3)
-    assert (served / ".snapshot-version").read_text() == "b-no-facts"
-    assert not (served / "entities").exists()
-    assert "entities/" not in (served / "llms.txt").read_text()
-    assert mounts.knowledge is None
-
-    # Facts back on before a matching build exists: the earlier all-on
-    # publication is the latest snapshot built for this set, so it serves
-    # again; the stale build that never published does not.
-    layers.reconcile_settings(
-        deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=True
-    )
-    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
-    assert (Path(mounts.p3) / ".snapshot-version").read_text() == "a-all-on"
-    assert (Path(mounts.p3) / "entities" / "_index.md").exists()
-    # A deletion after that publication retires it: an older tree never
-    # brings deleted content back, so the placeholder stands until a rebuild.
-    with corpus.engine.begin() as connection:
+        assert len(rows) == 1 and rows[0]["status"] == "pending"
+        assert (rows[0]["not_before"] - datetime.now(tz=UTC)).total_seconds() > 86_300
+        event = rows[0]["processing_id"]
+        # Place the prior cadence slot in the past without sleeping a day.
         connection.execute(
             text(
-                "UPDATE documents SET deleted_at = now()"
-                " WHERE doc_id = (SELECT doc_id FROM documents"
-                " WHERE deployment_id = :d LIMIT 1)"
+                "UPDATE processing_state SET not_before=now(), target_id=:old_slot WHERE processing_id=:p"
             ),
-            {"d": _DEPLOYMENT_ID},
+            {"p": event, "old_slot": uuid4()},
         )
-    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
-    assert (Path(mounts.p3) / "llms.txt").read_text() == EMPTY_CORPUS_NOTE
+    key = ObjectKey(source.path + "/original.pdf")
+    original = store.read_bytes(key=key)
+    store.replace_stream(
+        key=key, chunks=(b"late stale bytes",), storage_class="hot", sha256="f" * 64
+    )
+    assert _ready(engine, source).ready  # marker certifies publication once
+    if delivery == "pushed":
+        assert (
+            profile.run_task(processing_id=event).outcome == RunResultOutcome.SUCCEEDED
+        )
+    else:
+        assert (
+            profile.worker_loop(worker_class="llm", concurrency=1)
+            .drain_due()[0]
+            .outcome
+            == RunResultOutcome.SUCCEEDED
+        )
+    assert store.read_bytes(key=key) == original
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM processing_state WHERE stage='reconcile_corpus' AND status='pending'"
+                )
+            ).scalar_one()
+            == 1
+        )
+
+
+def test_ordinary_reconcile_and_publisher_obey_forget_admission(
+    active, engine: Engine
+) -> None:
+    profile, source, _ = active
+    from rememberstack.spine import ForgetCatalog
+
+    ForgetCatalog(engine=engine).prepare(
+        deployment_id=source.deployment_id, doc_id=source.doc_id, forget_id=uuid4()
+    )
+    for operation in (
+        lambda: profile.corpus_publisher().publish_corpus(
+            deployment_id=source.deployment_id, doc_id=source.doc_id
+        ),
+        lambda: profile.corpus_publisher().reconcile(
+            deployment_id=source.deployment_id
+        ),
+    ):
+        with pytest.raises(ForgetInProgressError):
+            operation()
+
+
+def test_restore_authorizes_each_manifest_while_the_whole_batch_is_closed(
+    active, engine: Engine
+) -> None:
+    from rememberstack.model import ForgetManifest
+    from rememberstack.spine import ForgetCatalog
+    from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
+
+    profile, source, _ = active
+    catalog = ForgetCatalog(engine=engine)
+    # UUID enumeration order differs from their original preparation order.
+    manifests = [
+        ForgetManifest(
+            forget_id=UUID(int=number),
+            deployment_id=source.deployment_id,
+            doc_id=uuid4(),
+            requested_at=datetime(2026, 11, 13, tzinfo=UTC),
+        )
+        for number in (9999, 1)
+    ]
+    for manifest in manifests:
+        catalog.materialize_portable(manifest=manifest)
+    with CorpusPublicationCatalog(engine=engine).locked(
+        deployment_id=source.deployment_id, forget_id=manifests[1].forget_id
+    ) as held:
+        held.check()
+    with pytest.raises(ForgetInProgressError):
+        profile.corpus_publisher().reconcile(deployment_id=source.deployment_id)

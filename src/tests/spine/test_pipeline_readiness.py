@@ -24,7 +24,6 @@ from rememberstack.model import ReadinessRequirements
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ensure_graph_catalog
 from rememberstack.spine import PipelineReadinessCatalog
-from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine.settings import load_database_settings
 from tests.database_reset import reset_database
 
@@ -106,19 +105,10 @@ def ready_rows(database_engine: Engine) -> tuple[Engine, UUID]:
                     "finished": finished,
                 },
             )
-        connection.execute(
-            text(
-                "INSERT INTO projection_snapshots (snapshot_id, deployment_id,"
-                " plane, version, gcs_uri, status, is_latest, published_at)"
-                " VALUES (:p, :d, 'P3_corpusfs', 'v1',"
-                " 'mem://snapshot', 'published', true, now())"
-            ),
-            {"p": uuid4(), "d": _DEPLOYMENT_ID},
-        )
     return database_engine, version_id
 
 
-def test_exact_terminal_stages_and_fresh_projections_are_ready(
+def test_terminal_stages_need_separate_document_publication(
     ready_rows: tuple[Engine, UUID],
 ) -> None:
     engine, version_id = ready_rows
@@ -128,7 +118,6 @@ def test_exact_terminal_stages_and_fresh_projections_are_ready(
             PipelineStage.CONVERT: "convert-v1",
             PipelineStage.STRUCTURE: "struct-v1",
         },
-        projections=ProjectionCatalog(engine=engine),
         model_bindings={"claim_extraction": "model-v1"},
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
@@ -136,11 +125,12 @@ def test_exact_terminal_stages_and_fresh_projections_are_ready(
         require=_requirements(p3=True),
     )
 
-    assert report.ready is True
+    assert report.ready is False
     assert report.versions[0].ready is True
     assert report.capabilities["pipeline"].ready is True
-    assert report.capabilities["p3"].ready is True
-    assert report.capabilities["p3"].version == "v1"
+    assert report.capabilities["p3"].ready is False
+    assert report.capabilities["p3"].reason == "corpus_publication_incomplete"
+    assert report.capabilities["p3"].version is None
     assert report.document_binding_generation == "document-t0-v1"
     assert report.model_bindings == {"claim_extraction": "model-v1"}
 
@@ -156,7 +146,6 @@ def test_live_graph_readiness_executes_exact_catalog_as_query_role(
             PipelineStage.CONVERT: "convert-v1",
             PipelineStage.STRUCTURE: "struct-v1",
         },
-        projections=ProjectionCatalog(engine=engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
@@ -359,7 +348,6 @@ def test_a_missing_exact_generation_is_not_ready(
             PipelineStage.CONVERT: "convert-v1",
             PipelineStage.STRUCTURE: "different-generation",
         },
-        projections=ProjectionCatalog(engine=engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
@@ -370,29 +358,10 @@ def test_a_missing_exact_generation_is_not_ready(
     assert report.versions[0].stages[1].status == "missing"
 
 
-def test_p3_started_before_terminal_work_is_not_fresh(
+def test_completed_pipeline_without_publication_is_not_p3_ready(
     ready_rows: tuple[Engine, UUID],
 ) -> None:
     engine, version_id = ready_rows
-    with engine.begin() as connection:
-        terminal_at = connection.execute(
-            text(
-                "SELECT max(finished_at) FROM processing_state"
-                " WHERE deployment_id = :deployment_id AND target_id = :version_id"
-            ),
-            {"deployment_id": _DEPLOYMENT_ID, "version_id": version_id},
-        ).scalar_one()
-        connection.execute(
-            text(
-                "UPDATE projection_snapshots SET built_at = :built_at,"
-                " published_at = now()"
-                " WHERE deployment_id = :deployment_id AND plane = 'P3_corpusfs'"
-            ),
-            {
-                "built_at": terminal_at - timedelta(seconds=1),
-                "deployment_id": _DEPLOYMENT_ID,
-            },
-        )
 
     report = PipelineReadinessCatalog(
         engine=engine,
@@ -400,7 +369,6 @@ def test_p3_started_before_terminal_work_is_not_fresh(
             PipelineStage.CONVERT: "convert-v1",
             PipelineStage.STRUCTURE: "struct-v1",
         },
-        projections=ProjectionCatalog(engine=engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
@@ -432,7 +400,6 @@ def test_terminal_status_without_a_completion_timestamp_fails_closed(
             PipelineStage.CONVERT: "convert-v1",
             PipelineStage.STRUCTURE: "struct-v1",
         },
-        projections=ProjectionCatalog(engine=engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
@@ -626,7 +593,6 @@ def _extract_stage_status(
     report = PipelineReadinessCatalog(
         engine=engine,
         expected_components={PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION},
-        projections=ProjectionCatalog(engine=engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
     )
@@ -828,7 +794,6 @@ def test_selection_success_does_not_hide_pending_claimify(
             PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION,
             PipelineStage.GROUND_CLAIMS: _EXTRACTOR_VERSION,
         },
-        projections=ProjectionCatalog(engine=engine),
     )
     with engine.begin() as connection:
         chunk_id = connection.execute(
@@ -899,7 +864,6 @@ def test_parked_version_stage_reports_why_it_waits(
             PipelineStage.CONVERT: "convert-v1",
             PipelineStage.STRUCTURE: "struct-v1",
         },
-        projections=ProjectionCatalog(engine=engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
     )
@@ -939,7 +903,6 @@ def test_parked_chunk_stage_reports_why_it_waits(
     report = PipelineReadinessCatalog(
         engine=engine,
         expected_components={PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION},
-        projections=ProjectionCatalog(engine=engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
     )

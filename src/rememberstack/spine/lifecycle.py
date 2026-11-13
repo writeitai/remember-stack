@@ -645,6 +645,7 @@ class LifecycleCatalog:
         pointer, the latest remaining live version takes it (NULL when none
         remain). Returns the lineage context for the caller's cascade.
         """
+        from rememberstack.spine.corpus_publication import corpus_changed_on
         from rememberstack.spine.processing_layers import lineage_changed_on
         from rememberstack.spine.processing_layers import lock_lineage_for_layers_on
 
@@ -689,6 +690,11 @@ class LifecycleCatalog:
                 deployment_id=row["deployment_id"],
                 doc_id=row["doc_id"],
             )
+            corpus_changed_on(
+                connection=connection,
+                deployment_id=row["deployment_id"],
+                doc_id=row["doc_id"],
+            )
         return dict(row)
 
     def delete_lineage(self, *, doc_id: UUID) -> datetime:
@@ -702,6 +708,7 @@ class LifecycleCatalog:
         returning bytes are processed as a new version (D135). Returns the
         lineage's deletion instant (the first one, on a repeated call).
         """
+        from rememberstack.spine.corpus_publication import corpus_changed_on
         from rememberstack.spine.processing_layers import lineage_changed_on
         from rememberstack.spine.processing_layers import lock_lineage_for_layers_on
 
@@ -726,6 +733,9 @@ class LifecycleCatalog:
                 reason="lineage_deleted",
             )
             lineage_changed_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+            corpus_changed_on(
                 connection=connection, deployment_id=deployment_id, doc_id=doc_id
             )
             return connection.execute(

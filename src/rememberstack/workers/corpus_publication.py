@@ -1,7 +1,7 @@
 """D155 idempotent publication and verifying reconcile over the same live tree.
 
-This capability is deliberately unbound from serving profiles until lifecycle
-removal, restore and readiness switch together. It performs no paid model work.
+Publication, repair and D74 erasure share the same lock and renderer. None
+performs paid model work.
 """
 
 from collections import defaultdict
@@ -24,10 +24,12 @@ from rememberstack.core.corpus_export import render_navigation
 from rememberstack.model import ClaimedWork
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
+from rememberstack.model import ObjectPurgeEvidence
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.object_store import MutableObjectStorePort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.object_store import StreamingReadPort
+from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine.corpus_export import CorpusReaderCatalog
 from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
 from rememberstack.spine.corpus_publication import CorpusPublicationLock
@@ -116,9 +118,15 @@ class CorpusPublisher:
                 lock=held, doc_id=doc_id, revision=revision, policy=self.policy
             )
 
-    def reconcile(self, *, deployment_id: UUID, verify: bool = True) -> int:
+    def reconcile(
+        self,
+        *,
+        deployment_id: UUID,
+        verify: bool = True,
+        work: ClaimedWork | None = None,
+    ) -> int:
         """Share one discovery pass; verify digests even behind matching markers."""
-        with self._catalog.locked(deployment_id=deployment_id) as lock:
+        with self._catalog.locked(deployment_id=deployment_id, work=work) as lock:
             folders, navigation = self._discover(lock=lock)
             self._store.abort_uploads(prefix="", before_write=lock.check)
             published: list[tuple[UUID, str | None, str | None]] = []
@@ -150,6 +158,84 @@ class CorpusPublisher:
                 )
             return len(published)
 
+    def erase_document(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        forget_id: UUID,
+        purger: ObjectPurgePort,
+    ) -> ObjectPurgeEvidence | None:
+        """D74: erase this suffix, then regenerate metadata from scrubbed authority.
+
+        Discovery includes retained/delete-marked keys and uncompleted uploads.
+        Even an empty recorded set MUST scan: a bucket can be restored separately
+        from PostgreSQL. Survivor document folders are never written or deleted.
+        """
+        with self._catalog.locked(
+            deployment_id=deployment_id, forget_id=forget_id
+        ) as lock:
+            if self._catalog.clear(lock=lock, doc_id=doc_id) is not None:
+                raise RuntimeError(
+                    "corpus erasure requires scrubbed document authority"
+                )
+            folders = self._catalog.paths(lock=lock, doc_id=doc_id)
+            navigation: set[str] = set()
+            suffix = corpus_suffix(doc_id)
+            for key in purger.iter_purge_keys():
+                if found := document_folder(key.root):
+                    if found[1] == suffix:
+                        folders.add(found[0])
+                elif _is_navigation(key.root):
+                    navigation.add(key.root)
+            # Navigation can contain the source even after its last folder key
+            # disappeared. Erase its retained versions too, then render it anew.
+            keys = tuple(ObjectKey(path) for path in sorted(navigation))
+            prefixes = tuple(ObjectKey(path) for path in sorted(folders))
+            evidence = purger.purge_objects(
+                keys=keys, prefixes=prefixes, before_write=lock.check
+            )
+            purger.verify_objects_purged(keys=keys, prefixes=prefixes)
+            self._navigation(lock=lock, existing=set())
+            self._verify_erasure(lock=lock, doc_id=doc_id, purger=purger)
+            self._catalog.set_paths(lock=lock, doc_id=doc_id, paths=set())
+            return evidence
+
+    def verify_erased(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        forget_id: UUID,
+        purger: ObjectPurgePort,
+    ) -> None:
+        with self._catalog.locked(
+            deployment_id=deployment_id, forget_id=forget_id
+        ) as lock:
+            self._verify_erasure(lock=lock, doc_id=doc_id, purger=purger)
+            if self._catalog.paths(lock=lock, doc_id=doc_id):
+                raise RuntimeError("corpus erasure left recorded friendly paths")
+
+    def _verify_erasure(
+        self, *, lock: CorpusPublicationLock, doc_id: UUID, purger: ObjectPurgePort
+    ) -> None:
+        suffix = corpus_suffix(doc_id)
+        navigation: set[str] = set()
+        for key in purger.iter_purge_keys():
+            if found := document_folder(key.root):
+                if found[1] == suffix:
+                    raise RuntimeError(f"corpus erasure verification found {key.root}")
+            elif _is_navigation(key.root):
+                navigation.add(key.root)
+        with self._readers.documents(deployment_id=lock.deployment_id) as documents:
+            desired = render_navigation(documents, policy=self.policy)
+        if navigation != desired.keys() or any(
+            self._store.sha256_of(key=ObjectKey(path))
+            != hashlib.sha256(content).hexdigest()
+            for path, content in desired.items()
+        ):
+            raise RuntimeError("corpus erasure verification found stale navigation")
+
     def _discover(
         self, *, lock: CorpusPublicationLock
     ) -> tuple[dict[str, set[str]], set[str]]:
@@ -160,7 +246,7 @@ class CorpusPublisher:
             if found := document_folder(key.root):
                 path, suffix = found
                 folders[suffix].add(path)
-            elif posixpath.basename(key.root) == "_index.md" or key.root == "llms.txt":
+            elif _is_navigation(key.root):
                 navigation.add(key.root)
             else:
                 self._delete(lock=lock, key=key)
@@ -323,3 +409,34 @@ class PublishCorpusHandler:
             deployment_id=work.deployment_id, doc_id=doc_id, work=work
         )
         return HandlerOutcome()
+
+
+class ReconcileCorpusHandler:
+    """Digest verification delivered by the ordinary unlaned delayed-work route."""
+
+    def __init__(
+        self,
+        *,
+        publisher: CorpusPublisher,
+        catalog: CorpusPublicationCatalog,
+        interval_s: float,
+    ) -> None:
+        self._publisher = publisher
+        self._catalog = catalog
+        self._interval_s = interval_s
+
+    def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
+        if work.component_version == corpus_policy_version(self._publisher.policy):
+            self._publisher.reconcile(
+                deployment_id=work.deployment_id, verify=True, work=work
+            )
+        self._catalog.schedule_verification(
+            deployment_id=work.deployment_id,
+            interval_s=self._interval_s,
+            policy=self._publisher.policy,
+        )
+        return HandlerOutcome()
+
+
+def _is_navigation(path: str) -> bool:
+    return posixpath.basename(path) == "_index.md" or path == "llms.txt"
