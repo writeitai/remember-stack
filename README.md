@@ -5,10 +5,9 @@
 [![PyPI](https://img.shields.io/pypi/v/remember)](https://pypi.org/project/remember/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**Give your agents a past.**
+**Memory engine for AI agents**
 
-RememberStack is open-source memory for AI agents. You give it the documents
-your work already produces: email, chat, specs, meeting notes, tickets,
+Process anything relevant: email, chat, specs, meeting notes, tickets,
 agent transcripts. It reads them, keeps what matters, and answers your
 agent's questions with facts it can trace back to the source. It knows what
 is true now, what was true a month ago, and who said so.
