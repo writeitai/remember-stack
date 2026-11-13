@@ -1,19 +1,12 @@
 # E0 — Files / Document Layer + the Corpus Filesystem (P3)
 
-> **Binding D98 amendment (2026-08-27).** Document cross-references are exposed
-> as live PostgreSQL graph edges; there is no P2 snapshot to purge or rebuild.
-> P3 alone retains its full snapshot/pointer-swap lifecycle and must be
-> described directly, not by analogy to P2. Pre-D98 P2 wording below is
-> superseded; E0 authority and P3 contracts are unchanged.
-
-How a raw input file becomes a **structured document** (E0), and how documents are organized into
-a **mountable corpus filesystem** that agents browse (P3, a projection). Decisions **D36–D40**.
-Companion working analysis: `_feature_planning/e0/` (Claude + Codex). Numbers/choices here are
-starting points to measure, not committed constants (CLAUDE.md).
-
-> **Amended 2026-08-26 (D96).** P3 Tier-1 entity leaves are
-> `entities/<entity_id>/`, not `entities/<type>/<entity_id>/`. Authority:
-> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md) §9.
+How a raw input becomes a **structured document** (E0), and how its original and
+reader-useful derivatives become a **mountable document folder** (P3). E0 objects
+are immutable; the corpus tree is a mutable, rebuildable projection. D36–D39,
+D55/D65 and [D155](../../decisions.md#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders)
+bind the contract. [Analysis](../analysis/corpus_document_folders.md) explains
+alternatives; [delivery order](../plans/corpus_document_folders.md) is separate.
+Design acceptance does not mean this replacement is implemented.
 
 ## 1. Where this sits
 
@@ -36,7 +29,7 @@ structuring its own number — that's churn across every doc for no architectura
 complexity is handled by *decomposition into sub-workers*, each separately idempotent (on
 `content_hash + that sub-worker's version`, D12) and separately observable.
 
-## 2. Storage layout — GCS holds bodies, Postgres holds the index
+## 2. Storage layout — object storage holds bodies, Postgres holds the index
 
 Retained-resource evidence follows
 [D152's engine capture contract](storage_capture_consumer_design.md).
@@ -47,47 +40,45 @@ lineage, converter, chunk, Selection/Claimify or embedding identity change.
 Existing processing admission and truth commits remain authoritative; a
 storage observation cannot create either.
 
-Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
+Three stores per deployment have distinct purposes (D37/D55/D65/D155):
 
-- **raw** — `gs://rememberstack-<dep>-raw/<doc_id>/<content_hash>/original.<ext>` — immutable source-of-truth
-  bytes (D1). Strict per-deployment IAM. **Mounted read-only, but off the navigation path**
-  (D51): P3 and the Markdown never *promote* raw — stubs and `document.md` frontmatter carry an
-  explicit raw pointer, so reaching an original is always a deliberate act (following a link),
-  never a browse default. The point is whole-file media: for a video, an MP3, a photo *input*,
-  the original **is** the artifact a multimodal harness needs — conversion yields only a lossy
-  transcript/description. Three guardrails replace the old never-mounted rule: (1) **storage
-  class routes by mime** (per-deployment config, like the D38 converter router): media likely
-  to be read by agents (video/audio/images) → standard/nearline; text/office originals kept
-  only for audit and re-conversion → archive (this kills the grep-the-archive cost bug at the
-  source); (2) **data-access audit logging on the bucket is mandatory** — the audit property
-  of the old rule came from logging, not from unmountedness, and a gcsfuse read is a GCS read;
-  (3) originals may carry what conversion strips (EXIF, tracked changes, embedded metadata) —
-  acceptable because a deployment is **one trust domain** (D50): every agent that reaches the
-  mount is trusted with the deployment's content; data with a different trust boundary belongs
-  in a separate deployment, never behind an in-library filter.
-- **artifacts** — `gs://rememberstack-<dep>-artifacts/<doc_id>/<content_hash>/<representation_id>/`
-  holding `document.md` (clean Markdown — the immutable coordinate system everything
-  references by offset, D57), `pageindex.json`, `conversion.json` (source map + route
-  manifest + converter metadata), `blocks.json` (the blockizer's block sequence, D57),
-  `meta.json`, and **`media/`** — the path's **representation segment (D65)** exists because
-  one content object can own several conversion generations (a better ASR re-reads the same
-  bytes): each is an immutable `document_representations` row, a re-conversion lands *beside*
-  the old reading (whose coordinate system historical claims still resolve against), never
-  over it, and the version's `current_representation_id` points at the live one — the
-  document's *derived* media: figures extracted from documents, video keyframes, crops,
-  thumbnails, referenced from `document.md` by relative links. Standard storage. This is the
-  per-document material an agent *reads*; it is reachable from the corpus filesystem (§6).
-  Media matters because conversion is lossy exactly where a source is visual: agents are
-  pointed **Markdown-first**, but a multimodal harness must be able to open the referenced
-  image directly from the browse path. **Whole-file media originals** (a video, an MP3, a
-  photo input) are *not* duplicated into `media/` — they are served from the raw mount (above)
-  via the explicit raw pointer; `media/` holds only what conversion *derived*. **The
-  canonical-text rule (D65):** all text eligible for extraction, search, and grounding lives
-  in `document.md` — a transcript is the *body* of a recording's document.md, never (only) a
-  sidecar. `media/` may additionally hold a `.vtt`/JSON **interchange** copy of a transcript
-  (timing-preserving, provenance-linked, for players and external tools), but text that
-  exists *only* in a sidecar is invisible to the blockizer, E2, P1, and D32 grounding — it
-  does not exist as testimony.
+- **raw** holds immutable source-of-truth originals. Ordinary E0 ingestion uses
+  `<doc_id>/<content_hash>/original<suffix>`; D147 registered uploads can retain
+  `uploads/<id>`. Always follow the recorded `raw_uri`, including content shared
+  with another lineage; never reconstruct it from the document id. Raw remains
+  private to the pipeline and API byte/`source_open` access. D51 MIME-based hot/cold
+  routing and provider access logging apply. The deployment is one trust domain
+  (D50); originals can contain EXIF, tracked changes and other source metadata.
+- **artifacts** holds immutable readings under
+  `<doc_id>/<content_hash>/<representation_id>/`: `document.md`, `blocks.json`,
+  `conversion.json`, `meta.json`, optional `source_map.json`, and `media/`.
+  The active PageIndex URI can instead be
+  `<representation-prefix>/structure/<structure_generation_id>/pageindex.json`.
+  These stored URIs and inventories, not assumed filenames, select the reading.
+  Re-conversion creates another representation; old claims keep their old
+  coordinate system. `current_representation_id` changes only on downstream
+  completion. Artifacts contain both reader material and private pipeline output;
+  mounting this store wholesale is not the customer consumption contract.
+- **corpusfs** holds mutable **copies for readers**, including a copy of each
+  published original. Its root is the filesystem root (§§5–6), with no snapshot
+  prefix or `latest` pointer. All its objects are hot, including copies of cold
+  raw originals: this is a browse surface, so readers must not need archive
+  restoration. Raw and corpus original bytes occupy storage separately; that
+  duplication and the cost of initially reading a cold raw object are accepted.
+  D152 classifies these as distinct physical resources, not another source of truth.
+
+The object-store port is provider-neutral. Corpus storage uses the existing S3
+adapter for mountable.io, AWS S3, GCS XML/HMAC and MinIO (§5); local files remain a
+development adapter. `gs://` in historical examples of E0 URIs denotes a provider
+location, not a requirement for a native GCS adapter.
+
+**Canonical-text rule (D65).** All text eligible for extraction, search and
+span grounding lives in immutable `document.md`. A recording's transcript is its
+Markdown body. Timing-preserving `.vtt`/`.srt`/JSON transcripts may also be reader
+assets, but a sidecar alone is never testimony. `media/` contains derived images,
+keyframes, crops, thumbnails and other reader assets; the original is copied
+separately as `original<suffix>` in the document folder. P3 copies `document.md`
+byte-for-byte, preserving offsets and `media/` relative links.
 
 **Byte-authoritative admission (D132).** Before raw storage or a catalog row,
 E0 inspects file signatures and header fields, ISO BMFF file-type brands
@@ -121,7 +112,7 @@ validates the complete format before producing evidence.
 **Class on every object (D132).** The object-store write contract requires an
 explicit class. Original video/audio/image bytes are `hot`, other originals
 `cold` as D51 specifies. Canonical Markdown, source maps, blocks, PageIndex,
-derived media, and P3 snapshots/manifests are `hot` because queries and agents
+derived media, and all P3 copies/indexes are `hot` because queries and agents
 read them. Conversion checkpoints and private K transcripts are `cold` because
 only retry/replay paths open them. The policy lives in `core/storage_routing.py`;
 storage adapters record the chosen class on every write.
@@ -132,17 +123,17 @@ storage adapters record the chosen class on every write.
 
 Canonical objects are **ID-addressed** (`doc_id` + `content_hash`), never title-addressed — titles
 change, collide, and contain hostile characters. Human-readable names live only in the corpus
-filesystem projection (§6), which points back at these stable paths.
+filesystem projection (§6), whose metadata records these stable identities.
 
-**The Postgres / GCS split (D37).** Postgres is the E-plane *ledger*; GCS is the *blob store*. The
+**The Postgres / object-store split (D37).** Postgres is the E-plane *ledger*; object storage holds bodies. The
 rule is precise:
 
 > **Postgres never stores document *body* text or Markdown bodies. It stores compact, query-critical
 > metadata** — document identity, versions, processing state, artifact URIs, hashes, costs, and the
-> *section index* (titles, paths, roles, spans, summaries). Bodies live in GCS.
+> *section index* (titles, paths, roles, spans, summaries). Bodies live in object storage.
 
 This keeps Postgres lean (1M document bodies would bloat it for nothing) and puts the text where it
-belongs — in the mountable artifact store. `documents`:
+belongs — in object storage; P3 supplies the reader copies. `documents`:
 
 ```
 documents(          -- the LINEAGE (D55): the logical document over time
@@ -184,9 +175,9 @@ the edit, not the document — full design: `evidence_lifecycle_design.md` §2/�
 **Deletion / forget (cascade).** Normal removal tombstones the lineage, purges its unshared **raw +
 artifacts** objects, ends its testimony currency, and reaches K through the citation tombstone path
 (lifecycle §8; schema §13.1). Irreversible hard-forget is D74's separate fail-closed workflow: it
-also scrubs retained source payloads, explicitly purges P1 and old P3 snapshots, erases affected
-K history, and records a portable restore barrier. A clean projection rebuild changes what is
-served; it does not by itself erase immutable old bytes (`hard_forget_design.md`).
+also scrubs retained source payloads, explicitly purges P1 and resets P3 and its controlled
+serving copies before repair, erases affected K history, and records a portable restore
+barrier. A rebuild alone is not erasure (§6.7; `hard_forget_design.md`).
 
 ## 3. The conversion module (raw → Markdown) — D38
 
@@ -260,9 +251,11 @@ gates everything downstream:
   This can retain a cycle's absence-based closures indefinitely and is the
   deliberate cost of not deriving absence from unsupported content.
 
-  Raw availability is separate from processed currency: §6 defines the latest
-  stored-original fields and §5 the provider mount. A parked file becomes browsable
-  after the next successful P3 rebuild and mount publication, without conversion.
+  Raw availability is separate from processed currency: the raw APIs expose a
+  stored parked version. P3 publishes only the served completed version (§6.2); a
+  parked successor does not replace its original or derivatives on the mount, and a
+  lineage with no completed version has no corpus folder. This replaces D117
+  latest-stored-original browse publication, without changing storage or parking.
   Analysis and alternatives: [stored originals and parking](../analysis/unroutable_mime_parking.md).
 
 Output Markdown → artifacts bucket; the source map + manifest + converter metadata → `conversion.json`; the
@@ -321,13 +314,14 @@ keep as **context, never as facts**: they feed agent navigation, E2 orientation 
 relations/evidence), **not** these per-document summaries — so the high-level picture never depends
 on summary quality, but the summaries usefully enrich local navigation.
 
-**Placement hint (the extension).** The PageIndex output is **extended** with a `placement` field: a
-proposed path for the document (and optionally key sections) within a *hypothetical directory tree*
-of the whole corpus — e.g. `"/finance/annual-reports/2023/"` or
-`"/research/transformers/attention/"`. This is a **per-document hint**, produced where the document's
-content and structure are freshly understood. It is *advisory*: the authoritative, coherent tree is
-materialized later by the projection (§6), which can reconcile, rename, and reorganize across the
-whole corpus as it grows (a single document cannot know the global tree).
+**Optional topic hint (D39 amended by D155).** Root placement returns
+`placement: null | [topic_segment, ...]`, never a type, document filename or
+absolute path. The model chooses `null` when a topic adds no useful orientation;
+for example a routine message can live directly in `email/`, while a report can
+suggest `["finance", "annual-reports"]` beneath deterministic `pdf/`. P3 validates
+and normalizes segments (§6.3). The persisted hint is the sole topic input; there
+is no second model or whole-corpus topic reconciliation. Section structure still
+serves document navigation, not additional corpus leaves.
 
 ### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bounded summaries, orientation-only consumption
 
@@ -536,9 +530,11 @@ unchanged):
   ancestor that cannot receive all child one-liners null), may preserve successful summaries
   in independent subtrees, and makes the generation's `summary_version` null. Because root
   placement is emitted by the same complete reduction, `placement_version` is non-null iff
-  `summary_version` and root `placement_path` are non-null; otherwise both placement fields
-  are null. Thus a partially useful tree is persisted without mislabeling a degraded run as a
-  complete summary generation.
+  `summary_version` is non-null and the root call returned a valid placement
+  result. A deliberate `placement=null` is a successful result: keep its
+  `placement_version` even though `placement_path` is null. On failure both
+  placement fields are null. Thus an intentional no-topic answer is distinct from
+  degradation and is reusable, rather than retried indefinitely.
 - **Placement rides the root reduction.** The one-shot call also produced the D39 placement
   hint; that responsibility moves to the **document-level (root) summary call**, which sees
   exactly what placement needs — the title, source kind, and the child one-liners. On the
@@ -656,238 +652,446 @@ class (D52): deterministic first, one small-model rung for the extraction residu
 spend scales with ambiguity, not volume (D4). A deployment that supplies references for a
 source kind may disable extraction for that source kind by configuration.
 
-## 5. Mounting — agents read the memory on their filesystem
+## 5. Mounting — the corpus is the customer filesystem
 
-A hard requirement: agentic workers get the memory **on their filesystem** and navigate it without
-querying Postgres per step. `gcsfuse` mounts a GCS bucket as a filesystem on Cloud Run/GKE, so an
-agent can `ls / cat / grep` the corpus. Three buckets are mounted **read-only** (writes always go
-through the pipeline; Postgres stays the authority):
+Customers mount **corpusfs read-only**. Its document folders contain actual bytes,
+not symlinks, pointer stubs or a union of E0 mounts. The engine writes through the
+pipeline; PostgreSQL and immutable raw/artifact objects remain authority. K is a
+standalone git repository, outside this filesystem; there are no K links or entity
+folders in P3. API/CLI byte access and `source_open` retain unmounted parity.
 
-- the **corpus filesystem** bucket (§6) — the navigable hierarchy agents browse *first*,
-- the **artifacts** bucket — the per-document material they *drill into* (linked from the tree), and
-- the **raw** bucket — originals, **off the navigation path** (§2, D51): reached only by following
-  an explicit raw pointer from a stub or `document.md` frontmatter (whole-file media ingestion,
-  verification, re-OCR debugging, legal provenance); mandatory data-access audit logging; storage
-  class routed by mime so browse-pattern reads never hit archive-class retrieval fees.
+**Storage.** Reuse `adapters/selfhost/minio.py`'s S3 adapter, configured by endpoint,
+bucket, region/signing and credentials, with D147 per-bucket settings. Supported
+targets are mountable.io (S3 bucket name = filesystem id), AWS S3, GCS through
+`https://storage.googleapis.com`'s S3-compatible XML API using HMAC keys, and MinIO
+for self-host/tests. GCS interoperability and listing/multipart support are
+[documented in the analysis](../analysis/corpus_document_folders.md#provider-facts-checked-on-2026-11-13).
+There is no native GCS adapter. Bucket provisioning belongs to the composing
+profile/operator; the engine does not assume that generic `CreateBucket` is the
+way to provision every provider's filesystem.
 
-(The K repo is the fourth mounted surface of the system overall — a read-only checkout — but it is
-plane K's concern, not E0's; see `retrieval_design.md` §7.)
+Keep immutable `ObjectStorePort.write_bytes` create-only for E0. Add a narrow
+mutable capability in `ports/object_store.py`, implemented by the same adapters:
 
-**Mount mechanics (not a normal POSIX FS).** A `gcsfuse` mount is object storage behind a filesystem
-facade — directories are inferred from object name prefixes, and symlinks/hard-links are not
-first-class. So the corpus filesystem is built from **real generated files**, not links: every leaf
-is a small generated Markdown **stub** with frontmatter (`doc_id`, `artifact_uri`, `content_hash`,
-`section_path`; for media documents additionally `raw_uri` — the mount-relative path to the
-original — plus duration and preview links into the artifact `media/` folder, D65: the browse
-path shows what the file *is* before anyone opens 2 GB, and never materializes whole raw media
-or per-keyframe pseudo-documents in the tree) and a relative pointer to the artifact, so `cat`
-shows orientation and the agent follows `artifact_uri` for the full body. Mount config: **read-only**, `--implicit-dirs` (so prefix
-folders list correctly), with stat/list caching tuned for the rebuild cadence. (gcsfuse semantics:
-https://cloud.google.com/storage/docs/cloud-storage-fuse/overview.)
+- `replace_stream(key, chunks, storage_class)`: create or atomically replace one
+  complete object from bounded chunks; a small file supplies one chunk.
+- `iter_keys(prefix)`: bounded-memory, fully paginated key enumeration; empty
+  prefix means this deployment's whole corpus store. Error on incomplete/repeated
+  continuation tokens. Recursive deletion uses path boundaries (`path/`, never a
+  sibling such as `path-other/`).
+- Idempotent exact `delete(key)`; missing keys succeed. Reuse this implementation
+  in the existing object/projection purge capabilities and verify absence by
+  listing/reading, rather than adding another deletion service.
 
-## 6. The corpus filesystem — P3, a projection — D40
+No rename, directory API, distributed transaction, CAS, or mandatory provider-side
+copy is needed. Copy across independently configured raw/artifact/corpus endpoints
+by streaming GET to replacement upload. Use multipart upload for large objects,
+complete only after successful input/hash validation, abort failed uploads and
+clean abandoned multipart parts on repair/forget through the adapter's purge
+capability. No whole-video buffering or durable worker-local state. A qualified
+adapter provides complete-object replacement and read/write/delete/list
+consistency; mount caches have a separate lifetime. Existing raw create-only
+preconditions must also be qualified on each endpoint, not silently weakened.
 
-### Stored originals and processed currency — D117
+**Managed mount CLI contract.** `remember mount DIR` obtains a one-time mount
+ticket from remember.dev for the selected deployment/project, then starts
+`mountable mount --ticket-stdin --json DIR`. Pass the ticket **only on the child
+process's stdin**, close stdin after writing, and never put it in argv, environment,
+logs, shell history or a temporary file. Invoke the executable directly, propagate
+its JSON result/exit failure, and report missing `mountable` clearly. `remember
+unmount DIR` delegates to the installed mountable CLI's unmount operation, reports
+its result, and does not request another ticket. The remember.dev control plane
+creates the read-only mountable session; its authentication route, ticket format
+and session lifecycle implementation belong to the cloud repo. These commands
+are a thin client wrapper, not an engine mount scheduler or new truth surface.
 
-P3 exports every live lineage with at least one durable, nondeleted version.
-It selects the latest stored version by descending `version_no`, independently
-of `documents.current_version_id`. It never promotes a version on upload.
-Managed new-version measurements must have accepted admission before their
-original is advertised: a content-object catalog row alone does not prove bytes
-have reached raw storage.
+**Self-host.** Mount the configured corpus bucket using any S3 FUSE tool with
+read-only credentials/options and bounded stat/list/data caching. A local
+filesystem adapter serves the same live directory tree; it uses atomic file
+replacement and stores class bookkeeping outside reader paths. Provider access
+logging covers corpus-original reads as well as raw reads. API raw access keeps
+its existing audit path; a plain local filesystem cannot audit arbitrary file
+reads. No separate raw/artifact mount is required or advertised as the normal
+customer interface. Engine-controlled sessions and serving caches must participate
+in D74 purge acknowledgement (§6.7); changing bucket objects alone cannot flush a
+client's cached bytes.
 
-Existing `version_id`, `content_hash`, `raw_uri`, `mime`, `artifact_uri`, summary
-and placement describe the **current processed version**. Separate
-`stored_version_id`, `stored_content_hash`, `stored_raw_uri`, `stored_mime`,
-`stored_status` and `stored_defer_reason` describe the **latest stored original**.
-A raw-only lineage has empty processed fields and an explicit no-processed-version
-message. If ready v1 is followed by parked v2, the stub labels v1's summary and
-full text as processed v1 and v2's raw pointer as the latest stored original.
-Directory summaries carry the same distinction; unsupported bytes get no invented
-summary or inferred topic. Canonical paths remain `documents/<doc_id>/`.
+## 6. The corpus filesystem — a mutable P3 tree (D155)
 
-Deleting a stored version selects the newest surviving durable version; deleting
-the lineage excludes it. Existing D74 barriers and P3 snapshot purge cover these
-stubs. P3 rebuild and mount publication remain explicit operations, independent
-of processing completion. Failed builds keep the prior snapshot. Provider raw
-and artifact mounts must exist and enforce read-only access. Read auditing follows
-the backend under D51/D116 (plain local filesystem reads are not recorded); configuring their existing roots must not silently create empty stores.
-D116 governs direct original navigation; stored-version selection is independent
-of whether the original is reached through a pointer or a browse entry.
-This adds projection queries and retained parked work, but no duplicate original
-bytes, new projection plane, LLM work or changes to D55 processed currency.
+P3 is a derived view over E0 and PostgreSQL: it holds no independent testimony,
+validity or knowledge. Ordinary maintenance changes affected folders and indexes
+in place. **D7/D40 snapshot rebuild plus `latest` pointer swap is replaced for P3**;
+full repair reconciles this same live tree, not another snapshot layout.
 
+### 6.1 Folder contents: reader files, with an explicit boundary
 
-**We build a canonical corpus filesystem.** It is a real, materialized **GCS bucket laid out as a
-directory tree** that organizes the whole corpus for agent navigation. It is a **P-plane projection**
-(P3): **derived, holding no source-of-truth, no validity state**, and discardable/rebuildable. It is
-"canonical" only in the sense of being *the published navigable view* — never an independent truth.
-
-**Rebuild semantics — snapshot + pointer-swap (D7).** P3 is a **full snapshot rebuild** by
-default: the projection worker builds the whole tree into
-`gs://rememberstack-<dep>-corpusfs/snapshots/<version>/`, validates it, then atomically swaps the `latest`
-pointer; agent mounts read `latest`. Incremental tree maintenance is permitted only as an *internal
-optimization* that produces the same validated snapshot — never as authority and never a separate
-mutable state. This lifecycle is specific to P3; the D98 live graph does not share it.
-
-**Rebuild inputs (Postgres-anchored).** The tree *structure* is built from **Postgres** (the
-placement hints D39, plus entities/relations that define topic/entity folders) **+ the GCS
-artifacts** (for the leaf stubs). It **cross-links to** K-plane pages by reference but does **not**
-take K as a structural input — so P3 stays rebuildable from the E spine + artifacts, consistent with
-other derived surfaces (it does not depend on the non-reproducible K git repo for its shape).
-
-```
-gs://rememberstack-<dep>-corpusfs/snapshots/<version>/
-  finance/annual-reports/2023/
-    acme-10k-2023.md            # generated stub: frontmatter (doc_id, artifact_uri, content_hash)
-    _index.md                   # generated: what's here, summaries, links down + across (+ to K)
-    llms.txt                    # generated agent-navigation manifest
-  research/transformers/attention/
-    attention-is-all-you-need.md
+```text
+<corpus bucket root>/
+  llms.txt
+  _index.md
+  email/
     _index.md
-  entities/018f3d8e-4a65-7a10-9b2c-73f2dcbad410/
-    _index.md                   # Acme: profile + the docs/sections evidencing facts about it
+    atlas/
+      _index.md
+      kickoff--m4t7hx2k5bqp/
+        _index.md
+        document.json
+        original.eml
+        document.md
+        pageindex.json
+        source_map.json          # when emitted
+        media/                   # when reader assets exist
+          diagram.png
+  pdf/
+    _index.md
+    finance/annual-reports/
+      _index.md
+      acme-2023--q7hn3m4tc2vx/
+        ...
+  audio/                         # empty types still have an index
+  ...
 ```
 
-- Folders come from placement hints reconciled across the corpus (topics, sources, time) and from
-  entity/relation structure (`entities/...`); leaves are **generated stub files** pointing at the
-  per-document artifacts (the agent drills from the tree into the Markdown + per-doc structure).
-- Each level carries a generated **`_index.md` / `llms.txt`** so an agent reads orientation before
-  contents (the navigation-manifest pattern). Where an `_index.md` links to a **K page**, it
-  carries that page's freshness state alongside the link (`compiled_at`, stale?, open review
-  flags) — the **browse-path half of the D49 reader-facing flag surface** (the query engine's
-  envelope is the other half, `retrieval_design.md` §5): an agent must be able to see "this
-  page has unresolved evidence-change flags" *before* reading it, on either path.
-- **Composition with K (cross-link, not dependency):** the K plane (compiled understanding) is the
-  *summarized* layer; P3 is the *navigable index over sources*. `_index.md` files **link to** relevant
-  K pages and vice versa (understanding ↔ evidence) — complementary mounts, not duplicates, and P3's
-  *structure* does not depend on K.
-- **Reorganizable — within the path contract:** because it's a rebuilt projection, *view*
-  subtrees reorganize as the corpus grows on the next rebuild — placement hints are inputs,
-  never commitments. What may **not** move is the stable-leaf tier of the path contract below.
+There is exactly one published folder per live completed lineage. Optional topic
+and deterministic shard directories can intervene (§6.3). The export is an
+allowlist, never a recursive copy of the artifact prefix:
 
-### The `_index.md` contract — what every index file contains
+| In the folder | Why it belongs |
+|---|---|
+| `original<suffix>` | Byte-identical original of the displayed version, copied from its recorded raw URI; full media included. Choose a safe extension from the validated format registry/MIME, `.bin` on unknown format |
+| `document.md` | Exact immutable Markdown bytes of the displayed representation; no P3 banners, frontmatter edits or offset changes |
+| `pageindex.json` | Exact active structure-generation sidecar: sections, spans, roles and available summaries for reading at section grain |
+| `source_map.json`, when present | Exact representation source map so a reader can relate Markdown spans to original pages, times or regions |
+| `media/<asset-name>` | Every reader asset in the conversion inventory: extracted/page images, crops, thumbnails, keyframes, and timing-preserving transcript/annotation interchange that a reader/player uses, including assets not linked in Markdown |
+| `document.json` | Generated public inventory: `doc_id`, stable suffix, displayed version/representation/structure ids, original MIME/hash, file hashes, relative reader-asset names and locators, derivation labels, coverage gaps/warnings and publication revision. This is a documented reader record, not a copy of engine `meta.json`/`conversion.json` |
+| `_index.md` | Generated orientation and a member table linking these files, with source date, stored root summary (or explicit absence), derivation disclosure and publication state |
 
-An index file is not a courtesy listing; it is the mechanism that makes the tree *cheaper to
-navigate than to search*. Its content is bound, and **fully deterministic — assembled from
-Postgres, zero LLM**:
+The projection's versioned asset-kind registry classifies each converter kind as
+reader or pipeline. Reader kinds include `embedded_image`, `page_image`,
+`keyframe`, `thumbnail`, `crop` and transcript/annotation interchange; pipeline
+kinds include `provider_response`. An unknown kind fails publication until
+classified, instead of accidentally publishing internals or silently dropping a
+useful asset. Custom conversion routes supply the same classification. Validate
+safe relative names and reserve generated filenames; every local asset link in
+copied Markdown must resolve to a reader asset. No manufactured per-keyframe
+lineages. Preserve converter asset paths so relative links stay valid.
 
-1. **Directory identity line** — templated from the taxonomy: *"Emails — client
-   correspondence, 2024–2026 · 1,284 documents in 14 subfolders."* Counts, time range, source
-   facets: all SQL.
-2. **The member table — one row per child, carrying each document's PageIndex root summary**
-   (already stored in `document_sections`, D39 — surfacing it is free), plus date, source,
-   and entity links. This is the load-bearing property of the whole tree: an agent reads
-   *one* `_index.md` and knows what every file in the directory is about without opening any
-   of them — navigation cost becomes O(index files read), not O(documents opened).
-3. **Cross-links**: covering K pages (with the freshness/flag state above), sibling views of
-   the same documents, parent/child indexes.
+**Out:** `blocks.json` (chunking grid), `conversion.json` (full route/execution
+manifest), engine `meta.json`, conversion checkpoints, raw provider response JSON
+(even under `media/`), supplied/extracted references NDJSON and generations,
+work/retry logs, extraction/audit payloads, vectors, historical representations
+and historical versions. These are engine state, not reader files; the useful
+source map, disclosure and warnings are exposed explicitly above. K contents,
+links and entity indexes are outside this projection.
 
-**Directory-level LLM summaries are a rejected alternative, not an omission.** The member
-table already carries the directory's meaning, and where a directory-level *synthesis* is
-genuinely wanted, that is a signal to create the covering **K page** (an ordinary planner
-decision) — the layer built to keep synthesis current via citations. A P3-local LLM summary
-would be a second, uncited understanding layer that drifts (§4: the global picture is K's
-job, never per-document — or per-directory — summaries), and it would put an LLM call inside
-an otherwise fully deterministic projection builder. `_index.md` links K; it never competes
-with it.
+### 6.2 One coherent version, independent of a newer upload
 
-### Structure rules — facets, views, fan-out, and the path contract
+Select `documents.current_version_id` and that version's
+`current_representation_id`, with its active structure generation: the newest
+nondeleted version whose processing completed under the deployment's enabled
+layers (D55/D65/D143). A title, type, topic, original and derivatives always refer
+to that reading. P3 completion is a separate capability and cannot be a prerequisite
+for committing this pointer, which would create a trigger cycle.
 
-1. **The top level is configured, not emergent.** Placement hints reconcile *within* a
-   deployment-declared facet skeleton (registry-style config): e.g. `by-type/` (emails,
-   papers, contracts, notes…), `by-source/`, `by-topic/` (placement-hint/registry-derived), `entities/`.
-   `entities/` exists only while the deployment serves its facts processing layer (D143).
-   Emergent top levels reshuffle as the corpus grows — exactly what path-holding consumers
-   cannot tolerate. Facets are stable; their interiors reorganize.
-2. **One document, many views — by stub duplication.** An email about Project Atlas belongs
-   under `by-type/emails/…` *and* a project view. gcsfuse has no real symlinks; stubs are
-   cheap generated pointers, so duplication is the mechanism — it is a projection, nothing
-   is kept consistent by hand.
-3. **The two-tier path contract** (accepts design-review F6). Tier 1 — **stable,
-   ID-addressed leaves that never move across rebuilds**: every entity at
-   `entities/<entity_id>/`, every document lineage at one canonical per-doc path
-   (lineage-anchored, D55 — a living document's path survives its content versions). These
-   are the durable targets agents, K pages, and cross-links may store. Tier 2 — **view
-   paths** (topic/source/time subtrees), documented as freely reorganizable; every view stub
-   carries the canonical path in its frontmatter. Consumers needing durability hold Tier 1;
-   browsing uses Tier 2.
-4. **Bounded fan-out.** Directories shard deterministically (by date, alpha, source) above
-   ~100–200 entries (a starting point to measure against real `ls`/gcsfuse listing
-   behavior) — an unbounded directory is unbrowsable for an agent and slow to list; the
-   member table keeps sharded levels cheap to traverse.
+If processed v1 is followed by stored/processing/parked/failed v2, keep **all of
+v1's folder**, including v1's original. When v2 completes, publish its whole
+reading. A lineage with no completed version has no folder; its stored original
+is accessible by version through the existing raw API/`source_open`. This
+explicitly replaces D117's latest-stored-original fields in P3, but retains
+store-and-park, resumability, raw availability and the rule that upload never
+promotes processed currency. Identical-byte metadata observations that merely add
+`document_names` (D134) do not rename the corpus folder.
 
-### The navigation ladder
+Version deletion republishes the surviving served version, or removes the folder
+if none survives. Lineage/source deletion removes it. Effective-time queries
+still use version-addressed source handles; the filesystem is the served version,
+not an as-of or all-editions archive.
 
-The tree exists to make this the default motion — each step one `cat`, escalation to the
-API only for what has no filesystem equivalent (the D51 precedence rule):
+### 6.3 Type first, optional topic, safe names and bounded navigation
 
-```
-llms.txt (root orientation: facets, counts, where things live)
-  → facet _index.md        (what kinds of things exist here)
-    → directory _index.md  (member table: every file's one-line meaning)
-      → stub               (doc orientation + canonical path + artifact pointer)
-        → document.md      (+ pageindex.json for section-grain entry)
-```
+Apply these rules **in order**, using existing stored source kind, byte-decided
+MIME, format family and conversion route; never infer a type from an LLM summary
+or an unchecked filename. A card or missing provider does not erase the known
+format. These are the fixed top-level document types, each with an `_index.md`:
 
-`grep -r` over stubs gives content-ish lookup (title + summary + entities are *in* the
-stubs) with zero API calls. The consumption skill (`retrieval_design.md` §8) teaches this
-ladder, and navigation joins the eval surface: an S58-style scenario — *find the document
-answering X using only `ls`/`cat`/`grep` on the mount* — measured on hops-to-target and
-tokens-read-to-target.
+| Directory | Deterministic match |
+|---|---|
+| `email/` | Email source kind or email family (`message/rfc822`, validated MSG/email route) |
+| `chat/` | Chat/message-thread source kind or conversation route, excluding email |
+| `image/`, `audio/`, `video/` | Corresponding decided MIME/family |
+| `pdf/` | `application/pdf` |
+| `spreadsheet/` | Spreadsheet/workbook family, including CSV/TSV |
+| `presentation/` | Presentation/slide family |
+| `document/` | Prose text, Markdown, HTML, word-processing, RTF and notebook families |
+| `data/` | Remaining structured-data, code/configuration, archive/container families |
+| `other/` | Anything unmatched, including unrecognized binary cards |
 
-**Rejected alternative — index-files-only (no per-document stubs).** Publishing only
-`_index.md` files pointing at ID-addressed artifacts saves roughly the stub writes — ~1M
-Class-A GCS operations ≈ **$5 per full view rebuild** at a million documents — and in
-exchange loses files-as-files (`ls`/`grep` over the corpus), the Tier-1 stable document
-leaves, and the open-what-you-found ergonomics harnesses are built around. Not worth it at
-any corpus size; recorded so the object-count worry doesn't re-litigate it.
+Registry subtypes extend these matches, not the set of top-level types. An email
+attachment ingested as its own lineage follows its own format; its email source
+relationship alone does not turn a PDF attachment into an email. Source-kind
+matches above mean the item itself is a message/thread, not merely fetched by an
+email/chat connector. Type-policy changes are versioned P3 changes.
 
-**Why a projection, not E0 state:** the *organization of the corpus* is a function of the evolving
-knowledge; freezing it as E0 state would lock an organization that should change as understanding
-changes. Per-*document* structure (PageIndex) is intrinsic → E0; *cross-document* organization is
-derived → P3.
+Below the type use the persisted root placement hint, or no topic for `null`, a
+failed/degraded call, or invalid input. Accept at most four topic components,
+normalize each by NFKC, lowercase, ASCII letters/digits with other runs replaced
+by `-`, trim and cap at 48 bytes; empty/reserved components, absolute paths,
+`.`/`..`, slash/backslash inside a component, or excessive depth reject the hint
+as a whole. A valid empty/no-topic result is explicit `null`, not an error.
+The model may intentionally choose no topic; it never chooses the type or slug.
+No LLM calls occur in the publisher or repair.
+
+The leaf name is `<title-slug>--<corpus_id>`. The slug uses the same normalization,
+a 60-byte cap and `untitled` fallback. `corpus_id` is an opaque 12-character
+lowercase base32 token allocated once on the lineage, reserved with a deployment
+UNIQUE constraint and retried on collision **before commit**. This makes identical
+or hostile titles safe without a probabilistic uniqueness promise. Retain the
+reservation through tombstones/forget; it contains no source text. It is display
+metadata, not source identity or an extraction key. `doc_id` remains the durable
+handle; the suffix helps a person recognize the same folder after a move.
+
+Navigation directories split when their immediate child table exceeds B entries
+(starting point B=150, a measured/versioned projection setting). Use deterministic
+radix shards over each child's unique key (`d:<corpus_id>` for document folders,
+`t:<normalized-topic>` for topic branches), encoded into base32. Reserved `~`
+shard prefixes distinguish machinery from user topics. Each split exposes at most
+32 next-character branches; collapse shared single-child prefixes into one shard
+component. Recursively split overloaded branches. Merge when membership falls to
+B or below, so topology depends on current membership rather than event history.
+This bounds topic children as well as document children. A split/merge moves only
+the affected branch's folders through the same publication procedure; a million
+new siblings never require copying unrelated types. Converter-established asset
+paths inside a document are preserved, not reshuffled by corpus sharding; their
+member tables paginate deterministically when large.
+
+### 6.4 Deterministic indexes and stable addressing
+
+Every navigation directory, including root, has `_index.md`: directory identity,
+subtree counts, parent/child links and one member row per immediate child. A
+document row includes title, source/date, displayed version, stored PageIndex root
+summary or “no summary”, and its relative folder link. Topic/shard rows include
+counts and child-index links. Document `_index.md` lists reader files and media;
+large asset tables use bounded continuation pages referenced from that index.
+Tables are sorted by normalized title then stable id (branches by name), with
+Markdown cells and link components escaped. Root `llms.txt` lists the fixed types,
+counts, reading steps, version/move semantics and how to resolve `doc_id`; it is
+bounded by the type taxonomy. It is the only `llms.txt` in this tree.
+
+Index rendering uses SQL metadata and stored summaries, **zero LLM**. There are no
+directory summaries, facets, `documents/<doc_id>/`, `by-source/`, `by-time/`,
+`entities/`, duplicate view stubs, K links or global id-to-path file. The ladder is
+`llms.txt → type/topic/shard _index.md → folder _index.md → document.md/original`.
+
+Folder paths can change on type/topic/title changes or shard split/merge.
+Consumers store `doc_id` (and a version/representation handle for a citation),
+then resolve it with existing `search_documents` filtered by `doc_ids`. The engine
+joins the **publication receipt**, not a computed title path, for MCP/API/SDK
+`p3_path`: return a corpus-root-relative folder path only when that receipt has
+finished cleanup/indexing and matches the selected version, representation and
+current desired P3 revision. Otherwise return `null`, including unprocessed,
+unpublished, updating, deleted, historical or failed publications. This applies
+also to lineages without effective periods; their old unconditional Tier-1 path
+is removed. `served_version` still describes authority currency, not P3 progress.
+MCP descriptions and the consumption skill teach re-resolution after a move.
+
+### 6.5 Incremental work, publication order and reader observations
+
+The engine owns an unlaned `publish_corpus` stage. Whenever a transaction
+changes served version/representation, active structure or placement, a canonical
+title/type input, or deletion selection, it increments a per-lineage **corpus
+revision** (`documents.corpus_revision`). In the **same transaction**, insert a
+content-free `corpus_publication_requests` target (document id, revision and
+builder policy) and `enqueue_on` its stage row. No event on every chunk or model
+call. Projection-policy changes seed affected live documents through this same
+mechanism. No-source/no-folder is a removal result, not an absent trigger.
+
+The new `corpus_publication` work target is necessary because existing ledger
+uniqueness is `(target_kind, target_id, stage, component_version)`: changing
+`content_hash` alone would not re-run a succeeded document target. Derive the
+request UUID deterministically from deployment/doc/revision/policy and enforce
+its unique document/revision/policy key. Duplicate enqueue reuses that row;
+even A→B→A creates a fresh target. Keep attempts, leases and the registered builder
+component version unchanged in meaning; do not mint one component policy per
+document revision or reset a running work row. This is a target for ordinary
+processing, not a new scheduler or parallel work ledger. Its content-free lifetime
+follows its processing rows; it is not a history of title/topic paths.
+
+Self-host D146's `llm` class serves this non-convert stage; it makes no model call.
+The managed host registers the same engine stage in its pushed-work class map
+and invokes D147 `run_task(context, processing_id)`. D62/D67 queue announcements,
+reannouncement janitor, leases, retries and DLQ are reused. Cloud delivery is a
+wake-up, not authority. Registering the stage and class mapping in the cloud repo
+is an integration requirement, not a second scheduler or engine correctness hook
+implemented there. Manual `run_projection(plane="p3")` is the repair entry point.
+
+Use one deployment-scoped PostgreSQL advisory lock for P3 mutation, shared by
+publish, normal deletion, repair and forget's authorized internal calls. Hold it
+on a dedicated connection through object operations; the outer handler maintains
+its claim lease. Re-read authority/revision after taking the lock. Delayed work
+converges to current intent rather than overwriting it with its payload. Losing
+the claim or lock stops writes; no detached/background uploads survive a handler.
+Before retry/forget can take over, settle or fence in-flight external writes;
+lease expiry alone is not proof they stopped. If that cannot be established,
+remain unavailable to mutation/forget completion rather than certify erasure.
+
+One compact per-document `corpus_publications` row records applied revision,
+applied identity, published path, and a **pending path/affected-index journal**;
+its desired revision is copied from `documents.corpus_revision`. Persist every destination and old path before writing there; keep the
+journal until cleanup succeeds. This is rebuildable projection progress, not E0
+truth. Indexed membership metadata and per-directory child/count rows let an
+update query its affected branch and ancestors, not rescan all documents. Repair
+reconstructs this metadata from authority. The short suffix reservation lives on
+the lineage along with its monotone corpus revision, so discarding projection
+progress cannot change either or change deterministic rendered publication ids.
+
+For a publication (including same-path replacement):
+
+1. Journal old/new paths and affected directories. Write an `updating` document
+   `_index.md` before changing existing folder contents. A new folder is initially
+   unindexed. Stream the selected original and allowlisted derivatives; confirm
+   input hashes and successful complete-object writes. Verify the final inventory
+   using upload checksums or streamed read-back when necessary; a multipart ETag
+   is not a SHA-256 checksum. Remove files not in the new inventory.
+2. Write `document.json`, then ready folder `_index.md` with the same publication
+   identity and complete member inventory. New parent indexes can now link it.
+3. Regenerate affected old/new member tables and ancestors bottom-up and root
+   `llms.txt`, using the candidate membership plus other completed publications.
+   Every document link added this way targets an already completed folder. Persist
+   membership changes and the journal so an interrupted index write is retryable.
+4. Delete obsolete folders only after links move; prune empty topic/shard indexes.
+   If authority changed while copying, leave the receipt unapplied and enqueue/
+   retain the newer revision. Otherwise, after cleanup, commit the applied receipt
+   and clear the journal. A crash after any step replays the same operations.
+
+For removal, first remove every index membership and regenerate affected ancestors
+and `llms.txt`, then delete all journaled folders, verify absence, and apply the
+empty receipt. A delete API retains D135's finish-or-refuse behavior: synchronously
+run this authorized removal before reporting success; an object failure reports
+failure and leaves durable work for retry. Deletion and forget run regardless of
+claims/facts switches.
+
+**What readers can observe.** S3 replacement is atomic per object, not per folder
+or tree. An unindexed new folder can be partly visible to direct `ls`. A move may
+briefly expose two complete copies; an old remembered path may disappear after
+cleanup. A same-path version update can mix old/new complete files while its
+index says `updating`; parent counts/indexes can temporarily disagree. Readers
+needing a consistent folder check the ready publication identity before/after
+reading, or use immutable version-addressed API handles (also for cached/ranged
+media reads). Caches can delay observations; there is no cross-file snapshot or
+point-in-time media guarantee on a mount. This is acceptable for browsing a
+projection, while exact citations/readiness use authority and receipts. No
+half-written individual object, invented raw/processed version pairing in a
+completed folder, or success receipt for incomplete cleanup is acceptable.
+
+### 6.6 Repair, readiness and processing layers
+
+`run_projection(plane="p3")` takes the same mutation lock and streams live served
+lineages and paged object listings. Apply the same selectors, renderer, sharding
+and publication/removal operations; delete unknown/orphan keys, regenerate all
+indexes and rebuild membership/progress. Re-read changed revisions or leave their
+newly queued work unapplied. With no concurrent authoritative changes, repair
+converges to the same paths and reader bytes as incremental maintenance, including
+removal of abandoned assets. No timestamps/random build ids in rendered content;
+publication identity derives from the authoritative revision and builder policy.
+Operational timestamps live in PostgreSQL receipts. Interrupted repair is safe to
+rerun and never opens a second layout. It is not necessary after every edit.
+
+Readiness `p3` is per requested lineage/version: true only when its desired revision
+has a fully applied matching receipt, valid folder inventory, affected indexes and
+root manifest, and no pending cleanup. A global recent build time proves nothing.
+A selected historical version is not mounted and reports `p3_version_not_served`;
+an unprocessed/parked selection is not ready; lag reports
+`corpus_publication_incomplete`, adapter/DLQ failure remains visible. For deletion,
+readiness requires the applied empty receipt and verified removal. Existing
+`built_at`/`published_at` describe that document publication; `version` identifies
+its revision/policy, not a global snapshot. A mount being absent on the querying
+machine does not make a completed remote publication incomplete.
+
+P3 is a **sources-layer** projection: it contains no facts/entities/K and has the
+same shape with claims/facts on or off. Completion eligibility follows the served
+pointer under D143's enabled-layer rules, but a facts setting change alone requires
+no P3 snapshot rebuild or served-set filtering. K's own facts-layer gating remains.
+Corpus revision, suffix and export metadata enter no converter, chunk, Selection,
+Claimify or embedding identity. Only the placement output/schema generation changes
+to accept successful `null`; it reuses stored summaries and never changes sections
+or re-extracts/re-embeds unchanged text (Rule 4).
+
+### 6.7 Hard forget and restore: erase before repair
+
+D74's portable manifest, admission/drain barrier and verification remain the
+privacy authority; D147 provides the explicit context and separately durable
+manifest store. A friendly path list is insufficient: a crash can leave partial
+copies, moves create former paths, and a bucket can be restored independently.
+For this rare operation choose a **deployment-wide corpus reset**, rather than a
+history of title-bearing paths in an immutable manifest:
+
+1. Include the deployment's entire corpus-store purge scope in portable intent,
+   using deployment identity only, not names/topics. Before acceptance, D74 stops
+   ordinary claims and drains **all** P3 writes/repair, including in-flight uploads.
+   Existing engine-controlled mount sessions must stop serving; API admission alone
+   does not stop a mounted reader.
+2. After lifecycle/authority scrub, the authorized forget coordinator takes the
+   P3 mutation lock. Purge every corpus object, incomplete multipart upload and
+   engine-controlled serving/cache copy. Reset publication/membership rows; scrub
+   pending paths and source-bearing export metadata. The corpus store is dedicated
+   to this deployment, so no unrelated truth is destroyed.
+3. Verify the reset, then run the same full repair from scrubbed authority. Verify
+   no forgotten lineage membership, original, derivative, title/summary row or
+   index line is present. Only after P3 and every other D74 store acknowledge purge
+   can serving reopen and the manifest be complete. Failure at any step retains
+   the barrier and retries the same path.
+4. Before any restore is served, re-honor **all** portable manifests, including
+   locally complete ones. Scrub restored authority, reset/reconcile a separately
+   restored corpus store and controlled mount caches, and verify again. One reset
+   after all manifests' scrubs can cover their union in a readiness pass; no
+   trusted “already clean” PostgreSQL flag can skip an independently restored store.
+
+The mutable corpus bucket must not retain accessible noncurrent/soft-deleted
+objects or immutable retention locks: configure it without such retention, or
+qualify the existing purge capability to erase and verify **all** retained versions
+and multipart parts. A delete marker alone is insufficient. Backups stay outside
+the active store under D74/D75 and cannot be served without replay. Managed session
+revocation/cache discard is an adapter acknowledgement obligation; its control-plane
+implementation remains in the cloud repo. Operator-managed FUSE mounts must be
+stopped/remounted for forget; arbitrary downloaded client bytes are outside the
+library-controlled purge boundary. Do not claim stale caches are erased by PUT,
+DELETE or the API barrier alone.
 
 ## 7. End-to-end (one document)
 
-1. Upload `acme-10k-2023.pdf` → **ingest**: raw bytes to the raw bucket, `content_hash`, a
-   `documents` row.
-2. **convert**: router OCRs every page of the PDF → `document.md` + `conversion.json` (offsets) to
-   artifacts.
-3. **structure**: PageIndex builds the tree (sections, roles, spans, summaries) + a `placement` hint
-   `/finance/annual-reports/2023/`; `pageindex.json` to artifacts, `document_sections` rows to
-   Postgres.
-4. **crossref**: extract citations / document links.
-5. → E1 chunks along sections → E2/E3 extract claims/relations.
-6. On the next **P3 build**, the document appears at
-   `/finance/annual-reports/2023/acme-10k-2023.md` in the mounted corpus filesystem, with a generated
-   `_index.md`, cross-linked from `/entities/<entity_id>/` for Acme's stable id.
+1. Ingest `acme-2023.pdf` under its stable lineage; write the immutable raw
+   original, record its URI/hash and allocate the lineage's stable corpus suffix.
+2. Convert through the configured PDF OCR route: immutable `document.md`, source
+   map, derived images and engine manifests in the representation store. Structure
+   persists PageIndex/roles/summaries and the optional topic
+   `["finance", "annual-reports"]`; crossref persists its private reference state.
+3. Enabled E1/E2/E3 work completes. In the same transaction that serves this
+   version/representation, increment its corpus revision and enqueue
+   `publish_corpus`. Sources-only deployments use their own completion boundary.
+4. The self-host worker or managed pushed task runs the same engine publisher.
+   It copies the original and reader files to
+   `pdf/finance/annual-reports/acme-2023--q7hn3m4tc2vx/`, writes ready folder
+   metadata, updates affected member tables/root `llms.txt`, cleans obsolete paths
+   and commits the receipt. `p3` is now ready; `p3_path` resolves that folder.
+5. A customer mounts read-only and opens `document.md`, its images or
+   `original.pdf` in place. A newer upload leaves this complete folder intact
+   until its processed reading is served and published. A topic/title/type change
+   moves it; the consumer re-resolves `doc_id`.
+6. Normal deletion removes the folder and index membership through the same stage.
+   Hard forget instead resets and repairs P3 under D74's fail-closed barrier;
+   independent restores repeat that erasure before serving.
 
-## 8. Decisions & spikes
+## 8. Decisions and measurements
 
-Decisions: **D36** (E0 = document layer of sub-workers, no renumber), **D37** (storage split +
-Postgres-metadata rule + ID-addressed paths + read-only mount), **D38** (configurable conversion
-module), **D39** (PageIndex structure: sidecar + PG index, structure-only, summaries kept, placement
-hint), **D40** (P3 corpus-filesystem projection), **D65** (media routes + generalized contract +
-canonical-text rule — binding home: `media_design.md`).
+D36–D39 govern the E0 chain/structure; D55/D65 govern source and representation
+identity; D117 governs retained originals and parked conversion; D143 governs
+enabled processing; D155 replaces P3 layout, maintenance and customer mounting.
+The ordered, independently mergeable [implementation plan](../plans/corpus_document_folders.md)
+includes MinIO, forget/restore and Rule-4 proofs. No product code or deployment
+migration is specified by this design amendment.
 
-Open spikes (measure before committing):
-1. **Conversion fidelity and cost** — measure OCR reading order, layout fidelity
-   and page cost on born-digital, scanned and mixed PDFs. D139 keeps OCR
-   mandatory for every accepted page regardless of those measurements.
-2. **When to run the PageIndex tool vs. a synthetic root.** Every doc gets a `document_sections`
-   structure either way (§4); measure where running the full tool earns its cost vs. a synthetic
-   root — an implementation-routing question, not a contract gap.
-3. **Placement-hint quality** — how good is a per-document path guess, and how much does the P3 build
-   reconcile/override? Measure tree coherence.
-4. **P3 build cadence & scale** — rebuild-all vs incremental tree maintenance as the corpus
-   grows. (Path stability is no longer this spike's question — it is the §6 two-tier path
-   contract; what remains to measure: the fan-out sharding threshold and incremental-delta
-   size per cycle.)
-5. **doc_id scheme** — hash (collision-safe, opaque canonical paths) + readable names in P3.
-6. **Raw storage-class routing** (D51) — measure the read patterns per mime class on a real
-   corpus slice; set the standard/nearline/archive routing table and verify the mounted-read
-   cost envelope (no archive-class retrieval fees on agent browse patterns).
-7. **Citation-resolution precision/recall** (§4A) — exact-key coverage vs the fuzzy/LLM
-   residue rate on a corpus slice; per-deployment citation grammars (law) — measure before
-   trusting `cites` edges for navigation.
+Measure conversion fidelity, structure-route quality, intentional no-topic rate,
+nav hops/tokens to find a document, B/shard churn, P3 lock wait/publication lag,
+streamed media memory/transfer cost, and reset/repair duration. These measurements
+tune policy/operational settings; they do not reopen the original-copy rule,
+served-version choice or erasure guarantees.

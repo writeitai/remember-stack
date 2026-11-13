@@ -38,7 +38,7 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
             │    pgvector + pg_textsearch BM25)   │
             │ live graph (Postgres one-hop join + │
             │    bounded frontier traversal)      │
-            │ P3 corpus filesystem (GCS tree,     │
+            │ P3 corpus filesystem (S3 tree,      │
             │    mounted read-only to agents)     │
             └─────────────────────────────────────┘
                               │
@@ -49,14 +49,14 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
 
 *(Diagram note: the arrows descending into plane P come from the E columns (E0 artifacts → P3;
 E1/E2/E3 → P1/live graph) — plane P derives from the E spine only. K sits beside that flow: K pages
-and P3 cross-link as consumers of each other, but K is never a structural input to any
-projection — D40 refined; `e0_files_design.md` §6.)*
+remain standalone git content; P3 has no K links or dependency. No projection
+uses K as structural input — D155; `e0_files_design.md` §6.)*
 
 | Plane | Trigger | Source of truth | Mutability | "Rebuild" means |
 |---|---|---|---|---|
 | **E** | per-document chain | Postgres | append-only, windows close | n/a — it *is* the truth |
 | **K** | debounced/windowed | git repo | agent- and human-edited | re-compile (semantic) |
-| **P** | inline/current for P1 and graph; scheduled for P3 | none | current PostgreSQL derived state plus immutable P3 generations | reindex P1 or rebuild P3; graph catalog DDL is replayable |
+| **P** | inline/current for P1 and graph; per-document work for P3 | none | current PostgreSQL derived state and mutable P3 folders | reindex P1 or reconcile P3; graph catalog DDL is replayable |
 
 ## 2. Stores and sources of truth (D1, D6)
 
@@ -65,7 +65,7 @@ projection — D40 refined; `e0_files_design.md` §6.)*
 | **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; rebuildable **P1** vectors/BM25 indexes plus the sole `chunk_search` sidecar (D94); live graph views and bounded traversal (D98) | **source of truth** for plane E; P1/graph query structures remain derived | authority is PITR-backed; P1 rebuilds from authority + artifacts; graph metadata/functions replay from migrations |
 | **GCS — raw** | immutable original files | source of truth for file bytes | — |
 | **GCS — artifacts** | per-document markdown + `pageindex.json` + conversion sidecars, one immutable **representation** per conversion run (E0, D37/D65: `…/<content_hash>/<representation_id>/…`) | source of truth for converted bodies (nondeterministic converter output is **replayed from storage**, D7 — a toolchain bump creates a new representation beside the old, never regenerates in place) | — (like raw: backed up, not regenerated) |
-| **GCS — corpus fs** | **P3**: corpus organized as a mounted directory tree (D40) | derived | Postgres + artifacts (every cycle) |
+| **S3-compatible — corpus fs** | **P3**: copied originals and reader derivatives in per-document folders (D155) | derived | Postgres + raw + artifacts; incremental publication and full repair |
 | **git repo** | plane K: compiled + authored knowledge (K1 plus K2 purpose scopes, D47/D73) | **source of truth** — irreducibly the human-authored content; compiled pages are semantically regenerable from the spine + recorded inputs (D45/D46) | — (own backups) |
 Two hard rules: validity/invalidation state exists **only** in authoritative Postgres
 columns — P1 and live graph queries never independently decide truth
@@ -145,10 +145,11 @@ entity rows, or as the `chunk_search` row for a chunk. P1 remains a logical
 plane-P object—fully rebuildable from authority and immutable artifacts,
 carrying no authority itself (D94).
 
-## 5. Planes K and P: aggregate derivation (debounced/scheduled, D12)
+## 5. Planes K and P: aggregate knowledge and derived reads (D12/D155)
 
-Neither plane is triggered per document — K is windowed/debounced ("N new claims or T
-minutes"), P rebuilds on schedule; both summarize/project across the corpus.
+K compiles across documents on a debounce window ("N new claims or T minutes").
+P1 and the live graph follow authority writes; P3 publishes per-document changes
+through ordinary engine work and retains full reconcile as repair (D155).
 
 - **K1/K2** (git): a manifest-driven compile system (D45–D47, refined by D73; design: `k_layers_design.md`).
   A **planner** LLM maintains which pages exist and each page's mechanical **routing rule**
@@ -174,12 +175,12 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
   generation, build, or reader swap (D98). Full design: `p2_graph_design.md`.
 - **P1**: written inline by plane E (see §4); batch rebuild path exercised for embedding
   migrations and drills.
-- **P3 — corpus filesystem** (D40): a rebuildable GCS directory tree organizing the corpus for
-  agent navigation, **mounted read-only** to agentic workers. Built from E0 placement hints (D39)
-  + entities/relations (K is cross-linked, never a structural input — D40 refined; P3 stays
-  rebuildable from the E spine); folders by topic/source/entity, leaves linking to
-  the E0 artifacts, generated `_index.md`/`llms.txt` at each level. Cross-links with K
-  (understanding ↔ source). Full design: `e0_files_design.md` §6.
+- **P3 — corpus filesystem** (D155): mutable S3-compatible tree, mounted read-only.
+  Deterministic type, optional stored topic, title slug and stable suffix locate
+  one folder per served completed document. It contains copied originals and
+  reader-useful derivatives, deterministic `_index.md` tables and root `llms.txt`.
+  Incremental work maintains it; full reconcile repairs it from E0/PostgreSQL.
+  No stub/facet/entity/K layout. Full design: `e0_files_design.md` §§5–7.
 
 ## 6. Retrieval architecture (D9, D48, D94)
 
@@ -213,8 +214,9 @@ PG entity registry             (D98)                      → GCS bytes
   MCP *intent* tools; MCP renders the full shared MCP catalogue `remember.mcp_tools` (D136, [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)), whose other entries are
   infrastructure: `ingest`, `pipeline_readiness`, `delete_document`,
   `source_open` and the seven open-query tools.
-- Surfaces (D51): HTTP API, CLI, MCP server, and **four read-only mounts** (P3, E0 artifacts,
-  E0 raw — off the navigation path, K repo checkout); **filesystem-first** for agent harnesses
+- Surfaces (D51/D155): HTTP API, CLI, MCP server, the **read-only corpus mount**
+  (original copies and reader derivatives), and standalone K git repos;
+  **filesystem-first** for agent harnesses
   with full mount/API parity; a shipped **consumption skill** teaches cold agents the memory.
 - `valid_at` / `believed_at` supported end-to-end on both time axes, composable across calls.
 - Full design: `retrieval_design.md`; scenario battery: `plan/analysis/retrieval_scenarios.md`.
@@ -223,7 +225,9 @@ PG entity registry             (D98)                      → GCS bytes
 
 - **Postgres on Hetzner**: pgBouncer pooling, TLS for cross-cloud access, PITR backups.
 - **Workers on GCP**: Cloud Run jobs, Cloud Tasks queues (rate-limited, 2 retries + DLQ).
-- **GCS**: input files, conversion artifacts, and P3 corpus generations.
+- **Object storage**: immutable input files/artifacts and mutable S3-compatible P3 folders.
+  Mountable sessions are provisioned by the cloud control plane; self-host uses its
+  own bucket. No native GCS adapter is required for GCS XML/HMAC access.
 - **git repo** (plane K): hosted remote + independent backup; written only by the aggregate
   workers and humans.
 - Retrieval API runs semantic/BM25 entry, live graph expansion, and authority

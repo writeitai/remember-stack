@@ -55,6 +55,14 @@ and D147 (`run_task`); D101 itself concerns ingest attribution.
 | Provider API | S3 operations, streamed across stores when necessary | Native GCS and mandatory server-side copy add provider-specific behavior with no required benefit |
 | Fan-out | Deterministic radix shards for navigation children; bounded index tables | Unbounded topic directories and full member lists cease to be readable at millions of documents |
 
+The existing work ledger is unique by target/stage/component version, not content
+hash. A small content-free publication target per document/revision/policy lets
+ordinary `enqueue_on` and claim fencing work unchanged. Reusing/resetting a
+completed document-target row would need special completion/rearm semantics and
+could reuse attempt numbers against stale workers; that alternative is rejected.
+The desired corpus revision survives on the lineage, so clearing progress during
+repair does not change rendered publication identities.
+
 The serialized publisher is a deliberate small correctness mechanism: the
 pipeline stays concurrent, but one deployment's P3 changes cannot overwrite each
 other's shared indexes. It does not scan or recopy unrelated documents on each

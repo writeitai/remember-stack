@@ -138,8 +138,11 @@ search_documents(query?, filters?, k) → documents
   audit of all editions uses `time: history`; there is no option that ignores
   the scope ([effective time design §3.5](effective_time_and_section_references_design.md#35-search_documents)).
   Results carry their in-force intervals, their version id, and a P3 path only
-  when the judged version is the served one (`served_version`), with
-  `source_open(version_id)` otherwise, so an agent never opens a different
+  when the judged version is the served one (`served_version`) **and** its
+  D155 publication receipt matches the version, representation and desired corpus
+  revision, with `source_open(version_id)` otherwise. This publication guard also
+  applies without declared periods; a P3 path is resolved and movable, never
+  predicted from `doc_id`. Thus an agent never opens a different
   edition than it was shown. Filter-only paging uses the pinned `as_of` as the
   belief instant for declarations, so a correction between pages moves no row.
   Lineages without periods ignore `time` and behave as above

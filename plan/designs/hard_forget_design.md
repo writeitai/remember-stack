@@ -9,11 +9,11 @@
 > forget inventory. Authority deletion plus the normalized PostgreSQL views
 > removes forgotten material from all later live-graph statements. PostgreSQL
 > backups and bounded in-flight MVCC snapshots follow the existing database
-> erasure/retention contract. P3 clean rebuild remains required. Any P2 stage or
+> erasure/retention contract. P3 follows D155 reset/repair below. Any P2 stage or
 > object-prefix wording below is superseded by this rule and
 > [`p2_graph_design.md`](p2_graph_design.md) §10.
 
-> **Status:** current — D74; resolves `questions.md` #24 and gates WP-7.5.
+> **Status:** current — D74, with D155 corpus reset/restore; resolves `questions.md` #24 and gates WP-7.5.
 > Normal deletion remains `evidence_lifecycle_design.md` §8 / schema §13.1. This document owns
 > only irreversible hard-forget and restore non-resurrection.
 
@@ -76,7 +76,7 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
   and observation facts whose last live support was this lineage, and entities whose last live
   mention was this lineage);
 - exact immutable object keys/prefixes that may contain the source;
-- pre-forget P3 snapshot prefixes; and
+- the content-free deployment-wide P3 reset scope (D155), not friendly paths; and
 - K artifact IDs whose body, curation sidecar, or history ever cited the lineage's evidence.
 
 IDs and hashes are retained because replay must still work when PostgreSQL has already scrubbed the
@@ -86,8 +86,8 @@ a typed conflict.
 
 `ForgetManifestPort` has only two responsibilities: append one immutable manifest and enumerate
 manifests for a deployment. Its storage must be outside the ordinary data-restore set it protects.
-The self-host adapter uses a dedicated append-only local root; the cloud implementation and its
-durability live in `ultimate-memory-cloud`. D75/WP-7.7 require operators to transfer this separate
+D147 supports a dedicated append-only local root or a separately durable manifest
+bucket excluded from ordinary restores; the cloud host composes the same port. D75/WP-7.7 require operators to transfer this separate
 manifest root before restored data can become readable; the library does not own byte transport.
 
 External erasure capabilities are narrow protocols implemented by the
@@ -148,6 +148,9 @@ Hard-forget is correctness-first and fail-closed:
 2. One PostgreSQL transaction inserts the `preparing` row. That row is the admission barrier: new
    public reads/ingests/admin mutations, ordinary work claims, mount publication, and unrelated
    rebuilds refuse with `forget_in_progress`. Already-running ordinary work is allowed to finish.
+   D155 also stops engine-controlled mounted sessions and settles/fences in-flight
+   P3 object writes before inventory/reset; an expired lease or blocked API does
+   not prove an already mounted reader or detached store request has stopped.
 3. After the ordinary work ledger drains, the coordinator repeats K preflight against the current
    Git revision and takes the repeatable-read manifest inventory. Because ordinary commits and
    claims are now barred, this is the frozen acceptance cut. If the repeated preflight fails before
@@ -205,12 +208,21 @@ table or deletion-specific scheduler is added.
 3. **Raw and artifact objects.** `ObjectPurgePort` deletes every manifest raw, artifact, asset, and
    transcript key/prefix. A deduplicated content object is deleted only when no other live lineage
    references it; otherwise the other lineage remains the lawful owner of that identical byte
-   object. Missing keys count as success. P3 snapshot prefixes are handled in stage 4. The
+   object. Missing keys count as success. The whole P3 reset is handled in stage 4. The
    committed PostgreSQL scrub immediately removes the lineage from later live graph statements.
-4. **P3.** Use `CorpusFsBuilder` to publish a clean snapshot from the scrubbed spine. Then delete
-   every manifest-listed older P3 prefix and its registry rows. Mounts may reopen only the new
-   pointer; self-host cache cleanup is part of `CorpusFsPurgePort` acknowledgement, not a
-   best-effort side task.
+4. **P3 (D155).** Under the shared P3 mutation lock, reset **all** objects in
+   this deployment's dedicated corpus store, incomplete multipart uploads and
+   controlled serving/cache copies. Clear corpus membership/publication progress
+   and source-bearing pending paths. Verify the reset, then run the same full
+   repair from scrubbed authority and verify its indexes contain no forgotten
+   lineage. This deliberately covers former friendly paths and interrupted copies
+   without retaining title-bearing paths in portable intent. Purge acknowledgement
+   includes retained object versions if configured: a delete marker alone is not
+   erasure. No active retention/soft-delete feature may defeat that capability.
+   Controlled sessions stay closed until acknowledgement and all-store verification;
+   operator-managed FUSE mounts must stop/remount. Client downloads outside the
+   engine-controlled active stores are outside this erasure boundary. See
+   [E0 §6.7](e0_files_design.md#67-hard-forget-and-restore-erase-before-repair).
 5. **K.** Compiled pages recompile through the existing driver without the forgotten evidence.
    `KGitPurgePort` then removes every affected body/curation path from all reachable Git history and
    re-adds only its already-sanitized current file. This intentionally discards unrelated history
@@ -224,7 +236,7 @@ table or deletion-specific scheduler is added.
    the deployment. Sanitized current files are re-added unchanged, but their prior path history is
    discarded. This is an intentional correctness-first cost of the rare irreversible operation.
 6. **Verify and reopen.** Production verification proves every manifest ID, hash, key/prefix, old
-   P3 version, P1 derived state, live-graph reachability, and forbidden K reference is absent from its declared active store;
+   P3 source-bearing copy/index membership, P1 derived state, live-graph reachability, and forbidden K reference is absent from its declared active store;
    PostgreSQL has no remaining nominated source-bearing payload. Those mechanical store checks make
    public lookup by the forgotten IDs return the ordinary never-existed negative; the handler does
    not self-call a serving surface as a second verifier. The planted unique token and five-channel
@@ -249,22 +261,22 @@ Every serving composition has one readiness step before it accepts traffic:
 
 1. enumerate the deployment's portable manifests and materialize any missing PostgreSQL rows;
 2. for **every** manifest, including locally `complete` records, re-honor its
-   PostgreSQL authority/P1/live-graph state, exact objects, old P3
-   cache/mount, and K erasure through the idempotent purge capabilities;
-3. replay the full spine + clean-rebuild workflow when PostgreSQL is unsanitized or its current
-   P3 pointer does not resolve to a verified clean snapshot built after the accepted
-   manifest; and
+   PostgreSQL authority/P1/live-graph state, exact objects, entire P3 store and
+   controlled cache/mount copies, and K erasure through the idempotent capabilities;
+3. reset/repair P3 after all manifested lineages' authority scrubs (one reset may
+   cover their union). A local clean receipt never skips a separately restored
+   corpus bucket, former path or cache. Use the same coordinator services; and
 4. run mechanical production verification, update `last_verified_at`, and only then report ready.
 
 `complete` means the workflow once succeeded; it never means external stores may be skipped
 forever. Cheap exact deletes are reissued. The K adapter records a store-local acknowledgement ref
 after history erasure and validates it on every `honor` call; losing/restoring that ref triggers the
 same path erasure again. Such acknowledgements are receipts/cache only—the portable manifest is the
-sole intent. The P3 adapter likewise deletes every manifest-listed old durable prefix and local
-serving copy even when PostgreSQL still points at a clean current snapshot.
+sole intent. The P3 adapter likewise resets the entire dedicated corpus and its
+controlled serving copies even when PostgreSQL still records clean applied publications.
 
 Readiness stays false until re-honor/replay and S55 verification complete. Therefore restoring an older
-PostgreSQL dump, object bucket, P3 snapshot, K remote, or any combination cannot make
+PostgreSQL dump, object bucket, mutable P3 tree, K remote, or any combination cannot make
 forgotten data queryable: the append-only manifest lives outside that restore and re-closes the
 barrier first. The restore path is not special purge machinery; it feeds the same worker.
 
@@ -277,7 +289,7 @@ gate.
 
 ## 6. Rejected complexity and explicit limitations
 
-- No distributed transaction or rollback across PostgreSQL, object storage, snapshots, and Git.
+- No distributed transaction or rollback across PostgreSQL, object storage, P3 folders, and Git.
   P1 derived state can be purged in the PostgreSQL transaction; append-first + idempotent replay +
   fail-closed admission handles the remaining boundaries.
 - No semantic "find similar private text" eraser. Exact lineage provenance, IDs, keys, citations,
@@ -291,9 +303,9 @@ gate.
   remains the operator obligation above.
 - No machine-authored redaction of authored K content. A typed preflight makes accountable
   redaction a prerequisite instead of leaving a half-complete operation.
-- No claim that immutable P3 snapshots purge "for free." A clean rebuild changes the pointer;
-  explicit deletion removes the old bytes and local serving copies. The live graph has no
-  separate immutable bytes.
+- No claim that rebuilding P3 erases old paths or cached originals. D155 resets
+  and verifies the corpus store/controlled copies before repair. The live graph
+  has no separate immutable bytes.
 - No second K citation-history ledger solely for erasure. V1 conservatively rewrites registered K
   paths because current citation bindings cannot establish historical non-citation.
 
@@ -314,11 +326,21 @@ planting a unique token in one lineage and independently supported control facts
 4. proves forgotten and never-existed public envelopes are equal;
 5. restores the whole pre-forget fixture while retaining the manifest root and proves readiness
    blocks, replays, and returns S55 to green; and
-6. after a completed forget, independently restores object storage, P3
-   serving copies, and K while leaving PostgreSQL `complete`, proving each
+6. after a completed forget, independently restores object storage, the P3
+   bucket (including a former moved path/interrupted copy), controlled serving
+   copies, and K while leaving PostgreSQL `complete`, proving each
    readiness pass re-honors the manifest; and separately restores a pre-forget
    PostgreSQL database and proves its authority plus `chunk_search`/in-row
    vectors are scrubbed before readiness.
+
+D155 additionally requires a PostgreSQL + real MinIO forget/restore test with a
+unique token in original, derivatives, title/topic, member/root indexes and an
+unindexed interrupted copy. Retry after a failed reset/cache acknowledgement;
+restore the corpus bucket alone while PostgreSQL remains complete, then the
+database independently. No serving surface reopens until reset, repair and
+verification succeed, and an independent control document survives. The
+[delivery plan](../plans/corpus_document_folders.md#5-activate-with-deletion-forget-and-restore-together)
+spells out the fixtures.
 
 The canary uses deterministic providers and makes no hosted LLM calls. Focused component tests cover
 manifest idempotency/conflicts, ingest guards, missing-object idempotency, adapter failure visibility,

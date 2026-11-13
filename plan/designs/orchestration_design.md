@@ -14,8 +14,8 @@ Numbers here are starting points to measure, not committed constants (CLAUDE.md)
 > ingest→convert→structure→crossref; E1 chunk → **prepare embedding input** → **batch embed**
 > (D80); E2 extract/ground; E3 resolve/normalize/adjudicate/label), each delivered through the
 > D61 queue port when the previous stage completes; the reference adapter uses Cloud Tasks/Cloud
-> Run and the self-host adapter uses Postgres wake-ups. Planes K and P are debounced/scheduled
-> aggregate workers. `processing_state` in Postgres is the idempotency + status + dead-letter
+> Run and the self-host adapter uses Postgres wake-ups. K compiles on a debounce
+> window; D155 P3 publishes document changes through unlaned engine work. `processing_state` in Postgres is the idempotency + status + dead-letter
 > ledger (one row per target/stage/version — schema §2) and, under D67, the authority for route,
 > due time, retry, and parking state; `cost_ledger` meters every model call with lane
 > attribution. A **lane** is a parallel plane-E queue set for the same stages with its own rate
@@ -65,7 +65,7 @@ attempt count, backoff, and terminal dead-lettering belong only to `processing_s
   adjudication is rate-limited independently of E2's LLM-throughput limits. Queue count is
   configuration, not architecture — stages × lanes × deployments is tens of queues, well
   inside platform limits. For lane-managed plane-E rows, `lane` is `steady` or `backfill`.
-  K/P debounce or schedule jobs set `lane IS NULL`; their route is the single unlaned
+  K debounce jobs and D155 P3 publication work set `lane IS NULL`; their route is the single unlaned
   `(deployment, stage, NULL)` route, not a third lane. Physical queue names are derived adapter
   configuration and are not work identity.
 - **Enqueue granularity mirrors `processing_state` targets**: document-grain through E0;
@@ -76,10 +76,14 @@ attempt count, backoff, and terminal dead-lettering belong only to `processing_s
   bottlenecks: Postgres write capacity through the configured pool and
   per-provider LLM rate limits. Queues meter *volume*; the cascades already meter *ambiguity*
   (D4) — the two knobs are deliberately different mechanisms.
-- **K and P workers keep their own trigger models** (debounce window; schedule — D12) and do
-  not use lanes; lanes are a plane-E concept. Their jobs still record `processing_state` rows
-  (`build_snapshot`, `compile_knowledge`, …) like everything else, with `lane IS NULL` and
-  normalized `not_before` when their debounce/schedule is in the future. A domain trigger ledger
+- **K and P3 keep their trigger models** (K debounce — D12; per-document corpus
+  publication — D155) and do not use lanes. Their `processing_state` rows use
+  `publish_corpus`, `compile_knowledge`, etc., with `lane IS NULL` and normalized
+  `not_before`. Corpus publication has a small content-free request target per
+  document/revision/policy, so another update is a distinct ordinary work row
+  under the existing ledger key; the desired lineage revision is durable, not
+  payload authority. Self-host's non-convert class and managed
+  pushed `run_task` execute the same engine-owned stage. A domain trigger ledger
   may also carry a debounce timestamp—for example `knowledge_refresh_queue.not_before` coalesces
   evidence-change signals—but that row is not task delivery state. When it materializes a K/P job,
   the unlaned `processing_state` row is the only authority consulted by the D61 queue port.
@@ -304,7 +308,7 @@ well above the longest pause a live worker can have between renewals.
 ## 7. Observable state and telemetry — no dashboard subsystem
 
 Everything below derives from tables that already exist (`processing_state`, `cost_ledger`,
-`projection_snapshots`, `knowledge_compilations`) or from the worker's existing `worker.run`
+`corpus_publications`, `knowledge_compilations`) or from the worker's existing `worker.run`
 telemetry event. The library exposes it through typed admin/CLI
 results and the D61 telemetry port; it does not ship a dashboard backend or a second bookkeeping
 system:

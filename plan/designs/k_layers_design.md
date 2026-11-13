@@ -536,9 +536,9 @@ treat "compiled never consumes authored" as an invariant, not a convention.
   *reader* — an agent loading the to-be before acting on it — must also be able to see "this
   page has N unresolved evidence-change flags," or agents will plan against commitments the
   system already knows are shaky. The body is untouchable (D46) but the flag state is
-  queryable; it must surface on at least one read path — the P3 `_index.md`, the retrieval
-  API's page metadata, and/or a driver-owned status sidecar. Which surface(s) is an open
-  choice (§11 spike 9); *that* it surfaces is design.
+  queryable; it surfaces in retrieval page metadata and K's own provenance/read
+  metadata. D155 removes P3 mirroring because that document tree contains no K
+  links or state; it does not remove this K reader-disclosure requirement.
 
 ## 6. The compile cycle
 
@@ -609,9 +609,9 @@ answer it:
 The writer runtime is deliberately simple: **a stock Codex/OpenCode session with its default
 tools** — shell, file reads, file writes — and **no custom tool integration, no instrumented
 retrieval layer**. This works because consumption is already harness-shaped (D51): the
-memory's read surfaces are the read-only mounts (P3 tree, artifacts, K checkout) and the
+memory's read surfaces are the read-only P3 document tree, a standalone K checkout and the
 memory CLI, both reachable from a default shell; the consumption skill teaches them; and
-every reachable object carries its evidence ID (stub frontmatter, CLI results — a D50
+every reachable object carries its evidence ID (P3 reader metadata, CLI results — a D50
 requirement), so citing is *copying an ID it already has*, never reconstructing one.
 
 **One runtime, a policy knob.** The driver always prepares the same per-page working
@@ -818,9 +818,9 @@ structurally (one committer, disjoint writes, DAG order).
    workflows — measure with the first agent-operated scope.
 8. ~~**Reader-facing flag surface**~~ **RESOLVED (D49)** — two surfaces: the retrieval
    **response envelope** carries each consumed K page's `compiled_at` + staleness + open-flag
-   count, and P3's generated `_index.md` mirrors the same per page for the browse path. The
-   status-sidecar option is dropped (a second mutable state to keep honest, for no third
-   consumption mode). See `retrieval_design.md` §5.
+   count, and K's own provenance/read metadata carries status for readers. D155
+   removes the former P3 mirroring: K repos remain standalone. No P3 status
+   sidecar/cache is introduced. See `retrieval_design.md` §5.
 
 ## References
 

@@ -142,8 +142,10 @@ answering current-fact — so validity-as-current-fact still has exactly one hom
 
 ## D7. Rebuild-first sync; immutable GCS snapshots; read-only readers
 
-**Status:** superseded by D98 for graph data. P3 keeps its independently
-specified rebuild/publish lifecycle; there is no P2 generation.
+**Status:** superseded by D98 for graph data and by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders) for P3.
+P3 uses incremental mutable document folders; full repair remains, with no
+snapshot or pointer-swap contract. This entry's old lifecycle is historical.
+Persisting/replaying nondeterministic outputs remains required.
 
 **Decision.** The L6 worker periodically rebuilds the entire graph from a Postgres → Parquet
 export (`COPY FROM` bulk load), validates, and publishes an immutable versioned snapshot to
@@ -938,6 +940,10 @@ for E1). Operational complexity is handled by decomposition, not numbering.
 
 ## D37. E0 storage split — GCS holds bodies, Postgres holds the index; ID-addressed; mount-ready
 
+> **Amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** The immutable raw/artifact authority split and
+> ID-addressed E0 keys remain. Customers mount P3 copies of originals and reader
+> derivatives; separate raw/artifact mounts are no longer the consumption contract.
+
 > **Refined by D51.** The raw bucket's "never mounted" arm is reversed: raw is now mounted
 > read-only but **off the navigation path** (explicit pointers only), with mandatory data-access
 > audit logging and mime-routed storage classes (so "cold" is no longer blanket). The storage
@@ -1012,6 +1018,12 @@ derived_assets[], manifest }`. `plan/designs/media_design.md` §2/§4.
 
 ## D39. PageIndex provides per-document structure — sidecar + PG index, structure-only, summaries kept, placement-hint-extended
 
+> **Amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Root placement is an optional topic path or
+> explicit `null`, not a full type/filename path. A successful no-topic result is
+> persisted with a placement generation, distinct from degradation. P3 types are
+> deterministic; there are no section leaves or corpus-wide model reconciliation.
+> Structure, summaries, sidecar and PostgreSQL section indexing remain binding.
+
 **Decision.** PageIndex builds a per-document hierarchical tree (`node_id`, `title`, `summary`,
 nested nodes, spans). It is used as **structure, not a retrieval engine** (we keep chunk + embed +
 graph, D8/D9). Stored **both** as a `pageindex.json` sidecar (artifact) **and** a Postgres
@@ -1033,6 +1045,12 @@ partition; sections never cut through a block; blocks are never derived from sec
 tool, roles, summaries, and placement hints are unchanged. `e1_chunks_design.md` §3.
 
 ## D40. P3 — the corpus filesystem: a mountable, rebuildable projection
+
+**Status:** superseded for layout, inputs, publication and K composition by
+[D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders). P3 remains a read-only, derived, rebuildable consumption surface.
+Its current contract is actual per-document original/derivative folders in a
+mutable S3-compatible tree, with incremental work and full repair. The snapshot,
+stub/facet/entity and K-cross-link rules below are historical.
 
 **Decision.** The system builds a **canonical corpus filesystem** (a published navigable view, no source-of-truth): a materialized **GCS bucket
 laid out as a directory tree** organizing the whole corpus for agent navigation, **mounted read-only**
@@ -1503,6 +1521,10 @@ bodies deliberately do not live in Postgres.
 
 ## D49. The response envelope: grain type-discipline, inline contradictions, typed negatives, freshness stamps
 
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** K freshness/open-flag disclosure
+> remains on K's own read surfaces and retrieval envelopes; P3 no longer links K
+> or mirrors its per-page status. Other retrieval/envelope contracts remain.
+
 > **D98 amendment (2026-08-27).** P2 snapshot freshness and generation
 > provenance are removed. The envelope's grain, contradiction, negative,
 > truncation, and per-source honesty rules survive; graph freshness is the
@@ -1632,6 +1654,13 @@ access-isolation arm; `retrieval_design.md` §9.)
 > `project` argument never reaches the engine.
 
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Customer filesystem consumption
+> is one read-only P3 mount containing original copies and reader derivatives;
+> raw/artifact mounts, original-pointer-only access, and rejection of duplicate
+> originals are replaced. K remains a standalone git repo. Filesystem-first
+> preference, unmounted API parity, the consumption skill, audit logging and raw
+> MIME-class routing remain; every P3 copy is hot.
 
 **Refined by D132.** The original MIME class is decided from bytes before this
 raw routing rule runs. D132 also requires explicit classes on derived, snapshot,
@@ -1817,6 +1846,12 @@ coordinate is persisted on occurrence records and currency transitions.
 `evidence_lifecycle_design.md` §1/§3; `plan/designs/media_design.md` §6.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Lineages remain stable source
+> identities and P3 serves the completed current version. A P3 folder path may
+> move on type/topic/title or shard changes: store `doc_id` and resolve its applied
+> publication path. The F6 stable-folder-path clause is withdrawn. K citations,
+> immutable versions, testimony currency and paid-work reuse are unchanged.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** A `snapshot` lineage's versions may carry declared
 > **effective periods** (when the text is in force). An identical-byte observation that
@@ -2139,6 +2174,13 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
 
+> **Amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders) for corpus storage/mounts.** The existing S3
+> adapter serves mountable.io, AWS S3, GCS XML/HMAC and MinIO; local FS is the dev
+> adapter. The port adds only streamed whole-object replacement, paginated prefix
+> listing and idempotent deletion for mutable P3. No native GCS adapter or separate
+> raw/artifact customer mounts; managed mounting is the remember.dev-ticket CLI
+> contract. Immutable E0 writes and other provider boundaries remain.
+
 > **D152 measurement extension.** Retained-resource evidence is a narrow
 > substrate capability. Its engine-owned classification/native capture and
 > exact ACK contract are defined in
@@ -2384,6 +2426,12 @@ the person holding the role).
 > measured (CLAUDE.md).
 
 ## D65. Media is an E0 input modality — bound routes, typed source locators, derivation disclosure, and direct media search
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Binding (8)'s stubs/previews-only
+> and no-original-copy rule, and (1)'s raw-mount-only original access are replaced
+> by actual P3 folders containing a copied original and reader derivatives.
+> `media/` still means derived assets; canonical Markdown, immutable source and
+> representation identity, locators, disclosure and unmounted source access remain.
 
 **Refined by D133.** The locator union gains `sheet_range`, `table_region`,
 `json_pointer` and `line_range`; `evidence_mode` gains `computed`. The media
@@ -2895,6 +2943,13 @@ status documentation, but adds no new public runtime feature or configuration su
 D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
+
+> **P3 stage amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Under the same portable intent and
+> fail-closed/drain barrier, reset the deployment's entire corpus store and
+> controlled mount/cache copies, then repair from scrubbed authority and verify.
+> Replay this after independent restores even for locally complete manifests.
+> This replaces clean-snapshot publication plus old-prefix purge; manifests need
+> no historic friendly paths. All non-P3 erasure/restore rules remain.
 
 **Refined by D134** (document metadata, people and observed-name rows are deleted with their
 lineage). An earlier D133 container rule here is withdrawn by D138: containers are not expanded.
@@ -4183,6 +4238,10 @@ projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
 
+> **P3 registry clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Mutable P3 publication
+> receipts replace immutable snapshot rows. D94's PostgreSQL-native P1 and other
+> storage/search contracts remain unchanged.
+
 > **Fact-writer concurrency amendment (2026-11-11).** Labeling and embedding
 > reserve only bounded batches of pending fact IDs, ordered consistently,
 > through provider I/O without an open database transaction. Overlapping jobs
@@ -4365,6 +4424,10 @@ a shipped switch.
 D20, or D21.
 
 ## D96. No entity types; profile is observation prose
+
+> **P3 entity-path clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 has no entity
+> directories or entity-index publication. Entity identity, canonical types,
+> profiles and retrieval contracts remain binding outside P3.
 
 **Refined by D134.** When Claimify replaced a self-reference with the document's own name, the
 one reference at that recorded span is not minted or resolved; the claim keeps the name as text. No entity type is introduced.
@@ -5967,6 +6030,12 @@ lives in `plan/plans/`.
 
 ## D116. Originals sit on the navigation path, alongside their representation
 
+**Status:** navigation intent retained; original placement and mount mechanism
+superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders). The original remains authoritative in raw; every
+published document folder contains a derived byte-identical copy beside its
+reader derivatives. No per-family exclusion or archive-class browse copy.
+Backend auditing and unmounted/locator-scoped `source_open` remain binding.
+
 **Decision (2026-09-03).** Every document's byte-identical original is reachable by browsing,
 at `<doc_id>/<content_hash>/original.<ext>` — one level *above* the representation directory,
 so it is shared by every representation of the same bytes and a re-conversion never duplicates
@@ -6010,6 +6079,13 @@ ten seconds of a recording rather than the file. Any managed-offering claim abou
 are accessed is a D5 claim-governance matter in the cloud repository, not settled here.
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 shows the served completed
+> version's original and derivatives together, not the latest stored original
+> alongside older text. A raw-only lineage has no folder; its original remains
+> available by version through raw APIs. Explicit snapshot/mount publication is
+> replaced by incremental work. Store-and-park, resume, admission and connector
+> completeness, raw availability and no promotion on upload remain binding.
 
 **Refined by D133 and D138.** Parking applies to recognized families whose converter needs
 an unconfigured provider or is not yet built. Unrecognized bytes are stored and get a card
@@ -7345,6 +7421,12 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 
 ## D143. Processing layers can be switched off per deployment and per request
 
+> **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
+> sources-only document tree with no entities, fact metadata or K links, identical
+> across claims/facts settings. No facts-setting snapshot rebuild or filtering is
+> required. Completion still follows enabled-layer currency; K gating and all
+> other processing/retrieval-layer rules remain binding.
+
 **Status:** accepted (design approved by GPT-6.1 Sol review round 9, 2026-10-23); binding on
 merge of PR #515; implementation is not implied.
 **Date:** 2026-10-23.
@@ -7441,6 +7523,11 @@ fact child).
 ---
 
 ## D147. A deployment's engine is built from explicit settings and can run beside others in one process
+
+> **Extended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Corpus publication is engine-owned work
+> invoked through the same explicit context, `run_task` and delivery collector.
+> D74's corpus reset/replay uses the separately durable forget manifest store.
+> No hosted scheduler or correctness authority is added to this repository.
 
 **Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c). Merged
 as D144 in #531 and renumbered the same day to avoid colliding with decisions being written
@@ -7948,3 +8035,100 @@ are evidence for the design, not proof of a shipped speedup.
 **Delivery:** [implementation and qualification](plan/plans/shared_retrieval_eligibility.md).
 **Amends:** D142/D149 physical read execution and D23 UUID-derived pruning;
 retains D54, D56, D67, D74, D140 and D152 correctness boundaries.
+
+---
+
+## D155. The corpus filesystem is a mutable tree of document folders
+
+**Status:** accepted design (owner direction 2026-11-13); implementation is separate.
+**Date:** 2026-11-13. D154 is reserved for pagination PR #589.
+
+**Context.** The customer mount must be a browsable corpus, with one real folder
+per document holding its original and every reader-useful derivative. Snapshot
+stubs and separate raw/artifact mounts cannot provide that interface. Originals
+remain authoritative in raw; the extra corpus copy is an accepted storage cost.
+There are no users requiring migration, aliases or a transition layout.
+
+**Decision.**
+
+- **Publish copies, not stubs.** One folder contains `original<suffix>`, exact
+  `document.md`, the active `pageindex.json`, optional `source_map.json`, every
+  reader-classified media/transcript asset, and generated `document.json` and
+  `_index.md`. Exclude blocks, full conversion/meta manifests, provider-response
+  JSON, checkpoints, references NDJSON, work/extraction state and old readings.
+  Export by inventory/kind allowlist, never by copying an artifact prefix.
+- **Type first, topic optional.** Fixed types: `email`, `chat`, `image`, `audio`,
+  `video`, `pdf`, `spreadsheet`, `presentation`, `document`, `data`, `other`.
+  Match stored source kind/byte-decided MIME/family/route in the design's order;
+  `other` is the fallback. PageIndex root placement may deliberately return
+  `null`; otherwise it proposes only a bounded topic path beneath the type.
+  No corpus-organizing model call. A safe title slug plus an immutable,
+  uniqueness-checked 12-character lineage suffix names the folder.
+- **One completed reading.** Original and derivatives use the served completed
+  version/representation and active structure. A newer upload stays accessible
+  through raw APIs but leaves the previous folder intact until completion. No
+  processed version means no folder. D117 storage/parking is retained; its
+  latest-stored-original P3 view is replaced.
+- **Incremental, through existing work.** Projection-relevant transactions advance
+  a durable lineage corpus revision and enqueue `publish_corpus` on a small
+  content-free request target for that document/revision/policy. This respects
+  existing ledger uniqueness without resetting attempts or changing ingestion
+  work identity. Delayed work checks current intent/receipts. Self-host classes and managed pushed `run_task` execute the same
+  engine handler through existing leases/retries/announcements. One deployment
+  P3 mutation lock plus a pending-path journal prevents lost shared-index updates
+  and makes interrupted moves/removals retryable. Stream new folder contents
+  before indexing; update affected ancestors/root, then remove old folders.
+  Same-path updates explicitly expose an updating state and can temporarily mix
+  complete files. There is no multi-object snapshot guarantee.
+- **Repair the same tree.** Full rebuild is a reconcile operation using identical
+  selectors/rendering; it deletes orphans and converges to incremental output.
+  D7/D40 whole snapshots and pointer swap are replaced for this projection.
+  Deterministic `_index.md` member tables, one bounded root `llms.txt`, and radix
+  fan-out sharding remain. No Tier-1 `documents/`, facet duplication, `entities/`,
+  global path-map file, or K links. K repos remain standalone.
+- **Identity survives moves.** Store `doc_id` and version handles, not paths.
+  Resolve through existing document search; MCP `p3_path` is an applied matching
+  publication path or `null`, never a predicted stable path. Readiness `p3`
+  certifies the selected document revision's files, indexes and cleanup, not a
+  recent global snapshot timestamp. P3 is sources-only across D143 layer settings.
+- **S3 and one customer mount.** Reuse the S3 adapter for mountable.io (bucket =
+  filesystem id), AWS S3, GCS XML API/HMAC and MinIO. Keep E0 writes immutable;
+  add only streamed replacement, paged prefix listing and idempotent deletion for
+  P3. All corpus copies are hot. Customers mount read-only. `remember mount DIR`
+  obtains a one-time remember.dev ticket and invokes
+  `mountable mount --ticket-stdin --json DIR`, with the ticket only on stdin;
+  `remember unmount DIR` delegates unmount. Session provisioning is a cloud-repo
+  concern. Self-host can use any read-only S3 FUSE mount.
+- **Forget erases before rebuilding.** Keep D74's portable intent, barrier,
+  drain, verification and restore replay. Reset the whole dedicated corpus store,
+  incomplete uploads and controlled serving caches; then repair from scrubbed
+  authority. This removes interrupted copies and every index mention without
+  storing historic friendly paths in immutable intent. Re-honor even completed
+  manifests on independent restores. P3 purge acknowledgement includes retained
+  object versions and controlled sessions; a lease expiry or API barrier alone
+  does not prove that external writes/cached reads have stopped.
+
+**Rationale and alternatives.** A second original makes folders self-contained;
+serving a single completed version avoids silently pairing v2 bytes with v1 text.
+Serialized incremental maintenance is smaller than snapshot recopying or a
+multi-writer directory transaction protocol. Resetting all derived P3 data during
+rare forget is deliberately more expensive than ordinary removal and simpler to
+prove after independent restores. S3 interoperability is documented for GCS, so
+there is no reason for a native GCS adapter. A mounted global id map would be an
+unbounded shared rewrite; existing id-filtered search resolves paths instead.
+
+**Reuse boundary.** No new converter, blockizer, chunker, extraction, Claimify,
+embedding-policy/model or text-origin generation. Nullable topic changes only
+placement output/schema generation and reuses stored summaries. Corpus revisions,
+suffixes and reader metadata never enter paid-work identities (Rule 4/D56).
+
+**Amends/supersedes.** P3 lifecycle/layout and path guarantees in D7/D39/D40/D55;
+customer mounts/original-copy rules in D37/D51/D61/D65/D116; D117 browse version
+selection; D74 purge targets; D94 snapshot registry; D96 entity folders; D49 K
+status mirroring and D143 P3 served-set snapshots. Their other authority, reuse,
+retrieval, media and privacy contracts remain as identified inside those entries.
+D147's context/work/portable-store seams are reused, not replaced.
+
+**Authority:** [E0 §§5–7](plan/designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem).
+**Analysis:** [choices and provider evidence](plan/analysis/corpus_document_folders.md).
+**Delivery:** [ordered slices and tests](plan/plans/corpus_document_folders.md).
