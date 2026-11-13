@@ -42,8 +42,12 @@ a JSON object raises the ordinary `OpenRouterProviderError`:
   class (`empty`, `whitespace_only`, `not_json`, or the JSON type of a non-object),
   and the decoder's fixed reason and character offset. It never includes body
   text, headers or credentials, because a partial reply can contain model
-  output derived from user content. The original decoder exception is not
-  chained, because it keeps the whole raw body in its `doc` attribute.
+  output derived from user content. The error is raised after the decoder's
+  `except` block, so no decoder exception is attached as its cause or context.
+  That matters because a `json.JSONDecodeError` keeps the whole raw body in its
+  `doc` attribute and its own message would appear in a printed traceback.
+  This protects the message and the exception chain only. It is not memory
+  redaction: the HTTP response object still exists in the callers' frames.
 - On the rotation path the error carries the targeted provider slug, like
   every other error on that path.
 - `usage` is `None`, which means unknown, not zero. A success status does not
@@ -61,9 +65,11 @@ Valid replies, including valid JSON preceded by whitespace, decode exactly as
 before. The rule changes no reuse key, prompt, schema, model, routing or price
 (D56).
 
-## Open point for the binding design
+## Where the rule is recorded
 
-Section 3 of the rotation design covers capacity envelopes and missing
-accounting, but says nothing about a success reply that is not a JSON object.
-If reviewers accept this behaviour, add one bullet there stating the rule
-above, so the design matches the code.
+The same change adds this rule to section 3 of the
+[provider-rotation design](../designs/openrouter_provider_rotation_design.md)
+and documents it for operators on the self-hosting models page
+(`website/src/app/docs/self-hosting/models/page.mdx`). It restores the
+adapter's existing typed-error contract. It adds no recovery mechanism, so no
+new numbered decision is needed.

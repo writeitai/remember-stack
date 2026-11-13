@@ -2506,7 +2506,13 @@ _MALFORMED_SUCCESS_BODIES = [
 def _assert_safe_typed_success_body_error(
     *, error: OpenRouterProviderError, path: str, expected: str
 ) -> None:
-    """The broken success reply is a plain typed error with safe facts only."""
+    """The broken success reply is a plain typed error with safe facts only.
+
+    Privacy here covers the message and the exception chain: no decoder
+    exception (whose ``doc`` holds the raw body) is attached as cause or
+    context, so a printed traceback cannot show one. It does not claim the
+    response object is gone from memory.
+    """
     from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 
     message = str(error)
@@ -2521,6 +2527,7 @@ def _assert_safe_typed_success_body_error(
     assert error.retryable_unbilled is False
     assert error.status_code == 200
     assert error.__cause__ is None
+    assert error.__context__ is None
 
 
 @pytest.mark.parametrize(("content", "expected"), _MALFORMED_SUCCESS_BODIES)
@@ -2637,6 +2644,8 @@ def test_whitespace_decode_error_reports_offset_like_the_bare_decoder() -> None:
     assert f"body_bytes={len(content)}" in message
     assert f"decode_error='Expecting value', decode_pos={len(content)}" in message
     assert raised.value.provider_host == "deepinfra"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 @pytest.mark.parametrize("rotated", [False, True], ids=["unrotated", "rotated"])

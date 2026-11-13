@@ -1051,10 +1051,23 @@ def _success_body(
     class, and the decoder's fixed reason and character offset. It never
     includes body text, headers or credentials, because a partial body can
     contain model output derived from user content.
+
+    The error is raised after the ``except`` block, so it has no chained
+    decoder exception (neither ``__cause__`` nor ``__context__``). A
+    traceback of it therefore shows no decoder message and offers no path to
+    the decoder's ``doc`` attribute, which holds the raw body. This covers the
+    message and the exception chain only; the response object itself still
+    lives in the callers' frames.
     """
+    body: object = None
+    decode_failure: str | None = None
     try:
         body = response.json()
-    except ValueError as error:
+    except json.JSONDecodeError as error:
+        decode_failure = f"decode_error={error.msg!r}, decode_pos={error.pos}"
+    except ValueError:
+        decode_failure = "decode_error='invalid text encoding'"
+    if decode_failure is not None:
         size = len(response.content)
         if size == 0:
             body_class = "empty"
@@ -1062,17 +1075,13 @@ def _success_body(
             body_class = "whitespace_only"
         else:
             body_class = "not_json"
-        if isinstance(error, json.JSONDecodeError):
-            reason = f"decode_error={error.msg!r}, decode_pos={error.pos}"
-        else:
-            reason = "decode_error='invalid text encoding'"
-        # ``from None``: a JSONDecodeError keeps the whole raw body in ``.doc``.
         raise OpenRouterProviderError(
             f"OpenRouter {path} returned {response.status_code} with an"
-            f" undecodable body (body={body_class}, body_bytes={size}, {reason})",
+            f" undecodable body (body={body_class}, body_bytes={size},"
+            f" {decode_failure})",
             provider_host=provider_host,
             status_code=response.status_code,
-        ) from None
+        )
     if not isinstance(body, dict):
         json_type = _JSON_TYPE_NAMES.get(type(body), "other")
         raise OpenRouterProviderError(
