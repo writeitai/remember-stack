@@ -7,7 +7,7 @@ export const metadata = {
 
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
-"Ravi", "Ravi S." and "our backend lead" may be one person. Two people
+"John", "John S." and "our backend lead" may be one person. Two people
 called Dana are two people. If memory gets this wrong in one direction,
 facts about different people blur into one; in the other, one person's
 history splits across duplicates and no query sees all of it. An agent that
@@ -37,8 +37,8 @@ only *find candidates*; they never decide on their own.
 1. **Exact alias.** Is there an entity with exactly this cleaned-up name?
    An exact match lists every such entity, which may be several (two people
    called Dana). It is a candidate list, not a verdict.
-2. **Similar spelling.** Trigram similarity finds near-spellings: "Ravi
-   Shankar" and "Ravi Shanker".
+2. **Similar spelling.** Trigram similarity finds near-spellings: "John
+   Smith" and "John Smyth".
 3. **Similar sound.** A phonetic code (Daitch–Mokotoff) finds names that
    sound alike but are spelled differently.
 4. **Profile embedding.** The mention, together with its claim, is embedded
@@ -115,7 +115,7 @@ them yet. In practice the write-time cascade above decides identity.
 
 ## Resolving a name at query time
 
-When you or your agent ask about "Ravi", the `resolve_entity` operation
+When you or your agent ask about "John", the `resolve_entity` operation
 turns the name into entity IDs. It uses the same exact, spelling and sound
 steps, and falls back to profile embedding search only when those find
 nothing. It never calls a model and never makes the small-model choice.

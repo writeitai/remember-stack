@@ -78,7 +78,7 @@ def claims_and_facts() -> str:
     """Claims (what sources said) feeding facts (what is held true)."""
     s = head(
         title="Claims and facts",
-        desc="Three sources make claims about Ravi: kickoff notes on 15 January, slides in February and a retro on 12 June. The first two support the fact that Ravi works on the billing migration, from 14 January. The retro supports a new fact, Ravi works on the search team from 1 June, and closes the earlier fact on 1 June. The claims never change; the facts change and keep their evidence.",
+        desc="Three sources make claims about John: kickoff notes on 15 January, slides in February and a retro on 12 June. The first two support the fact that John works on the billing migration, from 14 January. The retro supports a new fact, John works on the search team from 1 June, and closes the earlier fact on 1 June. The claims never change; the facts change and keep their evidence.",
         steps=9,
     )
     s += """  <text class="k" x="60" y="70">WHAT SOURCES SAID</text>
@@ -91,12 +91,12 @@ def claims_and_facts() -> str:
     claims = [
         (
             "Kickoff notes · 15 Jan",
-            "“Ravi has been on the billing",
+            "“John has been on the billing",
             "migration since yesterday.”",
             160,
         ),
-        ("Slides · Feb", "“Ravi is working on the billing", "migration.”", 290),
-        ("Retro · 12 Jun", "“Ravi moved to the search team", "on 1 June.”", 420),
+        ("Slides · Feb", "“John is working on the billing", "migration.”", 290),
+        ("Retro · 12 Jun", "“John moved to the search team", "on 1 June.”", 420),
     ]
     for i, (meta, l1, l2, y) in enumerate(claims, 1):
         s += f'''  <g class="s{i}">
@@ -112,7 +112,7 @@ def claims_and_facts() -> str:
     s += """  <g class="s5">
     <rect class="cardT" x="700" y="175" width="440" height="150" rx="16"/>
     <circle cx="736" cy="212" r="14" fill="url(#sphereT)"/>
-    <text class="h2" x="762" y="218">Ravi works on the billing migration</text>
+    <text class="h2" x="762" y="218">John works on the billing migration</text>
     <text class="m" x="762" y="246">valid 14 Jan – 1 Jun</text>
     <text class="m" x="762" y="270">supported by 2 documents</text>
     <rect x="762" y="284" width="112" height="24" rx="12" fill="#18244f" stroke="#25335f"/>
@@ -121,7 +121,7 @@ def claims_and_facts() -> str:
   <g class="s7">
     <rect class="cardT" x="700" y="380" width="440" height="120" rx="16"/>
     <circle cx="736" cy="417" r="14" fill="url(#sphereT)"/>
-    <text class="h2" x="762" y="423">Ravi works on the search team</text>
+    <text class="h2" x="762" y="423">John works on the search team</text>
     <text class="m" x="762" y="451">valid from 1 Jun</text>
     <text class="m" x="762" y="475">supported by 1 document</text>
   </g>
@@ -136,7 +136,7 @@ def claims_and_facts() -> str:
   </g>
   <g class="s8">
     <text class="b" x="60" y="585"><tspan class="cc">Claims are the transcript;</tspan><tspan class="tc"> facts are the verdict.</tspan></text>
-    <text class="m" x="60" y="610">The retro did not erase Ravi's billing work. It gave it an end date, and the history stays queryable.</text>
+    <text class="m" x="60" y="610">The retro did not erase John's billing work. It gave it an end date, and the history stays queryable.</text>
   </g>
 </svg>
 """
@@ -163,13 +163,13 @@ def three_clocks() -> str:
 """
     s = head(
         title="Three clocks",
-        desc="One fact, Ravi works on the billing migration, on three timelines. World time: true from 14 January to 1 June. Said-on time: the kickoff notes said it on 15 January and the retro said it ended on 12 June. Belief time: the memory learned it on 15 January and still holds it. A query at 1 March finds the fact true; a query at 1 July finds it no longer current, ended 1 June.",
+        desc="One fact, John works on the billing migration, on three timelines. World time: true from 14 January to 1 June. Said-on time: the kickoff notes said it on 15 January and the retro said it ended on 12 June. Belief time: the memory learned it on 15 January and still holds it. A query at 1 March finds the fact true; a query at 1 July finds it no longer current, ended 1 June.",
         height=600,
         steps=8,
         extra_css=cursor_css,
     )
     s += """  <text class="k" x="60" y="62">ONE FACT, THREE CLOCKS</text>
-  <text class="h" x="60" y="92">Ravi works on the billing migration</text>
+  <text class="h" x="60" y="92">John works on the billing migration</text>
 """
     for m, d in zip(months, starts, strict=True):
         s += f'  <text class="sm" x="{x(d) + 4:.0f}" y="136">{m}</text>\n  <line x1="{x(d):.0f}" y1="146" x2="{x(d):.0f}" y2="470" stroke="#18244f"/>\n'
@@ -409,7 +409,7 @@ def provenance() -> str:
     s += """  <g class="s7">
     <rect class="card" x="60" y="320" width="1080" height="96" rx="16"/>
     <text class="sm mono" x="84" y="354">## Team changes</text>
-    <text class="b mono" x="84" y="386" style="font-size:14px">Ravi moved to the search team on 1 June.</text>
+    <text class="b mono" x="84" y="386" style="font-size:14px">John moved to the search team on 1 June.</text>
     <text class="b mono" x="761" y="386" style="font-size:14px">Launch stays in October.</text>
     <rect x="435" y="368" width="324" height="26" rx="6" fill="#5cc8b6" fill-opacity=".9"/>
     <text class="b mono" x="441" y="386" style="font-size:14px;fill:#0a1230">Dana now leads the billing migration.</text>

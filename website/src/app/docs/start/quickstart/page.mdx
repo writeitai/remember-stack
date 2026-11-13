@@ -107,9 +107,9 @@ Save this as `standup.md`:
 ```markdown
 # Stand-up, 17 September 2026
 
-Ravi said the billing migration moves from June to October, because the
+John said the billing migration moves from June to October, because the
 invoice exporter needs a rewrite. Dana agreed and will tell finance.
-Ravi owns the invoice exporter.
+John owns the invoice exporter.
 ```
 
 Then send it:
@@ -153,7 +153,7 @@ print(result.model_dump_json(indent=2))
 
 The result is an envelope. Look for:
 
-- `facts`: each fact, such as Ravi owns the invoice exporter, with its
+- `facts`: each fact, such as John owns the invoice exporter, with its
   `validity` (when it held) and `evidence_count`;
 - `evidence`: the claims behind each fact, with the document, the passage
   and its character positions;

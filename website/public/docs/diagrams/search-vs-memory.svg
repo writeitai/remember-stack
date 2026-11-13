@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="t d">
   <title id="t">Search compared with memory</title>
-  <desc id="d">Asked who leads the billing migration, a document search returns three passages that all look equally relevant: January kickoff notes saying Ravi leads, February slides saying Ravi leads, and the June retro saying Dana now leads. A memory system returns one fact: Dana leads the billing migration since 1 June, from the June retro, with Ravi's January to June period kept as history.</desc>
+  <desc id="d">Asked who leads the billing migration, a document search returns three passages that all look equally relevant: January kickoff notes saying John leads, February slides saying John leads, and the June retro saying Dana now leads. A memory system returns one fact: Dana leads the billing migration since 1 June, from the June retro, with John's January to June period kept as history.</desc>
   <defs>
     <radialGradient id="glowC" cx="30%" cy="45%" r="45%">
       <stop offset="0" stop-color="#ee5b44" stop-opacity=".16"/>
@@ -79,14 +79,14 @@
     <rect class="card" x="60" y="210" width="480" height="84" rx="14"/>
     <rect x="60" y="210" width="6" height="84" rx="3" fill="#ee5b44"/>
     <text class="m" x="86" y="238">Kickoff notes · January</text>
-    <text class="b" x="86" y="268">“Ravi leads the billing migration.”</text>
+    <text class="b" x="86" y="268">“John leads the billing migration.”</text>
     <text class="s" x="470" y="238">0.82</text>
   </g>
   <g class="s2">
     <rect class="card" x="60" y="308" width="480" height="84" rx="14"/>
     <rect x="60" y="308" width="6" height="84" rx="3" fill="#ee5b44"/>
     <text class="m" x="86" y="336">Slides · February</text>
-    <text class="b" x="86" y="366">“Ravi leads billing.”</text>
+    <text class="b" x="86" y="366">“John leads billing.”</text>
     <text class="s" x="470" y="336">0.81</text>
   </g>
   <g class="s3">
@@ -97,7 +97,7 @@
     <text class="s" x="470" y="434">0.80</text>
   </g>
   <g class="s4">
-    <text class="b" x="60" y="536" style="fill:#ff7a62">Two say Ravi, one says Dana.</text>
+    <text class="b" x="60" y="536" style="fill:#ff7a62">Two say John, one says Dana.</text>
     <text class="m" x="60" y="562">Nothing says which is current, so the agent guesses.</text>
   </g>
 
@@ -129,10 +129,10 @@
     <rect class="grow" x="842" y="420" width="298" height="26" rx="13" fill="#3e9b8e"/>
   </g>
   <g class="s7">
-    <text class="m" x="674" y="438" style="fill:#ffffff">Ravi</text>
+    <text class="m" x="674" y="438" style="fill:#ffffff">John</text>
     <text class="m" x="856" y="438" style="fill:#ffffff">Dana</text>
     <circle cx="672" cy="480" r="8" fill="url(#sphereC)"/>
-    <text class="m" x="688" y="485">Ravi led it from January to 1 June, kept as history.</text>
+    <text class="m" x="688" y="485">John led it from January to 1 June, kept as history.</text>
   </g>
   <g class="s8">
     <text class="b" x="660" y="536" style="fill:#5cc8b6">One answer, with when and where it came from.</text>

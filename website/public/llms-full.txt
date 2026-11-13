@@ -95,14 +95,14 @@ Here is how a small team's memory changes over a few months.
 
 | Date | What the documents say | What the memory holds afterwards |
 |---|---|---|
-| January | Kickoff notes: "Ravi leads the billing migration. Launch in June." | Ravi leads the billing migration, since January. Launch planned for June. |
+| January | Kickoff notes: "John leads the billing migration. Launch in June." | John leads the billing migration, since January. Launch planned for June. |
 | April | Planning doc: "Launch moves to October; the invoice system needs a rewrite." | Launch planned for October, since April. The June date is kept as history, with the kickoff notes as its source. |
-| June | Retro: "Ravi moved to the search team on 1 June. Dana now leads billing." | Dana leads the billing migration, since 1 June. Ravi led it from January to 1 June. |
-| July | A slide deck from February is added: "Ravi leads billing." | The slide is kept as something a source said in February. It supports Ravi's January to June period; it does not change who leads now. |
+| June | Retro: "John moved to the search team on 1 June. Dana now leads billing." | Dana leads the billing migration, since 1 June. John led it from January to 1 June. |
+| July | A slide deck from February is added: "John leads billing." | The slide is kept as something a source said in February. It supports John's January to June period; it does not change who leads now. |
 
 Ask "who leads the billing migration?" in August and the answer is Dana,
 since 1 June, according to the June retro. Ask "who led it in March?" and
-the answer is Ravi. Ask "when is the launch?" and you get October, with a
+the answer is John. Ask "when is the launch?" and you get October, with a
 note that it was planned for June until April.
 
 A search over the same four documents would return all of them and leave
@@ -257,7 +257,7 @@ Source: https://remember.dev/docs/start/how-it-works
 
 This page follows one document through RememberStack. The team in the
 example is working on a billing migration. Dana is the product lead and
-Ravi is an engineer. The document is the notes from Thursday's stand-up.
+John is an engineer. The document is the notes from Thursday's stand-up.
 
 ## 1. You send the document
 
@@ -297,7 +297,7 @@ background.
 4. **Select and extract claims.** RememberStack picks out the statements
    worth keeping and drops opinions, advice and hypotheticals. It records
    why each dropped statement was dropped. Each kept statement becomes a
-   *claim*, rewritten to stand on its own ("Ravi said the migration moves to
+   *claim*, rewritten to stand on its own ("John said the migration moves to
    October" rather than "he said it moves"), and tied to the exact
    characters it came from.
 5. **Check grounding.** A deterministic check rejects any claim that uses
@@ -308,11 +308,11 @@ background.
 
 ## 3. RememberStack connects it
 
-1. **Resolve entities.** Names become *entities*. "Ravi", "Ravi K." and
+1. **Resolve entities.** Names become *entities*. "John", "John K." and
    "the backend engineer on billing" can resolve to one person. A merge can
    be undone.
 2. **Form facts.** Claims become *facts*: relations between two entities
-   ("Ravi owns the invoice exporter") or observations about one ("the
+   ("John owns the invoice exporter") or observations about one ("the
    billing migration targets October").
 3. **Adjudicate.** Each new claim is weighed against what the memory
    already holds. It either confirms an existing fact, adjusts the period in
@@ -433,9 +433,9 @@ Save this as `standup.md`:
 ```markdown
 # Stand-up, 17 September 2026
 
-Ravi said the billing migration moves from June to October, because the
+John said the billing migration moves from June to October, because the
 invoice exporter needs a rewrite. Dana agreed and will tell finance.
-Ravi owns the invoice exporter.
+John owns the invoice exporter.
 ```
 
 Then send it:
@@ -479,7 +479,7 @@ print(result.model_dump_json(indent=2))
 
 The result is an envelope. Look for:
 
-- `facts`: each fact, such as Ravi owns the invoice exporter, with its
+- `facts`: each fact, such as John owns the invoice exporter, with its
   `validity` (when it held) and `evidence_count`;
 - `evidence`: the claims behind each fact, with the document, the passage
   and its character positions;
@@ -850,7 +850,7 @@ family, authors, recipients, dates, language and thread.
 
 Each result is a document judged by one version, its current one by
 default, and it reports that version's status, so a file still being
-processed can already be found by name. Say Ravi uploaded
+processed can already be found by name. Say John uploaded
 `billing-migration-draft.md` and later sent the same file as
 `billing-migration.md`: searching for either name finds the one document.
 See [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
@@ -862,14 +862,14 @@ call (`DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
 `remember documents delete`, or the `delete_document` MCP tool).
 
 Say Dana uploaded a draft of the billing migration plan that says "the
-migration finishes in March", and Ravi's status note says the same. Dana
+migration finishes in March", and John's status note says the same. Dana
 deletes the draft. From then on:
 
 - the draft is gone from `GET /documents`, search, facts, the graph and SQL
   queries;
 - its claims stop counting as evidence (their currency ends with reason
   `version_deleted`);
-- "the migration finishes in March" stays believed, because Ravi's note still
+- "the migration finishes in March" stays believed, because John's note still
   supports it; it now has one supporter instead of two;
 - a fact that only the draft supported is closed, and the closure is recorded
   as a retraction (`retracted_source_removal`), exactly as when a living
@@ -965,7 +965,7 @@ exact characters of the source that support it. A claim records *what a
 source said*, not whether it is true. Deciding what is true is the job of
 [facts](https://remember.dev/docs/concepts/facts). Claims are the transcript; facts are the verdict.
 
-![Three sources make claims about Ravi. Two support the fact that he works on the billing migration; the retro supports a new fact, that he works on the search team from 1 June, and closes the earlier fact on that date.](https://remember.dev/docs/diagrams/claims-and-facts.svg)
+![Three sources make claims about John. Two support the fact that he works on the billing migration; the retro supports a new fact, that he works on the search team from 1 June, and closes the earlier fact on that date.](https://remember.dev/docs/diagrams/claims-and-facts.svg)
 
 ## What a claim is
 
@@ -973,18 +973,18 @@ A claim is one coherent assertion from one document version, rewritten so a
 reader needs no surrounding context. From a meeting transcript dated
 2026-03-04:
 
-> **Ravi:** Dana and I agreed yesterday to move the cutover to June 8.
+> **John:** Dana and I agreed yesterday to move the cutover to June 8.
 
 RememberStack might store:
 
 | Field | Value |
 |---|---|
-| `claim_text` | `Ravi said that Dana and Ravi agreed on 2026-03-03 to move the billing migration cutover to June 8.` |
+| `claim_text` | `John said that Dana and John agreed on 2026-03-03 to move the billing migration cutover to June 8.` |
 | `source_span` | `Dana and I agreed yesterday to move the cutover to June 8.` |
 | `is_attributed` | `true` |
 | `asserted_at` | `2026-03-04T15:00:00Z` |
 
-The claim resolves pronouns ("I" becomes Ravi), partial references ("the
+The claim resolves pronouns ("I" becomes John), partial references ("the
 cutover" becomes the billing migration cutover, when the document says so)
 and relative dates ("yesterday" becomes 2026-03-03 when the document carries a
 date). The original wording is kept in `source_span`.
@@ -992,7 +992,7 @@ date). The original wording is kept in `source_span`.
 A claim keeps an assertion together even when its support spans several
 sentences, and keeps apart things that differ: independently dated events,
 statements by different speakers, and propositions that sound alike but are
-not. "Ravi finished the migration", "Ravi worked on the migration" and "Ravi
+not. "John finished the migration", "John worked on the migration" and "John
 enjoyed the migration" are three different claims.
 
 Every claim carries:
@@ -1153,11 +1153,11 @@ the edit, not the size of the document.
 ## Attributed claims
 
 `is_attributed` is `true` when the claim records someone's statement or
-stance rather than asserting something directly: "Ravi said the cutover
+stance rather than asserting something directly: "John said the cutover
 moved", "Dana believes June is too tight".
 
-Attribution is never dropped. "Ravi said he finished the migration" does not
-become "Ravi finished the migration". When the claim becomes a fact, an
+Attribution is never dropped. "John said he finished the migration" does not
+become "John finished the migration". When the claim becomes a fact, an
 attributed claim becomes an observation about the speaker's stance, not a
 fact about the subject (see [Facts](https://remember.dev/docs/concepts/facts#observations)).
 
@@ -1199,7 +1199,7 @@ Source: https://remember.dev/docs/concepts/facts
 
 Claims tell you what each source said. An agent usually needs something
 else: what is true now, how sure the memory is, and what changed. Five
-meeting notes that each say Ravi works on the billing migration should be
+meeting notes that each say John works on the billing migration should be
 one piece of knowledge with five sources behind it, not five search hits.
 A retro that says he moved to the search team in June should close that
 knowledge, not sit next to it as an equal.
@@ -1215,7 +1215,7 @@ new evidence arrives. Claims never change; facts do.
 A **relation** connects two entities with a predicate:
 
 ```
-Ravi  works_on  billing migration
+John  works_on  billing migration
 Dana  reports_to  Head of Product
 ```
 
@@ -1236,7 +1236,7 @@ Observations carry values, properties and anything that does not fit a
 two-entity predicate: numbers, descriptions, states, stances. They are
 anchored on their entity and searchable, but they are not graph edges.
 
-An attributed claim ("Dana believes…", "Ravi said…") always becomes an
+An attributed claim ("Dana believes…", "John said…") always becomes an
 observation on the person who holds the view, never a fact about the thing
 they talked about.
 
@@ -1353,7 +1353,7 @@ fact is closed and the closure is recorded. See
 ## Labels
 
 Every fact has a readable `label`. A relation's label is built without a
-model, from its entity names and predicate ("Ravi works on billing
+model, from its entity names and predicate ("John works on billing
 migration"). An observation's label is its statement. Labels hold only the
 statement; the dates live in the `validity` fields, never in the text.
 
@@ -1370,7 +1370,7 @@ Source: https://remember.dev/docs/concepts/entities
 
 # Entities and identity
 
-"Ravi", "Ravi S." and "our backend lead" may be one person. Two people
+"John", "John S." and "our backend lead" may be one person. Two people
 called Dana are two people. If memory gets this wrong in one direction,
 facts about different people blur into one; in the other, one person's
 history splits across duplicates and no query sees all of it. An agent that
@@ -1400,8 +1400,8 @@ only *find candidates*; they never decide on their own.
 1. **Exact alias.** Is there an entity with exactly this cleaned-up name?
    An exact match lists every such entity, which may be several (two people
    called Dana). It is a candidate list, not a verdict.
-2. **Similar spelling.** Trigram similarity finds near-spellings: "Ravi
-   Shankar" and "Ravi Shanker".
+2. **Similar spelling.** Trigram similarity finds near-spellings: "John
+   Smith" and "John Smyth".
 3. **Similar sound.** A phonetic code (Daitch–Mokotoff) finds names that
    sound alike but are spelled differently.
 4. **Profile embedding.** The mention, together with its claim, is embedded
@@ -1476,7 +1476,7 @@ them yet. In practice the write-time cascade above decides identity.
 
 ## Resolving a name at query time
 
-When you or your agent ask about "Ravi", the `resolve_entity` operation
+When you or your agent ask about "John", the `resolve_entity` operation
 turns the name into entity IDs. It uses the same exact, spelling and sound
 steps, and falls back to profile embedding search only when those find
 nothing. It never calls a model and never makes the small-model choice.
@@ -1540,7 +1540,7 @@ Source: https://remember.dev/docs/concepts/time
 # Time
 
 Ask a vector store "who works on the billing migration?" and it returns the
-passages that sound most like the question. The January note that says Ravi
+passages that sound most like the question. The January note that says John
 joined, and the June retro that says he left, both sound like the question.
 The store has no idea that one replaced the other. Your agent gets both,
 with nothing to tell them apart, and answers with whichever the model
@@ -1571,11 +1571,11 @@ A worked example makes the difference concrete. The team's notes contain
 two documents:
 
 - **Kickoff notes**, ingested with `source_modified_at` 2026-01-15 10:00 UTC:
-  "Ravi has been on the billing migration since yesterday."
+  "John has been on the billing migration since yesterday."
 - **Retro notes**, ingested with `source_modified_at` 2026-06-12 14:00 UTC:
-  "Ravi moved from the billing migration to the search team on 1 June."
+  "John moved from the billing migration to the search team on 1 June."
 
-For the fact "Ravi works on billing migration", the three clocks read:
+For the fact "John works on billing migration", the three clocks read:
 
 | Clock | Value | Where it came from |
 |---|---|---|
@@ -1599,8 +1599,8 @@ as four fields:
 
 | Kind | Meaning | Example |
 |---|---|---|
-| `event_time` | When something happened. | "Ravi merged the schema change on 2026-03-03." |
-| `effective_period` | When a state or arrangement applied. | "Ravi worked on the billing migration from January to May." |
+| `event_time` | When something happened. | "John merged the schema change on 2026-03-03." |
+| `effective_period` | When a state or arrangement applied. | "John worked on the billing migration from January to May." |
 | `measurement_period` | The period a figure covers. | "Q1 billing errors fell to 12." |
 | `proposition_validity` | When a proposition holds. | "Dana has led product since 2024." |
 
@@ -1640,8 +1640,8 @@ arrives:
 - A later claim can correct the dates ("the cutover was 9 June, not 8
   June"). The fact keeps its identity; its window is replaced, and the
   decision names the claims that justify it.
-- A successor closes its predecessor. Ravi's move to the search team caps
-  "Ravi works on billing migration" at 2026-06-01, the successor's start in
+- A successor closes its predecessor. John's move to the search team caps
+  "John works on billing migration" at 2026-06-01, the successor's start in
   the world.
 
 Each change is written to the fact's decision transcript with the window
@@ -1660,7 +1660,7 @@ Precision says how exact a window is. It is never faked: a claim that says
 | `quarter` | A calendar quarter. | "in Q2 2026" |
 | `year` | A calendar year. | "in 2025" |
 | `open` | A known start, still ongoing. | "since 2026-01-14" |
-| `unknown` | No usable date. | "Ravi is the on-call engineer" |
+| `unknown` | No usable date. | "John is the on-call engineer" |
 
 **Claim ends are inclusive; fact ends are exclusive:**
 
@@ -1731,10 +1731,10 @@ question is about time.
 
 ### The worked example, queried
 
-Add a third fact with no date, "Ravi is the on-call engineer for billing
+Add a third fact with no date, "John is the on-call engineer for billing
 incidents". Evaluated on 2026-09-23, the modes return:
 
-| Query | Ravi works on billing migration (2026-01-14 to 2026-06-01) | Ravi works on search team (since 2026-06-01, open) | Ravi is on-call (no date) |
+| Query | John works on billing migration (2026-01-14 to 2026-06-01) | John works on search team (since 2026-06-01, open) | John is on-call (no date) |
 |---|---|---|---|
 | `current` | not returned (ended) | `confirmed` | `possible` |
 | `at` 2026-03-01 | `confirmed` | not returned (not started) | `possible` |
@@ -1762,9 +1762,9 @@ from datetime import datetime, UTC
 import remember
 
 with remember.Client() as memory:
-    ravi = memory.resolve_entity("Ravi").entities[0]
+    john = memory.resolve_entity("John").entities[0]
     before_the_retro = memory.graph_neighborhood(
-        entity_id=ravi.entity_id,
+        entity_id=john.entity_id,
         valid_at=datetime(2026, 5, 1, tzinfo=UTC),
         believed_at=datetime(2026, 6, 1, tzinfo=UTC),
     )
@@ -1870,7 +1870,7 @@ Source: https://remember.dev/docs/concepts/evidence
 
 An agent that cannot show where a statement came from cannot be checked,
 and an agent that cannot be checked will not be trusted with real work. "The
-cutover is on June 8" is useful. "The cutover is on June 8, per Ravi in the
+cutover is on June 8" is useful. "The cutover is on June 8, per John in the
 2026-04-28 standup, characters 1,204 to 1,262 of that transcript" is
 something a person can verify in ten seconds.
 
@@ -1888,7 +1888,7 @@ A [claim](https://remember.dev/docs/concepts/claims) points to its source in two
   statement. It never changes.
 - **All supporting spans**: `evidence_spans`, a list of `{char_start,
   char_end}` ranges. A coherent statement is often supported by several
-  sentences, sometimes in different passages ("Ravi owns the schema change"
+  sentences, sometimes in different passages ("John owns the schema change"
   in one paragraph, "it ships in June" two paragraphs later). The list
   holds every range the claim relies on, origin first.
 
@@ -2055,7 +2055,7 @@ the same time. During [adjudication](https://remember.dev/docs/concepts/facts#ho
 a conflict is recorded in one of two ways:
 
 - **Contradicting evidence on one fact.** The incoming claim disputes an
-  existing fact directly ("Ravi did not approve the schema change"). The
+  existing fact directly ("John did not approve the schema change"). The
   claim attaches to that fact as evidence with stance `contradicts`.
 - **A contradiction group.** The incoming claim states a different,
   incompatible value. It becomes its own fact, and the facts are linked in a
@@ -2142,7 +2142,7 @@ A high count means many separate sources, not one source that talks a lot.
 
 ## Supersession is not contradiction
 
-"Ravi works on the billing migration" (January) and "Ravi moved to the
+"John works on the billing migration" (January) and "John moved to the
 search team" (June) do not conflict. Both were true, at different times.
 Treating them as a contradiction would force a choice that should not be
 made; treating them as unrelated would leave both "current".
@@ -2264,7 +2264,7 @@ passage that moved from one file to another within one sync counts as a
 change of support, never as a retraction followed by a re-assertion.
 
 This is how a living source takes something back: by no longer saying it.
-Removing "Ravi owns the schema change" from the spec retracts that fact if
+Removing "John owns the schema change" from the spec retracts that fact if
 no other document supports it.
 
 ## Retraction is recorded, not deleted
@@ -2287,7 +2287,7 @@ keeps them apart:
 
 | What changed | Example | A fact that loses its only support |
 |---|---|---|
-| **The source itself** | The spec no longer says "Ravi owns the schema change". | Is retracted in a `living` document (`invalidated_at` set, recorded as `retracted_source_removal`). In a `snapshot` document the old version still supports it, so it does not lose support. |
+| **The source itself** | The spec no longer says "John owns the schema change". | Is retracted in a `living` document (`invalidated_at` set, recorded as `retracted_source_removal`). In a `snapshot` document the old version still supports it, so it does not lose support. |
 | **Only the reading of it** | A new release re-reads an unchanged file with a newer extractor, converter or chunker, and does not find the claim again. | Is not retracted. It is marked `support: "withdrawn"`, flagged for review and still returned. |
 
 The first is the source speaking: it stopped saying something. The second
@@ -2682,8 +2682,8 @@ as tools. `GET /operations` lists them with their full schemas.
 ### When to use each
 
 **Start with `resolve_entity`** whenever the question names someone or
-something. It turns "Ravi" into an `entity_id`, or tells you there are two
-Ravis, or that there is none. Pass the chosen IDs to the next call as
+something. It turns "John" into an `entity_id`, or tells you there are two
+Johns, or that there is none. Pass the chosen IDs to the next call as
 `entity_ids`. See [Entities](https://remember.dev/docs/concepts/entities#resolving-a-name-at-query-time).
 
 **Use `facts_context` for what is true.** Current state, who owns what, what
@@ -2704,8 +2704,8 @@ with `evidence_count` 10. Arguments:
 
 With `entity_ids` and a `current` or `at` time scope, `facts_context` first
 expands the graph `hops` steps out from those entities, then searches fact
-text inside that neighbourhood. That is how "what is Ravi working on?" finds
-the facts about Ravi's projects, not only facts with Ravi in the text.
+text inside that neighbourhood. That is how "what is John working on?" finds
+the facts about John's projects, not only facts with John in the text.
 
 **Use `claims_and_sources_context` for what was said.** Exact wording,
 quotes, tone, who said what and when, or anything the fact layer did not
@@ -2724,13 +2724,13 @@ side, never blended. It takes `query`, `entity_ids`, `k`, `candidate_k`, `hops`,
 import remember
 
 with remember.Client() as memory:
-    who = memory.resolve_entity("Ravi")
-    ravi = who.entities[0].entity_id if len(who.entities) == 1 else None
+    who = memory.resolve_entity("John")
+    john = who.entities[0].entity_id if len(who.entities) == 1 else None
 
     facts = memory.facts_context(
-        "what is Ravi working on", entity_ids=[ravi] if ravi else None
+        "what is John working on", entity_ids=[john] if john else None
     )
-    said = memory.claims_and_sources_context("Ravi cutover date")
+    said = memory.claims_and_sources_context("John cutover date")
     both = memory.combined_context("billing migration cutover")
 ```
 
@@ -2979,7 +2979,7 @@ Each field is explained under [Field reference](#field-reference).
 
 ## An annotated example
 
-Ravi's `entity_id` was found with `resolve_entity`. This asks what he is
+John's `entity_id` was found with `resolve_entity`. This asks what he is
 working on now:
 
 ```python
@@ -2987,7 +2987,7 @@ import remember
 
 with remember.Client() as memory:
     result = memory.facts_context(
-        "what is Ravi working on",
+        "what is John working on",
         entity_ids=["0b6c4f7e-3d2a-4e91-8c1f-5a7d9e2b4c60"],
     )
     print(result.model_dump_json(indent=2, by_alias=True))
@@ -3007,7 +3007,7 @@ with remember.Client() as memory:
     {
       "fact_id": "7d2e9a14-58c3-4f0b-a6e1-3c9b2d7f8e05",
       "kind": "relation",
-      "label": "Ravi works on search team",
+      "label": "John works on search team",
       "evidence_count": 2,
       "validity": {
         "valid_from": "2026-06-01T00:00:00Z",
@@ -3024,7 +3024,7 @@ with remember.Client() as memory:
     {
       "fact_id": "c41f0b8e-92a7-4d63-b5e2-8f1a6c3d9e27",
       "kind": "observation",
-      "label": "Ravi is on call for billing incidents.",
+      "label": "John is on call for billing incidents.",
       "evidence_count": 1,
       "validity": {
         "valid_from": null,
@@ -3044,8 +3044,8 @@ with remember.Client() as memory:
       "claim_id": "e5a8c2d1-6f3b-4a97-8d0e-1b4c7f2a9e36",
       "doc_id": "3f9d1c6a-2b8e-5c47-9a1d-6e0f3b8c2d74",
       "chunk_id": "91c7e4b2-0d5a-4f86-b3e9-7a2c1d8f6e40",
-      "claim_text": "Ravi moved from the billing migration to the search team on 2026-06-01.",
-      "source_span": "Ravi moved from the billing migration to the search team on 1 June.",
+      "claim_text": "John moved from the billing migration to the search team on 2026-06-01.",
+      "source_span": "John moved from the billing migration to the search team on 1 June.",
       "char_start": 412,
       "char_end": 479,
       "evidence_spans": [{"char_start": 412, "char_end": 479}],
@@ -3065,8 +3065,8 @@ with remember.Client() as memory:
       "claim_id": "2b7f9d3e-4c1a-4e58-a0d6-9f3e2c7b1a85",
       "doc_id": "8a2e6d4f-1c9b-5f30-8e7a-2d5c9b1f4e63",
       "chunk_id": "4e8a1f6c-7b3d-4c29-9e05-3a6d8f2c1b97",
-      "claim_text": "Ravi is on call for billing incidents.",
-      "source_span": "Ravi is on call for billing incidents.",
+      "claim_text": "John is on call for billing incidents.",
+      "source_span": "John is on call for billing incidents.",
       "char_start": 96,
       "char_end": 134,
       "evidence_spans": [{"char_start": 96, "char_end": 134}],
@@ -3142,7 +3142,7 @@ Reading it top to bottom:
   (`mode: "current"`), as of 2026-09-23 08:15 UTC, using today's identities.
 - **The first fact** is a relation, true since 2026-06-01 and still open,
   supported by 2 distinct documents. Its window is complete, so its time
-  match is `confirmed`. Ravi's earlier billing migration work is not here:
+  match is `confirmed`. John's earlier billing migration work is not here:
   it ended on 2026-06-01, and this is a `current` read.
 - **The second fact** has no date. It is returned because nothing rules it
   out, and marked `possible` so the agent does not mistake it for a
@@ -3154,7 +3154,7 @@ Reading it top to bottom:
 - **`evidence_totals`**: the relation has 2 supporting documents and only
   1 claim was returned, so there is more evidence to fetch
   (`hydrate_relation`). Nothing contradicts either fact.
-- **`nodes`**: the graph expansion from Ravi reached the search team, one
+- **`nodes`**: the graph expansion from John reached the search team, one
   hop away.
 - **`truncation`**: both matching facts were returned; the total is exact.
 - **`negative: null`**: the answer is not empty.
@@ -3824,7 +3824,7 @@ client.ingest(text.encode("utf-8"), filename="dana-update.md")
 argument reads better as nothing at all.
 
 ```python
-client.ingest(content=b"...", filename="ravi-notes.txt")
+client.ingest(content=b"...", filename="john-notes.txt")
 ```
 
 With bytes, the MIME type comes from the `filename` you pass.
@@ -4071,11 +4071,11 @@ For the billing migration stand-up:
 ```markdown
 # Billing migration stand-up — 2026-09-17
 
-Participants: Dana, Ravi
+Participants: Dana, John
 
 [t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?
 
-[t2 | 2026-09-17T09:31:10Z] Ravi: It needs a rewrite. The migration moves from June to October.
+[t2 | 2026-09-17T09:31:10Z] John: It needs a rewrite. The migration moves from June to October.
 
 [t3 | 2026-09-17T09:32:05Z] Dana: Agreed. I will tell finance today.
 ```
@@ -4125,14 +4125,14 @@ def render_session(title: str, participants: list[str], turns: list[Turn]) -> st
 turns = [
     Turn("t1", datetime(2026, 9, 17, 9, 30, tzinfo=UTC), "Dana",
          "Where are we on the invoice exporter?"),
-    Turn("t2", datetime(2026, 9, 17, 9, 31, 10, tzinfo=UTC), "Ravi",
+    Turn("t2", datetime(2026, 9, 17, 9, 31, 10, tzinfo=UTC), "John",
          "It needs a rewrite. The migration moves from June to October."),
     Turn("t3", datetime(2026, 9, 17, 9, 32, 5, tzinfo=UTC), "Dana",
          "Agreed. I will tell finance today."),
 ]
 
 client = remember.Client.from_env()
-body = render_session("Billing migration stand-up — 2026-09-17", ["Dana", "Ravi"], turns)
+body = render_session("Billing migration stand-up — 2026-09-17", ["Dana", "John"], turns)
 version = client.ingest(
     body.encode("utf-8"),
     filename="standup-2026-09-17.md",
@@ -4170,7 +4170,7 @@ From an agent over MCP, pass the rendered text:
 {
   "name": "ingest",
   "arguments": {
-    "text": "# Billing migration stand-up — 2026-09-17\n\nParticipants: Dana, Ravi\n\n[t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?\n",
+    "text": "# Billing migration stand-up — 2026-09-17\n\nParticipants: Dana, John\n\n[t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?\n",
     "filename": "standup-2026-09-17.md",
     "source_kind": "meeting",
     "source_ref": "standup/2026-09-17",
@@ -4188,7 +4188,7 @@ two shapes to choose from.
 conversation into sessions (per day, per topic, per agent run) and ingest
 each finished session once, with its own `source_ref`, in the default
 `snapshot` mode. Each session stays dated testimony forever. Nothing is
-reprocessed, and a question about "what Ravi said on Tuesday" has a
+reprocessed, and a question about "what John said on Tuesday" has a
 document that is exactly Tuesday.
 
 **Re-send one growing document in `living` mode.** If you must keep one
@@ -4656,7 +4656,7 @@ explicit guarantees about time, truncation and absence.
 
 | The question | Operation | Returns |
 |---|---|---|
-| "Who is Ravi?" "Which 'billing' do you mean?" Any name you will use as an anchor. | `resolve_entity` | Ranked entity candidates. Never a silent guess. |
+| "Who is John?" "Which 'billing' do you mean?" Any name you will use as an anchor. | `resolve_entity` | Ranked entity candidates. Never a silent guess. |
 | "Is the migration still planned for October?" "Who owns the invoice exporter?" What is true now, or at a given time. | `facts_context` | Adjudicated facts (relations and observations) with their validity and supporting evidence. |
 | "What did the team say about the exporter?" "Quote the spec." What sources said, word for word. | `claims_and_sources_context` | Current claims and source passages. Testimony, not verdicts. |
 | A general question where you want both what is held true and what was said. | `combined_context` | Both results side by side, each complete and labelled. |
@@ -4717,7 +4717,7 @@ import remember
 
 client = remember.Client.from_env()
 
-candidates = client.resolve_entity("Ravi")
+candidates = client.resolve_entity("John")
 facts = client.facts_context("Who owns the invoice exporter?")
 said = client.claims_and_sources_context("invoice exporter rewrite")
 both = client.combined_context("What changed in the billing migration plan?")
@@ -4737,7 +4737,7 @@ facts = client.run_operation(
         "query": "invoice exporter owner",
         "k": 10,
         "evidence_per_fact": 2,
-        "entity_ids": [str(ravi_id)],
+        "entity_ids": [str(john_id)],
     },
 )
 ```
@@ -4749,14 +4749,14 @@ facts = client.run_operation(
 
 Resolve the names in the question first, then pass the chosen entity IDs
 as `entity_ids`. Facts are then searched in the anchors and their graph
-neighbours (one hop by default), which keeps "the exporter Ravi owns" from
+neighbours (one hop by default), which keeps "the exporter John owns" from
 matching every exporter in the memory.
 
 ```python
-resolved = client.resolve_entity("Ravi")
+resolved = client.resolve_entity("John")
 if resolved.negative is None and len(resolved.entities) == 1:
-    ravi_id = resolved.entities[0].entity_id
-    facts = client.facts_context("What does Ravi own?", entity_ids=[ravi_id])
+    john_id = resolved.entities[0].entity_id
+    facts = client.facts_context("What does John own?", entity_ids=[john_id])
 ```
 
 When a name resolves to more than one candidate, decide which one you mean
@@ -4774,7 +4774,7 @@ remember operations run facts_context \
   --arg query="invoice exporter owner" --arg k=10 --arg evidence_per_fact=2
 remember operations run claims_and_sources_context \
   --arg query="invoice exporter rewrite" --arg k=20
-remember operations run resolve_entity --arg name=Ravi
+remember operations run resolve_entity --arg name=John
 ```
 
 Each `--arg` value is parsed as JSON when it can be, so `k=10` is a number
@@ -4935,10 +4935,10 @@ you asked for, with the instant it was evaluated.
 | "Who owns the invoice exporter?" "Is the migration still planned for October?" | `current` |
 | "Who owned the exporter on 1 July?" | `at` |
 | "Who worked on the migration during Q3?" | `overlap` |
-| "Which teams has Ravi been on?" "Has the date ever changed?" Biographies, achievements, timelines, anything with "ever". | `history` |
+| "Which teams has John been on?" "Has the date ever changed?" Biographies, achievements, timelines, anything with "ever". | `history` |
 
 A `current` read leaves out everything that has ended, so it is the wrong
-mode for "what has Ravi done": his finished work is exactly what you want.
+mode for "what has John done": his finished work is exactly what you want.
 Use `history` for those.
 
 **Counting.** "How many times did the go-live date move?" Count only facts
@@ -5797,7 +5797,7 @@ context-ranked `resolve` is available from the Python client and `GET
 | `total_is_exact` | `False` when `estimated_total` is a lower bound. |
 | `reason` | Why it stopped, when known. |
 
-A truncated result is not an exhaustive answer. "Ravi owns three
+A truncated result is not an exhaustive answer. "John owns three
 components" from a truncated list means "at least three". Raise `k`
 ([Give an agent context](https://remember.dev/docs/guides/agent-context)), narrow the query, or say the
 count is partial.
@@ -6082,7 +6082,7 @@ LIMIT 20
 ```
 
 `claims_live` holds every statement that is still current testimony.
-"Ravi owns the invoice exporter" from a May spec and "Dana took over the
+"John owns the invoice exporter" from a May spec and "Dana took over the
 exporter" from a September retro are both in it, and the newest one is not
 necessarily what the memory holds true: it may be one side of a
 disagreement, or a statement that did not change the facts at all. The
@@ -6182,7 +6182,7 @@ deployment_id = client.open_query("SELECT count(*) FROM documents_live")["deploy
 neighbours = client.open_query(
     "SELECT hops, relation_ids, node_ids FROM graph_neighborhood($1::uuid, $2::uuid, 2)"
     " ORDER BY hops",
-    parameters=[deployment_id, str(ravi_id)],
+    parameters=[deployment_id, str(john_id)],
 )
 ```
 
@@ -6717,7 +6717,7 @@ python assistant.py ask "When does the billing migration go live, and who decide
 An answer looks like this:
 
 ```text
-The billing migration now goes live in October 2026 [C1]. Ravi moved it
+The billing migration now goes live in October 2026 [C1]. John moved it
 from June because the invoice exporter needs a rewrite, and Dana agreed
 [C2]. The June date from the kickoff no longer holds [C3].
 
@@ -7107,9 +7107,9 @@ Save this as `standup.md`:
 ```markdown
 # Stand-up, 17 September 2026
 
-Ravi said the billing migration moves from June to October, because the
+John said the billing migration moves from June to October, because the
 invoice exporter needs a rewrite. Dana agreed and will tell finance.
-Ravi owns the invoice exporter.
+John owns the invoice exporter.
 ```
 
 Send it and ask about it:
@@ -8990,12 +8990,12 @@ Most surprising answers are the result of how the question was asked:
 
 | What happened | Why it is not a bug | What to do instead |
 |---|---|---|
-| "Who works on the billing migration?" leaves out Ravi, who worked on it until June. | `facts_context` defaults to the `current` time mode, which returns only facts true now. | Ask with `time={"mode": "history"}`, or `at` a date. See [Time](https://remember.dev/docs/concepts/time#asking-about-time). |
+| "Who works on the billing migration?" leaves out John, who worked on it until June. | `facts_context` defaults to the `current` time mode, which returns only facts true now. | Ask with `time={"mode": "history"}`, or `at` a date. See [Time](https://remember.dev/docs/concepts/time#asking-about-time). |
 | A fact dated "sometime" appears in an answer about March. | Its window is missing or partial, so it comes back with `temporal_match: "possible"`. | Treat `possible` as a lead, not an answer. |
 | The old June deadline still appears after the notes moved it to October. | `claims_and_sources_context` returns what sources said, including the earlier statement. Claims never change. | Use `facts_context` for what holds now; use claims to show who said what. See [Facts](https://remember.dev/docs/concepts/facts). |
 | "Dana" returns facts about the wrong Dana, or nothing. | `resolve_entity` returns every entity that matches and never picks one for you. | Resolve first; ask which one, or pass the right `entity_ids`. See [Handle unknowns and ambiguity](https://remember.dev/docs/guides/unknowns-and-ambiguity#names-that-match-more-than-one-entity). |
-| The agent says "Ravi has no tasks" after a `boundary` negative. | `boundary` means the lookup could not run as asked, not that nothing exists. | Follow `workaround`. Brief your agent as in [Handle unknowns and ambiguity](https://remember.dev/docs/guides/unknowns-and-ambiguity#brief-your-agent). |
-| "Ravi owns three components" when he owns more. | The list was truncated. | Check `truncation`; raise `k` or narrow the question. |
+| The agent says "John has no tasks" after a `boundary` negative. | `boundary` means the lookup could not run as asked, not that nothing exists. | Follow `workaround`. Brief your agent as in [Handle unknowns and ambiguity](https://remember.dev/docs/guides/unknowns-and-ambiguity#brief-your-agent). |
+| "John owns three components" when he owns more. | The list was truncated. | Check `truncation`; raise `k` or narrow the question. |
 | A SQL query returns no rows, and the agent concludes nothing exists. | SQL results carry no `negative`; an empty result can come from a rejected statement or a truncated one. | Check `termination_reason`, `error_code` and `truncated` first. |
 | The answer picks one side of a disagreement. | Both facts stand, in one `contradiction_group`. | Report both sides with their sources. See [Contradictions](https://remember.dev/docs/concepts/contradictions). |
 | `422` `invalid_parameter` "unknown argument(s)" from an operation. | Each operation accepts a fixed set of arguments. | See [Assured operations](https://remember.dev/docs/reference/assured-operations). |
@@ -11762,7 +11762,7 @@ contradiction, the other sides in `contradiction`. With `valid_at`,
 ```bash
 curl -s -G "$REMEMBER_API_URL/lookup/relations" \
   -H "Authorization: Bearer $REMEMBER_API_KEY" \
-  --data-urlencode "subject_entity_id=$RAVI_ID" \
+  --data-urlencode "subject_entity_id=$JOHN_ID" \
   --data-urlencode "valid_at=2026-06-01T00:00:00Z"
 ```
 
@@ -11772,7 +11772,7 @@ from remember import Client
 
 memory = Client()
 envelope = memory.lookup_relations(
-    subject_entity_id=ravi_id,
+    subject_entity_id=john_id,
     valid_at=datetime(2026, 6, 1, tzinfo=UTC),
 )
 ```
@@ -12412,11 +12412,11 @@ As for [`POST /graph/neighborhood`](#post-graphneighborhood).
 curl -s -X POST "$REMEMBER_API_URL/graph/path" \
   -H "Authorization: Bearer $REMEMBER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"from_entity_id\": \"$DANA_ID\", \"to_entity_id\": \"$RAVI_ID\", \"max_hops\": 3}"
+  -d "{\"from_entity_id\": \"$DANA_ID\", \"to_entity_id\": \"$JOHN_ID\", \"max_hops\": 3}"
 ```
 
 ```python
-envelope = memory.graph_path(from_entity_id=dana_id, to_entity_id=ravi_id, max_hops=3)
+envelope = memory.graph_path(from_entity_id=dana_id, to_entity_id=john_id, max_hops=3)
 ```
 
 ## POST /graph/citation-path
@@ -13482,7 +13482,7 @@ A trimmed response (empty arrays and some fields left out):
     {
       "fact_id": "c3d2…",
       "kind": "relation",
-      "label": "Ravi owns the billing migration",
+      "label": "John owns the billing migration",
       "evidence_count": 4,
       "validity": {
         "valid_from": "2026-03-02T00:00:00Z",
@@ -13502,8 +13502,8 @@ A trimmed response (empty arrays and some fields left out):
       "claim_id": "e8f1…",
       "doc_id": "a1f3…",
       "chunk_id": "0b7d…",
-      "claim_text": "Ravi is taking over the billing migration from 2 March 2026.",
-      "source_span": "Ravi takes over billing migration from Monday",
+      "claim_text": "John is taking over the billing migration from 2 March 2026.",
+      "source_span": "John takes over billing migration from Monday",
       "char_start": 1204,
       "char_end": 1249,
       "is_attributed": true,
@@ -17011,7 +17011,7 @@ both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
 `time` takes the same values as in `facts_context` and applies to both.
 
 ```python
-bundle = memory.combined_context("What did Ravi decide about invoicing?")
+bundle = memory.combined_context("What did John decide about invoicing?")
 print(len(bundle.facts.facts), len(bundle.claims_and_sources.evidence))
 ```
 
@@ -18660,8 +18660,8 @@ The `path` body is off by default. To allow it, list the directories the
 server may read:
 
 ```bash
-export REMEMBERSTACK_MCP_INGEST_ROOTS='["/home/ravi/notes", "/srv/specs"]'
-# or: REMEMBERSTACK_MCP_INGEST_ROOTS=/home/ravi/notes,/srv/specs
+export REMEMBERSTACK_MCP_INGEST_ROOTS='["/home/john/notes", "/srv/specs"]'
+# or: REMEMBERSTACK_MCP_INGEST_ROOTS=/home/john/notes,/srv/specs
 ```
 
 | Variable | Default | Meaning |
@@ -19007,7 +19007,7 @@ rewritten, and a rewritten file keeps its permissions.
 {
   "mcpServers": {
     "remember": {
-      "command": "/Users/ravi/.local/bin/remember",
+      "command": "/Users/john/.local/bin/remember",
       "args": ["mcp"],
       "env": {
         "REMEMBER_API_URL": "http://127.0.0.1:8000"
@@ -19068,7 +19068,7 @@ after removing any earlier `remember` entry with
 `claude mcp remove --scope local remember`:
 
 ```bash
-claude mcp add --scope local remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
+claude mcp add --scope local remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/john/.local/bin/remember mcp
 ```
 
 A URL entry is added with
@@ -19096,7 +19096,7 @@ Restart Claude Desktop after the change.
 
 ```toml
 [mcp_servers.remember]
-command = "/Users/ravi/.local/bin/remember"
+command = "/Users/john/.local/bin/remember"
 args = ["mcp"]
 
 [mcp_servers.remember.env]
@@ -20879,7 +20879,7 @@ has a field or value in the API, it is shown in code.
   [Facts](https://remember.dev/docs/concepts/facts).
 
 **Relation**
-: A fact that connects two entities with a predicate ("Ravi works_on billing
+: A fact that connects two entities with a predicate ("John works_on billing
   migration"). Relations are the edges of the graph.
 
 **Observation**
