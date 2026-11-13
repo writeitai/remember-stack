@@ -74,8 +74,11 @@ Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
 1. `ingest`, `pipeline_readiness`, `delete_document`, `search_documents`,
-   `section_history` and `document_references` (all but `ingest` and
-   `delete_document` with `--read-only`).
+   `section_history`, `document_references`, and the five tag tools
+   `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
+   `update_document_tags` (with `--read-only`, only `pipeline_readiness`,
+   `search_documents`, `section_history`, `document_references` and
+   `list_tags`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
 3. Context expansion: `adjacent_chunks`.
@@ -85,7 +88,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 18 tools: 6 + 4 + 1 + 7.
+lists 23 tools: 11 + 4 + 1 + 7.
 
 A deployment that does not process the facts
 [layer](/docs/concepts/pipeline#processing-layers) does not report
@@ -96,8 +99,8 @@ needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
-`ingest` and `delete_document`, and `destructiveHint` is `true` only for
-`delete_document`.
+`ingest`, `delete_document` and the four tag tools that change tags, and
+`destructiveHint` is `true` only for `delete_document` and `delete_tag`.
 
 The server serves one deployment, so no tool takes a `project` argument; a
 call that passes one is refused with `project_routing_unavailable`. A call to
@@ -180,7 +183,9 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `version_key` | string | no | 1–512 characters. A permanent name for this version, unique within the document. A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Needs `source_kind`/`source_ref`. |
 | `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
 | `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
+| `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
 
+`ingest` is at tool version 3; the `tags` argument raised it from 2.
 Unknown keys are refused. What a key and a period do:
 [Versions in force](/docs/reference/http-api/ingest#versions-in-force). The input schema enforces the one-body rule with
 `oneOf`.
@@ -374,6 +379,80 @@ An unknown document is `document_not_found`, an unknown passage
 Apart from the period arguments of `ingest`, no MCP tool changes effective
 periods or supplies references; use the HTTP API or the SDK for those.
 
+### Tag tools
+
+Tags are names such as `project:billing-migration`, each with a description,
+that say how documents are organized. A tag is registered before any
+document carries it. What they are for:
+[Tag documents](/docs/guides/tag-documents). All five tools are at tool
+version 1. Wherever a tool takes a `tag`, it accepts the name in any letter
+case or the `tag_id`; for `update_tag` and `delete_tag`, `remember mcp`
+looks the id up from the name before calling the deployment. Unknown keys are
+refused.
+
+#### `list_tags`
+
+Lists the registered tags. The tool description tells the agent to call it
+before tagging a document, and before registering a tag, so it reuses an
+existing one.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `query` | string | no | 1–200 characters. Keeps tags whose name or description contains it, ignoring letter case. |
+
+The result is a [`TagList`](/docs/reference/result-types#taglist): `tags`,
+each with `tag_id`, `name`, `description`, `created_at` and `updated_at`,
+ordered by name. See [`GET /tags`](/docs/reference/http-api/ingest#get-tags).
+
+#### `create_tag`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `name` | string | yes | 1–128 characters, no whitespace or control characters. Unique ignoring letter case. |
+| `description` | string | yes | At most 2,000 characters: what the tag means and when to apply it. |
+
+The result is the new [`Tag`](/docs/reference/result-types#tag). A name
+already registered in any letter case is `conflict`. See
+[`POST /tags`](/docs/reference/http-api/ingest#post-tags).
+
+#### `update_tag`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters. |
+| `name` | string | no | The new name, with the rules of `create_tag`. |
+| `description` | string | no | The new description. |
+
+Give `name`, `description` or both. Documents keep the tag; the old name
+stops working at once. The result is the changed `Tag`.
+
+#### `delete_tag`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters. |
+
+Deletes the tag and removes it from every document that carries it. The
+result is the deleted `Tag`. The tool description tells the agent to use it
+only when the user asks.
+
+#### `update_document_tags`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+| `add` | array of strings | no | At most 64, no repeats. Tags to add. |
+| `remove` | array of strings | no | At most 64, no repeats. Tags to remove. |
+| `set` | array of strings | no | At most 64, no repeats. The complete set; excludes `add` and `remove`. `[]` removes every tag. |
+
+Changes the document's tags in one step and returns
+[`DocumentTags`](/docs/reference/result-types#documenttags): `doc_id` and
+the tags afterwards. Every tag must be registered; any unregistered one
+refuses the whole call with `unknown_tag`. Removing a registered tag the
+document does not carry is not an error. Changing tags never reprocesses
+the document. An unknown or deleted document is `document_not_found`. See
+[`POST /documents/{doc_id}/tags`](/docs/reference/http-api/ingest#post-documentsdoc_idtags).
+
 ### Assured operations
 
 These four tools are the deployment's assured operations. Their input
@@ -525,7 +604,10 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`: no such document, or it is deleted. |
+| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`, `update_document_tags`: no such document, or it is deleted. |
+| `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |
+| `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
+| `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |
 | `chunk_not_found` | 404 | no | `document_references`: no such passage, or its document is deleted. |
 | `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. |

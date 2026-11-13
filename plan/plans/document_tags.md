@@ -1,7 +1,11 @@
 # Document tags — delivery order
 
 Build order for D156 ([document tags](../designs/document_tags_design.md)). The design
-describes the system; this file says what to build first and why. Nothing is built yet.
+describes the system; this file says what to build first and why.
+
+**Status.** Steps 1 and 4 are implemented (registry, assignments, all four surfaces, the
+D56 reuse proof, the two `memory_v1` views and `examples.facts_by_tag`). Steps 2 and 3
+(every read filter by tags) are not built yet.
 
 Each step merges with its tests and, where it changes user-facing behaviour, its
 `website/` docs in the same PR (D66), keeping `/docs/project/not-built-yet` truthful.

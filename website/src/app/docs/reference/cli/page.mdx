@@ -28,7 +28,8 @@ standalone tool; `uvx remember …` runs it without installing.
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
-| | [`documents`](#remember-documents) | List documents, or delete one from the memory. |
+| | [`documents`](#remember-documents) | List and search documents, delete one from the memory, or change its tags. |
+| | [`tags`](#remember-tags) | List, register, change and delete document tags. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
 | | [`doctor`](#remember-doctor) | Check installation, credentials, connectivity and agent configuration. |
@@ -54,7 +55,7 @@ For remember.dev:
 ## How the CLI finds your deployment
 
 Every command that talks to a deployment (`ingest`, `query`, `operations`,
-`documents`, `mcp`, `connectors`, `doctor`) accepts the same connection and request flags:
+`documents`, `tags`, `mcp`, `connectors`, `doctor`) accepts the same connection and request flags:
 
 | Flag | Meaning |
 |---|---|
@@ -153,6 +154,7 @@ remember ingest FILE [--filename NAME] [--mime MIME] [--title TITLE]
                      [--source-version-ref REF]
                      [--version-key KEY]
                      [--effective-from ISO8601 [--effective-until ISO8601]]
+                     [--tag TAG]...
                      [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
@@ -178,13 +180,15 @@ document; nothing is processed again.
 | `--version-key` | none | Your permanent name for this version, unique within the document, for example `edition-2`. A new key always creates a version. Needs `--source-kind`/`--source-ref`. |
 | `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
 | `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
+| `--tag` | none | A registered tag, by name or id, to add to the document. Repeat it for several. Ingest only adds tags; see [Tags](/docs/reference/http-api/ingest#tags). |
 
 What a key and a period do: [Versions in force](/docs/reference/http-api/ingest#versions-in-force).
 
 Exit status 2 when the source arguments break these rules, a timestamp is
 not UTC, or a period is malformed; 1 when the file cannot be read or the
 upload fails, including a `409` for a key or period start already used by
-another version.
+another version, and a `422` for a tag that is not registered
+(`error: API 422: unknown tags: …`).
 
 ```bash
 remember ingest notes/2026-09-18-billing-sync.md \
@@ -221,6 +225,10 @@ remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS
                           [--versions {current,all}] [--limit N] [--cursor CURSOR]
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents tag DOC_ID [--add TAG]... [--remove TAG]...
+                              [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents tag DOC_ID --set TAG [--set TAG]...
+                              [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one page of documents as JSON, newest document first, in the
@@ -263,6 +271,54 @@ does not exist, or is already deleted, prints
 
 ```bash
 remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+```
+
+`tag` changes the tags of one document in one step and prints its tags
+afterwards, in the shape of
+[`DocumentTags`](/docs/reference/result-types#documenttags). `--add` and
+`--remove` take a tag name or id and can each be repeated. `--set` replaces
+the document's whole set instead and cannot be combined with them (exit
+status 2); `--set ''` removes every tag. Every tag must be registered; see
+[`remember tags`](#remember-tags). An unregistered tag prints
+`error: API 422: unknown tags: …` and exits with status 1, and nothing
+changes. See
+[`POST /documents/{doc_id}/tags`](/docs/reference/http-api/ingest#post-documentsdoc_idtags).
+
+```bash
+remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --add kind:decision --remove kind:draft
+```
+```json
+{"doc_id":"a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b","tags":["kind:decision","project:billing-migration"]}
+```
+
+### `remember tags`
+
+```text
+remember tags list [--query TEXT] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember tags create NAME --description TEXT [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember tags update TAG [--name NAME] [--description TEXT]
+                         [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember tags delete TAG [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+Manage the deployment's tags: names such as `project:billing-migration` that
+you assign to documents, each with a description of what it means. What tags
+are for: [Tag documents](/docs/guides/tag-documents).
+
+| Command | Prints | Notes |
+|---|---|---|
+| `list` | [`TagList`](/docs/reference/result-types#taglist) | `--query` keeps tags whose name or description contains it, ignoring letter case. |
+| `create NAME --description TEXT` | the new [`Tag`](/docs/reference/result-types#tag) | `--description` is required. A name already registered in any letter case prints `error: API 409: a tag named '…' is already registered` and exits with status 1. |
+| `update TAG` | the changed `Tag` | `TAG` is the name (any letter case) or id. Give `--name`, `--description` or both; neither exits with status 2. Documents keep the tag; the old name stops working. |
+| `delete TAG` | the deleted `Tag` | Removes the tag from every document that carries it. |
+
+A `TAG` that is not registered prints `error: API 404: unknown tags: …` and
+exits with status 1. The commands print one JSON line.
+
+```bash
+remember tags create project:billing-migration \
+  --description "Documents about moving invoicing to the new billing provider."
+remember tags list --query billing | jq -r '.tags[] | "\(.name)  \(.description)"'
 ```
 
 ### `remember query`

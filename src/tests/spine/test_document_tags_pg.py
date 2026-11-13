@@ -388,6 +388,8 @@ def test_ingest_refuses_past_the_per_document_limit(rig: _Rig) -> None:
     with pytest.raises(TagLimitError):
         rig.observe(body="Full, edited.", tags=(names[-1],))
     assert rig.count("SELECT count(*) FROM document_versions") == 1
+    assert rig.count("SELECT count(*) FROM content_objects") == 1
+    assert len(list(rig.raw_root.rglob("original*"))) == 1
     with pytest.raises(TagLimitError):
         rig.update(doc.doc_id, add=[names[-1]])
     assert len(rig.document_tags(doc.doc_id)) == TAGS_PER_DOCUMENT_MAX

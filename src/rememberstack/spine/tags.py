@@ -256,6 +256,35 @@ def add_document_tags_on(
         )
 
 
+def check_document_tags_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    doc_id: UUID,
+    tag_ids: Sequence[UUID],
+) -> None:
+    """Refuse adding ``tag_ids`` when the lineage would pass the per-document limit.
+
+    A read-only pre-check; :func:`add_document_tags_on` enforces the limit
+    again inside the writing transaction.
+    """
+    if not tag_ids:
+        return
+    carried = connection.execute(
+        _COUNT_DOCUMENT_TAGS_AFTER_ADD,
+        {
+            "deployment_id": deployment_id,
+            "doc_id": doc_id,
+            "tag_ids": [str(tag_id) for tag_id in tag_ids],
+        },
+    ).scalar_one()
+    if carried > TAGS_PER_DOCUMENT_MAX:
+        raise TagLimitError(
+            f"a document carries at most {TAGS_PER_DOCUMENT_MAX} tags;"
+            f" this write would leave {carried}"
+        )
+
+
 def _resolve_one(*, connection: Connection, deployment_id: UUID, tag: str) -> UUID:
     """The one addressed tag's id; an unknown tag is a 404-shaped refusal."""
     try:
@@ -382,6 +411,17 @@ _COUNT_DOCUMENT_TAGS = text(
     """
     SELECT count(*) FROM document_tags
     WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+    """
+)
+
+_COUNT_DOCUMENT_TAGS_AFTER_ADD = text(
+    """
+    SELECT count(*) FROM (
+      SELECT tag_id FROM document_tags
+      WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+      UNION
+      SELECT unnest(CAST(:tag_ids AS uuid[]))
+    ) AS carried
     """
 )
 

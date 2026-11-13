@@ -1,0 +1,236 @@
+export const metadata = {
+  title: "Tag documents",
+  description: "Register tags such as project:billing-migration, assign them to documents at ingest or later, rename and delete them, and find tags in document lists, search results and SQL queries.",
+};
+
+# Tag documents
+
+<AppliesTo products={["self-hosted"]} />
+
+Dana's deployment holds the work of several projects: the billing
+migration's specs and decision records, the support team's meeting notes,
+John's engineering design documents. The memory is shared on purpose,
+because the same people, systems and decisions turn up in all of them. Dana
+still wants to say which documents belong to which body of work, so that she
+and the agents she works with can see it at a glance.
+
+Tags do that. A tag is a name, such as `project:billing-migration`, with a
+description of what it means. You register a tag once, then assign it to the
+documents it applies to. A document can carry several tags. This guide shows
+how to register, assign, change and remove tags, and where they show up.
+
+<Callout type="note">
+
+Reads cannot be filtered by tag yet: search, `search_documents` and the
+assured operations return the same results whatever tags documents carry.
+Today you can assign tags, read them back, and join on them in SQL queries.
+See [What is not built yet](/docs/project/not-built-yet#documents).
+
+</Callout>
+
+<Cloud>
+
+<Callout type="note">
+
+Tags are newer than the engine remember.dev runs today; see
+[What remember.dev serves](/docs/cloud/compatibility).
+
+</Callout>
+
+</Cloud>
+
+Setup is in the [Quickstart](/docs/start/quickstart). The routes are in
+[Ingest, readiness and documents](/docs/reference/http-api/ingest#get-tags).
+
+## Register a tag
+
+A tag must be registered before any document can carry it. That keeps the
+vocabulary in one place: anyone, person or agent, can list the tags and read
+what each means instead of guessing between `project:billing-migration` and
+`proj:billing`. A tag that is not registered is refused, so a typo is an
+error rather than a silently untagged document.
+
+```python
+from remember import Client
+
+memory = Client()
+memory.create_tag(
+    name="project:billing-migration",
+    description="Documents about moving invoicing to the new billing provider: specs, decisions and meeting notes.",
+)
+memory.create_tag(name="kind:decision", description="An accepted decision record, not a proposal.")
+```
+
+```bash
+remember tags create kind:draft --description "A proposal that is not decided yet."
+remember tags list
+```
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "project:support", "description": "Support team notes and tickets."}'
+```
+
+The rules for a tag:
+
+- **Name.** 1 to 128 characters after Unicode NFC normalization, with no
+  whitespace or control characters. The engine gives a name no structure;
+  a `key:value` convention (`project:…`, `kind:…`, `source:…`) keeps a
+  shared memory readable.
+- **Spelling and case.** A name keeps the spelling you declare, and names
+  are unique ignoring letter case: `Project:Billing-Migration` finds
+  `project:billing-migration`, and registering both is refused with `409`
+  `conflict`.
+- **Description.** Up to 2,000 characters. Write it for the agent that will
+  choose the tag later: what the tag means and when to apply it.
+- **Limits.** A deployment registers at most 10,000 tags, and a document
+  carries at most 64. A write past either is refused with `409`
+  `tag_limit_exceeded` and changes nothing.
+
+Wherever a call takes a tag, it accepts the name in any letter case or the
+`tag_id`.
+
+## Tag a document when you ingest it
+
+Pass `tags` with the upload. The tags are added to the document's tags.
+
+```python
+version = memory.ingest(
+    "specs/billing-migration.md",
+    source_kind="notes",
+    source_ref="specs/billing-migration.md",
+    tags=["project:billing-migration"],
+)
+```
+
+```bash
+remember ingest decisions/0007-invoice-cutover.md \
+  --source-kind decisions --source-ref billing/0007 \
+  --tag project:billing-migration --tag kind:decision
+```
+
+Over HTTP, repeat the `tags` query parameter:
+`POST /ingest?filename=…&mime=…&tags=project:billing-migration&tags=kind:decision`.
+
+Ingest only adds tags. A tag the document already carries stays, and
+leaving `tags` out removes nothing. This matters because one document can be
+reached by more than one caller: when John and Dana upload the same file
+for two different projects, both reach the same document, and it ends up
+with both projects' tags.
+
+Tags never decide whether a version is created. Sending a file identical to
+the latest version, with new tags, adds the tags and is still a no-op
+(`"created": false`). Tags are not part of what the engine processes, so
+adding them starts no work.
+
+If any tag is not registered, the whole ingest is refused with `422`
+`unknown_tag`, naming every unregistered tag, and nothing is stored. The
+Python client raises `remember.UnknownTag`, whose `tags` lists them.
+
+## Change a document's tags
+
+`update_document_tags` adds and removes tags, or replaces the whole set, in
+one step, and returns the document's tags afterwards.
+
+```python
+memory.update_document_tags(doc_id=version.doc_id, add=["kind:decision"], remove=["kind:draft"])
+memory.update_document_tags(doc_id=version.doc_id, set=["project:billing-migration"])
+memory.update_document_tags(doc_id=version.doc_id, set=[])  # removes every tag
+```
+
+```bash
+remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --add kind:decision --remove kind:draft
+remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --set ''
+```
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"set": ["project:billing-migration", "kind:decision"]}'
+```
+
+- `set` replaces the whole set and cannot be combined with `add` or
+  `remove`; an empty `set` removes every tag.
+- Removing a tag the document does not carry is not an error, as long as
+  the tag is registered.
+- Every tag named must be registered; otherwise nothing changes and the
+  call is refused with `unknown_tag`.
+- A deleted document cannot be tagged (`404` `document_not_found`).
+
+Tags belong to the document, not to one version: every version, old and
+new, carries the document's current tags. Changing them never reprocesses
+the document or creates a version.
+
+To retag many documents, find them with
+[`search_documents`](/docs/reference/http-api/ingest#post-documentssearch)
+and update each one; there is no bulk retag.
+
+## Rename, re-describe or delete a tag
+
+```python
+memory.update_tag(tag="project:billing-migration", name="project:billing")
+memory.update_tag(tag="project:billing", description="Everything about the billing provider change.")
+memory.delete_tag(tag="kind:draft")
+```
+
+```bash
+remember tags update project:billing --description "Everything about the billing provider change."
+remember tags delete kind:draft
+```
+
+A rename changes one record: every document that carries the tag shows the
+new name at once. There are no aliases, so the old name stops working, and a
+call that still uses it gets `unknown_tag`. Deleting a tag removes it from
+every document that carries it, in one step; the documents themselves are
+unchanged. Over HTTP, `PATCH` and `DELETE /tags/{tag_id}` take the tag's id,
+because a name may contain `/`; the client, the CLI and the MCP tools accept
+the name and look the id up.
+
+## Where tags show up
+
+- **Document lists and search.** Each item of
+  [`GET /documents`](/docs/reference/http-api/ingest#get-documents) and each
+  result of [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch)
+  has `tags`: the document's tag names, ordered by name.
+- **SQL queries.** [`tags_current`](/docs/reference/query-space#tags_current)
+  has one row per registered tag, and
+  [`document_tags_live`](/docs/reference/query-space#document_tags_live) one
+  row per tag on a live document, with the tag's current `name`. A chunk
+  inherits its document's tags through `doc_id`, a claim through its
+  occurrences, and a fact through its supporting claims. The shipped
+  saved query `examples.facts_by_tag` lists the current facts supported by
+  documents that carry a tag:
+
+  ```bash
+  curl -s -X POST "$REMEMBER_API_URL/query/saved/examples/facts_by_tag/run" \
+    -H "Authorization: Bearer $REMEMBER_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"parameters": ["project:billing-migration"]}'
+  ```
+
+- **MCP.** Agents get the tools `list_tags`, `create_tag`, `update_tag`,
+  `delete_tag` and `update_document_tags`, and `ingest` takes `tags`. See
+  [MCP tools](/docs/reference/mcp#tag-tools).
+
+## Tags and deleted documents
+
+A deleted document never shows its tags: it leaves `GET /documents`, search
+and the SQL views, and its tags with it. The engine keeps the record of which
+tags it carried, so if you ingest the document again it comes back with
+those tags. Forgetting a document (the operator's hard forget) removes that
+record; the registered tags themselves stay, because they are the
+deployment's vocabulary, not content from any document.
+
+## What tags are not
+
+- **Not part of the memory's content.** A tag is never extracted, resolved
+  or turned into an entity or fact, and tagging a document cannot change a
+  claim extracted from it or a fact it supports.
+- **Not a way to split the memory.** Entities, claims and facts stay shared
+  across every tag. Bodies of work that must never share entities or facts
+  belong in separate deployments.
+- **Not metadata about the source.** Authors, dates and titles are what a
+  file declares about itself; tags are how you organize it.

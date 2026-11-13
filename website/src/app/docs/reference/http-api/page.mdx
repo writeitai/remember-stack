@@ -13,11 +13,11 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 35 documented operations:
+The API has 40 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references` |
+| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
 | Sections and references | [Section history and references](/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
@@ -187,6 +187,11 @@ their arguments do not fit in a query string.
 | `PUT` | `/documents/{doc_id}/versions/{version_id}/effective-periods` | `write` |
 | `DELETE` | `/documents/{doc_id}/effective-periods` | `write` |
 | `DELETE` | `/documents/{doc_id}` | `write` |
+| `GET` | `/tags` | `read` |
+| `POST` | `/tags` | `write` |
+| `PATCH` | `/tags/{tag_id}` | `write` |
+| `DELETE` | `/tags/{tag_id}` | `write` |
+| `POST` | `/documents/{doc_id}/tags` | `write` |
 | `GET` | `/operations` | `read` |
 | `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |
@@ -271,7 +276,7 @@ gated routes are:
 | `POST /operations/{name}` | operation, named |
 
 `GET /healthz`, `GET /deployment`, `POST /readiness`, `GET /operations`,
-connector management and document deletion take no hold.
+connector management, document deletion and the tag routes take no hold.
 
 When the hold is refused, the route returns before doing any work:
 
@@ -349,8 +354,12 @@ with the same bytes is the same no-op, so a retry stays safe. See
 The two `PUT` routes replace a version's complete set of effective periods
 or references, so repeating one with the same body changes nothing.
 `DELETE /documents/{doc_id}/effective-periods` repeated finds nothing left
-to withdraw. Every other route except `DELETE /documents/{doc_id}` only
-reads, so repeating it is safe.
+to withdraw. `POST /documents/{doc_id}/tags` repeated with the same body
+leaves the same tags, and `PATCH /tags/{tag_id}` repeated leaves the same
+tag. `POST /tags` repeated is refused with `409` `conflict`, and
+`DELETE /tags/{tag_id}` repeated with `404` `unknown_tag`: in both cases the
+first call already did the work. Every other route except
+`DELETE /documents/{doc_id}` only reads, so repeating it is safe.
 
 ## Pagination and truncation
 

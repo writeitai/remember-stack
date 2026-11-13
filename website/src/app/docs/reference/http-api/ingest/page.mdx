@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Ingest, readiness and documents",
-  description: "The routes that add a document, report how far its processing has got, list, find and delete documents, declare when versions are in force, and supply a version's references.",
+  description: "The routes that add a document, report how far its processing has got, list, find and delete documents, declare when versions are in force, supply a version's references, and register and assign document tags.",
 };
 
 # Ingest, readiness and documents
@@ -22,6 +22,12 @@ declaration of a document. `PUT /documents/{doc_id}/versions/{version_id}/refere
 supplies the references a version makes, and the `GET` of the same path
 reports what became of them. Reading sections and references across versions
 is on [Section history and references](/docs/reference/http-api/sections-and-references).
+
+Five routes manage document tags. `GET /tags`, `POST /tags`,
+`PATCH /tags/{tag_id}` and `DELETE /tags/{tag_id}` list, register, change and
+remove the deployment's tags, and `POST /documents/{doc_id}/tags` changes the
+tags one document carries. A walkthrough is in
+[Tag documents](/docs/guides/tag-documents).
 
 Base URL, authentication and error shapes are described in
 [HTTP API conventions](/docs/reference/http-api).
@@ -51,6 +57,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `version_key` | query | string | no | | 1 to 512 characters. Your own permanent name for this version, unique within the document, such as `edition-2`. Requires `source_kind` and `source_ref`. See [Versions in force](#versions-in-force). |
 | `effective_from` | query | date-time | no | | UTC only. The start (included) of the period during which this version's text is in force. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
 | `effective_until` | query | date-time | no | | UTC only. The end (excluded) of that period. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
+| `tags` | query | string, repeatable | no | | At most 64. Registered tags, each by name (any letter case) or `tag_id`, added to the document's tags. Repeat the parameter for several: `tags=project:billing-migration&tags=kind:decision`. See [Tags](#tags). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -165,6 +172,27 @@ stays the one set by the first ingest.
 [`POST /documents/search`](#post-documentssearch) finds a document by any of
 these names.
 
+### Tags
+
+`tags` adds [registered tags](#get-tags) to the document. Ingest only adds:
+a tag the document already carries stays, and a tag you leave out is not
+removed. One document can be reached by several callers (two people
+uploading the same file reach the same document), so each caller's tags are
+kept. Change or remove tags with
+[`POST /documents/{doc_id}/tags`](#post-documentsdoc_idtags).
+
+Tags never decide whether a version is created. Sending bytes identical to
+the latest version with new tags adds the tags and is still a no-op
+(`"created": false`); a new `version_key` or a document added back after a
+delete still creates a version, as without tags. Tags are not part of what is
+processed, so adding them starts no work.
+
+Every tag must be registered first. If any is not, the whole ingest is
+refused with `422` `unknown_tag`, naming every unregistered tag, before the
+bytes or any record are stored. A document carries at most 64 tags; an
+ingest that would pass that is refused with `409` `tag_limit_exceeded`, also
+before anything is stored.
+
 ### Attribution
 
 `X-Ingest-Principal-Kind` and `X-Ingest-Principal-Ref` record who added the
@@ -216,6 +244,8 @@ for it; it will not become ready on its own.
 | `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
 | `409` | `{"code": "version_key_conflict", "message": …, "version_id": …, "version_key": …}` | The `version_key` already names another version of this document (`version_id`), or names the latest version but the bytes differ. Nothing was stored. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version of this document (`version_id`) already declares this `effective_from`. Nothing was stored. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing was stored. |
+| `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `tags` is not registered. `tags` lists every unregistered one as you sent it. Nothing was stored. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | `source_modified_at`, `source_version_ref`, `versioning_mode=living`, `version_key` or `effective_from` without a source identity. |
 | `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. The same message names `effective_from` or `effective_until` for those parameters. |
@@ -429,14 +459,17 @@ does not mean the document is searchable yet; use
         "ingested_at": "2026-09-23T08:02:11.540Z",
         "error": null
       },
-      "serving": true
+      "serving": true,
+      "tags": ["kind:decision", "project:billing-migration"]
     }
   ],
   "cursor": null
 }
 ```
 
-`cursor` is `null` on the last page.
+`tags` holds the names of the document's [tags](#get-tags), ordered by name
+ignoring letter case; it is empty for an untagged document. `cursor` is
+`null` on the last page.
 
 ### Errors
 
@@ -602,6 +635,7 @@ than `k` results and still return a `cursor`: keep paging until `cursor` is
       "version_no": 1,
       "status": "ready",
       "lineage_title": "Q3_sales_2025",
+      "tags": ["project:finance"],
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
@@ -630,6 +664,9 @@ than `k` results and still return a `cursor`: keep paging until `cursor` is
   "scope_pending": null
 }
 ```
+
+Each result's `tags` holds the names of the document's [tags](#get-tags),
+as in `GET /documents`. Search does not filter by tags yet.
 
 ### Errors
 
@@ -1123,4 +1160,256 @@ curl -s "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
 ```python
 for generation in memory.reference_generations(doc_id=doc_id, version_id=version_id).generations:
     print(generation.status, generation.item_count, generation.errors)
+```
+
+## GET /tags
+
+List the deployment's registered tags. A tag is a name you declare, such as
+`project:billing-migration`, with a description of what it means; you
+assign tags to documents to say how you organize them. What tags are for and
+how to use them: [Tag documents](/docs/guides/tag-documents).
+
+**Scope:** `read`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `query` | query | string | no | | 1 to 200 characters. Keeps the tags whose name or description contains it, ignoring letter case. |
+
+The list is ordered by name, ignoring letter case, and is not paged: a
+deployment registers at most 10,000 tags. It carries no document counts.
+
+### Response
+
+`200` with a [`TagList`](/docs/reference/result-types#taglist):
+
+```json
+{
+  "tags": [
+    {
+      "tag_id": "6b1d2f0e-8c4a-4f1e-9a3b-2d7c5e0f1a42",
+      "name": "project:billing-migration",
+      "description": "Documents about moving invoicing to the new billing provider: specs, decisions and meeting notes.",
+      "created_at": "2026-11-13T09:12:44.102Z",
+      "updated_at": "2026-11-13T09:12:44.102Z"
+    }
+  ]
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | `query` is empty or longer than 200 characters. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/tags?query=billing" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+for tag in memory.list_tags(query="billing").tags:
+    print(tag.tag_id, tag.name, tag.description)
+```
+
+## POST /tags
+
+Register a tag. A tag must be registered before any document can carry it.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Request body
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `name` | string | yes | 1 to 128 characters after Unicode NFC normalization, with no whitespace or control characters. |
+| `description` | string | yes | At most 2,000 characters. What the tag means and when to apply it, written for the agents that will choose it. |
+
+The name keeps the spelling you declare, and names are unique ignoring
+letter case: when `project:billing-migration` exists, `Project:Billing-Migration`
+finds it and cannot be registered again. The engine gives a name no
+structure; a `key:value` convention (`project:…`, `kind:…`) keeps a shared
+memory readable.
+
+### Response
+
+`200` with the new [`Tag`](/docs/reference/result-types#tag), as in
+[`GET /tags`](#get-tags).
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `409` | `{"code": "conflict", "message": …}` | A tag with this name, in any letter case, is already registered. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | The deployment already has 10,000 tags. |
+| `422` | validation list | A field is missing or unknown, the name is empty, too long or contains whitespace or a control character, or the description is over 2,000 characters. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "project:billing-migration", "description": "Documents about moving invoicing to the new billing provider."}'
+```
+
+```python
+tag = memory.create_tag(
+    name="project:billing-migration",
+    description="Documents about moving invoicing to the new billing provider.",
+)
+```
+
+## PATCH /tags/\{tag_id\}
+
+Rename a tag, change its description, or both. Every document that carries
+the tag keeps it.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `tag_id` | path | UUID | yes | The tag's id. Names can contain `/`, so the route takes the id; the SDK, CLI and MCP tools accept a name and look the id up first. |
+
+### Request body
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `name` | string | no | The new name, with the rules of [`POST /tags`](#post-tags). |
+| `description` | string | no | The new description, at most 2,000 characters. |
+
+Give at least one. A rename takes effect at once and keeps no alias: the old
+name stops resolving, so a call that still uses it gets `unknown_tag`.
+
+### Response
+
+`200` with the changed [`Tag`](/docs/reference/result-types#tag);
+`updated_at` is the time of this change.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | No tag has this id. |
+| `409` | `{"code": "conflict", "message": …}` | Another tag already has the new name, in any letter case. |
+| `422` | validation list | `tag_id` is not a UUID, the body has neither field or an unknown one, or a value breaks its rule. |
+
+### Example
+
+```bash
+curl -s -X PATCH "$REMEMBER_API_URL/tags/6b1d2f0e-8c4a-4f1e-9a3b-2d7c5e0f1a42" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "project:billing"}'
+```
+
+```python
+memory.update_tag(tag="project:billing-migration", name="project:billing")
+```
+
+## DELETE /tags/\{tag_id\}
+
+Delete a tag and remove it from every document that carries it, in one
+step. The documents themselves are unchanged.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `tag_id` | path | UUID | yes | The tag's id. |
+
+### Response
+
+`200` with the deleted [`Tag`](/docs/reference/result-types#tag) as it was.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | No tag has this id, or it was already deleted. |
+| `422` | validation list | `tag_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s -X DELETE "$REMEMBER_API_URL/tags/6b1d2f0e-8c4a-4f1e-9a3b-2d7c5e0f1a42" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+memory.delete_tag(tag="project:billing")
+```
+
+## POST /documents/\{doc_id\}/tags
+
+Change the tags one document carries, in one atomic step: add and remove
+tags, or replace the whole set.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+
+### Request body
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `add` | array of strings | no | `[]` | At most 64. Tags to add, each by name (any letter case) or `tag_id`. |
+| `remove` | array of strings | no | `[]` | At most 64. Tags to remove. |
+| `set` | array of strings | no | | At most 64. The document's complete set of tags. Excludes `add` and `remove`; `[]` removes every tag. |
+
+Each tag is 1 to 128 characters. Every tag named in any list must be
+registered; removing a registered tag the document does not carry is not an
+error. A call with none of the three fields changes nothing and returns the
+current tags. Changing tags starts no processing and creates no version.
+
+Tags belong to the document, not to one version: every version carries the
+document's current tags.
+
+### Response
+
+`200` with a [`DocumentTags`](/docs/reference/result-types#documenttags): the
+document's tags after the change, ordered by name ignoring letter case.
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "tags": ["kind:decision", "project:billing-migration"]
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing changed. |
+| `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `add`, `remove` or `set` is not registered; `tags` lists every one. Nothing changed. |
+| `422` | validation list | `set` together with `add` or `remove`, a list over 64 items, an empty or over-long tag, an unknown field, or `doc_id` not a UUID. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"add": ["kind:decision"], "remove": ["kind:draft"]}'
+```
+
+```python
+result = memory.update_document_tags(
+    doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b", set=["project:billing-migration"]
+)
+print(result.tags)
 ```

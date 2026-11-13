@@ -4450,6 +4450,227 @@ them instead.
 
 ---
 
+Source: https://remember.dev/docs/guides/tag-documents
+
+# Tag documents
+
+Dana's deployment holds the work of several projects: the billing
+migration's specs and decision records, the support team's meeting notes,
+John's engineering design documents. The memory is shared on purpose,
+because the same people, systems and decisions turn up in all of them. Dana
+still wants to say which documents belong to which body of work, so that she
+and the agents she works with can see it at a glance.
+
+Tags do that. A tag is a name, such as `project:billing-migration`, with a
+description of what it means. You register a tag once, then assign it to the
+documents it applies to. A document can carry several tags. This guide shows
+how to register, assign, change and remove tags, and where they show up.
+
+**Note:**
+
+Reads cannot be filtered by tag yet: search, `search_documents` and the
+assured operations return the same results whatever tags documents carry.
+Today you can assign tags, read them back, and join on them in SQL queries.
+See [What is not built yet](https://remember.dev/docs/project/not-built-yet#documents).
+
+Setup is in the [Quickstart](https://remember.dev/docs/start/quickstart). The routes are in
+[Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest#get-tags).
+
+## Register a tag
+
+A tag must be registered before any document can carry it. That keeps the
+vocabulary in one place: anyone, person or agent, can list the tags and read
+what each means instead of guessing between `project:billing-migration` and
+`proj:billing`. A tag that is not registered is refused, so a typo is an
+error rather than a silently untagged document.
+
+```python
+from remember import Client
+
+memory = Client()
+memory.create_tag(
+    name="project:billing-migration",
+    description="Documents about moving invoicing to the new billing provider: specs, decisions and meeting notes.",
+)
+memory.create_tag(name="kind:decision", description="An accepted decision record, not a proposal.")
+```
+
+```bash
+remember tags create kind:draft --description "A proposal that is not decided yet."
+remember tags list
+```
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "project:support", "description": "Support team notes and tickets."}'
+```
+
+The rules for a tag:
+
+- **Name.** 1 to 128 characters after Unicode NFC normalization, with no
+  whitespace or control characters. The engine gives a name no structure;
+  a `key:value` convention (`project:…`, `kind:…`, `source:…`) keeps a
+  shared memory readable.
+- **Spelling and case.** A name keeps the spelling you declare, and names
+  are unique ignoring letter case: `Project:Billing-Migration` finds
+  `project:billing-migration`, and registering both is refused with `409`
+  `conflict`.
+- **Description.** Up to 2,000 characters. Write it for the agent that will
+  choose the tag later: what the tag means and when to apply it.
+- **Limits.** A deployment registers at most 10,000 tags, and a document
+  carries at most 64. A write past either is refused with `409`
+  `tag_limit_exceeded` and changes nothing.
+
+Wherever a call takes a tag, it accepts the name in any letter case or the
+`tag_id`.
+
+## Tag a document when you ingest it
+
+Pass `tags` with the upload. The tags are added to the document's tags.
+
+```python
+version = memory.ingest(
+    "specs/billing-migration.md",
+    source_kind="notes",
+    source_ref="specs/billing-migration.md",
+    tags=["project:billing-migration"],
+)
+```
+
+```bash
+remember ingest decisions/0007-invoice-cutover.md \
+  --source-kind decisions --source-ref billing/0007 \
+  --tag project:billing-migration --tag kind:decision
+```
+
+Over HTTP, repeat the `tags` query parameter:
+`POST /ingest?filename=…&mime=…&tags=project:billing-migration&tags=kind:decision`.
+
+Ingest only adds tags. A tag the document already carries stays, and
+leaving `tags` out removes nothing. This matters because one document can be
+reached by more than one caller: when John and Dana upload the same file
+for two different projects, both reach the same document, and it ends up
+with both projects' tags.
+
+Tags never decide whether a version is created. Sending a file identical to
+the latest version, with new tags, adds the tags and is still a no-op
+(`"created": false`). Tags are not part of what the engine processes, so
+adding them starts no work.
+
+If any tag is not registered, the whole ingest is refused with `422`
+`unknown_tag`, naming every unregistered tag, and nothing is stored. The
+Python client raises `remember.UnknownTag`, whose `tags` lists them.
+
+## Change a document's tags
+
+`update_document_tags` adds and removes tags, or replaces the whole set, in
+one step, and returns the document's tags afterwards.
+
+```python
+memory.update_document_tags(doc_id=version.doc_id, add=["kind:decision"], remove=["kind:draft"])
+memory.update_document_tags(doc_id=version.doc_id, set=["project:billing-migration"])
+memory.update_document_tags(doc_id=version.doc_id, set=[])  # removes every tag
+```
+
+```bash
+remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --add kind:decision --remove kind:draft
+remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --set ''
+```
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"set": ["project:billing-migration", "kind:decision"]}'
+```
+
+- `set` replaces the whole set and cannot be combined with `add` or
+  `remove`; an empty `set` removes every tag.
+- Removing a tag the document does not carry is not an error, as long as
+  the tag is registered.
+- Every tag named must be registered; otherwise nothing changes and the
+  call is refused with `unknown_tag`.
+- A deleted document cannot be tagged (`404` `document_not_found`).
+
+Tags belong to the document, not to one version: every version, old and
+new, carries the document's current tags. Changing them never reprocesses
+the document or creates a version.
+
+To retag many documents, find them with
+[`search_documents`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch)
+and update each one; there is no bulk retag.
+
+## Rename, re-describe or delete a tag
+
+```python
+memory.update_tag(tag="project:billing-migration", name="project:billing")
+memory.update_tag(tag="project:billing", description="Everything about the billing provider change.")
+memory.delete_tag(tag="kind:draft")
+```
+
+```bash
+remember tags update project:billing --description "Everything about the billing provider change."
+remember tags delete kind:draft
+```
+
+A rename changes one record: every document that carries the tag shows the
+new name at once. There are no aliases, so the old name stops working, and a
+call that still uses it gets `unknown_tag`. Deleting a tag removes it from
+every document that carries it, in one step; the documents themselves are
+unchanged. Over HTTP, `PATCH` and `DELETE /tags/{tag_id}` take the tag's id,
+because a name may contain `/`; the client, the CLI and the MCP tools accept
+the name and look the id up.
+
+## Where tags show up
+
+- **Document lists and search.** Each item of
+  [`GET /documents`](https://remember.dev/docs/reference/http-api/ingest#get-documents) and each
+  result of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch)
+  has `tags`: the document's tag names, ordered by name.
+- **SQL queries.** [`tags_current`](https://remember.dev/docs/reference/query-space#tags_current)
+  has one row per registered tag, and
+  [`document_tags_live`](https://remember.dev/docs/reference/query-space#document_tags_live) one
+  row per tag on a live document, with the tag's current `name`. A chunk
+  inherits its document's tags through `doc_id`, a claim through its
+  occurrences, and a fact through its supporting claims. The shipped
+  saved query `examples.facts_by_tag` lists the current facts supported by
+  documents that carry a tag:
+
+  ```bash
+  curl -s -X POST "$REMEMBER_API_URL/query/saved/examples/facts_by_tag/run" \
+    -H "Authorization: Bearer $REMEMBER_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"parameters": ["project:billing-migration"]}'
+  ```
+
+- **MCP.** Agents get the tools `list_tags`, `create_tag`, `update_tag`,
+  `delete_tag` and `update_document_tags`, and `ingest` takes `tags`. See
+  [MCP tools](https://remember.dev/docs/reference/mcp#tag-tools).
+
+## Tags and deleted documents
+
+A deleted document never shows its tags: it leaves `GET /documents`, search
+and the SQL views, and its tags with it. The engine keeps the record of which
+tags it carried, so if you ingest the document again it comes back with
+those tags. Forgetting a document (the operator's hard forget) removes that
+record; the registered tags themselves stay, because they are the
+deployment's vocabulary, not content from any document.
+
+## What tags are not
+
+- **Not part of the memory's content.** A tag is never extracted, resolved
+  or turned into an entity or fact, and tagging a document cannot change a
+  claim extracted from it or a fact it supports.
+- **Not a way to split the memory.** Entities, claims and facts stay shared
+  across every tag. Bodies of work that must never share entities or facts
+  belong in separate deployments.
+- **Not metadata about the source.** Authors, dates and titles are what a
+  file declares about itself; tags are how you organize it.
+
+---
+
 Source: https://remember.dev/docs/guides/wait-for-readiness
 
 # Wait until a document is queryable
@@ -6279,7 +6500,7 @@ if result["termination_reason"] != "completed":
 
 ## Next
 
-- [Saved queries](https://remember.dev/docs/guides/saved-queries): the 18 shipped queries to start from.
+- [Saved queries](https://remember.dev/docs/guides/saved-queries): the 19 shipped queries to start from.
 - [Query space memory_v1](https://remember.dev/docs/reference/query-space)
 - [SQL query routes in the HTTP API](https://remember.dev/docs/reference/http-api/query)
 
@@ -6291,7 +6512,7 @@ Source: https://remember.dev/docs/guides/saved-queries
 
 A saved query is a SQL query stored in the deployment under a name, with
 its parameters described, so an agent or a script can run it without
-writing SQL. Every deployment ships with 18 of them, covering the questions
+writing SQL. Every deployment ships with 19 of them, covering the questions
 people ask most: claims about an entity, documents that mention it, what
 changed since a date, why a fact is held. They run over the same query
 space as any [SQL query](https://remember.dev/docs/guides/sql): prepared, read-only views and functions,
@@ -6333,7 +6554,7 @@ remember query list-saved --namespace examples
 {"name": "list_saved_queries", "arguments": {"namespace": "examples"}}
 ```
 
-## The 18 shipped queries
+## The 19 shipped queries
 
 Parameters are positional, in this order. IDs are UUID strings; instants
 are ISO 8601 timestamps with a time zone.
@@ -6358,6 +6579,7 @@ are ISO 8601 timestamps with a time zone.
 | `graph_neighborhood` | Relations within two hops of an entity. | deployment ID, entity ID | graph budget |
 | `graph_path` | Routes of up to four hops between two entities. | deployment ID, from entity ID, to entity ID | graph budget |
 | `graph_citation_path` | Citation routes of up to six hops between two documents. | deployment ID, from document ID, to document ID | graph budget |
+| `facts_by_tag` | Current facts supported by documents that carry a [tag](https://remember.dev/docs/guides/tag-documents), with how many of those documents support each. | tag name (any letter case) | 50 |
 
 The graph queries take your deployment ID first. It is in every ingest
 result (`deployment_id`) and every SQL result.
@@ -6887,17 +7109,23 @@ Compose runs [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for this
 (image `chrislusf/seaweedfs`, pinned to `4.44` by digest). The engine talks
 to it through the S3 API with path-style addressing and SigV4 signing. It
 writes every object with a conditional create (`If-None-Match: *`), so an
-object is never silently replaced. Only SeaweedFS is exercised by the
-project's checks. Another S3-compatible store has to support path-style
-requests, conditional writes and user metadata on objects.
+object is never silently replaced. The project's checks exercise SeaweedFS
+and real MinIO adapter contracts. Another S3-compatible store has to support
+path-style requests, conditional writes and user metadata on objects.
 
 SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
 of them, so the bundled store holds up to about 100 GiB before writes fail
 (each bucket also reserves 7 volumes on its first write). Volumes are not
 preallocated, so unused capacity takes no disk. To store more, raise
 `-volume.max` on the `object-store` service in `compose.yaml`. The engine
-sets no S3 lifecycle (expiry) rules and does not need them: it deletes
-objects itself, during a hard forget.
+sets no S3 lifecycle (expiry) rules; it deletes published objects itself
+during a hard forget.
+
+For unfinished multipart uploads, purge aborts matching uploads when the
+provider supports listing them. A `NotImplemented`/501 response to that listing
+leaves unfinished-part cleanup to the provider's policy. Purge evidence records
+that limitation and the engine logs a warning; it still verifies that published
+objects are absent. This does not verify immediate erasure of unfinished parts.
 
 ## Model provider keys
 
@@ -9714,11 +9942,11 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 35 documented operations:
+The API has 40 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references` |
+| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
 | Sections and references | [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](https://remember.dev/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
@@ -9851,6 +10079,11 @@ their arguments do not fit in a query string.
 | `PUT` | `/documents/{doc_id}/versions/{version_id}/effective-periods` | `write` |
 | `DELETE` | `/documents/{doc_id}/effective-periods` | `write` |
 | `DELETE` | `/documents/{doc_id}` | `write` |
+| `GET` | `/tags` | `read` |
+| `POST` | `/tags` | `write` |
+| `PATCH` | `/tags/{tag_id}` | `write` |
+| `DELETE` | `/tags/{tag_id}` | `write` |
+| `POST` | `/documents/{doc_id}/tags` | `write` |
 | `GET` | `/operations` | `read` |
 | `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |
@@ -9973,8 +10206,12 @@ with the same bytes is the same no-op, so a retry stays safe. See
 The two `PUT` routes replace a version's complete set of effective periods
 or references, so repeating one with the same body changes nothing.
 `DELETE /documents/{doc_id}/effective-periods` repeated finds nothing left
-to withdraw. Every other route except `DELETE /documents/{doc_id}` only
-reads, so repeating it is safe.
+to withdraw. `POST /documents/{doc_id}/tags` repeated with the same body
+leaves the same tags, and `PATCH /tags/{tag_id}` repeated leaves the same
+tag. `POST /tags` repeated is refused with `409` `conflict`, and
+`DELETE /tags/{tag_id}` repeated with `404` `unknown_tag`: in both cases the
+first call already did the work. Every other route except
+`DELETE /documents/{doc_id}` only reads, so repeating it is safe.
 
 ## Pagination and truncation
 
@@ -10061,6 +10298,12 @@ supplies the references a version makes, and the `GET` of the same path
 reports what became of them. Reading sections and references across versions
 is on [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references).
 
+Five routes manage document tags. `GET /tags`, `POST /tags`,
+`PATCH /tags/{tag_id}` and `DELETE /tags/{tag_id}` list, register, change and
+remove the deployment's tags, and `POST /documents/{doc_id}/tags` changes the
+tags one document carries. A walkthrough is in
+[Tag documents](https://remember.dev/docs/guides/tag-documents).
+
 Base URL, authentication and error shapes are described in
 [HTTP API conventions](https://remember.dev/docs/reference/http-api).
 
@@ -10089,6 +10332,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `version_key` | query | string | no | | 1 to 512 characters. Your own permanent name for this version, unique within the document, such as `edition-2`. Requires `source_kind` and `source_ref`. See [Versions in force](#versions-in-force). |
 | `effective_from` | query | date-time | no | | UTC only. The start (included) of the period during which this version's text is in force. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
 | `effective_until` | query | date-time | no | | UTC only. The end (excluded) of that period. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
+| `tags` | query | string, repeatable | no | | At most 64. Registered tags, each by name (any letter case) or `tag_id`, added to the document's tags. Repeat the parameter for several: `tags=project:billing-migration&tags=kind:decision`. See [Tags](#tags). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -10203,6 +10447,27 @@ stays the one set by the first ingest.
 [`POST /documents/search`](#post-documentssearch) finds a document by any of
 these names.
 
+### Tags
+
+`tags` adds [registered tags](#get-tags) to the document. Ingest only adds:
+a tag the document already carries stays, and a tag you leave out is not
+removed. One document can be reached by several callers (two people
+uploading the same file reach the same document), so each caller's tags are
+kept. Change or remove tags with
+[`POST /documents/{doc_id}/tags`](#post-documentsdoc_idtags).
+
+Tags never decide whether a version is created. Sending bytes identical to
+the latest version with new tags adds the tags and is still a no-op
+(`"created": false`); a new `version_key` or a document added back after a
+delete still creates a version, as without tags. Tags are not part of what is
+processed, so adding them starts no work.
+
+Every tag must be registered first. If any is not, the whole ingest is
+refused with `422` `unknown_tag`, naming every unregistered tag, before the
+bytes or any record are stored. A document carries at most 64 tags; an
+ingest that would pass that is refused with `409` `tag_limit_exceeded`, also
+before anything is stored.
+
 ### Attribution
 
 `X-Ingest-Principal-Kind` and `X-Ingest-Principal-Ref` record who added the
@@ -10254,6 +10519,8 @@ for it; it will not become ready on its own.
 | `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
 | `409` | `{"code": "version_key_conflict", "message": …, "version_id": …, "version_key": …}` | The `version_key` already names another version of this document (`version_id`), or names the latest version but the bytes differ. Nothing was stored. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version of this document (`version_id`) already declares this `effective_from`. Nothing was stored. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing was stored. |
+| `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `tags` is not registered. `tags` lists every unregistered one as you sent it. Nothing was stored. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | `source_modified_at`, `source_version_ref`, `versioning_mode=living`, `version_key` or `effective_from` without a source identity. |
 | `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. The same message names `effective_from` or `effective_until` for those parameters. |
@@ -10433,14 +10700,17 @@ does not mean the document is searchable yet; use
         "ingested_at": "2026-09-23T08:02:11.540Z",
         "error": null
       },
-      "serving": true
+      "serving": true,
+      "tags": ["kind:decision", "project:billing-migration"]
     }
   ],
   "cursor": null
 }
 ```
 
-`cursor` is `null` on the last page.
+`tags` holds the names of the document's [tags](#get-tags), ordered by name
+ignoring letter case; it is empty for an untagged document. `cursor` is
+`null` on the last page.
 
 ### Errors
 
@@ -10606,6 +10876,7 @@ than `k` results and still return a `cursor`: keep paging until `cursor` is
       "version_no": 1,
       "status": "ready",
       "lineage_title": "Q3_sales_2025",
+      "tags": ["project:finance"],
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
@@ -10634,6 +10905,9 @@ than `k` results and still return a `cursor`: keep paging until `cursor` is
   "scope_pending": null
 }
 ```
+
+Each result's `tags` holds the names of the document's [tags](#get-tags),
+as in `GET /documents`. Search does not filter by tags yet.
 
 ### Errors
 
@@ -11127,6 +11401,258 @@ curl -s "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
 ```python
 for generation in memory.reference_generations(doc_id=doc_id, version_id=version_id).generations:
     print(generation.status, generation.item_count, generation.errors)
+```
+
+## GET /tags
+
+List the deployment's registered tags. A tag is a name you declare, such as
+`project:billing-migration`, with a description of what it means; you
+assign tags to documents to say how you organize them. What tags are for and
+how to use them: [Tag documents](https://remember.dev/docs/guides/tag-documents).
+
+**Scope:** `read`.
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `query` | query | string | no | | 1 to 200 characters. Keeps the tags whose name or description contains it, ignoring letter case. |
+
+The list is ordered by name, ignoring letter case, and is not paged: a
+deployment registers at most 10,000 tags. It carries no document counts.
+
+### Response
+
+`200` with a [`TagList`](https://remember.dev/docs/reference/result-types#taglist):
+
+```json
+{
+  "tags": [
+    {
+      "tag_id": "6b1d2f0e-8c4a-4f1e-9a3b-2d7c5e0f1a42",
+      "name": "project:billing-migration",
+      "description": "Documents about moving invoicing to the new billing provider: specs, decisions and meeting notes.",
+      "created_at": "2026-11-13T09:12:44.102Z",
+      "updated_at": "2026-11-13T09:12:44.102Z"
+    }
+  ]
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | `query` is empty or longer than 200 characters. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/tags?query=billing" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+for tag in memory.list_tags(query="billing").tags:
+    print(tag.tag_id, tag.name, tag.description)
+```
+
+## POST /tags
+
+Register a tag. A tag must be registered before any document can carry it.
+
+**Scope:** `write`.
+
+### Request body
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `name` | string | yes | 1 to 128 characters after Unicode NFC normalization, with no whitespace or control characters. |
+| `description` | string | yes | At most 2,000 characters. What the tag means and when to apply it, written for the agents that will choose it. |
+
+The name keeps the spelling you declare, and names are unique ignoring
+letter case: when `project:billing-migration` exists, `Project:Billing-Migration`
+finds it and cannot be registered again. The engine gives a name no
+structure; a `key:value` convention (`project:…`, `kind:…`) keeps a shared
+memory readable.
+
+### Response
+
+`200` with the new [`Tag`](https://remember.dev/docs/reference/result-types#tag), as in
+[`GET /tags`](#get-tags).
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `409` | `{"code": "conflict", "message": …}` | A tag with this name, in any letter case, is already registered. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | The deployment already has 10,000 tags. |
+| `422` | validation list | A field is missing or unknown, the name is empty, too long or contains whitespace or a control character, or the description is over 2,000 characters. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "project:billing-migration", "description": "Documents about moving invoicing to the new billing provider."}'
+```
+
+```python
+tag = memory.create_tag(
+    name="project:billing-migration",
+    description="Documents about moving invoicing to the new billing provider.",
+)
+```
+
+## PATCH /tags/{tag_id}
+
+Rename a tag, change its description, or both. Every document that carries
+the tag keeps it.
+
+**Scope:** `write`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `tag_id` | path | UUID | yes | The tag's id. Names can contain `/`, so the route takes the id; the SDK, CLI and MCP tools accept a name and look the id up first. |
+
+### Request body
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `name` | string | no | The new name, with the rules of [`POST /tags`](#post-tags). |
+| `description` | string | no | The new description, at most 2,000 characters. |
+
+Give at least one. A rename takes effect at once and keeps no alias: the old
+name stops resolving, so a call that still uses it gets `unknown_tag`.
+
+### Response
+
+`200` with the changed [`Tag`](https://remember.dev/docs/reference/result-types#tag);
+`updated_at` is the time of this change.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | No tag has this id. |
+| `409` | `{"code": "conflict", "message": …}` | Another tag already has the new name, in any letter case. |
+| `422` | validation list | `tag_id` is not a UUID, the body has neither field or an unknown one, or a value breaks its rule. |
+
+### Example
+
+```bash
+curl -s -X PATCH "$REMEMBER_API_URL/tags/6b1d2f0e-8c4a-4f1e-9a3b-2d7c5e0f1a42" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "project:billing"}'
+```
+
+```python
+memory.update_tag(tag="project:billing-migration", name="project:billing")
+```
+
+## DELETE /tags/{tag_id}
+
+Delete a tag and remove it from every document that carries it, in one
+step. The documents themselves are unchanged.
+
+**Scope:** `write`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `tag_id` | path | UUID | yes | The tag's id. |
+
+### Response
+
+`200` with the deleted [`Tag`](https://remember.dev/docs/reference/result-types#tag) as it was.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | No tag has this id, or it was already deleted. |
+| `422` | validation list | `tag_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s -X DELETE "$REMEMBER_API_URL/tags/6b1d2f0e-8c4a-4f1e-9a3b-2d7c5e0f1a42" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+memory.delete_tag(tag="project:billing")
+```
+
+## POST /documents/{doc_id}/tags
+
+Change the tags one document carries, in one atomic step: add and remove
+tags, or replace the whole set.
+
+**Scope:** `write`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+
+### Request body
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `add` | array of strings | no | `[]` | At most 64. Tags to add, each by name (any letter case) or `tag_id`. |
+| `remove` | array of strings | no | `[]` | At most 64. Tags to remove. |
+| `set` | array of strings | no | | At most 64. The document's complete set of tags. Excludes `add` and `remove`; `[]` removes every tag. |
+
+Each tag is 1 to 128 characters. Every tag named in any list must be
+registered; removing a registered tag the document does not carry is not an
+error. A call with none of the three fields changes nothing and returns the
+current tags. Changing tags starts no processing and creates no version.
+
+Tags belong to the document, not to one version: every version carries the
+document's current tags.
+
+### Response
+
+`200` with a [`DocumentTags`](https://remember.dev/docs/reference/result-types#documenttags): the
+document's tags after the change, ordered by name ignoring letter case.
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "tags": ["kind:decision", "project:billing-migration"]
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing changed. |
+| `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `add`, `remove` or `set` is not registered; `tags` lists every one. Nothing changed. |
+| `422` | validation list | `set` together with `add` or `remove`, a list over 64 items, an empty or over-long tag, an unknown field, or `doc_id` not a UUID. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b/tags" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"add": ["kind:decision"], "remove": ["kind:draft"]}'
+```
+
+```python
+result = memory.update_document_tags(
+    doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b", set=["project:billing-migration"]
+)
+print(result.tags)
 ```
 
 ---
@@ -12795,7 +13321,7 @@ hits = memory.search_query_space(query="current facts", k=5)
 ## GET /query/saved
 
 List saved queries. A saved query is a named, versioned SQL statement stored in
-the deployment. Every deployment ships with 18 in the `examples` namespace;
+the deployment. Every deployment ships with 19 in the `examples` namespace;
 see [Query space memory_v1](https://remember.dev/docs/reference/query-space#shipped-saved-queries).
 
 ### Parameters
@@ -14310,6 +14836,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `first_seen_at` | date-time | Never changes. |
 | `latest` | [`DocumentVersionSummary`](#documentversionsummary) | The newest version that has not been deleted. |
 | `serving` | boolean | Some version of this document is `ready` and not deleted. |
+| `tags` | array of strings | The names of the document's [tags](#tag), ordered by name ignoring letter case. Empty when it has none. |
 
 ### DocumentVersionSummary
 
@@ -14370,6 +14897,7 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `version_no` | integer | |
 | `status` | string | That version's processing status, as in [`DocumentVersionSummary`](#documentversionsummary). |
 | `lineage_title` | string, nullable | The document's title, set by its first ingest. |
+| `tags` | array of strings | The names of the document's [tags](#tag), ordered by name ignoring letter case. |
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
@@ -14420,6 +14948,37 @@ changed. The counts describe this call only.
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |
+
+## Tags
+
+### Tag
+
+One registered tag, as [`GET /tags`](https://remember.dev/docs/reference/http-api/ingest#get-tags)
+and the other tag routes return it.
+
+| Field | Type | Contents |
+|---|---|---|
+| `tag_id` | UUID | Stable identity; a rename keeps it. |
+| `name` | string | The current name, with the spelling it was declared with. Unique ignoring letter case. |
+| `description` | string | What the tag means and when to apply it. |
+| `created_at` | date-time | When the tag was registered. |
+| `updated_at` | date-time | When its name or description last changed. |
+
+### TagList
+
+| Field | Type | Contents |
+|---|---|---|
+| `tags` | array of [`Tag`](#tag) | Ordered by name, ignoring letter case. |
+
+### DocumentTags
+
+What [`POST /documents/{doc_id}/tags`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idtags)
+left on the document.
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `tags` | array of strings | The document's tag names after the change, ordered by name ignoring letter case. |
 
 ## Effective periods
 
@@ -14702,8 +15261,8 @@ see what the memory itself would return.
 This page is the reference for the query space: [identity and
 versioning](#version-and-manifest-hash), [the grammar a statement must
 follow](#what-a-statement-may-contain), [limits](#limits), the
-[15 functions](#functions), the [27 views](#views) and the
-[18 shipped saved queries](#shipped-saved-queries). The routes that run
+[15 functions](#functions), the [29 views](#views) and the
+[19 shipped saved queries](#shipped-saved-queries). The routes that run
 statements are in [SQL queries](https://remember.dev/docs/reference/http-api/query); a walkthrough is in
 [Explore memory with SQL](https://remember.dev/docs/guides/sql).
 
@@ -15336,7 +15895,7 @@ LIMIT 50
 
 ## Views
 
-The 27 views, with every column. Descriptions are the comments in the
+The 29 views, with every column. Descriptions are the comments in the
 manifest, as `GET /query/space` returns them. Every view has a
 `deployment_id` column; a deployment only ever sees its own rows.
 
@@ -15352,6 +15911,7 @@ manifest, as `GET /query/space` returns them. Every view has a
 | [`contradiction_members_current`](#contradiction_members_current) | one current contradiction-group member | `contradiction_group`, `fact_kind`, `fact_id` |
 | [`document_crossrefs_live`](#document_crossrefs_live) | one live, resolved reference made by a live source version | `crossref_id` |
 | [`document_effective_periods_live`](#document_effective_periods_live) | one currently known declared effective period | `period_id` |
+| [`document_tags_live`](#document_tags_live) | one tag assignment on a live document lineage | `doc_id`, `tag_id` |
 | [`document_versions_visible`](#document_versions_visible) | one visible version of a live lineage | `version_id` |
 | [`documents_live`](#documents_live) | one live document lineage | `doc_id` |
 | [`entities_current`](#entities_current) | one externally visible survivor entity | `entity_id` |
@@ -15368,6 +15928,7 @@ manifest, as `GET /query/space` returns them. Every view has a
 | [`page_evidence_visible`](#page_evidence_visible) | one visible K artifact-to-target association | `artifact_id`, `role`, `target_kind`, `target_id` |
 | [`pages_live`](#pages_live) | one visible K artifact | `artifact_id` |
 | [`sections_live`](#sections_live) | one section in a current ready representation | `section_id` |
+| [`tags_current`](#tags_current) | one registered document tag | `tag_id` |
 | [`testimony_currency_events_visible`](#testimony_currency_events_visible) | one visible D54 transition | `event_id` |
 
 ### changes_visible
@@ -15666,6 +16227,23 @@ One row per currently known declared effective period, keyed by (deployment_id, 
 | `effective_until` | timestamp with time zone | yes | Exclusive end of the period: the declared end, else the next declared start in the lineage, null when the period is open. |
 | `until_declared` | boolean | no | True when effective_until was declared rather than derived from the next declared start. |
 | `declared_at` | timestamp with time zone | no | When the declaration became known, which is a belief-axis instant rather than a world-time clock. |
+
+### document_tags_live
+
+One row per tag assignment on a live document lineage, keyed by (deployment_id, doc_id, tag_id) and joined to documents_live on (deployment_id, doc_id) and to tags_current on (deployment_id, tag_id). Tags belong to the lineage, not to a version, so every version of the document carries them, and they are never part of what the memory extracts or believes: a chunk inherits its document's tags through doc_id, a claim through its occurrences, and a fact through its supporting claims in fact_claim_evidence_live. A deleted or forgotten lineage has no rows, and neither does a deleted tag. The view carries no counts.
+
+- **Grain:** one tag assignment on a live document lineage (`document_tag_live`)
+- **Row key:** `deployment_id`, `doc_id`, `tag_id`
+- **Clock semantics:** `registry_maintenance_instants`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `tags_current` on `deployment_id`, `tag_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the assignment. |
+| `doc_id` | uuid | no | The live lineage carrying the tag, joinable to documents_live. |
+| `tag_id` | uuid | no | The registered tag assigned to the lineage, joinable to tags_current. |
+| `name` | text | no | The tag's current name, so a renamed tag shows its new name on every lineage that carries it. |
+| `assigned_at` | timestamp with time zone | no | When the tag was first assigned to the lineage, a registry instant rather than a world-time clock. |
 
 ### document_versions_visible
 
@@ -16085,6 +16663,23 @@ One row per section of the current ready representation of a live lineage, keyed
 | `own_content_hash` | text | yes | Hash of the section's own ordered block hashes with its children excluded, null until the section has been indexed. |
 | `subtree_content_hash` | text | yes | Hash of every block hash in the section span including its children, null until the section has been indexed. |
 
+### tags_current
+
+One row per registered document tag, keyed by (deployment_id, tag_id). A tag is a caller-declared label with a description, created before any document carries it; its name is unique within the deployment ignoring letter case and is matched that way, so compare names with lower() on both sides. A renamed tag shows only its current name, because there are no aliases, and a deleted tag is absent. Tags are the deployment's vocabulary rather than content from any source, so forgetting a document does not change this relation. The view carries no counts: join document_tags_live to count the live documents that carry a tag.
+
+- **Grain:** one registered document tag (`tag_registered`)
+- **Row key:** `deployment_id`, `tag_id`
+- **Clock semantics:** `registry_maintenance_instants`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that registered the tag. |
+| `tag_id` | uuid | no | Stable identity of the tag; assignments point at it, so a rename changes no assignment. |
+| `name` | text | no | The tag's current name with the spelling it was declared with, unique within the deployment ignoring letter case. |
+| `description` | text | no | What the tag means and when to apply it, written by the caller for agents. |
+| `created_at` | timestamp with time zone | no | When the tag was registered, a registry instant rather than a world-time clock. |
+| `updated_at` | timestamp with time zone | no | When the tag's name or description last changed, a registry instant rather than a world-time clock. |
+
 ### testimony_currency_events_visible
 
 One row per visible D54 testimony-currency transition, keyed by (deployment_id, event_id) and joined to claims_visible_history on (deployment_id, claim_id) and to documents_live on (deployment_id, doc_id). A currency transition is BOOKKEEPING and never validity: nothing about the claim changes and no fact is adjudicated by it. Transitions of forgotten lineages and of claims whose source version is tombstoned are absent, and from_version_id is null rather than dangling whenever the superseded version is itself no longer visible, so this relation cannot be read as a tombstone side channel. The occurrence instant is transaction time; the view carries no counts and no world-validity clocks.
@@ -16109,7 +16704,7 @@ One row per visible D54 testimony-currency transition, keyed by (deployment_id, 
 
 ## Shipped saved queries
 
-Every deployment is seeded with 18 saved queries in the `examples`
+Every deployment is seeded with 19 saved queries in the `examples`
 namespace, status `active`, origin and assurance `shipped_example`. They are
 starting points, not guarantees: RememberStack wrote them and they pass the
 same validation as your statements, but what they compute is plain SQL you can
@@ -16139,6 +16734,7 @@ placeholders in the SQL, listed here. Run one with
 | `graph_neighborhood` | Relations within N hops of an entity (2 hops) | `$1` deployment id, `$2` entity id | none |
 | `graph_path` | Routes between two entities, each returned whole (up to 4 hops) | `$1` deployment id, `$2` from entity id, `$3` to entity id | none |
 | `graph_citation_path` | Directed citation routes between two live documents (up to 6 hops) | `$1` deployment id, `$2` from document id, `$3` to document id | none |
+| `facts_by_tag` | Current facts supported by documents carrying a tag, by name: each fact with its `support_state`, `evidence_count` and how many of its supporting documents carry the tag (`tagged_documents`) | `$1` tag name, matched ignoring letter case | 50 |
 
 The `examples` namespace belongs to the platform: seeding refuses to
 overwrite a query of yours with the same name, and never re-enables a shipped
@@ -16207,6 +16803,7 @@ The client is synchronous. There is no async client yet
 | `StoredKeyRefused` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `LayerUnavailable` | exception | [Errors](#errors) |
+| `UnknownTag` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
 | `ClaimOccurrence` | model | [Models](#models) |
@@ -16229,6 +16826,7 @@ The client is synchronous. There is no async client yet
 | `DocumentSearchRequest` | model | [Models](#models) |
 | `DocumentSearchResult` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
+| `DocumentTags` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `EffectiveInterval` | model | [Models](#models) |
 | `EffectivePeriodInput` | model | [Models](#models) |
@@ -16259,6 +16857,8 @@ The client is synchronous. There is no async client yet
 | `SectionHistoryRequest` | model | [Models](#models) |
 | `SectionHistoryRow` | model | [Models](#models) |
 | `SectionHistorySection` | model | [Models](#models) |
+| `Tag` | model | [Models](#models) |
+| `TagList` | model | [Models](#models) |
 | `TemporalMatch` | enum | [Models](#models) |
 | `ToolDescriptor` | model | [Models](#models) |
 | `VersionPipelineReadiness` | model | [Models](#models) |
@@ -16380,6 +16980,7 @@ Client.ingest_file(
     version_key: str | None = None,
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
+    tags: Sequence[str] | None = None,
 ) -> IngestedVersion
 ```
 
@@ -16424,6 +17025,11 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
+| [`list_tags`](#list_tags) | `GET /tags` | `TagList` |
+| [`create_tag`](#create_tag) | `POST /tags` | `Tag` |
+| [`update_tag`](#update_tag) | `PATCH /tags/{tag_id}` | `Tag` |
+| [`delete_tag`](#delete_tag) | `DELETE /tags/{tag_id}` | `Tag` |
+| [`update_document_tags`](#update_document_tags) | `POST /documents/{doc_id}/tags` | `DocumentTags` |
 | [`set_effective_periods`](#set_effective_periods) | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` | `EffectivePeriodsSet` |
 | [`clear_effective_time`](#clear_effective_time) | `DELETE /documents/{doc_id}/effective-periods` | `EffectiveTimeCleared` |
 | [`set_references`](#set_references) | `PUT /documents/{doc_id}/versions/{version_id}/references` | `ReferencesSet` |
@@ -16488,6 +17094,7 @@ MemoryClient.ingest(
     version_key: str | None = None,
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
+    tags: Sequence[str] | None = None,
 ) -> IngestedVersion
 ```
 
@@ -16511,6 +17118,7 @@ results.
 | `version_key` | Your permanent name for this version, unique within the document (1 to 512 characters). A key new to the document always creates a version; the latest version's key is accepted again only with the same bytes. Requires `source_kind`/`source_ref`. See [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force). |
 | `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
 | `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
+| `tags` | Registered tags, each a name (any letter case) or `tag_id`, added to the document's tags; at most 64. Ingest only adds tags and they never decide whether a version is created. See [Tags](https://remember.dev/docs/reference/http-api/ingest#tags). |
 
 Raises `ValueError` when:
 
@@ -16523,7 +17131,8 @@ Raises `ValueError` when:
 - `effective_until` is given without `effective_from`, or is not later than
   it, or a period is given with `versioning_mode="living"`;
 - neither `source` nor `content` is given;
-- bytes are given without `filename`.
+- bytes are given without `filename`;
+- `tags` is a single string instead of a sequence.
 
 Reading a path can raise `OSError`: `FileNotFoundError` when it does not
 exist, whether given as `Path` or `str`.
@@ -16532,7 +17141,8 @@ Returns [`IngestedVersion`](#models). `created` is `False` when these exact
 bytes were already stored for this document; no new processing starts. A
 `version_key` that names another version, or a start that another version
 already declares, raises `MemoryApiError` with `status_code` 409; a period
-on a `living` document raises it with 422.
+on a `living` document raises it with 422. A tag that is not registered
+raises [`UnknownTag`](#unknowntag) and nothing is stored.
 
 ```python
 from datetime import UTC, datetime
@@ -16743,6 +17353,100 @@ try:
 except MemoryApiError as error:
     if error.status_code != 404:
         raise
+```
+
+### Tags
+
+Tags are names you register, such as `project:billing-migration`, each with
+a description, and assign to documents. A walkthrough is in
+[Tag documents](https://remember.dev/docs/guides/tag-documents). Wherever a method takes a
+`tag`, it accepts the name in any letter case or the `tag_id`. Every method
+here except `list_tags` needs a `write` credential.
+
+#### `list_tags`
+
+```python
+MemoryClient.list_tags(*, query: str | None = None) -> TagList
+```
+
+Returns every registered tag, ordered by name ignoring letter case, as a
+`TagList` whose `tags` are [`Tag`](https://remember.dev/docs/reference/result-types#tag) models
+(`tag_id`, `name`, `description`, `created_at`, `updated_at`). `query`
+(1 to 200 characters) keeps the tags whose name or description contains it,
+ignoring letter case.
+
+#### `create_tag`
+
+```python
+MemoryClient.create_tag(*, name: str, description: str) -> Tag
+```
+
+Registers a tag. The name is normalized to Unicode NFC and must be 1 to 128
+characters with no whitespace or control characters; the description is at
+most 2,000 characters. Raises `pydantic.ValidationError` for a name or
+description that breaks these rules, before any request, and
+`MemoryApiError` with `status_code` 409 and `code` `"conflict"` when the
+name is already registered in any letter case, or `code`
+`"tag_limit_exceeded"` when the deployment has 10,000 tags.
+
+#### `update_tag`
+
+```python
+MemoryClient.update_tag(
+    *,
+    tag: UUID | str,
+    name: str | None = None,
+    description: str | None = None,
+) -> Tag
+```
+
+Renames a tag, changes its description, or both; give at least one
+(`pydantic.ValidationError` otherwise). Documents keep the tag, and the old
+name stops resolving at once. A name is first looked up with `list_tags`;
+a tag that is not registered raises [`UnknownTag`](#unknowntag) with
+`status_code` 404. A new name another tag has raises `MemoryApiError` 409
+with `code` `"conflict"`.
+
+#### `delete_tag`
+
+```python
+MemoryClient.delete_tag(*, tag: UUID | str) -> Tag
+```
+
+Deletes the tag and removes it from every document that carries it, and
+returns the deleted `Tag`. An unregistered tag raises `UnknownTag` with
+`status_code` 404.
+
+#### `update_document_tags`
+
+```python
+MemoryClient.update_document_tags(
+    *,
+    doc_id: UUID | str,
+    add: Sequence[str] | None = None,
+    remove: Sequence[str] | None = None,
+    set: Sequence[str] | None = None,
+) -> DocumentTags
+```
+
+Changes one document's tags in one step and returns a
+[`DocumentTags`](https://remember.dev/docs/reference/result-types#documenttags) with the tags
+afterwards. Give `add` and `remove`, or `set` to replace the whole set
+(`set=[]` removes every tag); each list holds at most 64 tags. Removing a
+registered tag the document does not carry is not an error. Changing tags
+starts no processing.
+
+Raises `ValueError` before sending anything when `doc_id` is not a UUID or a
+list is a single string, `pydantic.ValidationError` when `set` is combined
+with `add` or `remove`, `UnknownTag` when a tag is not registered (nothing
+changes), and `MemoryApiError` with `status_code` 404 for an unknown or
+deleted document, or 409 with `code` `"tag_limit_exceeded"` past 64 tags.
+
+```python
+tags = memory.update_document_tags(
+    doc_id=version.doc_id, add=["project:billing-migration", "kind:decision"]
+)
+print(tags.tags)
 ```
 
 ### Versions in force, sections and references
@@ -17406,6 +18110,8 @@ with `status_code` 404. See [What is not built yet](https://remember.dev/docs/pr
 RuntimeError
 ├── MemoryApiError                 every memory call
 │   ├── RateLimited                429 from the deployment's admission limits
+│   ├── LayerUnavailable           409 layer_unavailable
+│   ├── UnknownTag                 unknown_tag
 │   └── StoredKeyRefused           the stored key may not go to that address
 └── PipelineDeadLettered           wait_for_readiness
 Exception
@@ -17423,7 +18129,7 @@ Raised by every memory-client method when a request fails.
 | `retryable`, `request_id` | Optional typed server diagnostics; they do not authorize automatic replay. |
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
-| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` (`rate_limited` or `concurrency_limited`); otherwise `None`. |
+| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`), for a `429` (`rate_limited` or `concurrency_limited`), and for the tag refusals `unknown_tag`, `conflict` and `tag_limit_exceeded`; otherwise `None`. |
 | `response` | Not set by the SDK (`None`). |
 
 `str(error)` reads `API <status_code>: <detail>`.
@@ -17469,6 +18175,23 @@ the deployment does not process. `layer` is `"claims"` or `"facts"`. Check
 [`processing_layers`](#processing_layers) and use a read the deployment
 serves.
 
+### UnknownTag
+
+A `MemoryApiError` (`code` `unknown_tag`) raised when a call names a tag the
+deployment has not registered. `tags` is a tuple of every unregistered tag
+as the call gave it. `status_code` is 422 for tags in `ingest` or
+`update_document_tags`, and 404 when `update_tag` or `delete_tag` cannot find
+the tag. Nothing was stored or changed. Register the tag with
+[`create_tag`](#create_tag), or check the spelling with
+[`list_tags`](#list_tags).
+
+```python
+try:
+    memory.ingest("notes/billing-sync.md", tags=["project:biling-migration"])
+except remember.UnknownTag as error:
+    print("not registered:", error.tags)
+```
+
 ### PipelineDeadLettered
 
 Raised by `wait_for_readiness` when a stage of a version it waits on is
@@ -17506,9 +18229,10 @@ models below are Pydantic models (frozen) unless noted.
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
 | `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`), `version_key` (str or `None`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
-| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
+| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`, `tags` (tuple of tag names). |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
 | `DocumentDeletion` | The result of `delete_document`: `doc_id`, `deleted_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
+| `Tag`, `TagList`, `DocumentTags` | One registered tag (`tag_id`, `name`, `description`, `created_at`, `updated_at`), the result of `list_tags` (`tags`), and the result of `update_document_tags` (`doc_id`, `tags`). |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
@@ -17688,6 +18412,9 @@ objects and arrays, with validated defaults.
 | `setEffectivePeriods` | `EffectivePeriodsSet` |
 | `clearEffectiveTime` | `EffectiveTimeCleared` |
 | `deleteDocument` | `DocumentDeletion` |
+| `listTags` | `TagList` |
+| `createTag`, `updateTag`, `deleteTag` | `Tag` |
+| `updateDocumentTags` | `DocumentTags` |
 | `connectors` | `tuple[ConnectorDescriptor, ...]` |
 | `addConnector` | `ConnectorDescriptor` |
 | `pauseConnector` | `ConnectorDescriptor` |
@@ -17699,7 +18426,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -17722,6 +18449,20 @@ Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: f
 A `failed` stage has a retry pending; polling continues. A `dead_letter` stage
 stops with PipelineDeadLettered and the full report. The readiness deadline
 covers routing, HTTP and polling waits, retaining the last validated report.
+
+### Tags
+
+`listTags({ query })` lists the registered tags, ordered by name ignoring
+letter case. `createTag({ name, description })` registers one; the name is
+NFC-normalized and checked before sending (1 to 128 characters, no
+whitespace or control characters). `updateTag({ tag, name, description })`
+and `deleteTag({ tag })` take a tag name or `tag_id`; a name is first looked
+up with `listTags`, and one that is not registered raises `UnknownTag` with
+status 404. `updateDocumentTags({ docId, add, remove })` or
+`updateDocumentTags({ docId, set })` changes one document's tags in one step
+(`set: []` removes every tag) and returns its tags afterwards. `ingest`
+takes `tags`, an array of tag names or ids added to the document. What tags
+are: [Tag documents](https://remember.dev/docs/guides/tag-documents).
 
 ### Version history and references
 
@@ -17821,7 +18562,10 @@ seconds. Hints are carried for callers; the client does not interpret them as
 permission to retry writes. ProjectResolutionError, StoredKeyRefused,
 AccountApiUnavailable, IssuerError, NumericPrecisionError and RequestTimeoutError
 extend MemoryApiError, as does LayerUnavailable (status 409, code
-`layer_unavailable`, with the missing `layer`). InputValidationError and CredentialError are TypeErrors.
+`layer_unavailable`, with the missing `layer`), and UnknownTag (code
+`unknown_tag`, status 422 or 404, with every unregistered tag in `tags`). The
+tag refusals `conflict` and `tag_limit_exceeded` keep their code on
+MemoryApiError. InputValidationError and CredentialError are TypeErrors.
 PipelineDeadLettered, TimeoutError, ConnectorNotFoundError and AbortError are
 outside MemoryApiError.
 
@@ -17837,7 +18581,8 @@ Definitions carry routes, versions, permissions, schemas and annotations.
 `OPEN_QUERY_TOOL_NAMES`, `OPERATION_TOOL_NAMES` and `MEMORY_WRITE_TOOL_NAMES`
 identify the source-defined groups. Individual constants include
 INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, DELETE_DOCUMENT_TOOL_NAME,
-SEARCH_DOCUMENTS_TOOL_NAME and ADJACENT_CHUNKS_TOOL_NAME.
+SEARCH_DOCUMENTS_TOOL_NAME and ADJACENT_CHUNKS_TOOL_NAME. `TAG_READ_TOOL_NAMES`,
+`TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools.
 
 `validateArguments` checks every memory tool and returns parsed arguments.
 `validateSavedQueryIdentifier` checks saved-query names. `ToolError`,
@@ -17923,7 +18668,8 @@ standalone tool; `uvx remember …` runs it without installing.
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
-| | [`documents`](#remember-documents) | List documents, or delete one from the memory. |
+| | [`documents`](#remember-documents) | List and search documents, delete one from the memory, or change its tags. |
+| | [`tags`](#remember-tags) | List, register, change and delete document tags. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
 | | [`doctor`](#remember-doctor) | Check installation, credentials, connectivity and agent configuration. |
@@ -17936,7 +18682,7 @@ standalone tool; `uvx remember …` runs it without installing.
 ## How the CLI finds your deployment
 
 Every command that talks to a deployment (`ingest`, `query`, `operations`,
-`documents`, `mcp`, `connectors`, `doctor`) accepts the same connection and request flags:
+`documents`, `tags`, `mcp`, `connectors`, `doctor`) accepts the same connection and request flags:
 
 | Flag | Meaning |
 |---|---|
@@ -18000,6 +18746,7 @@ remember ingest FILE [--filename NAME] [--mime MIME] [--title TITLE]
                      [--source-version-ref REF]
                      [--version-key KEY]
                      [--effective-from ISO8601 [--effective-until ISO8601]]
+                     [--tag TAG]...
                      [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
@@ -18025,13 +18772,15 @@ document; nothing is processed again.
 | `--version-key` | none | Your permanent name for this version, unique within the document, for example `edition-2`. A new key always creates a version. Needs `--source-kind`/`--source-ref`. |
 | `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
 | `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
+| `--tag` | none | A registered tag, by name or id, to add to the document. Repeat it for several. Ingest only adds tags; see [Tags](https://remember.dev/docs/reference/http-api/ingest#tags). |
 
 What a key and a period do: [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force).
 
 Exit status 2 when the source arguments break these rules, a timestamp is
 not UTC, or a period is malformed; 1 when the file cannot be read or the
 upload fails, including a `409` for a key or period start already used by
-another version.
+another version, and a `422` for a tag that is not registered
+(`error: API 422: unknown tags: …`).
 
 ```bash
 remember ingest notes/2026-09-18-billing-sync.md \
@@ -18068,6 +18817,10 @@ remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS
                           [--versions {current,all}] [--limit N] [--cursor CURSOR]
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents tag DOC_ID [--add TAG]... [--remove TAG]...
+                              [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents tag DOC_ID --set TAG [--set TAG]...
+                              [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one page of documents as JSON, newest document first, in the
@@ -18110,6 +18863,54 @@ does not exist, or is already deleted, prints
 
 ```bash
 remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+```
+
+`tag` changes the tags of one document in one step and prints its tags
+afterwards, in the shape of
+[`DocumentTags`](https://remember.dev/docs/reference/result-types#documenttags). `--add` and
+`--remove` take a tag name or id and can each be repeated. `--set` replaces
+the document's whole set instead and cannot be combined with them (exit
+status 2); `--set ''` removes every tag. Every tag must be registered; see
+[`remember tags`](#remember-tags). An unregistered tag prints
+`error: API 422: unknown tags: …` and exits with status 1, and nothing
+changes. See
+[`POST /documents/{doc_id}/tags`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idtags).
+
+```bash
+remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --add kind:decision --remove kind:draft
+```
+```json
+{"doc_id":"a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b","tags":["kind:decision","project:billing-migration"]}
+```
+
+### `remember tags`
+
+```text
+remember tags list [--query TEXT] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember tags create NAME --description TEXT [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember tags update TAG [--name NAME] [--description TEXT]
+                         [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember tags delete TAG [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+Manage the deployment's tags: names such as `project:billing-migration` that
+you assign to documents, each with a description of what it means. What tags
+are for: [Tag documents](https://remember.dev/docs/guides/tag-documents).
+
+| Command | Prints | Notes |
+|---|---|---|
+| `list` | [`TagList`](https://remember.dev/docs/reference/result-types#taglist) | `--query` keeps tags whose name or description contains it, ignoring letter case. |
+| `create NAME --description TEXT` | the new [`Tag`](https://remember.dev/docs/reference/result-types#tag) | `--description` is required. A name already registered in any letter case prints `error: API 409: a tag named '…' is already registered` and exits with status 1. |
+| `update TAG` | the changed `Tag` | `TAG` is the name (any letter case) or id. Give `--name`, `--description` or both; neither exits with status 2. Documents keep the tag; the old name stops working. |
+| `delete TAG` | the deleted `Tag` | Removes the tag from every document that carries it. |
+
+A `TAG` that is not registered prints `error: API 404: unknown tags: …` and
+exits with status 1. The commands print one JSON line.
+
+```bash
+remember tags create project:billing-migration \
+  --description "Documents about moving invoicing to the new billing provider."
+remember tags list --query billing | jq -r '.tags[] | "\(.name)  \(.description)"'
 ```
 
 ### `remember query`
@@ -18503,8 +19304,11 @@ Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
 1. `ingest`, `pipeline_readiness`, `delete_document`, `search_documents`,
-   `section_history` and `document_references` (all but `ingest` and
-   `delete_document` with `--read-only`).
+   `section_history`, `document_references`, and the five tag tools
+   `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
+   `update_document_tags` (with `--read-only`, only `pipeline_readiness`,
+   `search_documents`, `section_history`, `document_references` and
+   `list_tags`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
 3. Context expansion: `adjacent_chunks`.
@@ -18514,7 +19318,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 18 tools: 6 + 4 + 1 + 7.
+lists 23 tools: 11 + 4 + 1 + 7.
 
 A deployment that does not process the facts
 [layer](https://remember.dev/docs/concepts/pipeline#processing-layers) does not report
@@ -18525,8 +19329,8 @@ needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
-`ingest` and `delete_document`, and `destructiveHint` is `true` only for
-`delete_document`.
+`ingest`, `delete_document` and the four tag tools that change tags, and
+`destructiveHint` is `true` only for `delete_document` and `delete_tag`.
 
 The server serves one deployment, so no tool takes a `project` argument; a
 call that passes one is refused with `project_routing_unavailable`. A call to
@@ -18609,7 +19413,9 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `version_key` | string | no | 1–512 characters. A permanent name for this version, unique within the document. A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Needs `source_kind`/`source_ref`. |
 | `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
 | `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
+| `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
 
+`ingest` is at tool version 3; the `tags` argument raised it from 2.
 Unknown keys are refused. What a key and a period do:
 [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force). The input schema enforces the one-body rule with
 `oneOf`.
@@ -18802,6 +19608,80 @@ An unknown document is `document_not_found`, an unknown passage
 Apart from the period arguments of `ingest`, no MCP tool changes effective
 periods or supplies references; use the HTTP API or the SDK for those.
 
+### Tag tools
+
+Tags are names such as `project:billing-migration`, each with a description,
+that say how documents are organized. A tag is registered before any
+document carries it. What they are for:
+[Tag documents](https://remember.dev/docs/guides/tag-documents). All five tools are at tool
+version 1. Wherever a tool takes a `tag`, it accepts the name in any letter
+case or the `tag_id`; for `update_tag` and `delete_tag`, `remember mcp`
+looks the id up from the name before calling the deployment. Unknown keys are
+refused.
+
+#### `list_tags`
+
+Lists the registered tags. The tool description tells the agent to call it
+before tagging a document, and before registering a tag, so it reuses an
+existing one.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `query` | string | no | 1–200 characters. Keeps tags whose name or description contains it, ignoring letter case. |
+
+The result is a [`TagList`](https://remember.dev/docs/reference/result-types#taglist): `tags`,
+each with `tag_id`, `name`, `description`, `created_at` and `updated_at`,
+ordered by name. See [`GET /tags`](https://remember.dev/docs/reference/http-api/ingest#get-tags).
+
+#### `create_tag`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `name` | string | yes | 1–128 characters, no whitespace or control characters. Unique ignoring letter case. |
+| `description` | string | yes | At most 2,000 characters: what the tag means and when to apply it. |
+
+The result is the new [`Tag`](https://remember.dev/docs/reference/result-types#tag). A name
+already registered in any letter case is `conflict`. See
+[`POST /tags`](https://remember.dev/docs/reference/http-api/ingest#post-tags).
+
+#### `update_tag`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters. |
+| `name` | string | no | The new name, with the rules of `create_tag`. |
+| `description` | string | no | The new description. |
+
+Give `name`, `description` or both. Documents keep the tag; the old name
+stops working at once. The result is the changed `Tag`.
+
+#### `delete_tag`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters. |
+
+Deletes the tag and removes it from every document that carries it. The
+result is the deleted `Tag`. The tool description tells the agent to use it
+only when the user asks.
+
+#### `update_document_tags`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+| `add` | array of strings | no | At most 64, no repeats. Tags to add. |
+| `remove` | array of strings | no | At most 64, no repeats. Tags to remove. |
+| `set` | array of strings | no | At most 64, no repeats. The complete set; excludes `add` and `remove`. `[]` removes every tag. |
+
+Changes the document's tags in one step and returns
+[`DocumentTags`](https://remember.dev/docs/reference/result-types#documenttags): `doc_id` and
+the tags afterwards. Every tag must be registered; any unregistered one
+refuses the whole call with `unknown_tag`. Removing a registered tag the
+document does not carry is not an error. Changing tags never reprocesses
+the document. An unknown or deleted document is `document_not_found`. See
+[`POST /documents/{doc_id}/tags`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idtags).
+
 ### Assured operations
 
 These four tools are the deployment's assured operations. Their input
@@ -18953,7 +19833,10 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`: no such document, or it is deleted. |
+| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`, `update_document_tags`: no such document, or it is deleted. |
+| `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |
+| `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
+| `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |
 | `chunk_not_found` | 404 | no | `document_references`: no such passage, or its document is deleted. |
 | `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. |
@@ -19466,7 +20349,9 @@ the message) and `code` (set on `/query/*` routes when the body carries a
 known code at its expected status). A `429` raises its subclass
 `remember.RateLimited`, whose `code` is `rate_limited` or
 `concurrency_limited` and whose `retry_after` holds the `Retry-After`
-seconds. `wait_for_readiness` raises
+seconds. An `unknown_tag` raises its subclass `remember.UnknownTag`, whose
+`tags` lists the unregistered tags; `conflict` and `tag_limit_exceeded` keep
+their code in `code`. `wait_for_readiness` raises
 `remember.PipelineDeadLettered` when a stage it waits on is `dead_letter`
 ([Python SDK](https://remember.dev/docs/reference/python-sdk#pipelinedeadlettered)).
 
@@ -19485,6 +20370,7 @@ seconds. `wait_for_readiness` raises
 | `404` | `document_not_found` | `DELETE /documents/{doc_id}`, or a period, reference or section route, for a document that does not exist or is deleted. | Do not retry; check the id with `GET /documents`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
+| `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `PATCH` or `DELETE /tags/{tag_id}` for a tag id that is not registered, or was deleted. | Check the id with `GET /tags`. |
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
@@ -19492,6 +20378,8 @@ seconds. `wait_for_readiness` raises
 | `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
+| `409` | `{"code": "conflict", "message": …}` | `POST /tags` or `PATCH /tags/{tag_id}` with a name another tag already has, in any letter case. | Use the existing tag, or choose another name. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | A tag write would leave the deployment with more than 10,000 tags or a document with more than 64. Nothing changed. | Delete tags you no longer use, or remove some from the document. |
 | `409` | `{"code": "saved_query_…", …}` | A saved query cannot run. See [SQL query codes](#sql-query-codes). | See the code. |
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
 | `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | A `PUT …/references` body over 64 MiB. | Send a smaller set: the limit applies to one version's complete set. |
@@ -19505,6 +20393,7 @@ seconds. `wait_for_readiness` raises
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. The same message names `effective_from` or `effective_until`. | Send it with `Z`. |
 | `422` | `effective_until requires an earlier effective_from` | Ingest with an end but no start, or an end not after the start. | Send a start, and an end after it. |
 | `422` | `{"code": "effective_time_requires_snapshot", …}` | An effective period for a `living` document. | Periods apply to `snapshot` documents only. |
+| `422` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `POST /ingest` or `POST /documents/{doc_id}/tags` names a tag that is not registered; `tags` lists every one. Nothing was stored or changed. | Register the tag with `POST /tags`, or fix the spelling (check `GET /tags`). |
 | `422` | `{"code": "invalid_reference_set", "line": …, "message": …}` | A line of a `PUT …/references` body is not a valid reference. Nothing was recorded. | Fix the named line. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
@@ -19604,7 +20493,8 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_not_regular_file` | `null` | no | Point path at a regular file, or send text/content_base64. |
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
-| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
+| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id.) |
+| `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
 | `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
@@ -20683,6 +21573,11 @@ absent from the current release; nothing here has a date.
   others), fact lookups and the SQL query functions do not yet, and there is
   no `documents` filter over MCP because MCP has no claim or chunk search
   tool.
+- **Filtering by tag.** You can register tags, assign them to documents and
+  read them back, but no read filters by them yet: claim and chunk search,
+  `search_documents` and the assured operations return the same results
+  whatever tags documents carry. In SQL queries you can join on
+  `document_tags_live`.
 - **Metadata from other formats.** Word, PowerPoint, PDF and email files
   give their title, people and dates, and `.xlsx` workbooks their title,
   author and dates; HTML, EPUB and notebooks give only a title, and other
@@ -20842,6 +21737,13 @@ has a field or value in the API, it is shown in code.
 : The actor that created a version: a `user`, an `api_credential` or a
   `service`. See
   [Documents, versions and sources](https://remember.dev/docs/concepts/documents-and-sources#who-ingested-a-version).
+
+**Tag** (`tag_id`)
+: A name you register for the deployment, such as `project:billing-migration`,
+  with a description of what it means, and assign to documents to say how you
+  organize them. A tag belongs to the document, not to one version, and never
+  changes what the memory extracts or believes. See
+  [Tag documents](https://remember.dev/docs/guides/tag-documents).
 
 ## Claims and facts
 

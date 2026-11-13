@@ -147,7 +147,8 @@ contracts. There are no compatibility aliases.
 
 The 17 previously demoted recipe names remain discoverable, non-default saved
 queries in the `examples` namespace. D98 adds the new
-`examples.graph_citation_path`, for 18 shipped examples total. An `examples.*` query returns
+`examples.graph_citation_path`, and D156 adds `examples.facts_by_tag`, for 19 shipped
+examples total. An `examples.*` query returns
 `QueryResult/v1`, carries customer-space semantics, is editable only by copying
 it to a customer namespace, and is not a platform contract or a top-level MCP
 tool. The two removed context names do not become saved-query tools:
@@ -180,6 +181,7 @@ current-fact examples already cover `current_context`'s SQL pattern.
 | `graph_neighborhood` | `examples.graph_neighborhood` | Direct call to `graph_neighborhood` |
 | `graph_path` | `examples.graph_path` | Direct call to `graph_path` |
 | — | `examples.graph_citation_path` | Direct call to directed `graph_citation_path`; new under D98, not a compatibility alias |
+| — | `examples.facts_by_tag` | `document_tags_live` joined through supporting `fact_claim_evidence_live` rows to `facts_current`; new under D156, not a compatibility alias |
 
 The examples preserve familiar discovery names, not the old recipe behavior or
 `Envelope` shapes. No compatibility promise is made: the pre-release library
