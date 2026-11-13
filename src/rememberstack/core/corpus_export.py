@@ -333,6 +333,15 @@ def json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def corpus_policy_version(policy: CorpusPolicy = DEFAULT_CORPUS_POLICY) -> str:
+    """One component identity per builder policy, never per publication event."""
+    return (
+        policy.builder_version
+        + ":"
+        + hashlib.sha256(json_bytes(asdict(policy))).hexdigest()
+    )
+
+
 def desired_export_revision(
     document: CorpusDocument, *, policy: CorpusPolicy = DEFAULT_CORPUS_POLICY
 ) -> str:

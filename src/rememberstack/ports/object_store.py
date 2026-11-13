@@ -7,6 +7,7 @@ from typing import Protocol
 from typing import runtime_checkable
 
 from rememberstack.model import ObjectKey
+from rememberstack.model import ObjectPurgeEvidence
 
 
 @runtime_checkable
@@ -51,6 +52,15 @@ class MutableObjectStorePort(Protocol):
         Persist a supplied expected SHA-256 as metadata. Call ``before_write``
         immediately before each provider mutation (each multipart request too).
         Aborting one's failed unfinished upload is cleanup, not publication.
+        """
+        ...
+
+    def abort_uploads(
+        self, *, prefix: str, before_write: Callable[[], None]
+    ) -> ObjectPurgeEvidence:
+        """Abort abandoned uploads in this boundary; report provider-managed cleanup.
+
+        The caller owns publication exclusion. Check its guard before each abort.
         """
         ...
 

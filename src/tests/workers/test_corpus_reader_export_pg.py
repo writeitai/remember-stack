@@ -71,17 +71,18 @@ def _seed(engine: Engine, source: CorpusDocument) -> None:
         "family": source.family,
         "route": source.route,
         "date": source.source_date,
+        "version_no": source.version_no,
         "placement": source.placement_path,
         "summary": source.root_summary,
         "source_kind": source.source_kind,
     }
     statements = (
         """INSERT INTO documents (doc_id, deployment_id, source_kind, source_ref, title)
-        VALUES (:doc, :d, :source_kind, :doc, :lineage_title)""",
+        VALUES (:doc, :d, :source_kind, :doc, :lineage_title) ON CONFLICT DO NOTHING""",
         """INSERT INTO content_objects (deployment_id, content_hash, mime, byte_size, raw_uri)
         VALUES (:d, :hash, :mime, 100, :raw) ON CONFLICT DO NOTHING""",
         """INSERT INTO document_versions (version_id, deployment_id, doc_id, content_hash,
-        version_no, status, source_modified_at) VALUES (:v, :d, :doc, :hash, 1, 'ready', :date)""",
+        version_no, status, source_modified_at) VALUES (:v, :d, :doc, :hash, :version_no, 'ready', :date)""",
         """INSERT INTO document_metadata (deployment_id, version_id, doc_id, family, title,
         file_name, metadata_mapping_version) VALUES (:d, :v, :doc, :family, :title, :filename, 'test')""",
         """INSERT INTO document_representations (representation_id, deployment_id, version_id,

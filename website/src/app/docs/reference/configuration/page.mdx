@@ -100,6 +100,8 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | S3 region name used for signing. |
+| `REMEMBERSTACK_MINIO_CONNECT_TIMEOUT_S` | `5` | seconds, > 0 | Connection timeout for each S3 request. |
+| `REMEMBERSTACK_MINIO_READ_TIMEOUT_S` | `30` | seconds, > 0 | Socket read timeout for each S3 request. Multipart uploads send at most 8 MiB per part. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for filesystem-view snapshots. Fixed after the first start. |

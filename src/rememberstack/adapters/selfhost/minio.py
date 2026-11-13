@@ -394,6 +394,20 @@ class MinIOObjectStore:
         )
         parts.append({"PartNumber": len(parts) + 1, "ETag": result["ETag"]})
 
+    def abort_uploads(
+        self, *, prefix: str, before_write: Callable[[], None]
+    ) -> ObjectPurgeEvidence:
+        """Clean unfinished uploads under the caller's publication lock."""
+        boundary = validate_object_path(prefix, prefix=True)
+        try:
+            for name, upload_id in self._iter_uploads(prefix=boundary):
+                if matches_object_prefix(name, prefix=boundary):
+                    before_write()
+                    self._abort_upload(name=name, upload_id=upload_id)
+        except _UploadListingNotImplemented:
+            return ObjectPurgeEvidence(multipart_uploads="provider_managed")
+        return ObjectPurgeEvidence(multipart_uploads="checked")
+
     def sha256_of(self, *, key: ObjectKey) -> str | None:
         """Read the publisher's expected digest; multipart ETags are not hashes."""
         try:

@@ -14,6 +14,7 @@ from rememberstack.core.storage_routing import HOT
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
+from rememberstack.model import ObjectPurgeEvidence
 
 
 class LocalFSObjectStore:
@@ -124,6 +125,13 @@ class LocalFSObjectStore:
         """The declared class, kept outside the mounted reader paths."""
         marker = self._class_path(key=key)
         return marker.read_text(encoding="utf-8") if marker.exists() else None
+
+    def abort_uploads(
+        self, *, prefix: str, before_write: Callable[[], None]
+    ) -> ObjectPurgeEvidence:
+        """Local temporary files are private and removed by their owning writer."""
+        validate_object_path(prefix, prefix=True)
+        return ObjectPurgeEvidence(multipart_uploads="checked")
 
     def sha256_of(self, *, key: ObjectKey) -> str | None:
         """Read private digest metadata without putting sidecars in reader paths."""

@@ -28,6 +28,7 @@ class ProcessingTarget(StrEnum):
     SNAPSHOT = "snapshot"
     KNOWLEDGE_ARTIFACT = "knowledge_artifact"
     KNOWLEDGE_DISPATCH = "knowledge_dispatch"
+    CORPUS_PUBLICATION = "corpus_publication"
 
 
 class ProcessingStatus(StrEnum):
