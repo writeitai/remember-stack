@@ -20949,10 +20949,6 @@ absent from the current release; nothing here has a date.
 
 ## Knowledge
 
-- **Managed mount CLI wrapper.** Corpus folders contain copied originals and
-  reader derivatives, and self-hosters can mount the corpus bucket read-only.
-  `remember mount` / `remember unmount` and managed mount tickets do not ship yet.
-
 - **Compiled pages.** RememberStack does not write summary pages that
   combine what it knows about a topic; the envelope's `pages` field and the
   `compiled` grain exist but stay empty, and the `k` install extra installs

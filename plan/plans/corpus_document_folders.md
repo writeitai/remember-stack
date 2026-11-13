@@ -203,6 +203,21 @@ cloud ticket/session integration. Test stdin-only tickets, direct invocation,
 JSON/exit/missing-executable behavior and failed/expired tickets. Unmount gets no
 new ticket. Keep self-host instructions provider-neutral and read-only.
 
+CLI implementation ([draft PR #612](https://github.com/writeitai/remember-stack/pull/612)):
+`remember mount` uses the existing signed-key org and
+key/project configuration, discovers the issuer's account API and requests the
+one-time session ticket. It invokes mountable directly, writes and closes stdin,
+reports the matching canonical-path mounted event with the session id, and stays
+in the foreground until unmounted. `remember unmount` delegates locally without
+requesting a ticket. Network-free tests use MockTransport and a fake executable
+on PATH, including live mount/unmount, event matching, secret redaction and errors.
+The existing self-host filesystem-views page already specifies provider-neutral,
+read-only mounting. No managed-cloud pages are added to the public website.
+
+The cloud control-plane route is implemented separately in the cloud repository.
+The credentialed provider qualification below remains to be run; the CLI's fake
+HTTP/process tests do not qualify AWS, GCS or mountable serving/cache erasure.
+
 Run adapter conformance against credentialed AWS S3, GCS XML/HMAC and mountable.io
 sandboxes; record signing/addressing/checksum/multipart results, differing store
 endpoints, access logs and read-only session/cache erasure acknowledgement. Check
