@@ -22,9 +22,15 @@ _ROOT = Path(__file__).parents[3]
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 _PRE_D143_SHA256: Final = (
-    "c2bce70429554311e8564e59b2429e371798da1712e3be6aa3bb1c44eff5578f"
+    "065322a6a267c23d6f81be9f64286dfc1fbb78848e4072957bc89bafac1fd696"
 )
-"""Canonical hash of ``openapi.json`` at fbcd489bd (main just before D143's code)."""
+"""Canonical hash of ``openapi.json`` after stripping D143 additions.
+
+Pinned against the D154 pagination rename baseline (browse ``limit`` /
+``next_cursor``, Envelope ``next_cursor``, Truncation without
+``continuation``, QueryResult without ``exact_total*``). Earlier pin was
+``c2bce704…`` at fbcd489bd (main just before D143's code).
+"""
 
 _PRE_D143_VERSION: Final = "0.17.2"
 """``info.version`` in that document; a release bump is not a D143 change."""

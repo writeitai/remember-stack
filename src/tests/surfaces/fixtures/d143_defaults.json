@@ -228,7 +228,7 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and cursor pages them.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -251,7 +251,7 @@
               "type": "string"
             },
             "cursor": {
-              "description": "The previous page's cursor; only without query.",
+              "description": "Pass the previous page's next_cursor; only without query.",
               "minLength": 1,
               "type": "string"
             },
@@ -272,6 +272,8 @@
               "type": "array"
             },
             "k": {
+              "default": 20,
+              "description": "Ranked top-k when query is set.",
               "maximum": 200,
               "minimum": 1,
               "type": "integer"
@@ -279,6 +281,13 @@
             "language": {
               "minLength": 1,
               "type": "string"
+            },
+            "limit": {
+              "default": 50,
+              "description": "Browse page size when query is omitted.",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
             },
             "modified_from": {
               "description": "An ISO 8601 instant with a timezone, inclusive.",
@@ -394,12 +403,12 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with cursor.",
+        "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with limit/cursor; continue via next_cursor.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
             "cursor": {
-              "description": "The previous page's cursor.",
+              "description": "Pass the previous page's next_cursor.",
               "minLength": 1,
               "type": "string"
             },
@@ -408,7 +417,7 @@
               "minLength": 1,
               "type": "string"
             },
-            "k": {
+            "limit": {
               "default": 50,
               "maximum": 200,
               "minimum": 1,
@@ -503,7 +512,7 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with cursor; a short page with a cursor means keep paging.",
+        "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with limit/cursor; a short page with next_cursor means keep paging.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -513,7 +522,7 @@
               "type": "string"
             },
             "cursor": {
-              "description": "The previous page's cursor.",
+              "description": "Pass the previous page's next_cursor.",
               "minLength": 1,
               "type": "string"
             },
@@ -530,12 +539,6 @@
               "description": "The document's UUID (doc_id); or give chunk_id.",
               "minLength": 1,
               "type": "string"
-            },
-            "k": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "type": "integer"
             },
             "kinds": {
               "description": "Only these reference kinds.",
@@ -554,6 +557,12 @@
               "maxItems": 7,
               "minItems": 1,
               "type": "array"
+            },
+            "limit": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
             },
             "section_key": {
               "description": "With doc_id: the section key, without the leading #.",
@@ -1058,6 +1067,8 @@
           "additionalProperties": false,
           "properties": {
             "max_rows": {
+              "description": "Safety row cap; values above 1000 are rejected (D154).",
+              "maximum": 1000,
               "minimum": 0,
               "type": "integer"
             },
@@ -1208,6 +1219,8 @@
           "additionalProperties": false,
           "properties": {
             "max_rows": {
+              "description": "Safety row cap; values above 1000 are rejected (D154).",
+              "maximum": 1000,
               "minimum": 0,
               "type": "integer"
             },
@@ -1294,7 +1307,7 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and cursor pages them.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -1317,7 +1330,7 @@
               "type": "string"
             },
             "cursor": {
-              "description": "The previous page's cursor; only without query.",
+              "description": "Pass the previous page's next_cursor; only without query.",
               "minLength": 1,
               "type": "string"
             },
@@ -1338,6 +1351,8 @@
               "type": "array"
             },
             "k": {
+              "default": 20,
+              "description": "Ranked top-k when query is set.",
               "maximum": 200,
               "minimum": 1,
               "type": "integer"
@@ -1345,6 +1360,13 @@
             "language": {
               "minLength": 1,
               "type": "string"
+            },
+            "limit": {
+              "default": 50,
+              "description": "Browse page size when query is omitted.",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
             },
             "modified_from": {
               "description": "An ISO 8601 instant with a timezone, inclusive.",
@@ -1460,12 +1482,12 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with cursor.",
+        "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with limit/cursor; continue via next_cursor.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
             "cursor": {
-              "description": "The previous page's cursor.",
+              "description": "Pass the previous page's next_cursor.",
               "minLength": 1,
               "type": "string"
             },
@@ -1474,7 +1496,7 @@
               "minLength": 1,
               "type": "string"
             },
-            "k": {
+            "limit": {
               "default": 50,
               "maximum": 200,
               "minimum": 1,
@@ -1569,7 +1591,7 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with cursor; a short page with a cursor means keep paging.",
+        "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with limit/cursor; a short page with next_cursor means keep paging.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -1579,7 +1601,7 @@
               "type": "string"
             },
             "cursor": {
-              "description": "The previous page's cursor.",
+              "description": "Pass the previous page's next_cursor.",
               "minLength": 1,
               "type": "string"
             },
@@ -1596,12 +1618,6 @@
               "description": "The document's UUID (doc_id); or give chunk_id.",
               "minLength": 1,
               "type": "string"
-            },
-            "k": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "type": "integer"
             },
             "kinds": {
               "description": "Only these reference kinds.",
@@ -1620,6 +1636,12 @@
               "maxItems": 7,
               "minItems": 1,
               "type": "array"
+            },
+            "limit": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
             },
             "section_key": {
               "description": "With doc_id: the section key, without the leading #.",
@@ -2124,6 +2146,8 @@
           "additionalProperties": false,
           "properties": {
             "max_rows": {
+              "description": "Safety row cap; values above 1000 are rejected (D154).",
+              "maximum": 1000,
               "minimum": 0,
               "type": "integer"
             },
@@ -2274,6 +2298,8 @@
           "additionalProperties": false,
           "properties": {
             "max_rows": {
+              "description": "Safety row cap; values above 1000 are rejected (D154).",
+              "maximum": 1000,
               "minimum": 0,
               "type": "integer"
             },
@@ -2536,7 +2562,7 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and cursor pages them.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -2559,7 +2585,7 @@
               "type": "string"
             },
             "cursor": {
-              "description": "The previous page's cursor; only without query.",
+              "description": "Pass the previous page's next_cursor; only without query.",
               "minLength": 1,
               "type": "string"
             },
@@ -2580,6 +2606,8 @@
               "type": "array"
             },
             "k": {
+              "default": 20,
+              "description": "Ranked top-k when query is set.",
               "maximum": 200,
               "minimum": 1,
               "type": "integer"
@@ -2587,6 +2615,13 @@
             "language": {
               "minLength": 1,
               "type": "string"
+            },
+            "limit": {
+              "default": 50,
+              "description": "Browse page size when query is omitted.",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
             },
             "modified_from": {
               "description": "An ISO 8601 instant with a timezone, inclusive.",
@@ -2702,12 +2737,12 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with cursor.",
+        "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with limit/cursor; continue via next_cursor.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
             "cursor": {
-              "description": "The previous page's cursor.",
+              "description": "Pass the previous page's next_cursor.",
               "minLength": 1,
               "type": "string"
             },
@@ -2716,7 +2751,7 @@
               "minLength": 1,
               "type": "string"
             },
-            "k": {
+            "limit": {
               "default": 50,
               "maximum": 200,
               "minimum": 1,
@@ -2811,7 +2846,7 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with cursor; a short page with a cursor means keep paging.",
+        "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with limit/cursor; a short page with next_cursor means keep paging.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -2821,7 +2856,7 @@
               "type": "string"
             },
             "cursor": {
-              "description": "The previous page's cursor.",
+              "description": "Pass the previous page's next_cursor.",
               "minLength": 1,
               "type": "string"
             },
@@ -2838,12 +2873,6 @@
               "description": "The document's UUID (doc_id); or give chunk_id.",
               "minLength": 1,
               "type": "string"
-            },
-            "k": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "type": "integer"
             },
             "kinds": {
               "description": "Only these reference kinds.",
@@ -2862,6 +2891,12 @@
               "maxItems": 7,
               "minItems": 1,
               "type": "array"
+            },
+            "limit": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
             },
             "section_key": {
               "description": "With doc_id: the section key, without the leading #.",
@@ -3366,6 +3401,8 @@
           "additionalProperties": false,
           "properties": {
             "max_rows": {
+              "description": "Safety row cap; values above 1000 are rejected (D154).",
+              "maximum": 1000,
               "minimum": 0,
               "type": "integer"
             },
@@ -3516,6 +3553,8 @@
           "additionalProperties": false,
           "properties": {
             "max_rows": {
+              "description": "Safety row cap; values above 1000 are rejected (D154).",
+              "maximum": 1000,
               "minimum": 0,
               "type": "integer"
             },
@@ -3745,7 +3784,7 @@
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and cursor pages them.",
+      "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3768,7 +3807,7 @@
             "type": "string"
           },
           "cursor": {
-            "description": "The previous page's cursor; only without query.",
+            "description": "Pass the previous page's next_cursor; only without query.",
             "minLength": 1,
             "type": "string"
           },
@@ -3789,6 +3828,8 @@
             "type": "array"
           },
           "k": {
+            "default": 20,
+            "description": "Ranked top-k when query is set.",
             "maximum": 200,
             "minimum": 1,
             "type": "integer"
@@ -3796,6 +3837,13 @@
           "language": {
             "minLength": 1,
             "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Browse page size when query is omitted.",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
           },
           "modified_from": {
             "description": "An ISO 8601 instant with a timezone, inclusive.",
@@ -3911,12 +3959,12 @@
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with cursor.",
+      "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with limit/cursor; continue via next_cursor.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "cursor": {
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
             "minLength": 1,
             "type": "string"
           },
@@ -3925,7 +3973,7 @@
             "minLength": 1,
             "type": "string"
           },
-          "k": {
+          "limit": {
             "default": 50,
             "maximum": 200,
             "minimum": 1,
@@ -4020,7 +4068,7 @@
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with cursor; a short page with a cursor means keep paging.",
+      "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with limit/cursor; a short page with next_cursor means keep paging.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -4030,7 +4078,7 @@
             "type": "string"
           },
           "cursor": {
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
             "minLength": 1,
             "type": "string"
           },
@@ -4047,12 +4095,6 @@
             "description": "The document's UUID (doc_id); or give chunk_id.",
             "minLength": 1,
             "type": "string"
-          },
-          "k": {
-            "default": 50,
-            "maximum": 200,
-            "minimum": 1,
-            "type": "integer"
           },
           "kinds": {
             "description": "Only these reference kinds.",
@@ -4071,6 +4113,12 @@
             "maxItems": 7,
             "minItems": 1,
             "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
           },
           "section_key": {
             "description": "With doc_id: the section key, without the leading #.",
@@ -4575,6 +4623,8 @@
         "additionalProperties": false,
         "properties": {
           "max_rows": {
+            "description": "Safety row cap; values above 1000 are rejected (D154).",
+            "maximum": 1000,
             "minimum": 0,
             "type": "integer"
           },
@@ -4725,6 +4775,8 @@
         "additionalProperties": false,
         "properties": {
           "max_rows": {
+            "description": "Safety row cap; values above 1000 are rejected (D154).",
+            "maximum": 1000,
             "minimum": 0,
             "type": "integer"
           },
@@ -5228,7 +5280,7 @@
           },
           "Contradiction": {
             "additionalProperties": false,
-            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
             "properties": {
               "co_members": {
                 "default": [],
@@ -5237,18 +5289,6 @@
                 },
                 "title": "Co Members",
                 "type": "array"
-              },
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
               },
               "group_id": {
                 "format": "uuid",
@@ -6502,20 +6542,8 @@
           },
           "Truncation": {
             "additionalProperties": false,
-            "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+            "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
             "properties": {
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
-              },
               "estimated_total": {
                 "minimum": 0,
                 "title": "Estimated Total",
@@ -6721,6 +6749,18 @@
               }
             ],
             "default": null
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "nodes": {
             "default": [],
@@ -7388,7 +7428,7 @@
           },
           "Contradiction": {
             "additionalProperties": false,
-            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
             "properties": {
               "co_members": {
                 "default": [],
@@ -7397,18 +7437,6 @@
                 },
                 "title": "Co Members",
                 "type": "array"
-              },
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
               },
               "group_id": {
                 "format": "uuid",
@@ -8662,20 +8690,8 @@
           },
           "Truncation": {
             "additionalProperties": false,
-            "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+            "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
             "properties": {
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
-              },
               "estimated_total": {
                 "minimum": 0,
                 "title": "Estimated Total",
@@ -8881,6 +8897,18 @@
               }
             ],
             "default": null
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "nodes": {
             "default": [],
@@ -9565,7 +9593,7 @@
           },
           "Contradiction": {
             "additionalProperties": false,
-            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
             "properties": {
               "co_members": {
                 "default": [],
@@ -9574,18 +9602,6 @@
                 },
                 "title": "Co Members",
                 "type": "array"
-              },
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
               },
               "group_id": {
                 "format": "uuid",
@@ -10839,20 +10855,8 @@
           },
           "Truncation": {
             "additionalProperties": false,
-            "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+            "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
             "properties": {
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
-              },
               "estimated_total": {
                 "minimum": 0,
                 "title": "Estimated Total",
@@ -11058,6 +11062,18 @@
               }
             ],
             "default": null
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "nodes": {
             "default": [],
@@ -11736,7 +11752,7 @@
           },
           "Contradiction": {
             "additionalProperties": false,
-            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+            "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2–3 sides — both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, and `total`.\nOne-sided is never a valid answer. Paging co-members is out of scope\n(D154); ``returned`` and ``total`` disclose the cap.",
             "properties": {
               "co_members": {
                 "default": [],
@@ -11745,18 +11761,6 @@
                 },
                 "title": "Co Members",
                 "type": "array"
-              },
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
               },
               "group_id": {
                 "format": "uuid",
@@ -11992,6 +11996,18 @@
                   }
                 ],
                 "default": null
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next Cursor"
               },
               "nodes": {
                 "default": [],
@@ -13215,20 +13231,8 @@
           },
           "Truncation": {
             "additionalProperties": false,
-            "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+            "description": "The explicit cap marker (S18/S49 / D154): no silent top-k ever.\n\n``estimated_total`` is what the producer could see before the cap.\nFollow-up paging uses ``Envelope.next_cursor``, not a field here.",
             "properties": {
-              "continuation": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Continuation"
-              },
               "estimated_total": {
                 "minimum": 0,
                 "title": "Estimated Total",
@@ -13356,9 +13360,9 @@
     }
   ],
   "query_surface_manifest": {
-    "built_manifest_sha256": "b3d818e32839835caed21d4d90530def49070cc335870a25d07e17f84905149c",
+    "built_manifest_sha256": "5a167010a1076324d692a446603c5d62ffd9f1c7a1831e921163455ee5c52899",
     "checked_in_manifest_sha256": "b3d818e32839835caed21d4d90530def49070cc335870a25d07e17f84905149c",
-    "surface_manifest_hash": "6a5b81486cba3daccb109b3d1d936e048a6557afa7dd4eac1dbd6f9fde33578c"
+    "surface_manifest_hash": "3572a77e5db05f53cad6f7bb6845ab65dddecebc266b473aa776509f80a9b9e1"
   },
   "readiness_expected_components": [
     [
