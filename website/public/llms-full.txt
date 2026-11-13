@@ -7510,6 +7510,25 @@ Use those identifiers to reconcile the request with the provider before
 retrying paid work. The adapter does not invent a zero cost or automatically
 generate the same potentially paid response again.
 
+A reply can arrive with a success status but a body that is not a JSON
+object: empty, only whitespace, an HTML page, a cut-off object, or a JSON
+value such as `null` or `[]`. The call then fails with an ordinary OpenRouter
+provider error, on chat and embedding calls alike. The message names the
+endpoint, the status, the body size and the kind of problem, for example:
+
+```text
+OpenRouter /chat/completions returned 200 with an undecodable body (body=whitespace_only, body_bytes=26, decode_error='Expecting value', decode_pos=26)
+```
+
+The message never contains the body text, headers or your API key. A
+success status does not prove the request was free, so usage stays unknown
+rather than zero. The adapter does not treat this as a capacity rejection, so
+it does not retry, rotate to another provider, or start a new retry budget.
+Callers handle it as an ordinary provider error, using their existing retry
+or fallback policy: some stages retry the work item, while optional steps,
+such as section summaries, continue without the model's answer. Valid replies
+and the capacity retries above work as before.
+
 Lowering reasoning effort makes extraction faster and cheaper; the comment
 in `.env.example` notes that `none` can reduce adjudication quality and
 that some models reject it. A map lets you turn it off for the small models

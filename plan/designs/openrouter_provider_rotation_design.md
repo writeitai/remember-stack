@@ -92,6 +92,43 @@ rotation, a split throttle budget, and per-call host recording.
   disabled by default, and does not authorize automatic paid replay. See the
   [accounting-failure analysis](../analysis/openrouter-accounting-failure-525-20261106.md)
   for the November 6 evidence and upstream contracts.
+- A success-status reply whose body is not a JSON object is a broken provider
+  reply. It is neither a capacity rejection nor an invalid model answer.
+  Examples are an empty body, whitespace only, non-JSON text such as an HTML
+  page, a cut-off object, bytes that are not valid text, or a JSON array,
+  string, number, boolean or null. Every `OpenRouterModelProvider` POST path
+  (chat with or without rotation, and embeddings) reads the body through one
+  shared check. That check raises the ordinary typed `OpenRouterProviderError`
+  after the capacity checks above have already declined the reply. On the
+  rotation path the error carries the targeted slug. The image-description
+  converter (`adapters/converters/image_ocr_description.py`) also POSTs to
+  OpenRouter but does not use this check. It has its own equivalent guard: a
+  success reply that is not a JSON object becomes a typed `ProviderCallError`
+  with no usage events.
+  - **Safe diagnostics.** The message holds only the endpoint, the status, the
+    body size in bytes, a body class, and the JSON decoder's fixed reason and
+    character offset. It never includes body text, headers or credentials,
+    because a partial reply can repeat user content. The error is raised with
+    no decoder exception attached as cause or context, because that exception
+    holds the raw body and would print its own message in a traceback. This
+    covers the message and the exception chain, not memory: the response
+    object still exists in the callers' frames.
+  - **Billing.** A success status does not prove the request was free. Usage
+    stays unknown (`None`), never zero. The error is never classified as an
+    unbilled rejection. The adapter does not retry it, rotate to another slug,
+    or open a new retry budget. `generate()` records it once with
+    `outcome = transport_error`. Callers handle it as an ordinary provider
+    error under their existing policy: stages that fail closed leave any
+    retry to the work ledger, and fail-open steps (such as E0 section
+    summaries) continue without the answer.
+  - **Not an invalid response.** For embeddings, an invalid-response error
+    marks a chunk as poison (content that can never embed). A broken reply
+    says nothing about the chunk, so it is treated as a provider outage.
+  - **Unchanged.** Valid replies, including a valid object preceded by
+    whitespace, decode as before.
+  - See the
+    [malformed-success analysis](../analysis/openrouter_malformed_success_body_20261113.md)
+    for how this gap was found and what it does not explain.
 - Exact settings on `OpenRouterSettings`, alongside the existing
   `_IN_FLIGHT_BUDGET_RETRIES` so operators can reason about worst-case latency (R14 showed
   ~13 s per failed call; the design must keep worst-case bounded and visible):
