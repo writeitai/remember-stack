@@ -353,7 +353,7 @@ def test_attachment_type_uses_its_own_format(engine: Engine, corpus) -> None:
         version_id=uuid4(),
         representation_id=uuid4(),
         structure_generation_id=uuid4(),
-        source_kind="email",
+        source_kind="gmail",
         title="Attached PDF",
     )
     _seed(engine, attachment)
@@ -386,7 +386,7 @@ def test_attachment_type_uses_its_own_format(engine: Engine, corpus) -> None:
             },
         )
     selected = _select(engine, doc_id=attachment.doc_id)[0]
-    assert selected.is_attachment and corpus_type(selected) == "pdf"
+    assert corpus_type(selected) == "pdf"
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -394,7 +394,13 @@ def test_attachment_type_uses_its_own_format(engine: Engine, corpus) -> None:
             ),
             {"g": generation},
         )
-    assert not _select(engine, doc_id=attachment.doc_id)[0].is_attachment
+    assert _select(engine, doc_id=attachment.doc_id)[0] == selected
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET deleted_at = now() WHERE doc_id = :doc"),
+            {"doc": source.doc_id},
+        )
+    assert _select(engine, doc_id=attachment.doc_id)[0] == selected
 
 
 def test_schema_change_is_only_one_nullable_marker(engine: Engine) -> None:

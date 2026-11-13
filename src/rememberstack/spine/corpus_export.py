@@ -53,20 +53,7 @@ SELECT d.deployment_id, d.doc_id, d.source_kind, d.source_ref, d.source_uri,
        r.conversion_uri, r.manifest_hash,
        g.structure_generation_id, g.pageindex_uri,
        c.raw_uri, c.mime, m.family, m.title, m.file_name,
-       s.summary AS root_summary, s.placement_path,
-       EXISTS (
-         SELECT 1 FROM document_crossrefs attachment
-         JOIN document_reference_generations refs
-           ON refs.deployment_id = attachment.deployment_id
-          AND refs.version_id = attachment.from_version_id
-          AND refs.generation_id = attachment.generation_id AND refs.status = 'active'
-         JOIN documents parent
-           ON parent.deployment_id = attachment.deployment_id
-          AND parent.doc_id = attachment.from_doc_id AND parent.deleted_at IS NULL
-          AND parent.current_version_id = attachment.from_version_id
-         WHERE attachment.deployment_id = d.deployment_id
-           AND attachment.to_doc_id = d.doc_id AND attachment.kind = 'attaches'
-       ) AS is_attachment
+       s.summary AS root_summary, s.placement_path
 FROM documents d
 JOIN document_versions v
   ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id

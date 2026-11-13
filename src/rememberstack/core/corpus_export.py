@@ -149,7 +149,6 @@ class CorpusDocument:
     pageindex_uri: str
     placement_path: str | None
     root_summary: str | None
-    is_attachment: bool = False
     corpus_published_revision: str | None = None
 
     @property
@@ -259,10 +258,15 @@ def corpus_topics(hint: str | None) -> tuple[str, ...]:
 
 
 def corpus_type(document: CorpusDocument) -> str:
-    """Ordered matches use stored facts about the item, never its filename."""
+    """Ordered matches use stored facts about the item, never its filename.
+
+    The explicit email/chat kinds identify messages themselves. A fetcher name
+    such as gmail, or a parent's attaches reference, does not classify a file.
+    Its own MIME, family and route still identify an independently ingested PDF.
+    """
     mime = document.mime.split(";", 1)[0].strip().lower()
     family = document.family or family_for_mime(mime=mime).name
-    source = "" if document.is_attachment else document.source_kind
+    source = document.source_kind
     if (
         source in {"email", "email_thread"}
         or family == "email"

@@ -124,11 +124,10 @@ def test_ordered_types(source, mime, family, route, attachment, expected) -> Non
     assert (
         corpus_type(
             document(
-                source_kind=source,
+                source_kind=f"{source}_attachment" if attachment else source,
                 mime=mime,
                 family=family,
                 route=route,
-                is_attachment=attachment,
                 file_name="malicious.eml",
             )
         )
