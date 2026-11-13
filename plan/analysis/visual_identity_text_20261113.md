@@ -1,6 +1,6 @@
 # Preserve visible identity labels in image observations
 
-Non-binding analysis, 2026-11-13. The audited frozen map photograph had a legible
+Non-binding analysis, 2026-11-13. The accepted rule is in [media §2](../designs/media_design.md#2-converter-routes-extends-the-d38-router-table). The audited frozen map photograph had a legible
 park title and district name that OCR omitted and the vision description did
 not repeat. `_DESCRIPTION_PROMPT` explicitly prohibits text transcription. A
 retrieval change cannot recover a name absent from the canonical reading.
