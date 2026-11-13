@@ -959,7 +959,7 @@
         "checked_at": "<wallclock>",
         "published_at": null,
         "ready": false,
-        "reason": "corpus_snapshot_incomplete",
+        "reason": "corpus_publication_incomplete",
         "required": false,
         "version": null
       },

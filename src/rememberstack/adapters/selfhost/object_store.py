@@ -173,6 +173,7 @@ class LocalFSObjectStore:
     def iter_purge_keys(self) -> Iterator[ObjectKey]:
         """Local storage retains neither object versions nor multipart uploads."""
         yield from self.iter_keys(prefix="")
+        yield from self._iter_metadata_keys()
 
     def purge_objects(
         self,

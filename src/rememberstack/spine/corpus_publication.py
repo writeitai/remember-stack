@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+import math
 from uuid import UUID
 from uuid import uuid4
 from uuid import uuid5
@@ -181,7 +182,8 @@ class CorpusPublicationCatalog:
         Setup and each successful verification seed the next slot. Deterministic
         targets make duplicate seeds harmless; no scheduler or mutable timer row.
         """
-        if interval_s <= 0:
+        interval_s = float(interval_s)
+        if not math.isfinite(interval_s) or interval_s <= 0:
             raise ValueError("corpus verification interval must be positive")
         with self._engine.begin() as connection:
             now = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
@@ -215,10 +217,11 @@ class CorpusPublicationCatalog:
         with self._engine.connect().execution_options(
             isolation_level="AUTOCOMMIT"
         ) as connection:
-            # D74 preparation waits for complete IO, including synchronous
-            # delete/reconcile work with no processing row. Lock order is the
-            # admission fence first, publication second. Never use lease expiry
-            # as proof that an upload has stopped.
+            # Hold D74's admission fence through synchronous IO, including
+            # delete/reconcile with no processing row. Lock order is admission
+            # first, publication second. Session loss still requires D74's
+            # external-write quiescence acknowledgement: lease expiry cannot
+            # prove an already-issued provider request has stopped.
             fence = {"key": f"hard-forget:{deployment_id}"}
             params = {"key": f"corpus-publication:{deployment_id}"}
             fenced = locked = False

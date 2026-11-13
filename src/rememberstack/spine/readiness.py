@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from rememberstack.core import chunker_version as packing_generation
 from rememberstack.core import ChunkerParams
+from rememberstack.core.corpus_export import CorpusDocument
 from rememberstack.core.corpus_export import CorpusPolicy
 from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
 from rememberstack.core.corpus_export import desired_export_revision
@@ -30,7 +31,7 @@ from rememberstack.model import PipelineStageReadiness
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import VersionPipelineReadiness
 from rememberstack.model.client import ProcessingLayer
-from rememberstack.spine.corpus_publication import document_on
+from rememberstack.spine.corpus_export import _DOCUMENTS
 from rememberstack.spine.graph_catalog import graph_catalog_problems
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_ONE_HOP
@@ -382,20 +383,31 @@ def _corpus_readiness_on(
     policy: CorpusPolicy,
 ) -> tuple[bool, str, str | None]:
     """Per-selection success markers; unrelated publication proves nothing."""
+    version_documents = dict(
+        connection.execute(
+            text("""SELECT version_id, doc_id FROM document_versions
+        WHERE deployment_id = :d AND version_id = ANY(CAST(:ids AS uuid[]))
+        AND deleted_at IS NULL"""),
+            {"d": deployment_id, "ids": list(version_ids)},
+        )
+        .tuples()
+        .all()
+    )
+    # Readiness accepts 1,000 versions. Keep this a bounded batch rather than
+    # two round trips per version, within the same consistent authority cut.
+    documents = {
+        row["doc_id"]: CorpusDocument(**dict(row))
+        for row in connection.execute(
+            text(_DOCUMENTS + " AND d.doc_id = ANY(CAST(:ids AS uuid[]))"),
+            {
+                "deployment_id": deployment_id,
+                "ids": list(set(version_documents.values())),
+            },
+        ).mappings()
+    }
     revisions: list[str] = []
     for version_id in version_ids:
-        doc_id = connection.execute(
-            text("""SELECT doc_id FROM document_versions
-            WHERE deployment_id = :d AND version_id = :v AND deleted_at IS NULL"""),
-            {"d": deployment_id, "v": version_id},
-        ).scalar_one_or_none()
-        document = (
-            document_on(
-                connection=connection, deployment_id=deployment_id, doc_id=doc_id
-            )
-            if doc_id
-            else None
-        )
+        document = documents.get(version_documents.get(version_id))
         if document is None:
             return False, "corpus_publication_incomplete", None
         if document.version_id != version_id:

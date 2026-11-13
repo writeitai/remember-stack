@@ -273,3 +273,25 @@ def test_restore_authorizes_each_manifest_while_the_whole_batch_is_closed(
         held.check()
     with pytest.raises(ForgetInProgressError):
         profile.corpus_publisher().reconcile(deployment_id=source.deployment_id)
+
+
+def test_equivalent_configured_cadences_share_one_delayed_verification(
+    active, engine: Engine
+) -> None:
+    from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
+
+    _, source, _ = active
+    catalog = CorpusPublicationCatalog(engine=engine)
+    first = catalog.schedule_verification(
+        deployment_id=source.deployment_id, interval_s=86400
+    )
+    duplicate = catalog.schedule_verification(
+        deployment_id=source.deployment_id, interval_s=86400.0
+    )
+    assert first.created and not duplicate.created
+    assert first.processing_id == duplicate.processing_id
+    for invalid in (0, -1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="positive"):
+            catalog.schedule_verification(
+                deployment_id=source.deployment_id, interval_s=invalid
+            )

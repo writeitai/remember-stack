@@ -45,6 +45,10 @@ def test_local_suffix_purge_retries_with_empty_recorded_state(tmp_path: Path) ->
             content=b"private",
             storage_class="hot",
         )
+        # A failed local delete can leave only private digest/class metadata.
+        hidden = ObjectKey(forgotten.path + "/metadata-only")
+        store.write_bytes(key=hidden, content=b"private", storage_class="hot")
+        store._path_for(key=hidden).unlink()  # noqa: SLF001
         store.replace_stream(
             key=ObjectKey("pdf/obsolete/_index.md"),
             chunks=(b"private",),
@@ -55,6 +59,7 @@ def test_local_suffix_purge_retries_with_empty_recorded_state(tmp_path: Path) ->
         )
         adapter.purge_projections(**args)
         adapter.verify_projections_purged(**args)
+        assert hidden not in set(store.iter_purge_keys())
         assert authority.recorded[forgotten.doc_id] == set()
         assert store.read_bytes(key=control_key) == b"untouched"
         with pytest.raises(FileNotFoundError):
