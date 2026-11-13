@@ -132,3 +132,8 @@ matching and exact storage evidence acknowledgement, see the
 [analysis](analysis/storage_capture_consumer_20261111.md). It extends D61's
 substrate evidence boundary without adopting the broader financial-permission
 proposal or claiming that capture is implemented or qualified.
+
+For the shared browse, ranked-result and SQL pagination contracts, see
+[D154](../decisions.md#d154-one-pagination-contract-browse-lists-page-ranked-results-disclose-sql-caps-refuse-silence),
+the [retrieval envelope](designs/retrieval_design.md#5-the-response-envelope--the-contract-is-the-answers-self-account-d49),
+and the [review corrections analysis](analysis/pagination_review_20261113.md).

@@ -71,7 +71,7 @@ optionally with the path to each.
 | `valid_at` | date-time | no | now | Send with `believed_at`. |
 | `believed_at` | date-time | no | now | Send with `valid_at`. |
 | `limit` | integer | no | `100` | 1 to 500 entities per page. |
-| `cursor` | string | no | | The envelope `next_cursor` from the previous page. At most 200 characters. |
+| `cursor` | string | no | | The envelope `next_cursor` from the previous page. At most 2,048 characters. |
 | `include_paths` | boolean | no | `false` | Also return one path to each entity. |
 
 Unknown fields are rejected.
@@ -86,7 +86,11 @@ Unknown fields are rejected.
   [`GraphPath`](/docs/reference/result-types#graphpath) per entity and the distinct
   [`GraphEdge`](/docs/reference/result-types#graphedge) entries they use. Empty
   otherwise.
-- `next_cursor`: set when another page is available; `null` exactly at the end.
+- `next_cursor`: resumes after the last `(hops, relation_ids, node_ids)` tuple,
+  so deleting a returned edge does not skip surviving neighbors. It binds the
+  deployment and filters and pins both clocks. For hops greater than one, paging
+  stays within the 500-row computational ceiling; at that ceiling `next_cursor`
+  is null and `truncation.reason` discloses the stop.
 - `truncation`: always present. When more entities exist, `truncated` is
   `true` (disclosure only; page with `next_cursor`).
 

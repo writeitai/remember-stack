@@ -371,8 +371,8 @@ error). There are no totals, offsets, or `has_more`.
 Where the source can honour an as-of read cheaply, the cursor also pins that
 instant (document search browse, section history, document references, graph
 neighborhood clocks, lookup browse). Lookup browse uses one as-of
-belief/ingest predicate on every page: page one pins the database clock and
-is simply continuation with no position. `GET /documents` always reads the
+belief/ingest predicate on every page: page one acquires a commit-visible belief watermark before opening its
+snapshot and is simply continuation with no position. `GET /documents` always reads the
 current newest live version and serving flag, so its cursor carries no
 instant: unchanged rows are never repeated or skipped; a row whose filtered
 status changes between pages may enter or leave the listing.
@@ -403,7 +403,11 @@ Envelope also carries top-level `next_cursor` for graph neighborhood and
 browse-mode lookups. The `truncation` block is disclosure only:
 `truncated`, `returned`, `estimated_total`, `total_is_exact`, and an
 optional `reason`. `POST /graph/neighborhood` pages with request `cursor`
-(pins `valid_at` / `believed_at`; default `limit` 100).
+(pins `valid_at` / `believed_at`; default `limit` 100). Its keyset position
+survives deletion of already-returned edges. Browse cursors bind deployment
+identity and all membership filters; changing project or filters is an error,
+while page size may change. Deeper neighborhoods page within their 500-row
+ceiling and disclose any ceiling stop through `truncation.reason`.
 
 ### SQL
 

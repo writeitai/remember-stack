@@ -690,7 +690,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | Field | Type | Contents |
 |---|---|---|
 | `documents` | array of [`DocumentSummary`](#documentsummary) | |
-| `cursor` | string, nullable | Pass to the next request; `null` on the last page. |
+| `next_cursor` | string, nullable | Pass to the next request; `null` on the last page. |
 
 ### DocumentSummary
 
@@ -728,7 +728,8 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
 | `versions` | `current` \| `all` | no | `current` | |
 | `time` | [`ReadTime`](#readtime), nullable | no | `current` | Which editions of a document with declared effective periods are candidates. |
-| `k` | integer | no | `20` | 1 to 200. |
+| `k` | integer | no | `20` | Ranked results with `query`: 1 to 200. |
+| `limit` | integer | no | `50` | Browse page size without `query`: 1 to 200. |
 | `cursor` | string, nullable | no | | Only without `query`. |
 
 ### DocumentSearchFilters
@@ -749,7 +750,8 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | Field | Type | Contents |
 |---|---|---|
 | `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest ingested first without one. |
-| `cursor` | string, nullable | The next page; always `null` with a query. |
+| `next_cursor` | string, nullable | The next page; always `null` with a query. |
+| `truncated` | boolean | Ranked results exceeded `k`; false for browse pages. |
 | `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
 | `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
 | `scope_pending` | [`ScopePending`](#scopepending), nullable | Examined documents whose edition in force for `time` is still being processed. |
@@ -924,7 +926,7 @@ One line of the NDJSON body of
 | `periodised` | boolean | The document has declared effective periods; rows are then ordered by period start, otherwise by `version_no`. |
 | `rows` | array of [`SectionHistoryRow`](#sectionhistoryrow) | |
 | `amendments` | array of [`SectionAmendment`](#sectionamendment) | First page only. |
-| `cursor` | string, nullable | |
+| `next_cursor` | string, nullable | |
 | `evaluated_at`, `believed_at` | date-time | The instants the history was read at; a cursor keeps them. |
 
 ### SectionHistoryRow
@@ -976,7 +978,7 @@ Body of [`POST /documents/references`](/docs/reference/http-api/sections-and-ref
 | `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
 | `kinds` | array of strings, nullable | no | | 1 to 7 reference kinds. |
 | `time` | [`ReadTime`](#readtime), nullable | no | `current`; with `chunk_id`, the chunk's version's in-force time up to now | |
-| `k` | integer | no | `50` | 1 to 200. |
+| `limit` | integer | no | `50` | 1 to 200. |
 | `cursor` | string, nullable | no | | |
 
 ### DocumentReferencesPage
@@ -984,7 +986,7 @@ Body of [`POST /documents/references`](/docs/reference/http-api/sections-and-ref
 | Field | Type | Contents |
 |---|---|---|
 | `rows` | array of [`DocumentReference`](#documentreference) | |
-| `cursor` | string, nullable | A short page can still carry a cursor. |
+| `next_cursor` | string, nullable | A short page can still carry a cursor. |
 | `evaluated_at`, `believed_at` | date-time | |
 | `too_broad` | object, nullable | `{reason: "too_broad", descendant_keys, limit, explanation}` when the section has more than `limit` (1,000) keyed subsections; `rows` is then empty. |
 

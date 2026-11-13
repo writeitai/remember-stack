@@ -7956,7 +7956,7 @@ the only "more exists" signal; a short or empty page with a non-null
 `next_cursor` is legal, e.g. when a document-search browse page hits its
 lineage scan cap before finding another match). Keyset order on an immutable
 key plus id tiebreak. Every cursor carries a short hash of the request's
-listing scope (the filters that define the result set); a cursor whose scope
+listing scope (deployment identity and the filters that define the result set); a cursor whose scope
 hash does not match the request is rejected with the existing typed
 invalid-cursor 400 (or the route's existing typed error). Invalid cursor → 400
 (or the existing typed error). No totals, no offsets, no `has_more`. Applies
@@ -7979,7 +7979,8 @@ or reshape that feed.
 the cursor also pins that instant and later pages reuse it: document search
 browse, section history, document references, graph neighborhood clocks, and
 lookup browse. Lookup browse uses **one** as-of belief/ingest predicate on
-every page (page one pins the database clock and is continuation with no
+every page (page one acquires the existing commit-visible belief watermark
+before opening its snapshot and is continuation with no
 position; there is no first-page-only `invalidated_at IS NULL` branch). Where
 it cannot — `GET /documents` always reads the current newest live version and
 serving flag — the cursor carries no instant. The guarantee there is keyset
@@ -8004,10 +8005,14 @@ cap; `max_rows > 1000` → 422 instead of a silent clamp; delete
 neighborhood and browse-mode lookups). `Truncation` keeps disclosure fields
 only (drop `continuation`). Drop `Contradiction.continuation` and the dead
 continuation merge in `combine_evidence`. Graph neighborhood: request
-`continuation` → `cursor`; the cursor pins `valid_at` / `believed_at`; default
+`continuation` → `cursor`; the cursor pins `valid_at` / `believed_at` and the last
+`(hops, relation_ids, node_ids)` ordering tuple, so deleting a returned edge
+does not shift surviving paths past the next page. Default
 `limit` 100. For hops>1 the internal 500-row fetch ceiling stays as a
-computational bound: when hit, disclose via `truncation.reason` and leave
-`next_cursor` null (simpler and robust than removing the ceiling).
+computational bound: page within those bounded rows, then disclose the ceiling
+via `truncation.reason` and leave `next_cursor` null. The
+[review analysis](plan/analysis/pagination_review_20261113.md) explains why
+these corrections reuse the existing guards and bounded reads.
 
 **Names kept.** `limit`, request `cursor`, `k` / `candidate_k` for ranked,
 `truncation` / `truncated`, `max_rows`. Browse routes that used `k` rename to

@@ -227,7 +227,7 @@ remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJ
 
 `list` prints one page of documents as JSON, newest document first, in the
 shape of [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
-page's `cursor` to `--cursor` to read the next page; `cursor` is `null` on
+page's `next_cursor` to `--cursor` to read the next page; `next_cursor` is `null` on
 the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
 documents whose newest version has that status.
 

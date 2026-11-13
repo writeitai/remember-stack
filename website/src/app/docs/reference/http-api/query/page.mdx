@@ -84,7 +84,7 @@ Run one read-only SQL statement.
 |---|---|---|---|---|
 | `sql` | string | yes | | One statement: `SELECT`, `VALUES` or `WITH … SELECT`. At most 65,536 bytes. |
 | `parameters` | array | no | `[]` | Positional values for `$1`, `$2`, …. The count must equal the highest placeholder, and placeholders must be contiguous from `$1`. |
-| `max_rows` | integer | no | 200 | At least 0; values above 1,000 are clamped to 1,000. `0` returns no rows. |
+| `max_rows` | integer | no | 200 | 0 to 1,000; larger values are rejected with `422`. `0` returns no rows. |
 
 Unknown fields are rejected. Cast parameters in the SQL when the type matters
 (`$1::uuid`, `$2::timestamptz`). Graph functions must take `$1` as their first
@@ -140,7 +140,7 @@ any earlier `QueryResult` or `IngestedVersion` gives it to you.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | `sql` missing, `parameters` not an array, `max_rows` negative, or an unknown field. |
+| `422` | validation list | `sql` missing, `parameters` not an array, `max_rows` outside 0–1,000, or an unknown field. |
 
 Everything else about the statement is reported inside the `200` result.
 
@@ -461,7 +461,7 @@ validation and limits as `POST /query/sql`.
 |---|---|---|---|---|
 | `version` | integer | no | the active version | At least 1. |
 | `parameters` | array | no | `[]` | Positional values for the query's placeholders. |
-| `max_rows` | integer | no | the query's stored default, else 200 | At least 0; clamped to 1,000. |
+| `max_rows` | integer | no | the query's stored default, else 200 | 0 to 1,000; larger values are rejected with `422`. |
 
 Unknown fields are rejected. The query's stored `default_limits` apply
 (clamped to the interactive caps); your `max_rows` takes precedence over the
@@ -480,7 +480,7 @@ Statement problems are reported inside the result, as for `POST /query/sql`.
 | `404` | `saved_query_not_found` | No such query or version. |
 | `409` | `saved_query_disabled` | The query is disabled, or the version is not `active` (a draft, deprecated or broken version). |
 | `409` | `saved_query_revalidation_pending` | The query space changed since the version was validated, and it has not been revalidated. |
-| `422` | validation list | Malformed body, `version` below 1, `max_rows` negative, or an unknown field. |
+| `422` | validation list | Malformed body, `version` below 1, `max_rows` outside 0–1,000, or an unknown field. |
 | `500` | `execution_error` | The deployment could not read its saved-query registry state. |
 
 ### Example

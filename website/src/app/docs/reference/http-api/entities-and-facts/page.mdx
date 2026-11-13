@@ -109,7 +109,8 @@ now or at a past instant.
 | `predicate` | query | string | no | any | Exact predicate name. |
 | `object_entity_id` | query | UUID | no | any | |
 | `valid_at` | query | date-time | no | now | Must be UTC (`Z` or `+00:00`). |
-| `k` | query | integer | no | `50` | 1–400. The most relations to return. |
+| `limit` | query | integer | no | `50` | 1–200 relations per page. |
+| `cursor` | query | string | no | | The previous response's `next_cursor`. |
 
 Every filter is optional; the ones you send are combined with AND. A
 relation matches when it has not been invalidated and its validity window
@@ -119,16 +120,16 @@ as open on that side. A relation must also pass the
 `valid_at` (or now): a relation whose only supporting text is a version not
 in force at that instant is left out.
 
-At most `k` relations come back. When more match, `truncation` says so
-(`truncated: true`, `reason: "lookup_k_limit"`, `total_is_exact: false`):
-narrow the pattern or raise `k`.
+Pass `next_cursor` back as `cursor` until it is `null`. The cursor binds the
+deployment and filters and pins a commit-visible belief instant, so a
+declaration correction cannot first become visible on a later page.
 
 ### Response
 
 `200` with an `Envelope` of grain `fact`. `facts` holds one
 [`FactResult`](/docs/reference/result-types#factresult) per relation (`kind:
-"relation"`), ordered by evidence count, highest first, then by when the
-memory learned it; `truncation` is set when the `k` cap left matches out.
+"relation"`), ordered by ingest time and relation ID descending.
+`next_cursor` is null exactly at the end.
 Each result carries its `validity`, its
 `temporal_match`, its `support` and, when the relation is part of a
 contradiction, the other sides in `contradiction`. With `valid_at`,
@@ -139,7 +140,8 @@ contradiction, the other sides in `contradiction`. With `valid_at`,
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `k` outside 1–400. |
+| `400` | cursor error | A malformed cursor or one from another deployment or filter scope. |
+| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `limit` outside 1–200. |
 
 ### Example
 
@@ -173,13 +175,17 @@ well they match a phrase.
 |---|---|---|---|---|---|
 | `entity_id` | query | UUID | yes | | |
 | `property_query` | query | string | no | | When present, observations are found by semantic similarity to this text. |
-| `k` | query | integer | no | `10` | 1–400. The most observations to return. |
+| `k` | query | integer | no | `10` | Ranked results with `property_query`: 1–400. |
+| `limit` | query | integer | no | `50` | Browse page size without `property_query`: 1–200. |
+| `cursor` | query | string | no | | The previous response's `next_cursor`; only without `property_query`. |
 
 Without `property_query`, the live observations on the entity whose validity
 covers now, and that pass the
-[evidence gate](/docs/reference/assured-operations#text-in-force) now, are returned, strongest evidence first, at most `k`; when more
-exist, `truncation` says so (`reason: "lookup_k_limit"`). With
-`property_query`, up to `k` candidates are nominated by similarity and each is
+[evidence gate](/docs/reference/assured-operations#text-in-force) now, are paged
+by ingest time and observation ID descending. `limit` / `cursor` continues
+through `next_cursor`, with the same commit-visible belief pin as relations.
+With `property_query`, `k` bounds ranked results and `truncation.truncated`
+discloses the cap; query plus cursor is refused. Candidates are nominated by similarity and each is
 re-checked against the database before it is returned; candidates that no
 longer hold are dropped and counted in `dropped_by_hydration`.
 
@@ -193,7 +199,8 @@ observation (`kind: "observation"`). No match gives `negative.kind`
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | `entity_id` missing or malformed, or `k` not an integer in 1–400. |
+| `400` | cursor error | A malformed cursor or one from another deployment or filter scope. |
+| `422` | validation list | `entity_id` missing or malformed, or `k` outside 1–400, `limit` outside 1–200, or `property_query` with `cursor`. |
 | `503` | `model provider unavailable` | The embedding call for `property_query` failed. Retry with back-off. |
 
 ### Example
