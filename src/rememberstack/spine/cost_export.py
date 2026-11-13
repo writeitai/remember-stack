@@ -39,7 +39,6 @@ COST_EXPORT_PAGE_FIELDS: Final[tuple[str, ...]] = (
     "deployment_id",
     "server_time",
     "horizon",
-    "cursor",
     "next_cursor",
     "persist_failures",
     "scope_missing",
@@ -152,8 +151,8 @@ class CostExportPage(BaseModel):
     deployment_id: UUID
     server_time: datetime
     horizon: datetime
-    cursor: str
-    next_cursor: str
+    next_cursor: str | None
+    """Null exactly when this page is the last (D154)."""
     persist_failures: int = Field(ge=0)
     scope_missing: int = Field(ge=0)
     receipts: tuple[CostExportReceipt, ...]
@@ -238,29 +237,20 @@ class SqlCostExportReader:
         persist_failures = int(meter["persist_failures"]) if meter is not None else 0
         scope_missing = int(meter["scope_missing"]) if meter is not None else 0
         last_key = _last_key(receipts=receipts, incoming=incoming)
-        # Echo the request cursor when present. A first page issues the zero key
-        # with this request's horizon. ``next_cursor`` always refreshes horizon.
-        if incoming is None:
-            issued_cursor = encode_cost_export_cursor(
-                last_occurred_at=_ZERO_OCCURRED_AT,
-                last_source="",
-                last_cost_id=_ZERO_COST_ID,
+        # A full page may have more; a short page is the end (D154).
+        next_cursor: str | None = None
+        if len(receipts) >= limit:
+            next_cursor = encode_cost_export_cursor(
+                last_occurred_at=last_key[0],
+                last_source=last_key[1],
+                last_cost_id=last_key[2],
                 horizon_at_issue=request_horizon,
             )
-        else:
-            issued_cursor = cursor or incoming.encode()
-        next_cursor = encode_cost_export_cursor(
-            last_occurred_at=last_key[0],
-            last_source=last_key[1],
-            last_cost_id=last_key[2],
-            horizon_at_issue=request_horizon,
-        )
         return CostExportPage(
             contract=COST_EXPORT_CONTRACT,
             deployment_id=deployment_id,
             server_time=server_time,
             horizon=request_horizon,
-            cursor=issued_cursor if incoming is None else issued_cursor,
             next_cursor=next_cursor,
             persist_failures=persist_failures,
             scope_missing=scope_missing,

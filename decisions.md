@@ -7939,3 +7939,67 @@ are evidence for the design, not proof of a shipped speedup.
 **Delivery:** [implementation and qualification](plan/plans/shared_retrieval_eligibility.md).
 **Amends:** D142/D149 physical read execution and D23 UUID-derived pruning;
 retains D54, D56, D67, D74, D140 and D152 correctness boundaries.
+
+
+## D154. One pagination contract: browse lists page, ranked results disclose, SQL caps refuse silence
+
+**Status:** accepted; implementation on this PR.
+**Date:** 2026-11-13. **Authority:** owner request for sensible, consistent
+pagination across listing views, propagated to CLI / MCP / SDK and documented.
+No users yet: rename directly; no shims, aliases, deprecations or migrations.
+
+**Decision.** Listing surfaces share one contract with three shapes.
+
+**A. Browse lists** (filter-only, exhaustive). Request `limit` (default 50,
+max 200) and opaque `cursor`; response `next_cursor` (null exactly at the end —
+the only "more exists" signal; a short page with a non-null `next_cursor` is
+legal). Keyset order on an immutable key plus id tiebreak; the cursor pins the
+read instant. Invalid cursor → 400 (or the existing typed error). No totals, no
+offsets, no `has_more`. Applies to: `GET /documents`, `POST /documents/search`
+(browse mode), section history, document references, cost-export (drop its echo
+response `cursor`), and `GET /lookup/relations` plus `GET /lookup/observations`
+without `property_query` (keyset browse ordered by `(ingested_at DESC, id)`
+with the belief instant pinned in the cursor).
+
+**B. Ranked results** (any `query` / `property_query` / `name`). Request `k`
+(top-k), no cursor; a request with both a query and a cursor is a validation
+error. The response always discloses the cap: Envelope routes set
+`truncation.truncated` (fetch k+1) whenever more than k matched, including
+search/claims, search/chunks and observations with `property_query`;
+`DocumentSearchPage` in ranked mode gains `truncated: bool` and `next_cursor`
+stays null.
+
+**C. SQL** keeps `max_rows` plus `truncated` / `truncation_reason` as a safety
+cap; `max_rows > 1000` → 422 instead of a silent clamp; delete
+`exact_total` / `exact_total_known`. Larger scans use the statement's own
+`WHERE … LIMIT` (documented under guides/sql).
+
+**D. Envelope paging.** Envelope gains top-level `next_cursor` (graph
+neighborhood and browse-mode lookups). `Truncation` keeps disclosure fields
+only (drop `continuation`). Drop `Contradiction.continuation` and the dead
+continuation merge in `combine_evidence`. Graph neighborhood: request
+`continuation` → `cursor`; the cursor pins `valid_at` / `believed_at`; default
+`limit` 100. For hops>1 the internal 500-row fetch ceiling stays as a
+computational bound: when hit, disclose via `truncation.reason` and leave
+`next_cursor` null (simpler and robust than removing the ceiling).
+
+**Names kept.** `limit`, request `cursor`, `k` / `candidate_k` for ranked,
+`truncation` / `truncated`, `max_rows`. Browse routes that used `k` rename to
+`limit`. Response page field `cursor` → `next_cursor` everywhere. Request
+`continuation` → `cursor`.
+
+**Propagate.** Same names on the Python SDK, TypeScript client (regenerated
+from OpenAPI), CLI (`--limit` / `--cursor`, print `next_cursor`), MCP tool
+schemas and handlers, `openapi.json`, and the docs site. Canonical docs:
+`reference/http-api` "Pagination and truncation", linked from each affected
+page; regenerate `llms.txt` / `llms-full.txt`.
+
+**Tradeoffs.** Lookups without a property query change order from
+evidence-strength ranking to ingest-time keyset so paging is stable and
+exhaustive. Ranked lookups keep `k` and must always say when the cap applied.
+Graph deep neighborhoods may stop before a full page with an explicit reason
+rather than offering an unbounded fetch.
+
+**Amends:** listing and truncation naming on the HTTP / SDK / CLI / MCP
+surfaces; Envelope / Truncation / Contradiction wire shapes; cost-export page
+fields; SQL request validation for `max_rows`.
