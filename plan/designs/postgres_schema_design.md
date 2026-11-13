@@ -2313,8 +2313,7 @@ already applied. Obsolete-policy requests cannot write; policy seeding enqueues
 the current policy. Requests retain only ids/generation and follow ordinary work
 retention; attempts/claims/errors live solely in `processing_state`.
 
-Successful null topic is represented
-by a non-null placement generation with null root placement path; failure has no
+Successful null topic is represented by a non-null placement generation with null root placement path; failure has no
 complete placement generation.
 
 The [E0 publication procedure](e0_files_design.md#65-incremental-work-publication-order-and-reader-observations)
@@ -2324,8 +2323,10 @@ The membership table may hold journaled candidate membership while indexes are
 being published; it is private projection machinery, never a ready-path proof.
 `p3_path`/readiness require matching applied identity/revision and empty journals,
 not merely `published_path` being non-null. Deletion persists removal intent even
-when no served version survives. D74 resets both tables, including source-bearing
-paths/metadata, and reconstructs them from scrubbed authority before reopening.
+when no served version survives. D74 resets publication progress and directory
+membership, including source-bearing paths/metadata, and reconstructs them from
+scrubbed authority before reopening. Content-free request ids follow the ordinary
+work-row scrub/retention rules; they cannot reintroduce scrubbed source truth.
 Work attempts, lease, retry and DLQ remain only in `processing_state`.
 
 The graph schema consists of private current/history node and edge views

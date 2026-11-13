@@ -35,7 +35,7 @@ job explicitly even if the ordinary Compose profile uses another S3 provider.
 Add lineage suffix reservation/uniqueness, durable corpus revision and the projection tables in
 [schema §10](../designs/postgres_schema_design.md#10-corpus-publication-progress-and-live-graph-catalog-d155-d98).
 Implement the ordered type taxonomy, topic/slug validation, reader-kind registry,
-active-generation selector and deterministic indexes/sharding as a renderer
+active-generation selector and deterministic member/id-map indexes/sharding as a renderer
 without changing the profile's serving composition. Read E0 URIs and inventories,
 including D147 registered-upload keys and the generation-addressed PageIndex.
 
@@ -46,8 +46,8 @@ unknown reader kind, `provider_response` under `media/`, references/checkpoints
 excluded, every expected reader asset included. Original/Markdown/source-map and
 PageIndex bytes match authority; relative image links resolve. Seed v1 ready with
 v2 stored/parked and prove every folder file is v1; prove a raw-only lineage has
-no folder. Test shard split **and merge**, many distinct topics, bounded indexes,
-large asset-table continuation, and byte-identical output for identical intent.
+no folder. Test shard split **and merge**, many distinct topics, bounded member/id-map indexes,
+id lookup without scanning folders, large asset-table continuation, and byte-identical output for identical intent.
 
 ## 3. Incremental publisher and repair
 
@@ -109,7 +109,7 @@ The mandatory **PostgreSQL + MinIO forget test** plants a unique token in the
 original, Markdown, media, title/topic, root/member indexes, an old moved folder,
 and an interrupted unindexed copy. Keep an independently supported control
 document. Forget, then list/read every corpus key and assert no source copy or
-index mention remains, while the control folder is rebuilt. Inject delete,
+member/id-map index mention remains, while the control folder is rebuilt. Inject delete,
 multipart/cache-ack, repair and verification failures; the barrier stays closed,
 retry completes, and delayed ordinary work cannot recreate the source.
 
@@ -132,7 +132,9 @@ docs and `/docs/project/not-built-yet` as the new behavior becomes available.
 
 Tests: no path before publication; path during a completed v1 with pending v2;
 null for in-progress moves, failed/dirty publications, raw-only, deleted and
-historical selections; resolve `doc_id` after moves and shard changes. A recent
+historical selections; resolve `doc_id` through bounded `_paths/` pages after
+moves and shard changes, including periodised lineages whose search selection is
+not their served version or has no edition in force. A recent
 unrelated publication cannot satisfy readiness. Claims/facts switching changes
 neither P3 content nor topology, while K remains separately gated. Exercise the
 `llms.txt → indexes → actual original/derivatives` ladder with no raw/artifact

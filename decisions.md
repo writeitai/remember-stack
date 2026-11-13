@@ -1522,7 +1522,7 @@ bodies deliberately do not live in Postgres.
 ## D49. The response envelope: grain type-discipline, inline contradictions, typed negatives, freshness stamps
 
 > **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** K freshness/open-flag disclosure
-> remains on K's own read surfaces and retrieval envelopes; P3 no longer links K
+> remains in existing K provenance/retrieval contracts; P3 no longer links K
 > or mirrors its per-page status. Other retrieval/envelope contracts remain.
 
 > **D98 amendment (2026-08-27).** P2 snapshot freshness and generation
@@ -8085,9 +8085,11 @@ There are no users requiring migration, aliases or a transition layout.
   D7/D40 whole snapshots and pointer swap are replaced for this projection.
   Deterministic `_index.md` member tables, one bounded root `llms.txt`, and radix
   fan-out sharding remain. No Tier-1 `documents/`, facet duplication, `entities/`,
-  global path-map file, or K links. K repos remain standalone.
+  monolithic path-map file, or K links. A bounded radix `_paths/` member index
+  resolves stable ids without another document view. K repos remain standalone.
 - **Identity survives moves.** Store `doc_id` and version handles, not paths.
-  Resolve through existing document search; MCP `p3_path` is an applied matching
+  Resolve through the bounded mounted id index or existing document search;
+  MCP `p3_path` is an applied matching
   publication path or `null`, never a predicted stable path. Readiness `p3`
   certifies the selected document revision's files, indexes and cleanup, not a
   recent global snapshot timestamp. P3 is sources-only across D143 layer settings.
@@ -8114,8 +8116,9 @@ Serialized incremental maintenance is smaller than snapshot recopying or a
 multi-writer directory transaction protocol. Resetting all derived P3 data during
 rare forget is deliberately more expensive than ordinary removal and simpler to
 prove after independent restores. S3 interoperability is documented for GCS, so
-there is no reason for a native GCS adapter. A mounted global id map would be an
-unbounded shared rewrite; existing id-filtered search resolves paths instead.
+there is no reason for a native GCS adapter. A monolithic id map would be an
+unbounded shared rewrite; bounded radix pages permit offline resolution, including
+when a temporal search selects an edition other than the mounted served version.
 
 **Reuse boundary.** No new converter, blockizer, chunker, extraction, Claimify,
 embedding-policy/model or text-origin generation. Nullable topic changes only

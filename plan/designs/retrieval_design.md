@@ -433,10 +433,10 @@ Three rules that are contract, not garnish:
   everything, never a timeout.
 - **The K freshness block is the reader-facing flag surface** (resolves `k_layers_design.md`
   §11 spike 9): any answer that consumed a K page carries its `compiled_at`, staleness, and
-  open-flag count. K's own read metadata/provenance shows that status before a
-  reader plans against a page (S34). D155 removes P3's per-K-page mirroring: K
-  remains a standalone repository and P3 has no K links. No second P3 status
-  sidecar or mutable K status cache is introduced.
+  open-flag count, so a reader can check status before planning against a page
+  (S34). D155 removes P3's per-K-page mirroring: K remains a standalone repository,
+  its existing retrieval/provenance contracts stay intact, and P3 has no K links.
+  No new K mechanism or P3 status sidecar/cache is introduced.
 
 Two media additions to the provenance block (D65, `media_design.md` §4–§5) — both attach at
 the **evidence grain**: a *claim* has one derivation record and one locator set; a *fact*
@@ -516,8 +516,8 @@ copied originals beside Markdown, PageIndex and reader media/transcript assets
 chase or extra mount is needed to open a whole source. K is a standalone git repo,
 consumed through its own checkout/read surfaces, outside P3. Navigation starts at
 root `llms.txt` and deterministic type/topic member tables (S56, S59). Paths move:
-store `doc_id` and resolve the matching applied publication through document
-search. `p3_path=null` is truthful when absent/updating; readiness `p3` checks the
+store `doc_id` and resolve the applied folder through bounded `_paths/` member
+pages or document search when its selected version is the mounted one. `p3_path=null` is truthful when absent/updating; readiness `p3` checks the
 selected document receipt, not a recent tree timestamp. Managed `remember mount
 DIR` uses remember.dev's one-time ticket only on mountable's stdin; self-host
 mounts its own bucket with read-only S3 FUSE (`e0_files_design.md` §5).

@@ -536,9 +536,9 @@ treat "compiled never consumes authored" as an invariant, not a convention.
   *reader* — an agent loading the to-be before acting on it — must also be able to see "this
   page has N unresolved evidence-change flags," or agents will plan against commitments the
   system already knows are shaky. The body is untouchable (D46) but the flag state is
-  queryable; it surfaces in retrieval page metadata and K's own provenance/read
-  metadata. D155 removes P3 mirroring because that document tree contains no K
-  links or state; it does not remove this K reader-disclosure requirement.
+  queryable; it surfaces in existing retrieval page metadata. D155 removes P3
+  mirroring because that document tree contains no K links or state; K's existing
+  provenance and reader-disclosure contracts remain, without new K machinery.
 
 ## 6. The compile cycle
 
@@ -818,8 +818,8 @@ structurally (one committer, disjoint writes, DAG order).
    workflows — measure with the first agent-operated scope.
 8. ~~**Reader-facing flag surface**~~ **RESOLVED (D49)** — two surfaces: the retrieval
    **response envelope** carries each consumed K page's `compiled_at` + staleness + open-flag
-   count, and K's own provenance/read metadata carries status for readers. D155
-   removes the former P3 mirroring: K repos remain standalone. No P3 status
+   count. D155 removes the former P3 mirroring: K repos remain standalone with
+   their existing provenance/retrieval contracts. No new K mechanism or P3 status
    sidecar/cache is introduced. See `retrieval_design.md` §5.
 
 ## References

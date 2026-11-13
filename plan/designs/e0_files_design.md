@@ -729,6 +729,8 @@ full repair reconciles this same live tree, not another snapshot layout.
 <corpus bucket root>/
   llms.txt
   _index.md
+  _paths/                       # bounded id-to-published-folder index pages
+    _index.md
   email/
     _index.md
     atlas/
@@ -752,7 +754,9 @@ full repair reconciles this same live tree, not another snapshot layout.
   ...
 ```
 
-There is exactly one published folder per live completed lineage. Optional topic
+There is exactly one published folder per live completed lineage. `_paths/` is
+reserved index machinery, not another document type or duplicate document view.
+Optional topic
 and deterministic shard directories can intervene (§6.3). The export is an
 allowlist, never a recursive copy of the artifact prefix:
 
@@ -841,8 +845,9 @@ as a whole. A valid empty/no-topic result is explicit `null`, not an error.
 The model may intentionally choose no topic; it never chooses the type or slug.
 No LLM calls occur in the publisher or repair.
 
-The leaf name is `<title-slug>--<corpus_id>`. The slug uses the same normalization,
-a 60-byte cap and `untitled` fallback. `corpus_id` is an opaque 12-character
+The leaf name is `<title-slug>--<corpus_id>`. Use the selected version's D134 title,
+then its filename, then the lineage title as fallback. The slug uses the same
+normalization, a 60-byte cap and `untitled` fallback. `corpus_id` is an opaque 12-character
 lowercase base32 token allocated once on the lineage, reserved with a deployment
 UNIQUE constraint and retried on collision **before commit**. This makes identical
 or hostile titles safe without a probabilistic uniqueness promise. Retain the
@@ -874,17 +879,33 @@ counts and child-index links. Document `_index.md` lists reader files and media;
 large asset tables use bounded continuation pages referenced from that index.
 Tables are sorted by normalized title then stable id (branches by name), with
 Markdown cells and link components escaped. Root `llms.txt` lists the fixed types,
-counts, reading steps, version/move semantics and how to resolve `doc_id`; it is
+counts, reading steps, version/move semantics and the `_paths/` resolver; it is
 bounded by the type taxonomy. It is the only `llms.txt` in this tree.
 
 Index rendering uses SQL metadata and stored summaries, **zero LLM**. There are no
 directory summaries, facets, `documents/<doc_id>/`, `by-source/`, `by-time/`,
-`entities/`, duplicate view stubs, K links or global id-to-path file. The ladder is
+`entities/`, duplicate view stubs, K links or monolithic id-to-path file. The ladder is
 `llms.txt → type/topic/shard _index.md → folder _index.md → document.md/original`.
 
 Folder paths can change on type/topic/title changes or shard split/merge.
-Consumers store `doc_id` (and a version/representation handle for a citation),
-then resolve it with existing `search_documents` filtered by `doc_ids`. The engine
+Consumers store `doc_id` (and a version/representation handle for a citation).
+For offline browsing, `_paths/_index.md` is the stable entry to an id-to-path member
+table: rows carry doc id, stable suffix, applied relative folder, displayed
+version/representation and publication identity. Sort by full UUID hex and use
+bounded radix index pages (the same B/split/merge rule, with child ranges shown in
+parent indexes). An id lookup follows its range, reading at most a bounded page
+per level; it does not scan a million folders or rewrite a million-row root map.
+Only the affected map page/ancestors change on publication/removal. This is an
+index over the one document tree, never another copy, stub or authority. Map
+paths are not themselves permanent; resolve from their fixed root. Rows point
+only to completed folders and state that they open the displayed served reading,
+not a historical edition.
+
+Existing `search_documents` filtered by `doc_ids` also returns a path when its
+selected version has a matching completed publication. Periodised/historical
+search can select another edition (or none in force); the mounted id index still
+resolves the lineage's published folder without weakening those temporal rules.
+The engine
 joins the **publication receipt**, not a computed title path, for MCP/API/SDK
 `p3_path`: return a corpus-root-relative folder path only when that receipt has
 finished cleanup/indexing and matches the selected version, representation and
@@ -925,8 +946,10 @@ is an integration requirement, not a second scheduler or engine correctness hook
 implemented there. Manual `run_projection(plane="p3")` is the repair entry point.
 
 Use one deployment-scoped PostgreSQL advisory lock for P3 mutation, shared by
-publish, normal deletion, repair and forget's authorized internal calls. Hold it
-on a dedicated connection through object operations; the outer handler maintains
+publish, normal deletion, repair and forget's authorized internal calls. An
+internal repair/removal reuses its caller's lock ownership rather than acquiring
+another connection's lock recursively. Hold it on a dedicated connection through
+object operations; the outer handler maintains
 its claim lease. Re-read authority/revision after taking the lock. Delayed work
 converges to current intent rather than overwriting it with its payload. Losing
 the claim or lock stops writes; no detached/background uploads survive a handler.
@@ -936,8 +959,9 @@ remain unavailable to mutation/forget completion rather than certify erasure.
 
 One compact per-document `corpus_publications` row records applied revision,
 applied identity, published path, and a **pending path/affected-index journal**;
-its desired revision is copied from `documents.corpus_revision`. Persist every destination and old path before writing there; keep the
-journal until cleanup succeeds. This is rebuildable projection progress, not E0
+its desired revision is copied from `documents.corpus_revision`. Persist every
+destination and old path before writing there; keep the journal until cleanup
+succeeds. This is rebuildable projection progress, not E0
 truth. Indexed membership metadata and per-directory child/count rows let an
 update query its affected branch and ancestors, not rescan all documents. Repair
 reconstructs this metadata from authority. The short suffix reservation lives on
@@ -954,8 +978,9 @@ For a publication (including same-path replacement):
    is not a SHA-256 checksum. Remove files not in the new inventory.
 2. Write `document.json`, then ready folder `_index.md` with the same publication
    identity and complete member inventory. New parent indexes can now link it.
-3. Regenerate affected old/new member tables and ancestors bottom-up and root
-   `llms.txt`, using the candidate membership plus other completed publications.
+3. Regenerate affected old/new member tables, id-to-path pages and their ancestors
+   bottom-up, then root `llms.txt`, using candidate membership plus other completed
+   publications.
    Every document link added this way targets an already completed folder. Persist
    membership changes and the journal so an interrupted index write is retryable.
 4. Delete obsolete folders only after links move; prune empty topic/shard indexes.
@@ -963,7 +988,7 @@ For a publication (including same-path replacement):
    retain the newer revision. Otherwise, after cleanup, commit the applied receipt
    and clear the journal. A crash after any step replays the same operations.
 
-For removal, first remove every index membership and regenerate affected ancestors
+For removal, first remove every member/id-map row and regenerate affected ancestors
 and `llms.txt`, then delete all journaled folders, verify absence, and apply the
 empty receipt. A delete API retains D135's finish-or-refuse behavior: synchronously
 run this authorized removal before reporting success; an object failure reports
@@ -997,14 +1022,16 @@ Operational timestamps live in PostgreSQL receipts. Interrupted repair is safe t
 rerun and never opens a second layout. It is not necessary after every edit.
 
 Readiness `p3` is per requested lineage/version: true only when its desired revision
-has a fully applied matching receipt, valid folder inventory, affected indexes and
-root manifest, and no pending cleanup. A global recent build time proves nothing.
+has a fully applied matching receipt, valid folder inventory, affected member/id
+indexes and root manifest, and no pending cleanup. Aggregate `p3` is true only if
+all requested selections meet this rule. A global recent build time proves nothing.
 A selected historical version is not mounted and reports `p3_version_not_served`;
 an unprocessed/parked selection is not ready; lag reports
 `corpus_publication_incomplete`, adapter/DLQ failure remains visible. For deletion,
 readiness requires the applied empty receipt and verified removal. Existing
 `built_at`/`published_at` describe that document publication; `version` identifies
-its revision/policy, not a global snapshot. A mount being absent on the querying
+its revision/policy, not a global snapshot; aggregate timestamp/version fields
+are null when multiple publications are involved. A mount being absent on the querying
 machine does not make a completed remote publication incomplete.
 
 P3 is a **sources-layer** projection: it contains no facts/entities/K and has the
