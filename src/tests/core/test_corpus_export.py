@@ -20,6 +20,7 @@ from rememberstack.core.corpus_export import GeneratedFile
 from rememberstack.core.corpus_export import original_name
 from rememberstack.core.corpus_export import render_navigation
 from rememberstack.core.corpus_export import title_slug
+from rememberstack.core.format_registry import FAMILIES
 from rememberstack.workers.corpus_export import load_document_export
 from tests.corpus_export_support import authority
 from tests.corpus_export_support import document
@@ -87,27 +88,11 @@ def test_suffix_uses_uuid_bytes_and_needs_no_retained_metadata() -> None:
         ),
         *(
             ("upload", "text/plain", family, "text", False, "document")
-            for family in (
-                "text",
-                "markdown",
-                "html",
-                "word",
-                "rtf",
-                "notebook",
-                "ebook",
-            )
+            for family in ("text", "markdown", "html", "word", "notebook", "ebook")
         ),
         *(
             ("upload", "application/octet-stream", family, "card", False, "data")
-            for family in (
-                "dataset",
-                "code",
-                "config",
-                "archive",
-                "container",
-                "log",
-                "other_text",
-            )
+            for family in ("dataset", "code", "config", "archive", "log", "other_text")
         ),
         ("upload", "application/octet-stream", "binary", "card", False, "other"),
         (
@@ -135,6 +120,53 @@ def test_ordered_types(source, mime, family, route, attachment, expected) -> Non
     )
 
 
+def test_every_registered_family_has_an_intended_type() -> None:
+    expected = {
+        "archive": "data",
+        "binary": "other",
+        "code": "data",
+        "config": "data",
+        "dataset": "data",
+        "delimited": "spreadsheet",
+        "ebook": "document",
+        "email": "email",
+        "html": "document",
+        "image": "image",
+        "log": "data",
+        "markdown": "document",
+        "media": "audio",  # The registry's canonical media MIME is audio/mpeg.
+        "notebook": "document",
+        "other_text": "data",
+        "pdf": "pdf",
+        "presentation": "presentation",
+        "spreadsheet": "spreadsheet",
+        "text": "document",
+        "word": "document",
+    }
+    assert {family.name for family in FAMILIES} == expected.keys()
+    for family in FAMILIES:
+        assert (
+            corpus_type(
+                document(
+                    family=family.name, mime=family.mime, route=family.converter or ""
+                )
+            )
+            == expected[family.name]
+        ), family.name
+
+
+@pytest.mark.parametrize(
+    ("mime", "expected"),
+    [
+        (" AUDIO/MP4; codecs=mp4a.40.2 ", "audio"),
+        ("video/quicktime", "video"),
+        ("application/octet-stream", "other"),
+    ],
+)
+def test_media_type_uses_stored_mime_with_generic_card_route(mime, expected) -> None:
+    assert corpus_type(document(family="media", mime=mime, route="card")) == expected
+
+
 @pytest.mark.parametrize(
     ("title", "expected"),
     [
@@ -142,9 +174,11 @@ def test_ordered_types(source, mime, family, route, attachment, expected) -> Non
         ("", "untitled"),
         ("日本語", "untitled"),
         ("CON", "untitled"),
+        ("CÓN", "untitled"),
         ("Ｒｅｐｏｒｔ １２", "report-12"),
-        ("Résumé", "r-sum"),
+        ("Résumé", "resume"),
         ("A" * 1000, "a" * 60),
+        ("ß" * 100, "ss" * 30),
         ("..", "untitled"),
         ("x--y", "x-y"),
     ],
@@ -152,6 +186,22 @@ def test_ordered_types(source, mime, family, route, attachment, expected) -> Non
 def test_slug_is_safe_and_bounded(title, expected) -> None:
     assert title_slug(title) == expected
     assert len(title_slug(title).encode()) <= 60
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Smlouva o dílo – Žluťoučký kůň 2024", "smlouva-o-dilo-zlutoucky-kun-2024"),
+        ("Straße für Öl", "strasse-fur-ol"),
+        ("Łódź i Gdańsk", "lodz-i-gdansk"),
+        ("Cœur de l’été à Noël", "coeur-de-l-ete-a-noel"),
+        ("ẞ Æ Œ Ø Ł Đ Ð Þ", "ss-ae-oe-o-l-d-d-th"),
+        ("Re\u0301sume\u0301", "resume"),
+    ],
+)
+def test_latin_titles_and_topics_transliterate(title, expected) -> None:
+    assert title_slug(title) == expected
+    assert corpus_topics(f"Root/{title}") == ("root", expected)
 
 
 @pytest.mark.parametrize(
@@ -171,6 +221,7 @@ def test_slug_is_safe_and_bounded(title, expected) -> None:
         "a/_index.md",
         "a/document.json",
         "a/ＣＯＮ",
+        "a/cón",
         "a/one／two",
         "a/one＼two",
     ],

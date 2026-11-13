@@ -26,7 +26,7 @@ from rememberstack.core.format_registry import FAMILIES
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import FORMAT_MIMES
 
-CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11:d155"
+CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11b:d155"
 CORPUS_TYPES: Final = (
     "email",
     "chat",
@@ -70,6 +70,9 @@ _RESERVED: Final = frozenset(
         *(f"com{i}" for i in range(1, 10)),
         *(f"lpt{i}" for i in range(1, 10)),
     }
+)
+_LATIN_TRANSLITERATION: Final = str.maketrans(
+    {"ß": "ss", "æ": "ae", "œ": "oe", "ø": "o", "ł": "l", "đ": "d", "ð": "d", "þ": "th"}
 )
 _FAMILY_EXTENSIONS: Final = {
     "markdown": "md",
@@ -217,7 +220,12 @@ def corpus_suffix(doc_id: UUID) -> str:
 
 
 def _normalize(value: str, limit: int) -> str:
-    normalized = unicodedata.normalize("NFKC", value).lower()
+    normalized = (
+        unicodedata.normalize("NFKD", value).lower().translate(_LATIN_TRANSLITERATION)
+    )
+    normalized = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
     return re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")[:limit].rstrip("-")
 
 
@@ -278,28 +286,23 @@ def corpus_type(document: CorpusDocument) -> str:
         document.route in {"chat", "conversation"}
     ):
         return "chat"
-    for kind in ("image", "audio", "video"):
-        if mime.startswith(f"{kind}/") or family == kind:
+    if mime.startswith("image/") or family == "image":
+        return "image"
+    # The media family shares the generic card route; its MIME carries the subtype.
+    for kind in ("audio", "video"):
+        if mime.startswith(f"{kind}/"):
             return kind
     if mime == "application/pdf" or family == "pdf":
         return "pdf"
-    if family in {"spreadsheet", "workbook", "delimited"}:
+    if family in {"spreadsheet", "delimited"}:
         return "spreadsheet"
-    if family in {"presentation", "slides"}:
+    if family == "presentation":
         return "presentation"
-    if family in {"text", "markdown", "html", "word", "rtf", "notebook", "ebook"}:
+    if family in {"text", "markdown", "html", "word", "notebook", "ebook"}:
         return "document"
-    if family in {
-        "dataset",
-        "code",
-        "config",
-        "archive",
-        "container",
-        "log",
-        "other_text",
-        "structured_data",
-    }:
+    if family in {"dataset", "code", "config", "archive", "log", "other_text"}:
         return "data"
+    # Binary and media without an audio/video MIME have no known specific type.
     return "other"
 
 
