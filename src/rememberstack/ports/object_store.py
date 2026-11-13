@@ -1,4 +1,4 @@
-"""D61 byte/object-key seam for immutable raw inputs, artifacts, and snapshots."""
+"""D61 immutable E0 creation and the separate D155 mutable object capability."""
 
 from collections.abc import Iterable
 from collections.abc import Iterator
@@ -40,6 +40,7 @@ class MutableObjectStorePort(Protocol):
 
         The producer validates its expected size/hash before returning normally;
         raising leaves the previous object intact. No whole-object buffering.
+        A closeable source iterator is closed on success or failure.
         """
         ...
 

@@ -4,8 +4,10 @@ The module and `REMEMBERSTACK_MINIO_` names predate the bundled SeaweedFS store;
 any S3 API with path-style addressing and `If-None-Match: *` works.
 """
 
+from base64 import b64encode
 from collections.abc import Iterable
 from collections.abc import Iterator
+from hashlib import md5
 from typing import cast
 from typing import NotRequired
 from typing import Protocol
@@ -128,6 +130,7 @@ class _S3Client(Protocol):
         Body: bytes,
         Metadata: dict[str, str],
         IfNoneMatch: str = ...,
+        ContentMD5: str = ...,
     ) -> object:
         """Conditionally create one immutable object."""
         ...
@@ -137,7 +140,14 @@ class _S3Client(Protocol):
     ) -> _CreatedUpload: ...
 
     def upload_part(
-        self, *, Bucket: str, Key: str, UploadId: str, PartNumber: int, Body: bytes
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        UploadId: str,
+        PartNumber: int,
+        Body: bytes,
+        ContentMD5: str,
     ) -> _UploadedPart: ...
 
     def complete_multipart_upload(
@@ -281,8 +291,9 @@ class MinIOObjectStore:
         upload_id: str | None = None
         parts: list[_CompletedPart] = []
         buffer = bytearray()
+        source = iter(chunks)
         try:
-            for chunk in chunks:
+            for chunk in source:
                 view = memoryview(chunk)
                 while view:
                     count = min(_PART_SIZE - len(buffer), len(view))
@@ -301,9 +312,14 @@ class MinIOObjectStore:
                         )
                         buffer.clear()
             if upload_id is None:
+                content = bytes(buffer)
                 record_object_transfer(bytes_written=len(buffer))
                 self._client.put_object(
-                    Bucket=self._bucket, Key=name, Body=bytes(buffer), Metadata=metadata
+                    Bucket=self._bucket,
+                    Key=name,
+                    Body=content,
+                    Metadata=metadata,
+                    ContentMD5=_content_md5(content),
                 )
                 return
             if buffer:
@@ -320,6 +336,10 @@ class MinIOObjectStore:
             if upload_id is not None:
                 self._abort_upload(name=name, upload_id=upload_id)
             raise
+        finally:
+            close = getattr(source, "close", None)
+            if close is not None:
+                close()
 
     def _upload_part(
         self, *, name: str, upload_id: str, content: bytes, parts: list[_CompletedPart]
@@ -334,6 +354,7 @@ class MinIOObjectStore:
             UploadId=upload_id,
             PartNumber=len(parts) + 1,
             Body=content,
+            ContentMD5=_content_md5(content),
         )
         parts.append({"PartNumber": len(parts) + 1, "ETag": result["ETag"]})
 
@@ -524,7 +545,6 @@ def _client(*, settings: MinIOSettings) -> _S3Client:
                 s3={"addressing_style": "path"},
                 max_pool_connections=_MAX_POOL_CONNECTIONS,
                 request_checksum_calculation="when_required",
-                response_checksum_validation="when_required",
             ),
         ),
     )
@@ -533,6 +553,11 @@ def _client(*, settings: MinIOSettings) -> _S3Client:
 def _validated_key(*, key: ObjectKey) -> str:
     """Reject absolute and parent-traversal keys for local/S3 parity."""
     return validate_object_path(key.root)
+
+
+def _content_md5(content: bytes) -> str:
+    """Portable S3/XML transport checksum; not an object identity or ETag."""
+    return b64encode(md5(content, usedforsecurity=False).digest()).decode("ascii")
 
 
 def _error_code(*, error: ClientError) -> str:

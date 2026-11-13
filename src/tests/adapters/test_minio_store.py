@@ -76,6 +76,7 @@ class _MemoryS3:
         Body: bytes,
         Metadata: dict[str, str],
         IfNoneMatch: str = "",
+        ContentMD5: str = "",
     ) -> object:
         """Honor the S3 conditional-create header."""
         identity = (Bucket, Key)
@@ -95,7 +96,14 @@ class _MemoryS3:
         raise NotImplementedError("multipart is exercised against real MinIO")
 
     def upload_part(
-        self, *, Bucket: str, Key: str, UploadId: str, PartNumber: int, Body: bytes
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        UploadId: str,
+        PartNumber: int,
+        Body: bytes,
+        ContentMD5: str,
     ) -> _UploadedPart:
         raise NotImplementedError("multipart is exercised against real MinIO")
 

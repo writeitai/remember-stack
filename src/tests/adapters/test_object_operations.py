@@ -86,3 +86,33 @@ def test_local_refuses_external_symlinks(tmp_path: Path) -> None:
     with pytest.raises(ObjectKeyEscapesRootError):
         list(store.iter_keys(prefix=""))
     assert outside.read_bytes() == b"keep"
+
+
+def test_local_disk_failure_closes_source_and_removes_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rememberstack.adapters.selfhost.object_store as adapter
+
+    root = tmp_path / "objects"
+    store = LocalFSObjectStore(root=root)
+    key = ObjectKey("original")
+    store.write_bytes(key=key, content=b"old", storage_class="cold")
+    closed = []
+
+    def source() -> Iterator[bytes]:
+        try:
+            yield b"new"
+        finally:
+            closed.append(True)
+
+    def fail(fd: int) -> None:
+        raise OSError("disk failed")
+
+    monkeypatch.setattr(adapter.os, "fsync", fail)
+    stream = source()
+    with pytest.raises(OSError, match="disk failed"):
+        store.replace_stream(key=key, chunks=stream, storage_class="hot")
+    assert closed == [True]
+    assert store.read_bytes(key=key) == b"old"
+    assert store.storage_class_of(key=key) == "cold"
+    assert not list((tmp_path / ".objects.metadata").glob("tmp*"))

@@ -255,3 +255,64 @@ def test_cross_endpoint_stream_has_bounded_memory_and_transfer_accounting(
     finally:
         raw.purge_objects(keys=(key,), prefixes=())
         bucket.client.delete_bucket(Bucket=raw_name)
+
+
+def test_failed_destination_closes_source_and_counts_attempted_part(
+    bucket: _Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed = []
+
+    def source() -> Iterator[bytes]:
+        try:
+            for _ in range(20):
+                yield b"x" * (1024 * 1024)
+        finally:
+            closed.append(True)
+
+    stream = source()  # Retain it: collection must not be responsible for cleanup.
+
+    def fail(**kwargs: Any) -> Any:
+        raise RuntimeError("destination failed")
+
+    monkeypatch.setattr(bucket.client, "upload_part", fail)
+    with object_transfer_scope() as transfer:
+        with pytest.raises(RuntimeError, match="destination failed"):
+            bucket.store.replace_stream(
+                key=ObjectKey("original"), chunks=stream, storage_class="hot"
+            )
+    assert closed == [True]
+    assert transfer.bytes_written == 8 * 1024 * 1024
+    assert transfer.bytes_read == 0
+    assert not bucket.client.list_multipart_uploads(Bucket=bucket.name).get("Uploads")
+
+
+def test_small_replacement_transfer_accounting(bucket: _Bucket) -> None:
+    key = ObjectKey("small")
+    with object_transfer_scope() as transfer:
+        bucket.store.replace_stream(
+            key=key, chunks=(b"one", b"two"), storage_class="hot"
+        )
+        bucket.store.replace_stream(key=key, chunks=(b"123",), storage_class="hot")
+        assert bucket.store.read_bytes(key=key) == b"123"
+    assert (transfer.bytes_read, transfer.bytes_written) == (3, 9)
+
+
+@pytest.mark.parametrize("operation", ["put_object", "upload_part"])
+def test_provider_checks_transport_checksum_before_publication(
+    bucket: _Bucket, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    key = ObjectKey("original")
+    bucket.store.write_bytes(key=key, content=b"old", storage_class="cold")
+    send = getattr(bucket.client, operation)
+
+    def tamper(**kwargs: Any) -> Any:
+        kwargs["Body"] = b"corrupt"  # Keep the checksum of the original part/body.
+        return send(**kwargs)
+
+    monkeypatch.setattr(bucket.client, operation, tamper)
+    chunks = (b"new",) if operation == "put_object" else (b"x" * (8 * 1024 * 1024),)
+    with pytest.raises(ClientError, match="BadDigest"):
+        bucket.store.replace_stream(key=key, chunks=chunks, storage_class="hot")
+    assert bucket.store.read_bytes(key=key) == b"old"
+    assert bucket.store.storage_class_of(key=key) == "cold"
+    assert not bucket.client.list_multipart_uploads(Bucket=bucket.name).get("Uploads")

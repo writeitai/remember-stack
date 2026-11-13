@@ -1,4 +1,4 @@
-"""Provider-neutral object keys for immutable raw, artifact, and snapshot bytes."""
+"""Provider-neutral identities for stored raw, artifact and corpus objects."""
 
 from typing import Annotated
 
@@ -8,7 +8,7 @@ from pydantic import RootModel
 
 
 class ObjectKey(RootModel[Annotated[str, Field(min_length=1)]]):
-    """Opaque non-empty key in the configured immutable object store."""
+    """Non-empty key in the configured object store."""
 
     model_config = ConfigDict(frozen=True)
 

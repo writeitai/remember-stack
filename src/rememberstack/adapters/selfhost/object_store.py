@@ -69,10 +69,11 @@ class LocalFSObjectStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         marker.parent.mkdir(parents=True, exist_ok=True)
         temporary: Path | None = None
+        source = iter(chunks)
         try:
             with NamedTemporaryFile(dir=self._metadata_root, delete=False) as handle:
                 temporary = Path(handle.name)
-                for chunk in chunks:
+                for chunk in source:
                     handle.write(chunk)
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -87,8 +88,13 @@ class LocalFSObjectStore:
                     ) from error
             marker.write_text(storage_class, encoding="utf-8")
         finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+            try:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            finally:
+                close = getattr(source, "close", None)
+                if close is not None:
+                    close()
 
     def storage_class_of(self, *, key: ObjectKey) -> str | None:
         """The declared class, kept outside the mounted reader paths."""
