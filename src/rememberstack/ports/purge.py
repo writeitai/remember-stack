@@ -9,7 +9,7 @@ from rememberstack.model import ObjectKey
 
 @runtime_checkable
 class ObjectPurgePort(Protocol):
-    """Idempotently erase manifest-nominated immutable objects."""
+    """Idempotently erase manifest-nominated objects and unfinished uploads."""
 
     def purge_objects(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]

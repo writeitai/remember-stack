@@ -360,7 +360,11 @@ class MinIOObjectStore:
 
     def delete(self, *, key: ObjectKey) -> None:
         """Idempotently remove one exact key, never its descendants."""
-        self._client.delete_object(Bucket=self._bucket, Key=_validated_key(key=key))
+        try:
+            self._client.delete_object(Bucket=self._bucket, Key=_validated_key(key=key))
+        except ClientError as error:
+            if _error_code(error=error) not in {"404", "NoSuchKey", "NotFound"}:
+                raise
 
     def iter_keys(self, *, prefix: str) -> Iterator[ObjectKey]:
         """Enumerate all pages, retaining only boundary-matching object names."""
@@ -516,7 +520,7 @@ class MinIOObjectStore:
             key_marker = page.get("NextKeyMarker", "")
             upload_marker = page.get("NextUploadIdMarker", "")
             marker = (key_marker, upload_marker)
-            if not key_marker or marker in seen:
+            if not key_marker or not upload_marker or marker in seen:
                 raise RuntimeError(
                     "incomplete or repeated multipart listing continuation token"
                 )

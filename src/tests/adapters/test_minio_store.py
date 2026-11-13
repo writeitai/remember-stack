@@ -340,7 +340,13 @@ def test_listing_follows_empty_truncated_pages() -> None:
 
 @pytest.mark.parametrize(
     "markers",
-    [(None,), (("key", "id"), ("key", "id")), (("a", "1"), ("b", "2"), ("a", "1"))],
+    [
+        (None,),
+        (("key", ""),),
+        (("", "id"),),
+        (("key", "id"), ("key", "id")),
+        (("a", "1"), ("b", "2"), ("a", "1")),
+    ],
 )
 def test_purge_refuses_broken_multipart_pagination(
     markers: tuple[tuple[str, str] | None, ...],
@@ -411,3 +417,17 @@ def test_purge_follows_both_multipart_markers() -> None:
     store = MinIOObjectStore(bucket="corpus", client=client)
     store.purge_objects(keys=(), prefixes=(ObjectKey("path"),))
     assert client.aborted == [("path/a", "first"), ("path/a", "second")]
+
+
+@pytest.mark.parametrize("code", ["404", "NoSuchKey", "NotFound", "AccessDenied"])
+def test_exact_delete_accepts_only_absence_errors(code: str) -> None:
+    class DeleteError(_MemoryS3):
+        def delete_object(self, *, Bucket: str, Key: str) -> object:
+            raise _client_error(code=code, operation="DeleteObject")
+
+    store = MinIOObjectStore(bucket="corpus", client=DeleteError())
+    if code == "AccessDenied":
+        with pytest.raises(ClientError, match="AccessDenied"):
+            store.delete(key=ObjectKey("missing"))
+    else:
+        store.delete(key=ObjectKey("missing"))
