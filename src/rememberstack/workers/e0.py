@@ -275,6 +275,7 @@ class UploadIngestor:
             source_ref=content_hash,
             content_hash=content_hash,
         )
+        self._check_tags(deployment_id=deployment_id, upload=upload)
         upload = self._detect_upload(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
@@ -307,6 +308,7 @@ class UploadIngestor:
                 file_name=upload.filename,
                 declared_title=upload.title,
                 source_path=upload.source_path,
+                tags=upload.tags,
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
@@ -522,6 +524,7 @@ class UploadIngestor:
             source_ref=source_ref,
             content_hash=content_hash,
         )
+        self._check_tags(deployment_id=deployment_id, upload=upload)
         upload = self._detect_upload(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
@@ -550,6 +553,7 @@ class UploadIngestor:
             version_key=upload.version_key,
             effective_from=upload.effective_from,
             effective_until=upload.effective_until,
+            tags=upload.tags,
         )
         try:
             self._raw_store.write_bytes(
@@ -595,6 +599,11 @@ class UploadIngestor:
             and isinstance(self._raw_store, ObjectPurgePort)
         ):
             self._raw_store.purge_objects(keys=(key,), prefixes=())
+
+    def _check_tags(self, *, deployment_id: UUID, upload: DocumentUpload) -> None:
+        """D156: refuse unregistered tags before any bytes or rows are stored."""
+        if upload.tags:
+            self._catalog.check_tags(deployment_id=deployment_id, tags=upload.tags)
 
     def _detect_upload(self, *, upload: DocumentUpload) -> DocumentUpload:
         """Use byte classes first and registry hints within compatible families."""

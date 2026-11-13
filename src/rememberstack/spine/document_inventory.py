@@ -44,6 +44,7 @@ from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
+from rememberstack.spine.tags import LINEAGE_TAG_NAMES_SQL
 
 #: Most documents one page may carry. A caller asking for more gets this.
 MAX_PAGE_SIZE = 200
@@ -52,7 +53,7 @@ MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 50
 
 _PAGE = text(
-    """
+    f"""
     SELECT d.doc_id,
            d.title,
            d.source_kind,
@@ -73,7 +74,8 @@ _PAGE = text(
                AND ready.doc_id = d.doc_id
                AND ready.status = 'ready'
                AND ready.deleted_at IS NULL
-           ) AS serving
+           ) AS serving,
+           {LINEAGE_TAG_NAMES_SQL} AS tags
     FROM documents d
     JOIN LATERAL (
       SELECT dv.version_id, dv.version_no, dv.status, dv.ingested_at, dv.error
@@ -102,7 +104,7 @@ _PAGE = text(
       )
     ORDER BY d.first_seen_at DESC, d.doc_id DESC
     LIMIT :limit
-    """
+    """  # noqa: S608 -- interpolated fragment is a module constant
 )
 
 
@@ -167,6 +169,7 @@ class DocumentInventory:
                     error=row["error"],
                 ),
                 serving=bool(row["serving"]),
+                tags=tuple(row["tags"]),
             )
             for row in page
         )

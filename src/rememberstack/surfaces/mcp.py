@@ -32,6 +32,7 @@ from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
+from remember.mcp_tools import handle_tag_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import invalid_arguments
 from remember.mcp_tools import layer_unavailable
@@ -43,10 +44,17 @@ from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
+from remember.mcp_tools import TAG_TOOL_NAMES
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
+from remember.models import DocumentTags
+from remember.models import DocumentTagsUpdate
+from remember.models import Tag
+from remember.models import TagCreate
+from remember.models import TagList
+from remember.models import TagUpdate
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import DocumentReferencesPage
@@ -69,6 +77,7 @@ from rememberstack.surfaces.http_api import DocumentSearchPort
 from rememberstack.surfaces.http_api import IngestPort
 from rememberstack.surfaces.http_api import PipelineReadinessPort
 from rememberstack.surfaces.http_api import SectionHistoryPort
+from rememberstack.surfaces.http_api import TagPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
@@ -113,6 +122,7 @@ class _LocalMemoryWriteBackend:
         version_key: str | None = None,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
+        tags: tuple[str, ...] = (),
     ) -> IngestedVersion:
         """Accept one body through the composed E0 ingest port."""
         upload = DocumentUpload(
@@ -123,6 +133,7 @@ class _LocalMemoryWriteBackend:
             version_key=version_key,
             effective_from=effective_from,
             effective_until=effective_until,
+            tags=tags,
         )
         if source_kind is None or source_ref is None:
             return self._ingest.ingest(deployment_id=self._deployment_id, upload=upload)
@@ -231,6 +242,43 @@ class _LocalDocumentReferencesBackend:
             raise _BadSearchRequest(str(error)) from error
 
 
+class _LocalTagBackend:
+    """Adapt the in-process tag port to the shared tag tools (D156)."""
+
+    def __init__(self, *, tags: TagPort, deployment_id: UUID) -> None:
+        self._tags = tags
+        self._deployment_id = deployment_id
+
+    def list_tags(self, *, query: str | None) -> TagList:
+        """List through the composed port."""
+        return self._tags.list_tags(deployment_id=self._deployment_id, query=query)
+
+    def create_tag(self, *, request: TagCreate) -> Tag:
+        """Register through the composed port."""
+        return self._tags.create_tag(deployment_id=self._deployment_id, request=request)
+
+    def update_tag(self, *, tag: str, request: TagUpdate) -> Tag:
+        """Rename or re-describe through the composed port (name or id)."""
+        return self._tags.update_tag(
+            deployment_id=self._deployment_id, tag=tag, request=request
+        )
+
+    def delete_tag(self, *, tag: str) -> Tag:
+        """Delete through the composed port (name or id)."""
+        return self._tags.delete_tag(deployment_id=self._deployment_id, tag=tag)
+
+    def update_document_tags(
+        self, *, doc_id: UUID, request: DocumentTagsUpdate
+    ) -> DocumentTags:
+        """Change tags through the composed port; absence is a 404 shape."""
+        try:
+            return self._tags.update_document_tags(
+                deployment_id=self._deployment_id, doc_id=doc_id, request=request
+            )
+        except DocumentNotFoundError as error:
+            raise _DocumentNotFound() from error
+
+
 class _ChunkNotFound(Exception):
     """The HTTP-shaped absence the shared tool maps to ``chunk_not_found``."""
 
@@ -276,6 +324,7 @@ class OperationMcpServer:
         document_search: DocumentSearchPort | None = None,
         section_history: SectionHistoryPort | None = None,
         document_references: DocumentReferencesPort | None = None,
+        tags: TagPort | None = None,
         processing_layers: ProcessingLayersPort | None = None,
     ) -> None:
         """Bind the MCP server to the operation surface and optional ports.
@@ -288,7 +337,8 @@ class OperationMcpServer:
         `delete_document` is advertised only when `deletion` is composed, and
         `search_documents` only when `document_search` is, and
         `section_history` only when `section_history` is, and
-        `document_references` only when `document_references` is.
+        `document_references` only when `document_references` is, and the
+        five tag tools only when `tags` is (D156).
         """
         if open_query is not None and open_query.deployment_id != surface.deployment_id:
             raise ValueError(
@@ -339,6 +389,11 @@ class OperationMcpServer:
                 references=document_references, deployment_id=surface.deployment_id
             )
         )
+        self._tag_backend: _LocalTagBackend | None = (
+            None
+            if tags is None
+            else _LocalTagBackend(tags=tags, deployment_id=surface.deployment_id)
+        )
 
     def list_tools(self) -> dict[str, object]:
         """List the composed catalogue tools, in catalogue order.
@@ -362,6 +417,8 @@ class OperationMcpServer:
             names.append(SECTION_HISTORY_TOOL_NAME)
         if self._references_backend is not None:
             names.append(DOCUMENT_REFERENCES_TOOL_NAME)
+        if self._tag_backend is not None:
+            names.extend(TAG_TOOL_NAMES)
         # D143 §7.4: operations whose layer the deployment does not serve
         # (facts_context, resolve_entity without facts) are not listed.
         unserved = unserved_operation_names(
@@ -404,6 +461,10 @@ class OperationMcpServer:
         if name == DOCUMENT_REFERENCES_TOOL_NAME:
             return handle_document_references_tool(
                 arguments=arguments, backend=self._references_backend
+            )
+        if name in TAG_TOOL_NAMES:
+            return handle_tag_tool(
+                name=name, arguments=arguments, backend=self._tag_backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(

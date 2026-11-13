@@ -53,6 +53,8 @@ from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import SOURCE_KIND_MAX_LEN
 from remember.mcp_tools._definitions import SOURCE_REF_MAX_LEN
 from remember.mcp_tools._definitions import SOURCE_VERSION_REF_MAX_LEN
+from remember.mcp_tools._definitions import TAG_LIST_MAX
+from remember.mcp_tools._definitions import TAG_REF_MAX_LEN
 from remember.mcp_tools._definitions import TITLE_MAX_LEN
 from remember.mcp_tools._definitions import VERSION_IDS_MAX
 from remember.mcp_tools._definitions import VERSION_KEY_MAX_LEN
@@ -136,6 +138,7 @@ class MemoryWriteBackend(Protocol):
         version_key: str | None = None,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
+        tags: tuple[str, ...] = (),
     ) -> IngestedVersion:
         """Accept one document body into E0 and return the version identity."""
         ...
@@ -332,14 +335,15 @@ def _run_ingest(
         settings=settings,
         capability_limit=backend.max_ingest_body_bytes(),
     )
-    # D140 arguments travel only when given, so a backend that predates them
-    # keeps serving every call that does not use them.
+    # D140 and D156 arguments travel only when given, so a backend that
+    # predates them keeps serving every call that does not use them.
     effective_time: dict[str, Any] = {
         key: value
         for key, value in (
             ("version_key", parsed.version_key),
             ("effective_from", parsed.effective_from),
             ("effective_until", parsed.effective_until),
+            ("tags", parsed.tags or None),
         )
         if value is not None
     }
@@ -414,6 +418,7 @@ class ParsedIngest:
     version_key: str | None = None
     effective_from: datetime | None = None
     effective_until: datetime | None = None
+    tags: tuple[str, ...] = ()
 
 
 def parse_ingest_arguments(
@@ -445,6 +450,7 @@ def parse_ingest_arguments(
             "version_key",
             "effective_from",
             "effective_until",
+            "tags",
         },
     )
     path = _optional_nonempty_string(arguments, key="path", max_length=None)
@@ -509,6 +515,7 @@ def parse_ingest_arguments(
     effective_until = _parse_source_modified_at(
         arguments.get("effective_until"), key="effective_until"
     )
+    tags = parse_tag_list(arguments, key="tags") or ()
 
     if (source_kind is None) != (source_ref is None):
         raise ToolArgumentError(
@@ -631,7 +638,37 @@ def parse_ingest_arguments(
         version_key=version_key,
         effective_from=effective_from,
         effective_until=effective_until,
+        tags=tags,
     )
+
+
+def parse_tag_list(
+    arguments: Mapping[str, object], *, key: str
+) -> tuple[str, ...] | None:
+    """An optional list of tag references (names or ids), each at most 128 chars."""
+    raw = arguments.get(key)
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, list)
+        or len(raw) > TAG_LIST_MAX
+        or not all(
+            isinstance(item, str) and 1 <= len(item) <= TAG_REF_MAX_LEN for item in raw
+        )
+    ):
+        raise ToolArgumentError(
+            error=invalid_arguments(
+                detail=(
+                    f"{key} must be a list of at most {TAG_LIST_MAX} tag names or"
+                    f" tag_ids, each 1 to {TAG_REF_MAX_LEN} characters."
+                )
+            )
+        )
+    if len(set(raw)) != len(raw):
+        raise ToolArgumentError(
+            error=invalid_arguments(detail=f"{key} lists a tag twice.")
+        )
+    return tuple(raw)
 
 
 def _resolve_path_body(

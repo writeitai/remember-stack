@@ -74,6 +74,7 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
+from rememberstack.spine.tags import TagCatalog
 from rememberstack.spine.work_ledger import WorkLedgerSettings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -1454,6 +1455,7 @@ class SelfHostProfile:
                 embedding_model=embedding_model,
             ),
             effective_time=EffectiveTimeCatalog(engine=self._engine),
+            tags=TagCatalog(engine=self._engine),
             graph=graph_queries,
             task_queue=self._task_queue,
             build_info=_BuildInfo(

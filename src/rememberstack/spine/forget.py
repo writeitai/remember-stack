@@ -1550,6 +1550,14 @@ _POSTGRES_SCRUB = (
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         """
     ),
+    # D156: the lineage's tag assignments go; the registry is the deployment's
+    # vocabulary, not content from this source, and stays.
+    text(
+        """
+        DELETE FROM document_tags
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
     # D134: deleted, not scrubbed in place — they hold names, paths and people.
     text(
         """
@@ -1851,6 +1859,9 @@ _VERIFY_POSTGRES_SCRUB = text(
           AND (doc_id = :doc_id OR mention_id = ANY(:mention_ids))
         UNION ALL
         SELECT 1 FROM document_entity_bindings
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_tags
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM document_metadata

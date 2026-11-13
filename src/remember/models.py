@@ -14,6 +14,7 @@ from typing import Final
 from typing import Literal
 from typing import Self
 from typing import TypeAlias
+import unicodedata
 from uuid import UUID
 
 from pydantic import AfterValidator
@@ -147,6 +148,8 @@ class DocumentSummary(BaseModel):
     first_seen_at: datetime
     latest: DocumentVersionSummary
     serving: bool
+    tags: tuple[str, ...] = ()
+    """The names of the registered tags assigned to the document (D156)."""
 
 
 class DocumentPage(BaseModel):
@@ -168,6 +171,112 @@ class DocumentDeletion(BaseModel):
     claims_retired: int = Field(ge=0)
     relations_closed: int = Field(ge=0)
     observations_closed: int = Field(ge=0)
+
+
+# ---------------------------------------------------------------------------
+# Document tags (D156)
+# ---------------------------------------------------------------------------
+
+TAG_NAME_MAX_LEN: Final = 128
+TAG_DESCRIPTION_MAX_LEN: Final = 2000
+TAGS_PER_DOCUMENT_MAX: Final = 64
+"""Most tags one document may carry (a starting point, to be measured)."""
+TAGS_PER_DEPLOYMENT_MAX: Final = 10_000
+"""Most tags one deployment may register (a starting point, to be measured)."""
+
+
+def normalize_tag_name(name: str) -> str:
+    """The NFC form of a tag name, refused unless it is a valid name (D156 §3.1).
+
+    A name is 1-128 characters with no whitespace or control characters. Its
+    spelling is kept; names compare case-insensitively.
+    """
+    normalized = unicodedata.normalize("NFC", name)
+    if not 1 <= len(normalized) <= TAG_NAME_MAX_LEN:
+        raise ValueError(f"a tag name is 1 to {TAG_NAME_MAX_LEN} characters")
+    if any(
+        character.isspace() or unicodedata.category(character) == "Cc"
+        for character in normalized
+    ):
+        raise ValueError("a tag name has no whitespace or control characters")
+    return normalized
+
+
+TagName: TypeAlias = Annotated[str, AfterValidator(normalize_tag_name)]
+"""A tag name as declared: NFC, 1-128 characters, no whitespace or controls."""
+
+TagRef: TypeAlias = Annotated[str, Field(min_length=1, max_length=TAG_NAME_MAX_LEN)]
+"""A registered tag, by name (matched case-insensitively) or ``tag_id``."""
+
+
+class Tag(BaseModel):
+    """One registered tag: a name callers and agents use, and what it means."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag_id: UUID
+    name: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TagList(BaseModel):
+    """The deployment's registered tags, by name (``list_tags``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tags: tuple[Tag, ...]
+
+
+class TagCreate(BaseModel):
+    """Register one tag. A name already registered, in any case, is refused."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: TagName
+    description: str = Field(max_length=TAG_DESCRIPTION_MAX_LEN)
+
+
+class TagUpdate(BaseModel):
+    """Rename or re-describe one tag; its assignments are unaffected."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: TagName | None = None
+    description: str | None = Field(default=None, max_length=TAG_DESCRIPTION_MAX_LEN)
+
+    @model_validator(mode="after")
+    def _changes_something(self) -> Self:
+        if self.name is None and self.description is None:
+            raise ValueError("give name, description or both")
+        return self
+
+
+class DocumentTagsUpdate(BaseModel):
+    """Change one document's tags atomically: ``add``/``remove``, or ``set``.
+
+    ``set`` replaces the whole set and excludes ``add`` and ``remove``; an
+    empty ``set`` clears the document's tags. Removing a tag the document
+    does not have is not an error.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    add: tuple[TagRef, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
+    remove: tuple[TagRef, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
+    set: tuple[TagRef, ...] | None = Field(
+        default=None, max_length=TAGS_PER_DOCUMENT_MAX
+    )
+
+    @model_validator(mode="after")
+    def _set_excludes_add_and_remove(self) -> Self:
+        if self.set is not None and (self.add or self.remove):
+            raise ValueError("set replaces the tags; it excludes add and remove")
+        return self
+
+
+class DocumentTags(BaseModel):
+    """A document's tag names after a tag write."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    tags: tuple[str, ...]
 
 
 EFFECTIVE_PERIODS_MAX: Final = 1000
@@ -410,6 +519,8 @@ class DocumentSearchResult(BaseModel):
     version_no: int
     status: DocumentStatus
     lineage_title: str | None = None
+    tags: tuple[str, ...] = ()
+    """The names of the registered tags assigned to the document (D156)."""
     file_name: str | None = None
     title: str | None = None
     source_path: str | None = None

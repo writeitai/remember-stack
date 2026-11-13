@@ -83,6 +83,7 @@ from rememberstack.model.client import DocumentSearchResult
 from rememberstack.model.client import EffectiveInterval
 from rememberstack.model.client import MatchingEdition
 from rememberstack.spine.effective_time import belief_watermark
+from rememberstack.spine.tags import LINEAGE_TAG_NAMES_SQL
 
 TRIGRAM_MIN_SIMILARITY: Final = 0.3
 """Starting word-similarity floor for the trigram name channel; to be measured."""
@@ -935,6 +936,7 @@ def _describe(
                 version_no=row["version_no"],
                 status=row["status"],
                 lineage_title=row["lineage_title"],
+                tags=tuple(row["tags"]),
                 file_name=row["file_name"],
                 title=row["title"],
                 source_path=row["source_path"],
@@ -1099,11 +1101,12 @@ _SCOPE_PENDING: Final = text(
 # The overview is the root section's summary in the version's live reading,
 # when structuring produced one; it is orientation text, never evidence.
 _DETAILS: Final = text(
-    """
+    f"""
     SELECT m.version_id, m.family, m.file_name, m.title, m.source_path,
            m.created_at, m.modified_at, m.language, m.thread_ref, m.extra,
            v.version_no, v.status::text AS status, d.title AS lineage_title,
            v.current_representation_id, d.current_version_id,
+           {LINEAGE_TAG_NAMES_SQL} AS tags,
            (SELECT s.summary
             FROM document_representations r
             JOIN document_sections s
@@ -1119,7 +1122,7 @@ _DETAILS: Final = text(
     JOIN documents d ON d.deployment_id = v.deployment_id AND d.doc_id = v.doc_id
     WHERE m.deployment_id = :deployment_id
       AND m.version_id = ANY(CAST(:version_ids AS uuid[]))
-    """
+    """  # noqa: S608 -- interpolated fragment is a module constant
 )
 
 _PEOPLE: Final = text(

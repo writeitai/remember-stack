@@ -56,6 +56,8 @@ from rememberstack.spine.period_adjudication import request_window_review_on
 from rememberstack.spine.references import activate_extracted_on
 from rememberstack.spine.references import bind_pending_references_on
 from rememberstack.spine.references import enqueue_pending_supplied_on
+from rememberstack.spine.tags import add_document_tags_on
+from rememberstack.spine.tags import resolve_tags_on
 from rememberstack.spine.work_ledger import enqueue_on
 
 
@@ -312,6 +314,21 @@ class DocumentCatalog:
                         doc_id=doc_id,
                         reason="ingest_period_declared",
                     )
+            if record.tags:
+                # D156: tags are added to the lineage and never decide whether
+                # a version is created; they enter no processing input.
+                add_document_tags_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    doc_id=doc_id,
+                    tag_ids=tuple(
+                        resolve_tags_on(
+                            connection=connection,
+                            deployment_id=record.deployment_id,
+                            tags=record.tags,
+                        ).values()
+                    ),
+                )
             convert = enqueue_on(
                 connection=connection,
                 work=EnqueueWork(
@@ -350,6 +367,18 @@ class DocumentCatalog:
                     if created or latest is None
                     else latest["version_key"]
                 ),
+            )
+
+    def check_tags(self, *, deployment_id: UUID, tags: Sequence[str]) -> None:
+        """Refuse unregistered tags before an ingest stores anything (D156).
+
+        Raises ``UnknownTagError`` naming every unregistered tag. The upload's
+        own transaction resolves them again, so a tag deleted in between is
+        still refused there.
+        """
+        with self._engine.connect() as connection:
+            resolve_tags_on(
+                connection=connection, deployment_id=deployment_id, tags=tags
             )
 
     def version_principal(

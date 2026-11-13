@@ -117,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             "query": _run_query,
             "ingest": _run_ingest,
             "documents": _run_documents,
+            "tags": _run_tags,
             "connectors": _run_connectors,
             "mcp": _run_mcp,
             "login": _run_login,
@@ -643,6 +644,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 version_key=args.version_key,
                 effective_from=args.effective_from,
                 effective_until=args.effective_until,
+                tags=args.tag,
             )
     except OSError as error:
         print(f"error: could not read {args.file}: {error}", file=sys.stderr)
@@ -662,7 +664,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 
 def _run_documents(args: argparse.Namespace) -> int:
-    """List, search, or delete the deployment's documents."""
+    """List, search, delete or tag the deployment's documents."""
     with _cli_memory_client(args) as client:
         if args.documents_command == "search":
             page = client.search_documents(
@@ -691,8 +693,41 @@ def _run_documents(args: argparse.Namespace) -> int:
             )
             print(page.model_dump_json())
             return 0
+        if args.documents_command == "tag":
+            if args.set is not None and (args.add or args.remove):
+                print("error: --set excludes --add and --remove", file=sys.stderr)
+                return 2
+            tags = client.update_document_tags(
+                doc_id=args.doc_id,
+                add=args.add,
+                remove=args.remove,
+                set=None if args.set is None else [tag for tag in args.set if tag],
+            )
+            print(tags.model_dump_json())
+            return 0
         deletion = client.delete_document(doc_id=args.doc_id)
     print(deletion.model_dump_json())
+    return 0
+
+
+def _run_tags(args: argparse.Namespace) -> int:
+    """List, create, update or delete the deployment's tags (D156)."""
+    with _cli_memory_client(args) as client:
+        if args.tags_command == "list":
+            print(client.list_tags(query=args.query).model_dump_json())
+            return 0
+        if args.tags_command == "create":
+            tag = client.create_tag(name=args.name, description=args.description)
+        elif args.tags_command == "update":
+            if args.name is None and args.description is None:
+                print("error: give --name, --description or both", file=sys.stderr)
+                return 2
+            tag = client.update_tag(
+                tag=args.tag, name=args.name, description=args.description
+            )
+        else:
+            tag = client.delete_tag(tag=args.tag)
+    print(tag.model_dump_json())
     return 0
 
 
@@ -1231,9 +1266,15 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         type=datetime.fromisoformat,
         help="UTC end (exclusive) of that period; omit for until the next start",
     )
+    ingest.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="a registered tag (name or id) to add to the document (repeatable)",
+    )
 
     documents = commands.add_parser(
-        "documents", help="list, search, or delete documents"
+        "documents", help="list, search, delete or tag documents"
     )
     documents_commands = documents.add_subparsers(
         dest="documents_command", required=True
@@ -1303,6 +1344,61 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         ),
     )
     delete_document.add_argument("doc_id", type=UUID)
+    tag_document = documents_commands.add_parser(
+        "tag",
+        parents=[client_flags],
+        help=(
+            "add or remove a document's tags, or replace them with --set;"
+            " prints the document's tags"
+        ),
+    )
+    tag_document.add_argument("doc_id", type=UUID)
+    tag_document.add_argument(
+        "--add", action="append", default=[], help="a tag to add (repeatable)"
+    )
+    tag_document.add_argument(
+        "--remove", action="append", default=[], help="a tag to remove (repeatable)"
+    )
+    tag_document.add_argument(
+        "--set",
+        action="append",
+        help=(
+            "the document's complete tag set (repeatable); excludes --add and"
+            " --remove. --set '' clears the tags"
+        ),
+    )
+
+    tags = commands.add_parser("tags", help="list, create, update or delete tags")
+    tags_commands = tags.add_subparsers(dest="tags_command", required=True)
+    list_tags = tags_commands.add_parser(
+        "list", parents=[client_flags], help="the registered tags, as JSON"
+    )
+    list_tags.add_argument(
+        "--query", help="only tags whose name or description contains this"
+    )
+    create_tag = tags_commands.add_parser(
+        "create", parents=[client_flags], help="register a tag before using it"
+    )
+    create_tag.add_argument("name", help="the tag name, such as project:autoboard")
+    create_tag.add_argument(
+        "--description",
+        required=True,
+        help="what the tag means and when to apply it, for agents",
+    )
+    update_tag = tags_commands.add_parser(
+        "update",
+        parents=[client_flags],
+        help="rename or re-describe a tag; documents keep it",
+    )
+    update_tag.add_argument("tag", help="the tag's name or id")
+    update_tag.add_argument("--name", help="the new name")
+    update_tag.add_argument("--description", help="the new description")
+    delete_tag = tags_commands.add_parser(
+        "delete",
+        parents=[client_flags],
+        help="delete a tag and remove it from every document",
+    )
+    delete_tag.add_argument("tag", help="the tag's name or id")
 
     connectors = commands.add_parser(
         "connectors", help="manage deployment-side connectors"

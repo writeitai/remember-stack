@@ -6,7 +6,10 @@ those reference. Removing exactly those from today's export must give back the
 pre-D143 document, byte for byte after canonical serialisation; its hash is
 pinned here because the old document itself is a build product of history.
 D150 adds one more enum value, ``admission``, to a readiness stage's
-``defer_reason``; it is stripped the same way.
+``defer_reason``; it is stripped the same way. D156 adds the tag routes, the
+optional ``tags`` query parameter on ``POST /ingest``, the tag schemas and a
+``tags`` field on document inventory and search results; those are stripped
+too.
 """
 
 from __future__ import annotations
@@ -29,10 +32,25 @@ _PRE_D143_SHA256: Final = (
 _PRE_D143_VERSION: Final = "0.17.2"
 """``info.version`` in that document; a release bump is not a D143 change."""
 
-_ADDED_ROUTES: Final = frozenset({"/processing-layers"})
-_ADDED_SCHEMAS: Final = frozenset(
-    {"ProcessingLayer", "ProcessingLayerStates", "OutputProcessingLayerStates"}
+_ADDED_ROUTES: Final = frozenset(
+    {"/processing-layers", "/tags", "/tags/{tag_id}", "/documents/{doc_id}/tags"}
 )
+_ADDED_SCHEMAS: Final = frozenset(
+    {
+        "ProcessingLayer",
+        "ProcessingLayerStates",
+        "OutputProcessingLayerStates",
+        # D156
+        "DocumentTags",
+        "DocumentTagsUpdate",
+        "Tag",
+        "TagCreate",
+        "TagList",
+        "TagUpdate",
+    }
+)
+_D156_TAGGED_SCHEMAS: Final = ("DocumentSummary", "DocumentSearchResult")
+"""Schemas that gained a ``tags`` property in D156."""
 
 
 def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
@@ -49,7 +67,12 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
         for operation in operations.values():
             if not isinstance(operation, dict) or "parameters" not in operation:
                 continue
-            kept = [p for p in operation["parameters"] if p.get("name") != "layers"]
+            kept = [
+                p
+                for p in operation["parameters"]
+                if p.get("name") != "layers"
+                and not (p.get("name") == "tags" and p.get("in") == "query")
+            ]
             if kept:
                 operation["parameters"] = kept
             else:
@@ -57,6 +80,13 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
     schemas = stripped.get("components", {}).get("schemas", {})
     for name in _ADDED_SCHEMAS:
         schemas.pop(name, None)
+    for name in tuple(schemas):
+        if name.removeprefix("Output") in _ADDED_SCHEMAS:
+            schemas.pop(name)
+        elif name.removeprefix("Output") in _D156_TAGGED_SCHEMAS:
+            schemas[name]["properties"].pop("tags")
+            if "tags" in schemas[name].get("required", ()):
+                schemas[name]["required"].remove("tags")
     reasons = schemas["PipelineStageReadiness"]["properties"]["defer_reason"]["anyOf"]
     reasons[0]["enum"] = [value for value in reasons[0]["enum"] if value != "admission"]
     return stripped
