@@ -16,6 +16,9 @@ traversal's own snapshot. An ineligible edge therefore never spends a budget
 or a result slot.
 """
 
+import base64
+import binascii
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -48,7 +51,12 @@ from rememberstack.model import Truncation
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_ONE_HOP
 
+DEFAULT_NEIGHBORHOOD_LIMIT = 100
+"""Default page size for neighborhood browse (D154)."""
+
 DEFAULT_NEIGHBORHOOD_CAP = 500
+"""Maximum request limit and hops>1 fetch ceiling (D154)."""
+
 MAX_NEIGHBORHOOD_DEPTH = 4
 MAX_PATH_DEPTH = 6
 MAX_CITATION_DEPTH = 6
@@ -111,8 +119,8 @@ class GraphQueries:
         predicates: tuple[str, ...] = (),
         valid_at: datetime | None = None,
         believed_at: datetime | None = None,
-        limit: int = DEFAULT_NEIGHBORHOOD_CAP,
-        continuation: str | None = None,
+        limit: int = DEFAULT_NEIGHBORHOOD_LIMIT,
+        cursor: str | None = None,
         include_paths: bool = False,
         _deadline: float | None = None,
         _connection: Connection | None = None,
@@ -128,11 +136,22 @@ class GraphQueries:
             raise ValueError(
                 f"neighborhood limit must be between 1 and {DEFAULT_NEIGHBORHOOD_CAP}"
             )
-        offset = _decode_continuation(continuation)
-        if offset is None:
+        parsed = _decode_cursor(cursor)
+        if parsed is None:
             return self._boundary(
-                explanation="the continuation cursor is not a live-graph cursor",
-                workaround="restart the traversal without a continuation cursor",
+                explanation="the neighborhood cursor is not a live-graph cursor",
+                workaround="restart the traversal without a cursor",
+            )
+        offset, pinned_valid, pinned_believed = parsed
+        if pinned_valid is not None and not _clocks_match(
+            request_valid=valid_at,
+            request_believed=believed_at,
+            pinned_valid=pinned_valid,
+            pinned_believed=pinned_believed,
+        ):
+            return self._boundary(
+                explanation="the neighborhood cursor clocks do not match this request",
+                workaround="restart the traversal without a cursor",
             )
         transaction = (
             self._transaction(deadline=_deadline)
@@ -147,8 +166,12 @@ class GraphQueries:
                 entity_id=entity_id,
             ):
                 return self._unknown(identifier=entity_id, kind="entity", at=evaluation)
-            applied_valid = valid_at or evaluation
-            applied_believed = believed_at or evaluation
+            if pinned_valid is not None and pinned_believed is not None:
+                applied_valid = pinned_valid
+                applied_believed = pinned_believed
+            else:
+                applied_valid = valid_at or evaluation
+                applied_believed = believed_at or evaluation
             fetch = min(offset + limit + 1, DEFAULT_NEIGHBORHOOD_CAP)
             parameters: dict[str, object] = {
                 "deployment_id": self._deployment_id,
@@ -175,7 +198,16 @@ class GraphQueries:
                 )
             data, status = _split_status(rows=raw)
             selected = data[:limit] if hops == 1 else data[offset : offset + limit]
-            more = len(data) > limit if hops == 1 else len(data) > offset + limit
+            more_visible = (
+                len(data) > limit if hops == 1 else len(data) > offset + limit
+            )
+            next_offset = offset + len(selected)
+            # hops>1 keeps a 500-row fetch ceiling; when it blocks further
+            # paging, disclose via truncation.reason and leave next_cursor null.
+            ceiling_blocks_paging = hops > 1 and (
+                more_visible and next_offset >= DEFAULT_NEIGHBORHOOD_CAP
+            )
+            emit_cursor = more_visible and not ceiling_blocks_paging
             if include_paths:
                 paths = _hydrate_entity_paths(
                     connection=connection,
@@ -192,7 +224,7 @@ class GraphQueries:
                     deployment_id=self._deployment_id,
                     rows=selected,
                 )
-        truncated = bool(status["truncated"]) or more
+        truncated = bool(status["truncated"]) or more_visible or ceiling_blocks_paging
         if not nodes and offset == 0 and not truncated:
             return self._empty(
                 explanation=(
@@ -203,6 +235,11 @@ class GraphQueries:
                 believed_at=applied_believed,
                 at=evaluation,
             )
+        status_reason = (
+            str(status["truncation_reason"])
+            if status["truncation_reason"] is not None
+            else None
+        )
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=_temporal_scope(
@@ -218,17 +255,21 @@ class GraphQueries:
                 truncated=truncated,
                 returned=len(nodes),
                 estimated_total=max(
-                    int(status["returned_paths"]), offset + len(nodes) + int(more)
+                    int(status["returned_paths"]),
+                    offset + len(nodes) + int(more_visible),
                 ),
                 total_is_exact=not truncated,
-                continuation=(
-                    _encode_continuation(offset + len(nodes)) if more else None
-                ),
-                reason=(
-                    str(status["truncation_reason"])
-                    if status["truncation_reason"] is not None
-                    else ("result_budget" if more else None)
-                ),
+                reason=status_reason
+                or ("result_budget" if more_visible or ceiling_blocks_paging else None),
+            ),
+            next_cursor=(
+                _encode_cursor(
+                    offset=next_offset,
+                    valid_at=applied_valid,
+                    believed_at=applied_believed,
+                )
+                if emit_cursor
+                else None
             ),
         )
 
@@ -1082,22 +1123,63 @@ def _temporal_scope(
     )
 
 
-def _encode_continuation(offset: int) -> str:
-    """Encode a deployment-local live result offset."""
-    return f"live-v1:{offset}"
+def _encode_cursor(
+    *, offset: int, valid_at: datetime, believed_at: datetime
+) -> str:
+    """Encode a live neighborhood page offset with its pinned clocks (D154)."""
+    raw = json.dumps(
+        {
+            "v": 1,
+            "o": offset,
+            "valid_at": valid_at.isoformat(),
+            "believed_at": believed_at.isoformat(),
+        },
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _decode_continuation(value: str | None) -> int | None:
-    """Decode a live result offset or reject a foreign cursor."""
+def _decode_cursor(
+    value: str | None,
+) -> tuple[int, datetime | None, datetime | None] | None:
+    """Decode a live neighborhood cursor, or None when it is foreign/malformed."""
     if value is None:
-        return 0
-    prefix, separator, raw_offset = value.partition(":")
-    if prefix != "live-v1" or not separator:
-        return None
+        return (0, None, None)
+    padding = "=" * (-len(value) % 4)
     try:
-        return max(int(raw_offset), 0)
-    except ValueError:
+        payload = json.loads(base64.urlsafe_b64decode(value + padding).decode())
+        if int(payload["v"]) != 1:
+            return None
+        offset = max(int(payload["o"]), 0)
+        pinned_valid = datetime.fromisoformat(payload["valid_at"])
+        pinned_believed = datetime.fromisoformat(payload["believed_at"])
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ):
         return None
+    if pinned_valid.tzinfo is None or pinned_believed.tzinfo is None:
+        return None
+    return (offset, pinned_valid, pinned_believed)
+
+
+def _clocks_match(
+    *,
+    request_valid: datetime | None,
+    request_believed: datetime | None,
+    pinned_valid: datetime,
+    pinned_believed: datetime | None,
+) -> bool:
+    """Whether optional request clocks agree with the cursor's pinned clocks."""
+    assert pinned_believed is not None
+    if request_valid is not None and request_valid != pinned_valid:
+        return False
+    if request_believed is not None and request_believed != pinned_believed:
+        return False
+    return True
 
 
 def _envelope(**values: object) -> Envelope:
