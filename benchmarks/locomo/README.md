@@ -15,7 +15,8 @@ The publication run used `openai/gpt-6-luna-pro` at high reasoning for both
 answering and grading, Luna at low reasoning for ingestion and vision, and Jev
 for fact adjudication. It reused the frozen OCR/Luna image inputs and used
 `k=50`, `candidate_k=200` per search channel, with eight simultaneous questions
-per conversation. Serving revision: `1187ca0fbd84a43a15b152f4d79b0e641661b618`.
+per conversation. Serving revision: `1187ca0fbd84a43a15b152f4d79b0e641661b618`;
+ingestion revision: `13ce4a5224709b3e3cda65c429d5915d47e95e89`.
 
 ## Reader protocol
 

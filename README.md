@@ -19,7 +19,7 @@ is true now, what was true a month ago, and who said so.
 
 **89.94% accuracy on LoCoMo.** Agents using RememberStack answered
 **1,385 of 1,540 questions correctly** across **10 long conversations and
-272 sessions**. [Benchmark setup →](benchmarks/locomo/README.md#published-result)
+272 sessions**. [Benchmark setup →](https://github.com/writeitai/remember-stack/blob/main/benchmarks/locomo/README.md#published-result)
 
 ---
 

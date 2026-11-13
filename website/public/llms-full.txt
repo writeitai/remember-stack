@@ -19693,12 +19693,11 @@ gold evidence, each tool call with its result, and the answer, so you can
 check which of the two failed before blaming either the memory or the
 model.
 
-**Warning:**
+**89.94% accuracy on LoCoMo:**
 
-No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v45`. The numbers under [Recorded results](#recorded-results)
-belong to earlier protocols and earlier engine builds. Do not compare them
-with other systems' published scores.
+Agents using RememberStack answered **1,385 of 1,540 questions correctly**
+across ten long conversations and 272 sessions. The full publication run
+used `RS-LoCoMo-Full-v45`; see [Recorded results](#recorded-results).
 
 ## LoCoMo
 
@@ -19973,6 +19972,7 @@ engine revision.
 
 | Date | Protocol | Engine revision | Tier | Judge accuracy | Official F1 |
 |---|---|---|---|---|---|
+| 2026-11-13 | `RS-LoCoMo-Full-v45` | serving `1187ca0f`, processing `13ce4a52` | publication | **1,385 / 1,540 (89.94%)** | — |
 | 2026-07-31 | `RS-LoCoMo-Full-v5-strong` | extractor `07j` | publication | 517 / 1,540 (33.6%) | 0.3054 |
 | before 2026-08-10 | `RS-LoCoMo-Full-v8-strong` | `0ef54549` | publication, assembled from two partial runs | 1,100 / 1,540 (71.43%) | not recorded |
 | 2026-08-10 | `RS-LoCoMo-Full-v11` | `213551c7` | publication | 979 / 1,540 (63.57%) | 0.5417 |
@@ -19985,9 +19985,12 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-This results table contains no protocol after v18. The Full-v45 prompt
-change establishes no score. Any additional published result must identify
-its protocol, revision, tier, cost and failure counts.
+The Full-v45 publication run used `openai/gpt-6-luna-pro` at high reasoning
+for answering and grading, Luna at low reasoning for ingestion and vision,
+and Jev for adjudication. Retrieval used `k=50`, `candidate_k=200` per search
+channel and eight simultaneous questions per conversation. The saved run
+retains its answers, tool traces, model settings, costs and failure records
+for regrading.
 
 ## Reproduce a LoCoMo run
 
