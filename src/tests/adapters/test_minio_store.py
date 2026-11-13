@@ -47,6 +47,7 @@ class _MemoryS3:
         self.objects: dict[tuple[str, str], tuple[bytes, dict[str, str]]] = {}
         self.last_body: _Body | None = None
         self.upload_listing_error: ClientError | None = None
+        self.versioning_error: ClientError | None = None
 
     def head_bucket(self, *, Bucket: str) -> object:
         """Raise the provider's ordinary absence code for a missing bucket."""
@@ -132,6 +133,8 @@ class _MemoryS3:
         return {}
 
     def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:
+        if self.versioning_error is not None:
+            raise self.versioning_error
         return {}
 
     def list_object_versions(
@@ -272,6 +275,10 @@ def test_purge_without_upload_listing_reports_provider_managed_cleanup(
     client.upload_listing_error = _client_error(
         code=code, status=status, operation="ListMultipartUploads"
     )
+    # Mountable answers every unserved subresource, versioning included, with 501.
+    client.versioning_error = _client_error(
+        code=code, status=status, operation="GetBucketVersioning"
+    )
     store = MinIOObjectStore(bucket="raw", client=client)
     for name in ("exact", "doc/a", "doc/nested/b", "doc-other/control"):
         store.write_bytes(key=ObjectKey(name), content=b"body", storage_class="cold")
@@ -288,8 +295,9 @@ def test_purge_without_upload_listing_reports_provider_managed_cleanup(
         )
 
     assert [key.root for key in store.iter_keys(prefix="")] == ["doc-other/control"]
+    assert [key.root for key in store.iter_purge_keys()] == ["doc-other/control"]
     assert store.read_bytes(key=ObjectKey("doc-other/control")) == b"body"
-    assert len(caplog.records) == 4
+    assert len(caplog.records) == 5
     assert all(
         "unfinished uploads were not checked; cleanup is provider-managed"
         in record.getMessage()

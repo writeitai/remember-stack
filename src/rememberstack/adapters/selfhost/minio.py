@@ -572,10 +572,20 @@ class MinIOObjectStore:
             pass  # purge/verification return provider_managed evidence as usual
 
     def _has_versions(self) -> bool:
-        """Fail closed on an unknown bucket policy; no unsupported-listing waiver."""
-        return self._client.get_bucket_versioning(Bucket=self._bucket).get(
-            "Status"
-        ) in {"Enabled", "Suspended"}
+        """Fail closed on an unknown bucket policy; no unsupported-listing waiver.
+
+        A provider that does not implement the versioning subresource at all
+        (mountable answers 501) serves no object versions to erase.
+        """
+        try:
+            status = self._client.get_bucket_versioning(Bucket=self._bucket).get(
+                "Status"
+            )
+        except ClientError as error:
+            if not _not_implemented(error=error):
+                raise
+            return False
+        return status in {"Enabled", "Suspended"}
 
     def _iter_versions(self, *, prefix: str) -> Iterator[tuple[str, str]]:
         key_marker = version_marker = ""
@@ -683,11 +693,7 @@ class MinIOObjectStore:
                     UploadIdMarker=upload_marker,
                 )
             except ClientError as error:
-                if (
-                    _error_code(error=error) not in {"NotImplemented", "501"}
-                    and error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-                    != 501
-                ):
+                if not _not_implemented(error=error):
                     raise
                 # Mountable sweeps its own abandoned uploads. Existing callers
                 # may ignore returned evidence, so keep this limitation in logs too.
@@ -754,3 +760,11 @@ def _content_md5(content: bytes) -> str:
 def _error_code(*, error: ClientError) -> str:
     """Return the provider's stable error code without trimming the exception."""
     return str(error.response.get("Error", {}).get("Code", ""))
+
+
+def _not_implemented(*, error: ClientError) -> bool:
+    """Whether the provider does not serve this operation at all (HTTP 501)."""
+    return (
+        _error_code(error=error) in {"NotImplemented", "501"}
+        or error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 501
+    )
