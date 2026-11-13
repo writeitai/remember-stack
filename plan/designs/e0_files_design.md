@@ -676,7 +676,8 @@ mutable capability in `ports/object_store.py`, implemented by the same adapters:
 - `replace_stream(key, chunks, storage_class)`: create or atomically replace one
   complete object from bounded chunks; a small file supplies one chunk.
 - `iter_keys(prefix)`: bounded-memory, fully paginated key enumeration; empty
-  prefix means this deployment's whole corpus store. Error on incomplete/repeated
+  prefix means this deployment's whole corpus store, used only by reconcile and
+  forget/restore repair, never ordinary publication. Error on incomplete/repeated
   continuation tokens. Recursive deletion uses path boundaries (`path/`, never a
   sibling such as `path-other/`).
 - Idempotent exact `delete(key)`; missing keys succeed. Reuse this implementation
@@ -695,8 +696,14 @@ published-object absence without claiming unfinished parts were checked or erase
 immediately. Mountable's gateway expires abandoned uploads after seven days;
 provider qualification records the deployed expiry/sweep guarantee. Other listing
 errors and all abort failures remain failures. No whole-video buffering or durable
-worker-local state. A qualified adapter provides complete-object replacement and
-read/write/delete/list consistency; mount caches have a separate lifetime. Existing raw create-only
+worker-local state. Replacement accepts the expected SHA-256 for object metadata
+and exposes a metadata read for digest verification. A caller-supplied guard runs immediately
+before each provider mutation, including multipart create/part/complete requests;
+cleanup may abort its own failed upload even after losing ownership. Every
+provider request has bounded connect/read timeouts; one multipart part
+is the largest upload unit. A qualified adapter provides complete-object
+replacement and read/write/delete/list consistency; mount caches have a separate
+lifetime. Existing raw create-only
 preconditions must also be qualified on each endpoint, not silently weakened.
 
 **Managed mount CLI contract.** `remember mount DIR` obtains a one-time mount
@@ -875,8 +882,10 @@ of that document across title/topic/type moves.
 Navigation **index pages**, not document folders, split when a member table
 exceeds B entries (starting point B=150, a measured/versioned projection setting).
 Use deterministic radix pages over each child's key (`d:<suffix>` for documents,
-`t:<normalized-topic>` for topic branches), encoded into base32. Reserved `~`
-page-directory prefixes distinguish index machinery from topics. Each split has
+`t:<normalized-topic>` for topic branches), encoded into base32. Each index keeps
+its pages under a reserved `~/` subtree (for example `pdf/~/mqq/_index.md`),
+with recursive splits under the page's own `~/` subtree. This lets publication
+list obsolete pages without enumerating sibling topic or document folders. Each split has
 at most 32 next-character branches; collapse single-child prefixes, recursively
 split overloaded pages and merge when membership falls to B or below. All rows,
 counts and page boundaries are computed from DB membership.
@@ -958,53 +967,75 @@ cannot write; seed current-policy work instead.
 One deployment-scoped PostgreSQL advisory lock serializes publication, including
 index regeneration, normal removal, reconcile and forget's authorized internal
 calls. Reuse caller lock ownership for internal calls. Re-read authority after
-taking the lock. Keep the claim alive while streaming; loss of claim/lock stops
-writes and requires settling or fencing in-flight external IO before another
-writer or forget can proceed. A lease expiry alone cannot prove IO stopped.
-No detached uploads survive a handler. This small lock avoids competing writes to
-the same folder and shared indexes without a durable coordination protocol.
+taking the lock. Keep the claim alive while streaming. Before each object write
+or delete, confirm ownership of that advisory lock on the same PostgreSQL session
+and that the work claim is still live; abort further mutations on loss. Check
+before each multipart request too, so one bounded part is the largest upload
+unit. Configure bounded S3 connect/read timeouts and disable automatic write
+retries that could issue a new request after lock loss. No detached uploads
+survive a handler.
+
+A PostgreSQL session can die while its process still runs and an already-issued
+object request can complete after a successor acquired the lock. The remaining
+window is one in-flight request, not fenced external IO. This rare race can leave
+stale complete bytes (or a missing object after a late delete) even after a newer
+publication set its marker. This is accepted for ordinary publication: prevent
+further requests cheaply and repair by digest, without a fence, journal or extra
+coordination tables. It does not weaken D74's separate drain/barrier requirement
+for erasure (§6.7). A lease expiry alone cannot prove IO stopped.
 
 For each publish:
 
 1. Clear the publication marker before any store mutation. Compute the desired
-   path and inventory from the DB, then page through existing corpus keys to find
-   every document-folder component ending `--<suffix>/`. Match the complete path
-   segment, not a substring; stop interpreting navigation components at the first
-   document folder, so reader-asset names cannot impersonate another document.
-   Topic normalization cannot produce the reserved double-hyphen leaf delimiter.
-   Collect existing old/new ancestors in memory; no historic paths are persisted.
+   path and inventory from DB authority. Read nullable
+   `documents.corpus_paths text[]`, the small set of folder paths this document
+   may currently have objects under. Before writing any object at a new path, add
+   that path to the set and **commit on the advisory-lock session**. Ordinary publication lists only these
+   document prefixes, never the entire store to find a suffix. For example, a
+   title/topic move records both the old and desired folders before the first new
+   object write. The field is cleanup state, not desired authority, a history or
+   a navigation-membership cache; a null value means no recorded paths.
 2. If a served reading exists, write its desired folder **files first**. Mark an
    existing folder `_index.md` as `updating`, stream the selected original and
    allowlisted derivatives, confirm hashes/complete-object writes, and remove
    obsolete files at that path. A multipart ETag is not a SHA-256 checksum; use
    upload checksums or streamed read-back as required. Write `document.json`, then
    the ready folder `_index.md`, with the same deterministic export identity.
-3. Delete every other folder carrying this document's suffix, including partial
-   unindexed copies; if no reading survives, delete every matching folder. Missing
-   objects succeed. Handle abandoned multipart uploads under §5's provider rule.
-4. Regenerate affected old/new ancestors' `_index.md` bottom-up and root `llms.txt`
-   **from the DB**, never by editing previous index contents. Membership, paths,
-   counts and summaries come from current live served selections, not events or
-   a projection membership table. Prune navigation directories absent from DB
-   membership. If a crash already removed the last old-folder key, a paged scan of
-   navigation indexes can discover stale member links by `doc_id`/suffix and add
-   their ancestors to this regeneration; their old contents are discovery only.
-   Thus retries need neither a pending-path journal nor a stored publication path.
-   Index-page splits/merges rewrite only navigation metadata, leaving document
-   paths and unrelated originals/media unchanged.
-5. After files, removal and indexes succeed, re-read the desired digest in a DB
-   transaction and set `corpus_published_revision` only if it still matches what
-   was published. Otherwise leave it null and retain/enqueue work for current
-   authority. Updating transactions and final marker writes serialize on the
-   document row; neither can erase the other's wake-up. Delayed/reordered work
-   always recomputes current state. No journal, publication-receipt table, path
-   reservation or directory-membership table is kept.
+3. Delete every other recorded folder, including partial unindexed copies; if no
+   reading survives, delete all recorded folders. Missing objects succeed. Handle
+   abandoned multipart uploads under §5's provider rule. Keep old paths recorded
+   until their navigation has also been repaired: a crash after deleting the last
+   old-folder object must still leave its ancestors discoverable on retry.
+4. Regenerate only the affected old/new ancestors' `_index.md` chain, including
+   their rendered radix pages, bottom-up, plus root `llms.txt`, **from the DB**.
+   Membership, paths, counts and summaries come from current live served
+   selections, not events, recorded cleanup paths or previous index contents.
+   Stream DB selections for counts and retain members only for affected indexes.
+   List each affected index's reserved `~/` subtree to remove obsolete pages;
+   prune topic indexes absent from DB membership. Never enumerate unrelated
+   object folders or render/HEAD-check the whole navigation tree. A fresh tree
+   creates the fixed eleven type indexes once, since root links include empty
+   types. Ordinary object work is proportional to this document's recorded
+   folders plus its ancestors' indexes. Page splits/merges never move document
+   paths or recopy unrelated originals/media.
+5. After files, old-folder removal and navigation succeed, reduce `corpus_paths`
+   to exactly `[desired_path]`, or null after removal. A crash at any earlier
+   point leaves all possibly written paths recorded for the next publish or
+   forget. Then re-read the desired digest in a DB transaction and set
+   `corpus_published_revision` only if it still matches what was published.
+   Otherwise leave it null and retain/enqueue work for current authority.
+   Updating transactions and final marker writes serialize on the document row;
+   neither can erase the other's wake-up. Delayed/reordered work always recomputes
+   current state. No separate journal, publication-receipt table, path reservation
+   or directory-membership table is kept.
 
-Normal delete uses the same removal synchronously before D135 reports success;
-an object/index failure reports failure and leaves ordinary durable work for
-retry. Deletion and forget cannot be disabled with claims/facts switches. Removal
-success is absence verified by suffix listing and index regeneration, with the
-existing work row recording completion; it needs no separate empty receipt.
+Normal delete uses the same recorded-path removal synchronously before D135
+reports success; an object/index failure reports failure and leaves ordinary
+durable work for retry. Deletion and forget cannot be disabled with claims/facts
+switches. Removal success is absence under every recorded path plus repaired
+indexes, with the existing work row recording completion; it needs no separate
+empty receipt. Full suffix discovery remains mandatory for forget/restore (§6.7)
+and available through reconcile to recover anything missing from the DB set.
 
 **What readers can observe.** Objects are replaced atomically, folders and trees
 are not. A new folder can be partly visible to direct `ls`; moves can briefly
@@ -1015,8 +1046,11 @@ snapshot is promised. Check the ready folder identity before/after a read, or us
 immutable version-addressed source handles when exactness matters, including for
 cached/ranged media reads. The marker certifies a successful publication of this
 document's current inputs; it is not a whole-tree snapshot. Failed or interrupted
-publication leaves it null, and the next affected publish or reconcile regenerates
-shared indexes from authority.
+publication normally leaves it null, and the next affected publish or reconcile
+regenerates shared indexes from authority. The marker means “these current inputs
+were published once”, not that no late request from a dead publisher can change
+those bytes. Digest-verifying reconcile repairs that accepted transient staleness;
+a matching marker never skips verification.
 
 ### 6.6 Repair, readiness and processing layers
 
@@ -1024,9 +1058,18 @@ shared indexes from authority.
 selectors, renderer and publisher above. Stream DB lineages and paged key listings;
 delete unknown/orphan objects, render all current navigation indexes from the DB,
 and prune obsolete index keys even if no document folder remains there. Share
-discovery/index work across the run rather than scanning the whole store anew
-for every document. Existing originals/derivatives whose paths and hashes match
-need not be recopied. A retry
+one full-store discovery pass across the run; ordinary publication never does
+this scan. Union discovered suffix folders with recorded `corpus_paths`, repair
+each served document's set to its desired path after cleanup/navigation, and clear
+sets for unselected/deleted documents after their objects are removed. This repairs
+paths that an independently restored bucket or incomplete DB state missed. Match
+the first complete `--<suffix>` document-folder component, never a similarly named
+asset below it. Reconcile has a verify mode: compare each desired object's stored
+SHA-256 metadata with its desired digest, rewriting mismatches and missing metadata (or
+missing objects), including files whose document has a matching marker. Delete
+orphans through the same publication code path. Existing originals/derivatives
+whose paths and digest metadata match need not be recopied. Periodic verifying
+reconcile bounds how long rare late-request damage persists. A retry
 recomputes everything, with no progress reconstruction or snapshot registry.
 Without concurrent authority changes, incremental maintenance and reconcile
 converge to identical keys and bytes. Export identities are deterministic digests;
@@ -1079,6 +1122,9 @@ paths, suffix reservations or a corpus-wide purge scope.
    it does not reset document folders or require a historic path list. Verify no
    matching folder, forgotten title/summary/member entry or controlled serving
    copy remains; report unfinished-upload coverage under §5's provider rule.
+   Clear `corpus_paths` after object cleanup and navigation repair; its friendly
+   paths must not survive a completed forget. Always do the full suffix scan even
+   when the recorded set is empty, including on restore replay.
    Reopen only after every D74 store acknowledges erasure within that scope.
    Any error leaves the barrier closed and retries the same idempotent procedure.
 4. Before a restore serves traffic or controlled mounts, re-honor **every** portable
@@ -1106,11 +1152,16 @@ Arbitrary downloaded client bytes remain outside the library-controlled boundary
 3. Enabled E1/E2/E3 work completes. The transaction serving this version clears
    its publication marker and enqueues ordinary `publish_corpus` work. Sources-only
    deployments use their own completion boundary.
-4. The self-host worker or managed pushed task recomputes DB inputs, lists suffix
-   matches and writes files to
+4. The self-host worker or managed pushed task recomputes DB inputs, commits the
+   desired folder into `corpus_paths`, lists only recorded document folders and
+   writes files to
    `pdf/finance/annual-reports/acme-2023--9bf3e4c0c2d4861075a6ef82/`. It deletes other
-   folders of this document, regenerates ancestors/root from the DB and sets the
-   nullable marker after success. `p3` is ready; `p3_path` resolves that folder.
+   recorded folders of this document, regenerates their ancestors/root from the DB,
+   reduces the set to the desired folder and sets the nullable marker after success. Every object records its expected content digest;
+   requests are bounded and each mutation checks the same lock session. `p3` is
+   ready; `p3_path` resolves that folder. A late request after DB-session loss may
+   transiently replace newer bytes despite its matching marker; verifying
+   reconcile compares digest metadata and restores the newer reading.
 5. A customer mounts read-only and opens Markdown, images or `original.pdf` in
    place. A newer stored upload leaves the completed folder intact until served
    and published. A type/topic/title change moves it; re-resolve `doc_id` via MCP

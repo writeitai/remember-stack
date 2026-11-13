@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 import json
-import posixpath
 
 import pytest
 
@@ -270,9 +269,7 @@ def test_large_asset_tables_split_and_merge_without_renaming_any_reader_file() -
     }
     files["../_index.md"] = b"parent"
     _check_indexes(files, 32)
-    assert any(
-        posixpath.basename(posixpath.dirname(path)).startswith("~") for path in files
-    )
+    assert any(path.startswith("~/") for path in files)
     old_copies = {file.path: file for file in small.files if isinstance(file, CopyFile)}
     new_copies = {file.path: file for file in large.files if isinstance(file, CopyFile)}
     assert all(new_copies[path] == file for path, file in old_copies.items())

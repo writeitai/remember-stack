@@ -333,6 +333,7 @@ UNLANED_STAGES: Final = frozenset(
         "lint_knowledge",
         "dispatch_knowledge",
         "hard_forget",
+        "publish_corpus",
     }
 )
 """Scheduled aggregate and deployment-orchestration stages whose route is unlaned.

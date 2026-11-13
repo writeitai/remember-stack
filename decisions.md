@@ -8173,6 +8173,11 @@ validation for `max_rows`. Does **not** amend the cost-export feed contract
 **Status:** accepted design (owner direction and reviewer dispositions 2026-11-13);
 implementation is separate. **Date:** 2026-11-13. D154 is reserved for pagination PR #589.
 
+**Scaling amendment (Claude, design owner, 2026-11-13):** the original ordinary
+publication suffix scan and no-stored-path clause are superseded by the recorded
+folder set below. Full scans remain for reconcile and forget/restore; the accepted
+digest-verifying repair of late in-flight requests is unchanged.
+
 **Context.** The customer mount must be a browsable corpus, with one real folder
 per document holding its original and every reader-useful derivative. Snapshot
 stubs and separate raw/artifact mounts cannot provide that interface. Originals
@@ -8202,15 +8207,22 @@ There are no users requiring migration, aliases or a transition layout.
   processed version means no folder. D117 storage/parking is retained; its
   latest-stored-original P3 view is replaced.
 - **Idempotent publication through existing work.** `publish_corpus(doc_id)` reads
-  current DB authority for the desired folder/files, lists existing suffix-bearing
-  folders, writes desired files first, deletes other copies of this document, then
-  regenerates affected ancestor `_index.md` and root `llms.txt` **from the DB**.
+  current DB authority for the desired folder/files. Nullable
+  `documents.corpus_paths text[]` records the small set of possibly written folders;
+  commit the union with the desired path before any object write. List only these
+  prefixes, write desired files first, delete the other recorded folders, then
+  regenerate affected ancestor `_index.md` and root `llms.txt` **from the DB**.
   Never patch old index contents. One deployment advisory lock serializes these
-  operations; lost/reordered work self-heals on the next affected publish or
-  reconcile. Stale index-only remnants can be found by member `doc_id`/suffix and
-  regenerated without a historic path journal. Each committed trigger has a fresh
-  event target in existing `processing_state`, carrying only `doc_id`; retries
-  reuse the same row. No request table, lineage revision counter, pending-path
+  operations. Before every write/delete (including multipart requests), verify
+  ownership on that same session and the live claim; use bounded connect/read
+  timeouts without automatic write retries. Session loss can still let one issued
+  request land after a newer publisher: transient stale bytes are accepted and
+  repaired by digest-verifying reconcile, without coordination machinery. Keep
+  old paths recorded through ancestor-index repair, including after their last
+  object is gone, then reduce the set to `[desired]` (or null after removal). A
+  crash therefore leaves every possibly written path and affected ancestor known.
+  Each committed trigger has a fresh event target in existing `processing_state`,
+  carrying only `doc_id`; retries reuse the same row. No request table, lineage revision counter, pending-path
   journal, publication-receipt table or persistent directory-membership cache.
   Self-host classes and managed pushed `run_task` use the same engine handler,
   leases, retries and announcements.
@@ -8220,9 +8232,20 @@ There are no users requiring migration, aliases or a transition layout.
   match. Clear it on relevant changes and before writes. MCP `p3_path` computes
   the current relative path only behind a matching marker for the served selected
   version; otherwise null. Readiness `p3` uses that same per-document guard, never
-  a global recent-build timestamp. There is no whole-tree snapshot guarantee.
-- **Repair and navigation stay simple.** Full reconcile uses the same selectors/
-  renderer, removes orphans and regenerates indexes. Deterministic bounded member
+  a global recent-build timestamp. It means the current inputs were published
+  once, not that a late request from a dead publisher cannot change the bytes.
+  There is no whole-tree snapshot guarantee.
+- **Repair and navigation stay simple.** Full reconcile uses one full-store
+  listing with the same selectors/renderer, removes orphans, repairs `corpus_paths`
+  and regenerates all indexes. Ordinary publication renders/HEAD-checks only the
+  old/new ancestor chain and its radix pages plus root `llms.txt`, from current DB
+  membership. Reserved `~/` page subtrees make obsolete pages listable without
+  visiting unrelated document folders. A fresh tree initializes the fixed type
+  indexes once. Every corpus object carries
+  its expected SHA-256 in metadata; verify mode compares it with the desired digest
+  and rewrites mismatches/missing metadata even behind a matching marker. Periodic
+  verification repairs the bounded, rare DB-session-loss/in-flight-request race.
+  Deterministic bounded member
   tables, root `llms.txt` and navigation radix pages remain; page splits/merges
   never move document folders or recopy survivors. No Tier-1 `documents/`,
   facets, entities, K links or `_paths/` id index. Store `doc_id` and exact-version
@@ -8245,17 +8268,19 @@ There are no users requiring migration, aliases or a transition layout.
   drain, verification and restore replay. Page through keys for the document's
   suffix, erase every matching folder/upload and controlled serving/cache copy,
   then regenerate/prune indexes from scrubbed DB authority, including index-only
-  remnants. Never wipe the corpus or recopy surviving originals/media. The existing
+  remnants, and clear `corpus_paths`. An empty set never skips the full scan. Never wipe the corpus or recopy surviving originals/media. The existing
   `doc_id` suffices in immutable intent; no historic friendly paths are needed.
   Re-honor even completed manifests on independent restores; object-version purge
   requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-hard-forget-and-restore-erase-the-document-regenerate-indexes).
 
 **Rationale and alternatives.** A copied original makes each folder self-contained;
 a single completed reading avoids pairing v2 bytes with v1 text. Recomputing from
-authority plus suffix discovery replaces revision/journal/receipt coordination.
+authority plus a small committed folder set replaces revision/journal/receipt
+coordination. Per-document suffix scans would make N ingests quadratic in listed
+objects; recorded paths bound ordinary object IO to that document and its ancestors.
 The 96-bit suffix makes accidental collision negligible without reservation state;
-its unkeyed derivation survives restore without a secret. A paged key scan costs
-listing work, while per-document erasure leaves other documents' bytes in place.
+its unkeyed derivation survives restore without a secret. Rare repair/forget scans
+recover unrecorded copies, while per-document erasure leaves other bytes in place.
 MCP and suffix search meet addressing needs without a second id index. Shared
 indexes always regenerate from DB authority, so neither event ordering nor old
 index contents determine truth. S3 interoperability uses the existing adapter.

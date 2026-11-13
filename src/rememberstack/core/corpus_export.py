@@ -26,7 +26,7 @@ from rememberstack.core.format_registry import FAMILIES
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import FORMAT_MIMES
 
-CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11b:d155"
+CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11c:d155"
 CORPUS_TYPES: Final = (
     "email",
     "chat",
@@ -333,6 +333,15 @@ def json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def corpus_policy_version(policy: CorpusPolicy = DEFAULT_CORPUS_POLICY) -> str:
+    """One component identity per builder policy, never per publication event."""
+    return (
+        policy.builder_version
+        + ":"
+        + hashlib.sha256(json_bytes(asdict(policy))).hexdigest()
+    )
+
+
 def desired_export_revision(
     document: CorpusDocument, *, policy: CorpusPolicy = DEFAULT_CORPUS_POLICY
 ) -> str:
@@ -504,7 +513,9 @@ def _render_pages(
                 groups[key[:depth]].append(member)
             rows = []
             for prefix, group in sorted(groups.items()):
-                child = posixpath.join(path, "~" + prefix)
+                # One reserved subtree makes obsolete pages listable without
+                # enumerating any physical document/topic folders beside it.
+                child = posixpath.join(path, "~", prefix)
                 count = sum(member.count for member in group)
                 rows.append(
                     _Member(
@@ -530,7 +541,7 @@ def _render_pages(
                         "",
                         f"{count} member(s) in this subtree.",
                         "",
-                        "[Parent](../_index.md)",
+                        f"[Parent]({_link(child, posixpath.join(path, '_index.md'))})",
                         "",
                     ],
                 )
@@ -556,9 +567,16 @@ def _date(document: CorpusDocument) -> str:
 
 
 def render_navigation(
-    documents: Iterable[CorpusDocument], *, policy: CorpusPolicy = DEFAULT_CORPUS_POLICY
+    documents: Iterable[CorpusDocument],
+    *,
+    policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
+    ancestors: set[str] | None = None,
 ) -> dict[str, bytes]:
-    """DB membership only: fixed types, optional topics and bounded indexes."""
+    """Render DB membership, optionally only a complete affected ancestor chain.
+
+    Stream selections for counts, retaining members only for requested indexes
+    and their immediate topic rows. Unrelated navigation is never rendered.
+    """
     directories: dict[str, list[_Member]] = {
         "": [],
         **{kind: [] for kind in CORPUS_TYPES},
@@ -566,26 +584,32 @@ def render_navigation(
     counts: dict[str, int] = defaultdict(int)
     for document in documents:
         parent = posixpath.dirname(document.path)
-        directories.setdefault(parent, []).append(
-            _Member(
-                "d:" + corpus_suffix(document.doc_id),
-                document.display_title,
-                document.path + "/_index.md",
-                1,
-                (
-                    "document",
-                    "1",
-                    str(document.doc_id),
-                    document.source_kind,
-                    _date(document),
-                    str(document.version_id),
-                    document.root_summary or "no summary",
-                ),
+        if ancestors is None or parent in ancestors:
+            directories.setdefault(parent, []).append(
+                _Member(
+                    "d:" + corpus_suffix(document.doc_id),
+                    document.display_title,
+                    document.path + "/_index.md",
+                    1,
+                    (
+                        "document",
+                        "1",
+                        str(document.doc_id),
+                        document.source_kind,
+                        _date(document),
+                        str(document.version_id),
+                        document.root_summary or "no summary",
+                    ),
+                )
             )
-        )
         while parent:
-            directories.setdefault(parent, [])
-            counts[parent] += 1
+            if (
+                ancestors is None
+                or parent in ancestors
+                or posixpath.dirname(parent) in ancestors
+            ):
+                directories.setdefault(parent, [])
+                counts[parent] += 1
             parent = posixpath.dirname(parent)
         counts[""] += 1
     for directory in sorted(directories):
@@ -593,6 +617,8 @@ def render_navigation(
             continue
         parent = posixpath.dirname(directory)
         name = posixpath.basename(directory)
+        if ancestors is not None and parent not in ancestors:
+            continue
         directories[parent].append(
             _Member(
                 "t:" + name,
@@ -622,6 +648,8 @@ def render_navigation(
         "Summary",
     )
     for directory, members in sorted(directories.items()):
+        if ancestors is not None and directory not in ancestors:
+            continue
         intro = [
             f"# {directory or 'Corpus'}",
             "",

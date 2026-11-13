@@ -150,6 +150,11 @@ def merge_converter_metadata_on(
         connection=connection, deployment_id=deployment_id, version_id=version_id
     ):
         return
+    previous_title = connection.execute(
+        text("""SELECT title FROM document_metadata
+        WHERE deployment_id = :d AND version_id = :v"""),
+        {"d": deployment_id, "v": version_id},
+    ).scalar_one()
     source_fields = {
         field: "source"
         for field, value in (
@@ -175,6 +180,17 @@ def merge_converter_metadata_on(
             "mapping_version": mapping_version,
         },
     )
+    current_title = connection.execute(
+        text("""SELECT title FROM document_metadata
+        WHERE deployment_id = :d AND version_id = :v"""),
+        {"d": deployment_id, "v": version_id},
+    ).scalar_one()
+    if previous_title != current_title:
+        from rememberstack.spine.corpus_publication import corpus_version_changed_on
+
+        corpus_version_changed_on(
+            connection=connection, deployment_id=deployment_id, version_id=version_id
+        )
     connection.execute(
         _DELETE_SOURCE_PEOPLE,
         {"deployment_id": deployment_id, "version_id": version_id},
@@ -238,6 +254,26 @@ def refresh_family_on(
             "family": family_for_mime(mime=mime),
         },
     )
+    # A MIME repair changes the original extension/type even when its broad
+    # family stays the same (for example audio → video, both "media").
+    from rememberstack.spine.corpus_publication import corpus_changed_on
+
+    docs = (
+        connection.execute(
+            text("""SELECT d.doc_id FROM documents d
+        JOIN document_versions v ON v.version_id = d.current_version_id
+        AND v.deployment_id = d.deployment_id
+        WHERE d.deployment_id = :d AND v.content_hash = :hash
+        AND d.deleted_at IS NULL ORDER BY d.doc_id"""),
+            {"d": deployment_id, "hash": content_hash},
+        )
+        .scalars()
+        .all()
+    )
+    for doc_id in docs:
+        corpus_changed_on(
+            connection=connection, deployment_id=deployment_id, doc_id=doc_id
+        )
 
 
 def _lock_metadata(

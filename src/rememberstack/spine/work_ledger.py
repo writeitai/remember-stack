@@ -814,9 +814,9 @@ class WorkLedger:
         self,
         *,
         deployment_id: UUID,
-        routes: Sequence[tuple[PipelineStage, ProcessingLane]],
-    ) -> tuple[tuple[PipelineStage, ProcessingLane], ...]:
-        """Return, in the given order, the laned routes that have claimable work now.
+        routes: Sequence[tuple[PipelineStage, ProcessingLane | None]],
+    ) -> tuple[tuple[PipelineStage, ProcessingLane | None], ...]:
+        """Return, in the given order, the routes that have claimable work now.
 
         One round trip probes every route with the claim's own due predicate,
         so a worker serving many routes does not open a claim transaction per
@@ -832,7 +832,10 @@ class WorkLedger:
                     {
                         "deployment_id": deployment_id,
                         "stages": [stage.value for stage, _ in routes],
-                        "lanes": [lane.value for _, lane in routes],
+                        "lanes": [
+                            lane.value if lane is not None else None
+                            for _, lane in routes
+                        ],
                     },
                 ).scalars()
             )
@@ -2158,7 +2161,7 @@ _DUE_ROUTES = text(
         FROM processing_state
         WHERE deployment_id = :deployment_id
           AND stage = r.stage
-          AND lane = r.lane
+          AND lane IS NOT DISTINCT FROM r.lane
           AND {_CLAIMABLE}
     )
     """

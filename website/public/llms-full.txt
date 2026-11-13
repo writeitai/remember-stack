@@ -7262,6 +7262,7 @@ and three values Compose sets itself, which win over `.env`:
 |---|---|
 | `REMEMBERSTACK_DATABASE_URL` | Built from `REMEMBERSTACK_POSTGRES_USER`, `_PASSWORD` and `_DB`, pointing at the `postgres` service. |
 | `REMEMBERSTACK_MINIO_ENDPOINT_URL` | `http://object-store:8333`, the bundled SeaweedFS store. |
+| `REMEMBERSTACK_MINIO_CONNECT_TIMEOUT_S`, `REMEMBERSTACK_MINIO_READ_TIMEOUT_S` | Per-request S3 connect/read timeouts, 5/30 seconds by default. Automatic S3 retries are disabled; failed pipeline work uses the durable work ledger retry path. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | `8000`. In `.env` the same variable is the host port Compose publishes. |
 
 A variable exported in your shell overrides `.env` only if it is on the
@@ -19382,6 +19383,8 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | S3 region name used for signing. |
+| `REMEMBERSTACK_MINIO_CONNECT_TIMEOUT_S` | `5` | finite seconds, > 0 | Connection timeout for each S3 request. |
+| `REMEMBERSTACK_MINIO_READ_TIMEOUT_S` | `30` | finite seconds, > 0 | Socket read timeout for each S3 request. Multipart uploads send at most 8 MiB per part. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for filesystem-view snapshots. Fixed after the first start. |
@@ -20849,6 +20852,11 @@ absent from the current release; nothing here has a date.
   `pipeline_readiness` tool.
 
 ## Knowledge
+
+- **Self-contained document folders on mounted filesystems.** The current
+  [filesystem view](https://remember.dev/docs/self-hosting/filesystem-views) links to originals
+  and converted artifacts; it does not place their bytes together in one
+  document folder.
 
 - **Compiled pages.** RememberStack does not write summary pages that
   combine what it knows about a topic; the envelope's `pages` field and the

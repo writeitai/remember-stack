@@ -5,6 +5,7 @@ any S3 API with path-style addressing and `If-None-Match: *` works.
 """
 
 from base64 import b64encode
+from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
 from hashlib import md5
@@ -17,6 +18,7 @@ from typing import TypedDict
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
+from pydantic import Field
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -46,6 +48,8 @@ class MinIOSettings(BaseSettings):
     access_key: SecretStr
     secret_key: SecretStr
     region: str = "us-east-1"
+    connect_timeout_s: float = Field(default=5, gt=0, allow_inf_nan=False)
+    read_timeout_s: float = Field(default=30, gt=0, allow_inf_nan=False)
 
 
 class _StreamingBody(Protocol):
@@ -284,7 +288,13 @@ class MinIOObjectStore:
         return response.get("Metadata", {}).get("storage-class")
 
     def replace_stream(
-        self, *, key: ObjectKey, chunks: Iterable[bytes], storage_class: str
+        self,
+        *,
+        key: ObjectKey,
+        chunks: Iterable[bytes],
+        storage_class: str,
+        sha256: str | None = None,
+        before_write: Callable[[], None] | None = None,
     ) -> None:
         """Replace only after normal input exhaustion; abort any failed multipart.
 
@@ -296,6 +306,9 @@ class MinIOObjectStore:
             raise ValueError("invalid storage class")
         name = _validated_key(key=key)
         metadata = {"storage-class": storage_class}
+        if sha256 is not None:
+            metadata["sha256"] = sha256
+        guard = before_write or (lambda: None)
         upload_id: str | None = None
         parts: list[_CompletedPart] = []
         buffer = bytearray()
@@ -309,6 +322,7 @@ class MinIOObjectStore:
                     view = view[count:]
                     if len(buffer) == _PART_SIZE:
                         if upload_id is None:
+                            guard()
                             upload_id = self._client.create_multipart_upload(
                                 Bucket=self._bucket, Key=name, Metadata=metadata
                             )["UploadId"]
@@ -317,10 +331,12 @@ class MinIOObjectStore:
                             upload_id=upload_id,
                             content=bytes(buffer),
                             parts=parts,
+                            before_write=guard,
                         )
                         buffer.clear()
             if upload_id is None:
                 content = bytes(buffer)
+                guard()
                 record_object_transfer(bytes_written=len(buffer))
                 self._client.put_object(
                     Bucket=self._bucket,
@@ -332,8 +348,13 @@ class MinIOObjectStore:
                 return
             if buffer:
                 self._upload_part(
-                    name=name, upload_id=upload_id, content=bytes(buffer), parts=parts
+                    name=name,
+                    upload_id=upload_id,
+                    content=bytes(buffer),
+                    parts=parts,
+                    before_write=guard,
                 )
+            guard()
             self._client.complete_multipart_upload(
                 Bucket=self._bucket,
                 Key=name,
@@ -350,11 +371,18 @@ class MinIOObjectStore:
                 close()
 
     def _upload_part(
-        self, *, name: str, upload_id: str, content: bytes, parts: list[_CompletedPart]
+        self,
+        *,
+        name: str,
+        upload_id: str,
+        content: bytes,
+        parts: list[_CompletedPart],
+        before_write: Callable[[], None],
     ) -> None:
         """Send one bounded part, counting attempted network bytes as for E0."""
         if len(parts) == 10_000:
             raise ValueError("object exceeds the multipart part limit")
+        before_write()
         record_object_transfer(bytes_written=len(content))
         result = self._client.upload_part(
             Bucket=self._bucket,
@@ -365,6 +393,32 @@ class MinIOObjectStore:
             ContentMD5=_content_md5(content),
         )
         parts.append({"PartNumber": len(parts) + 1, "ETag": result["ETag"]})
+
+    def abort_uploads(
+        self, *, prefix: str, before_write: Callable[[], None]
+    ) -> ObjectPurgeEvidence:
+        """Clean unfinished uploads under the caller's publication lock."""
+        boundary = validate_object_path(prefix, prefix=True)
+        try:
+            for name, upload_id in self._iter_uploads(prefix=boundary):
+                if matches_object_prefix(name, prefix=boundary):
+                    before_write()
+                    self._abort_upload(name=name, upload_id=upload_id)
+        except _UploadListingNotImplemented:
+            return ObjectPurgeEvidence(multipart_uploads="provider_managed")
+        return ObjectPurgeEvidence(multipart_uploads="checked")
+
+    def sha256_of(self, *, key: ObjectKey) -> str | None:
+        """Read the publisher's expected digest; multipart ETags are not hashes."""
+        try:
+            response = self._client.head_object(
+                Bucket=self._bucket, Key=_validated_key(key=key)
+            )
+        except ClientError as error:
+            if _error_code(error=error) in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        return response.get("Metadata", {}).get("sha256")
 
     def delete(self, *, key: ObjectKey) -> None:
         """Idempotently remove one exact key, never its descendants."""
@@ -581,6 +635,9 @@ def _client(*, settings: MinIOSettings) -> _S3Client:
             region_name=settings.region,
             config=Config(
                 signature_version="s3v4",
+                connect_timeout=settings.connect_timeout_s,
+                read_timeout=settings.read_timeout_s,
+                retries={"total_max_attempts": 1},
                 s3={"addressing_style": "path"},
                 max_pool_connections=_MAX_POOL_CONNECTIONS,
                 request_checksum_calculation="when_required",

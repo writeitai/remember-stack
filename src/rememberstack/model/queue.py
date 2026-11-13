@@ -41,6 +41,7 @@ class PipelineStage(StrEnum):
     DISPATCH_KNOWLEDGE = "dispatch_knowledge"  # appended by WP-6.6
     HARD_FORGET = "hard_forget"
     REVIEW_FACT_WINDOWS = "review_fact_windows"  # appended by D140 WP-ET.7
+    PUBLISH_CORPUS = "publish_corpus"
 
 
 class ProcessingLane(StrEnum):
