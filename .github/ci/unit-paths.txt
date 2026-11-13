@@ -38,6 +38,7 @@ src/tests/benchmarks/test_workspacebench_core.py
 src/tests/benchmarks/test_workspacebench_runner.py
 src/tests/core/test_blockizer_corpus.py
 src/tests/core/test_chunker.py
+src/tests/core/test_corpus_export.py
 src/tests/core/test_context_references.py
 src/tests/core/test_consumption_skill.py
 src/tests/core/test_conversion.py
