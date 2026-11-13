@@ -6,6 +6,7 @@ from typing import Protocol
 
 import pytest
 
+from rememberstack.core.object_transfer import object_transfer_scope
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
@@ -200,14 +201,16 @@ class ObjectOperationContract:
         def lost() -> None:
             raise RuntimeError("lock lost")
 
-        with pytest.raises(RuntimeError, match="lock lost"):
-            store.replace_stream(
-                key=key,
-                chunks=(b"stale",),
-                storage_class="hot",
-                sha256=sha256(b"stale").hexdigest(),
-                before_write=lost,
-            )
+        with object_transfer_scope() as transfer:
+            with pytest.raises(RuntimeError, match="lock lost"):
+                store.replace_stream(
+                    key=key,
+                    chunks=(b"stale",),
+                    storage_class="hot",
+                    sha256=sha256(b"stale").hexdigest(),
+                    before_write=lost,
+                )
+        assert transfer.bytes_written == 0
         assert store.read_bytes(key=key) == b"new"
         assert store.sha256_of(key=key) == digest
         store.delete(key=key)

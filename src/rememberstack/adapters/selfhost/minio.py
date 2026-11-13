@@ -336,8 +336,8 @@ class MinIOObjectStore:
                         buffer.clear()
             if upload_id is None:
                 content = bytes(buffer)
-                record_object_transfer(bytes_written=len(buffer))
                 guard()
+                record_object_transfer(bytes_written=len(buffer))
                 self._client.put_object(
                     Bucket=self._bucket,
                     Key=name,
@@ -382,8 +382,8 @@ class MinIOObjectStore:
         """Send one bounded part, counting attempted network bytes as for E0."""
         if len(parts) == 10_000:
             raise ValueError("object exceeds the multipart part limit")
-        record_object_transfer(bytes_written=len(content))
         before_write()
+        record_object_transfer(bytes_written=len(content))
         result = self._client.upload_part(
             Bucket=self._bucket,
             Key=name,
