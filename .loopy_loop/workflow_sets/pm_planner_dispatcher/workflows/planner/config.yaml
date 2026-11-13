@@ -1,9 +1,0 @@
-enabled: true
-priority: 20
-run_every: 1
-must_follow: null
-not_before_iteration: 0
-run_on_start: true
-description: |
-  Own the high-level program plan, review child outcomes, select the next
-  milestone outcome, maintain the handoff, and decide completion.
