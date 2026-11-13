@@ -4,6 +4,7 @@
 Accepting the design does not mean it ships; the
 [delivery plan](../plans/document_tags.md) says what to build in which order.
 **Analysis:** [document tags](../analysis/document_tags_analysis.md).
+**Unchosen extension kept as a proposal:** [tag classification rules](../proposals/tag_classification_rules.md).
 **Refines:** D134 ([document metadata and search](document_metadata_and_search_design.md))
 — adds caller tags to the `documents` filter, lets that filter reach the
 context operations, and changes which fact evidence a filtered read returns.
@@ -40,51 +41,85 @@ express these today:
 
 ## 2. The idea in one paragraph
 
-The caller attaches **tags**, short labels such as `project:autoboard` or
-`kind:decision`, to a **document lineage** (the document over time, D55).
-Tags are stored in one place, on the lineage, and nowhere else. Every grain
-that already traces back to documents inherits them through that trace: a
-chunk through its document, a claim through its occurrences, a fact through
-its supporting claims. The existing `documents` filter gains a `tags`
-selector and is accepted by the context operations as well as by `search`
-and `search_documents`. Tags only select what a read returns. They never
-change what the memory extracts, resolves or believes, and changing them
-costs no processing.
+The deployment keeps a **tag registry**: a declared list of tags, each with a
+name such as `project:autoboard` and a description of what it means. The
+caller attaches registered tags to a **document lineage** (the document over
+time, D55); a document can carry several. Assignments are stored in one
+place, on the lineage, and nowhere else. Every grain that already traces
+back to documents inherits them through that trace: a chunk through its
+document, a claim through its occurrences, a fact through its supporting
+claims. The existing `documents` filter gains a `tags` selector and is
+accepted by the context operations as well as by `search` and
+`search_documents`. Tags only select what a read returns. They never change
+what the memory extracts, resolves or believes, and changing them costs no
+processing.
 
 ## 3. Tags
 
-### 3.1 What a tag is
+### 3.1 The tag registry
 
-A tag is a short caller-chosen string. The engine gives it no structure: it
-does not parse keys, values or paths. Callers are encouraged to use a
-`key:value` convention because it keeps a shared memory readable:
+A tag must be **created before it is used**. Each registered tag has:
 
-| Tag | Meaning in the caller's convention |
+| Field | Meaning |
+|---|---|
+| `tag_id` | Stable identity. Assignments point at it, so a rename changes one row. |
+| `name` | The label callers and agents use, e.g. `project:autoboard`. |
+| `description` | What the tag means and when to apply it, written for agents: "Documents about the Autoboard ticket board product, including its tickets, designs and decisions." |
+| `created_at`, `updated_at` | Clocks. |
+
+**Names.** A name is Unicode NFC-normalized, 1–128 characters, with no
+whitespace or control characters. It keeps the spelling it was declared
+with, and names are unique and matched **case-insensitively**:
+`Project:Autoboard` finds the tag declared as `project:autoboard`, and
+declaring both is refused as a duplicate. The engine gives a name no
+structure; callers are encouraged to use a `key:value` convention because it
+keeps a shared memory readable:
+
+| Tag | Description (example) |
 |---|---|
 | `project:autoboard` | belongs to the Autoboard product |
-| `kind:decision` | a decision record |
-| `source:ticket` | rendered from a ticket |
-| `repo:writeitai/autoboard` | lives in this repository |
+| `kind:decision` | an accepted decision record, not a proposal |
+| `source:ticket` | rendered from a board ticket |
 
-**Normalization.** On every write and in every filter, a tag is Unicode
-NFC-normalized and lower-cased, so `Project:Autoboard` and
-`project:autoboard` are the same tag. After normalization a tag is 1–128
-characters and contains no whitespace or control characters; anything else
-is refused with `invalid_parameter`. Lower-casing removes a whole class of
-"why did my filter find nothing" mistakes and costs nothing that a label
-needs.
+There are no tag groups: the engine does not know that `project:autoboard`
+and `project:legalit` are alternatives, and a document may carry both.
 
-**Limits** (starting points, to be measured): at most 64 tags per lineage,
-and at most 32 tags in each list of a filter (§4.1).
+**Why a registry rather than free text.** An agent can only filter by tags
+it knows exist. The registry is discoverable (`list_tags`, §6), so an agent
+reads the deployment's tags and their descriptions instead of guessing
+`project:autoboard` versus `proj:autoboard`. Writes and filters that name an
+unregistered tag are refused, so a typo is an error instead of a silently
+untagged document or an empty answer. A rename is one write and every
+document follows it.
 
-### 3.2 Tags belong to the lineage, not to a version
+**Registry operations.**
+
+- `create_tag(name, description)` declares a tag. A duplicate name
+  (case-insensitive) is refused with `conflict`.
+- `update_tag(tag, name?, description?)` renames or re-describes a tag.
+  Assignments are unaffected. The old name stops resolving at once; there
+  are no aliases, so filters and saved queries that use the old name fail
+  with `unknown_tag` until they are updated.
+- `delete_tag(tag)` removes the tag and all its assignments in one write.
+- `list_tags(query?)` returns every tag with its description and the number
+  of live documents carrying it, optionally narrowed by a substring of the
+  name or description.
+
+Wherever an operation takes a `tag`, it accepts the name or the `tag_id`.
+
+**Limits** (starting points, to be measured): 10,000 tags per deployment;
+descriptions up to 2,000 characters; 64 tags per lineage; 32 tags in each
+list of a filter (§4.1).
+
+### 3.2 Assignments belong to the lineage, not to a version
 
 Tags describe what a document *is for*, which does not change when its text
-is edited. They are stored per lineage (`doc_id`), so every version of the
-document carries the lineage's current tags, including old versions reached
-through a D140 time scope. Tags have no history of their own: a filter
-always uses the tags the lineage has when the read runs. A read that asks
-about March uses today's tags to choose which documents to look in.
+is edited. Assignments are stored per lineage (`doc_id`), so every version
+of the document carries the lineage's current tags, including old versions
+reached through a D140 time scope. Assignments have no history of their own:
+a filter always uses the tags the lineage has when the read runs. A read
+that asks about March uses today's tags to choose which documents to look
+in.
 
 Because claims are owned by one lineage (`claims.doc_id`; D56 reuse never
 crosses lineages), every occurrence of a claim lies in the same lineage. A
@@ -92,9 +127,18 @@ claim therefore has exactly one tag set: its document's. The occurrence
 subtleties of D134's version-level filters (a claim reused across versions
 whose metadata differ) cannot arise for tags.
 
+**Origin.** Every assignment records who made it. In this design the only
+origin is `caller`: a person, connector or agent calling ingest or
+`update_document_tags`. The column exists so that a different origin, such
+as the rule-based assignments in the
+[classification rules proposal](../proposals/tag_classification_rules.md),
+can manage its own assignments without ever touching a caller's. A document
+carries a tag when any origin assigns it.
+
 ### 3.3 Setting and changing tags
 
-Tags are set in two ways.
+Tags are assigned in two ways. Both refuse the whole request with
+`unknown_tag`, naming every unregistered tag, before anything is stored.
 
 **At ingest.** `ingest` takes an optional `tags` list. The listed tags are
 **added** to the lineage's tags; ingest never removes a tag. Omitting `tags`
@@ -103,19 +147,20 @@ reached by several callers: a one-shot upload is identified by its bytes,
 so two callers who upload the same file for different projects reach the
 same lineage. If ingest replaced the tag set, the second upload would
 silently remove the first caller's `project:` tag. With adding, the document
-ends up correctly tagged for both.
+ends up tagged for both.
 
 Sending identical bytes with new tags creates no version and processes
 nothing (the D134 metadata-observation rule): the tags are added and the
 existing version is returned with `created=False`.
 
 **By update.** `update_document_tags(doc_id, add?, remove?)` adds and
-removes tags on one live lineage in one atomic write, or
-`update_document_tags(doc_id, set)` replaces the whole set (`set` excludes
-`add`/`remove`; an empty `set` clears all tags). Removing a tag the lineage
-does not have is not an error. The result returns the lineage's tags after
-the write. A connector that knows the authoritative tag set of a source uses
-`set`; an agent that classifies a document uses `add`.
+removes the caller's tags on one live lineage in one atomic write, or
+`update_document_tags(doc_id, set)` replaces the caller's whole set (`set`
+excludes `add`/`remove`; an empty `set` clears the caller's tags). Removing
+a tag the lineage does not have is not an error. The result returns the
+lineage's tags after the write. A connector that knows the authoritative
+tag set of a source uses `set`; an agent that classifies a document uses
+`add`.
 
 Retagging many documents is a loop: find them with `search_documents` (any
 filter, paged) and update each. There is no bulk retag-by-filter operation;
@@ -126,12 +171,13 @@ Tags on a deleted lineage cannot be changed (`not_found`).
 ### 3.4 Tags never reach processing
 
 This is the D56 rule ("a new version costs only its edit") applied to
-tags. Tags are not part of any keyed input: not the extraction header, not
-`extraction_input_hash`, not `embedding_text_hash`, not the D80 location
-header, not the Claimify reference window. Adding, removing or replacing
-tags therefore causes no conversion, embedding, extraction, resolution or
-adjudication work, and never creates a version. Tag writes take effect for
-the next read.
+tags. Neither tag names, descriptions nor assignments are part of any keyed
+input: not the extraction header, not `extraction_input_hash`, not
+`embedding_text_hash`, not the D80 location header, not the Claimify
+reference window. Creating, renaming, describing, assigning, removing or
+deleting tags therefore causes no conversion, embedding, extraction,
+resolution or adjudication work, and never creates a version. Tag writes
+take effect for the next read.
 
 The same separation keeps the memory's content independent of how it is
 labelled. Tagging a document `project:legalit` cannot change a claim
@@ -139,10 +185,13 @@ extracted from it, an entity it mentions, or a fact it supports.
 
 ### 3.5 Deletion and hard forget
 
-Normal deletion (D135) keeps the lineage's tag rows for audit, like its
-D134 metadata rows; a deleted lineage never matches a filter and its tags
-are never returned. D74 hard forget deletes the lineage's tag rows, because
-tags are caller-written text that can name people, customers or projects.
+Normal deletion (D135) keeps a lineage's assignment rows for audit, like its
+D134 metadata rows; a deleted lineage never matches a filter, is not counted
+by `list_tags`, and its tags are never returned. D74 hard forget deletes the
+lineage's assignment rows. The registry itself is the deployment's
+vocabulary, not content from any source, and is unaffected by forgetting a
+document; a tag whose name or description must go is removed with
+`delete_tag`.
 
 ## 4. Filtering by tags
 
@@ -162,10 +211,12 @@ documents: {
 }
 ```
 
-At least one list must be present and non-empty when `tags` is given. Each
-list is normalized (§3.1); duplicates within a list are refused. Lists
-combine with AND, and `tags` combines with the other D134 fields with AND,
-exactly as those fields combine with each other. Examples:
+A tag is given by name (matched case-insensitively) or `tag_id`. Any
+unregistered tag fails the request with `unknown_tag`, naming it, before
+retrieval. At least one list must be present and non-empty when `tags` is
+given, and duplicates within a list are refused. Lists combine with AND,
+and `tags` combines with the other D134 fields with AND, exactly as those
+fields combine with each other. Examples:
 
 | Question | Filter |
 |---|---|
@@ -255,14 +306,15 @@ verdicts; there is no "contradiction" of a claim to disclose.
 
 ### 4.5 Saying what the filter matched
 
-A filter that matches no live document is not an error, because tags are
-free text and a new tag is legitimately empty. The envelope of every
-filtered read echoes the validated filter and states whether at least one
-live document matched it (`documents_filter: {filter, matched_any_document}`).
-An empty result therefore distinguishes "no document has tag
-`project:autobaord`" (probably a typo) from "Autoboard's documents say
-nothing about this" (a real negative). Both return `known_empty` with an
-explanation naming which case occurred.
+Because every tag in a filter must be registered, a misspelled tag fails
+with `unknown_tag` instead of returning nothing. A registered tag can still
+legitimately match no live document (it was just created, or its documents
+were deleted), and D134's other fields can match nothing too. The envelope of
+every filtered read echoes the validated filter and states whether at least
+one live document matched it (`documents_filter: {filter, matched_any_document}`).
+An empty result therefore distinguishes "no document matches this filter"
+from "the matching documents say nothing about this". Both return
+`known_empty` with an explanation naming which case occurred.
 
 ### 4.6 Eligibility before ranking
 
@@ -287,69 +339,100 @@ truth.
 ## 5. Storage
 
 ```sql
--- D156: caller tags on a document lineage. Stored only here; every other
--- grain inherits through its documents. Not versioned, not part of any
--- reuse key.
+-- D156: the deployment's tag registry. Names keep their declared spelling and are unique
+-- case-insensitively.
+CREATE TABLE tags (
+  deployment_id uuid NOT NULL,
+  tag_id        uuid NOT NULL,
+  name          text NOT NULL,              -- NFC, 1–128 chars, no whitespace/control
+  description   text NOT NULL,              -- up to 2,000 chars; written for agents
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, tag_id),
+  CHECK (char_length(name) BETWEEN 1 AND 128),
+  CHECK (char_length(description) <= 2000)
+);
+CREATE UNIQUE INDEX ux_tags_name ON tags (deployment_id, lower(name));
+
+-- D156: tag assignments on a document lineage. Stored only here; chunks, claims and facts
+-- inherit through their documents. Not versioned and never part of a reuse key, so a tag
+-- write causes no processing.
 CREATE TABLE document_tags (
   deployment_id uuid NOT NULL,
   doc_id        uuid NOT NULL,
-  tag           text NOT NULL,              -- NFC, lower-cased, 1–128 chars, no whitespace/control
-  added_at      timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, doc_id, tag),
+  tag_id        uuid NOT NULL,
+  origin        text NOT NULL CHECK (origin IN ('caller')),  -- who assigned it (§3.2)
+  assigned_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, doc_id, tag_id, origin),
   FOREIGN KEY (doc_id) REFERENCES documents (doc_id) ON DELETE CASCADE,
-  CHECK (char_length(tag) BETWEEN 1 AND 128)
+  FOREIGN KEY (deployment_id, tag_id) REFERENCES tags (deployment_id, tag_id) ON DELETE CASCADE
 );
-CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag, doc_id);
+CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag_id, doc_id);
 ```
 
-The primary key answers "which tags does this document have"; the tag index
-answers "which documents have this tag", the side every filter starts from.
-The 64-tags-per-lineage limit is enforced by the write path.
+The registry's unique index makes case-insensitive names a database rule,
+not only an API check. The assignment primary key answers "which tags does
+this document have"; the tag index answers "which documents have this tag",
+the side every filter starts from. Deleting a tag cascades to its
+assignments. The per-lineage and per-deployment limits are enforced by the
+write path.
 
-The SQL query facade exposes the table as `memory_v1.document_tags_live`
-(one row per tag of a live lineage; key `(deployment_id, doc_id, tag)`), so
-saved queries and `query_sql` can join on tags like any other document
-coordinate ([open query space §3.2](open_query_space_design.md#32-memory_v1-view-catalog)).
+The SQL query facade exposes both as views
+([open query space §3.2](open_query_space_design.md#32-memory_v1-view-catalog)):
+`memory_v1.tags_current` (one row per registered tag, with its live document
+count) and `memory_v1.document_tags_live` (one row per assignment on a live
+lineage, carrying `tag_id`, the current `name` and `origin`), so saved
+queries and `query_sql` can join on tags like any other document
+coordinate.
 
 ## 6. Surfaces
 
 | Surface | Change |
 |---|---|
-| HTTP | `POST /ingest` accepts `tags`. New `POST /documents/{doc_id}/tags` with `{add?, remove?}` or `{set}`; returns `{doc_id, tags}`. `GET /documents` page items and `search_documents` results return `tags`. Every `documents` filter accepts `tags`. |
-| Python SDK | `client.ingest(..., tags=[...])`; `client.update_document_tags(doc_id, add=..., remove=...)` or `set=...`; `documents={"tags": {"all": [...]}}` on `search_documents`, `search` and the context methods. |
-| CLI | `remember ingest FILE --tag T` (repeatable); `remember documents tag DOC_ID --add T --remove T` or `--set T`; `--tag T` (all), `--any-tag T` and `--not-tag T` on query commands. |
-| MCP | `ingest` gains `tags`; new write tool `update_document_tags`; `search_documents`, `claims_and_sources_context`, `facts_context` and `combined_context` gain the `documents` argument. Each changed tool raises its `tool_version`. |
+| HTTP | `GET /tags` (list, optional `query`); `POST /tags` (create); `PATCH /tags/{tag}` (rename/describe); `DELETE /tags/{tag}`. `POST /ingest` accepts `tags`. `POST /documents/{doc_id}/tags` with `{add?, remove?}` or `{set}`; returns `{doc_id, tags}`. `GET /documents` page items and `search_documents` results return `tags`. Every `documents` filter accepts `tags`. |
+| Python SDK | `client.list_tags()`, `create_tag()`, `update_tag()`, `delete_tag()`; `client.ingest(..., tags=[...])`; `client.update_document_tags(doc_id, add=..., remove=...)` or `set=...`; `documents={"tags": {"all": [...]}}` on `search_documents`, `search` and the context methods. |
+| CLI | `remember tags list`, `remember tags create NAME --description TEXT`, `remember tags update TAG [--name] [--description]`, `remember tags delete TAG`; `remember ingest FILE --tag T` (repeatable); `remember documents tag DOC_ID --add T --remove T` or `--set T`; `--tag T` (all), `--any-tag T` and `--not-tag T` on query commands. |
+| MCP | Read tool `list_tags`; write tools `create_tag`, `update_tag`, `delete_tag` and `update_document_tags`; `ingest` gains `tags`; `search_documents`, `claims_and_sources_context`, `facts_context` and `combined_context` gain the `documents` argument. Each changed tool raises its `tool_version`. The context tools' descriptions tell agents to call `list_tags` before filtering by tag. |
 | Operations | `claims_and_sources_context@5`, `facts_context@5`, `combined_context@6` (new optional input and the §4.4/§4.5 response fields); `surface_manifest_hash` rolls. |
 
 ## 7. What tags are not
 
 - **Not entities or facts.** A tag is never extracted, resolved or turned
   into a graph node. The memory does not "know" that `project:autoboard` is
-  the Autoboard product; the caller does.
+  the Autoboard product; the tag's description says so for agents.
 - **Not a way to split the memory.** Entities, claims, facts and
   adjudication remain shared across every tag. Bodies of work that must
   never share entities or facts belong in separate deployments, as before.
 - **Not metadata about the source.** D134 fields say what a source declares
   (who wrote it, when); tags say how the caller organizes it. Both filter
   through the same object, and neither overwrites the other.
+- **Not assigned by the engine.** This design has no automatic tagging;
+  every assignment comes from a caller. Rule-based assignment is the
+  [classification rules proposal](../proposals/tag_classification_rules.md).
 
 ## 8. Tests
 
-- Normalization: case and Unicode forms collapse to one tag; whitespace,
-  control characters, empty and over-long tags are refused; the per-lineage
-  and per-list limits refuse with `invalid_parameter`.
+- Registry: create, rename, re-describe, delete; duplicate names refused
+  case-insensitively; declared spelling returned; invalid names (whitespace,
+  control characters, empty, over-long) and limits refused; a rename keeps
+  every assignment and makes the old name `unknown_tag`; delete removes all
+  assignments; `list_tags` counts only live lineages.
+- Strictness: ingest, `update_document_tags` and every filter naming an
+  unregistered tag fail with `unknown_tag` listing it, and ingest stores
+  nothing.
 - Ingest adds and never removes; identical bytes with new tags create no
   version and return `created=False`; two one-shot uploads of the same bytes
   with different tags leave both tags on the lineage.
 - `update_document_tags`: add/remove atomically; `set` replaces; empty `set`
   clears; removing an absent tag succeeds; deleted lineage is `not_found`.
-- **D56 reuse:** tagging, retagging and clearing a lineage with ready
-  versions makes zero conversion, embedding, Selection and Claimify calls
-  and creates no version (provider-call counts per stage, as in
-  `test_reuse_lifecycle.py`). Two versions ingested with different tags reuse
-  exactly what they would reuse with no tags.
-- Each `all` / `any` / `none` combination, combined with D134 fields and with
-  `entity_ids`.
+- **D56 reuse:** creating, renaming and deleting tags, and tagging,
+  retagging and clearing a lineage with ready versions make zero conversion,
+  embedding, Selection and Claimify calls and create no version
+  (provider-call counts per stage, as in `test_reuse_lifecycle.py`). Two
+  versions ingested with different tags reuse exactly what they would reuse
+  with no tags.
+- Each `all` / `any` / `none` combination, by name and by `tag_id`, combined
+  with D134 fields and with `entity_ids`.
 - Each grain of §4.3, on every surface that accepts the filter, applied
   before the cut: a matching item ranked below the unfiltered top-k is
   returned; a filter matching 1% and one matching 90% of a large store both
@@ -358,10 +441,11 @@ coordinate ([open query space §3.2](open_query_space_design.md#32-memory_v1-vie
   contradictions and co-members returned and marked; two-sided totals equal
   hand-counted distinct lineages; the fact's value and support state are
   byte-identical to an unfiltered read.
-- §4.5: a filter matching no document and a filter matching documents with
-  no relevant content return distinguishable `known_empty` explanations.
+- §4.5: a registered tag on no live document and a filter matching documents
+  with no relevant content return distinguishable `known_empty`
+  explanations.
 - D140: a time-scoped read selects old versions of a tagged lineage using
   the lineage's current tags.
-- Deletion keeps tag rows but never matches or returns them; hard forget
-  removes them.
+- Deletion keeps assignment rows but never matches, counts or returns them;
+  hard forget removes them and leaves the registry unchanged.
 - `resolve_entity` results are unaffected by any tag state.

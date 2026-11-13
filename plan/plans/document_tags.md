@@ -6,12 +6,14 @@ describes the system; this file says what to build first and why. Nothing is bui
 Each step merges with its tests and, where it changes user-facing behaviour, its
 `website/` docs in the same PR (D66), keeping `/docs/project/not-built-yet` truthful.
 
-1. **Store and write tags.** `document_tags` migration; normalization and limits;
-   `tags` on ingest (add-only, no version for identical bytes); `update_document_tags`
-   on HTTP, SDK, CLI and MCP; tags returned by `GET /documents` and `search_documents`;
-   deletion and hard-forget handling. Prove the D56 rule first: the provider-call-counting
-   reuse test shows tagging, retagging and clearing make no model calls and no versions.
-   Tags are useful from this step on as a `search_documents` filter.
+1. **Registry and assignments.** `tags` and `document_tags` migrations; the registry
+   operations (`list_tags`, `create_tag`, `update_tag`, `delete_tag`) and `unknown_tag`
+   strictness; `tags` on ingest (add-only, no version for identical bytes);
+   `update_document_tags`; all on HTTP, SDK, CLI and MCP; tags returned by
+   `GET /documents` and `search_documents`; deletion and hard-forget handling. Prove the
+   D56 rule first: the provider-call-counting reuse test shows registry changes, tagging,
+   retagging and clearing make no model calls and no versions. Callers can start tagging
+   their documents from this step on, before any read filters by tags.
 2. **Filter `search` and `search_documents` by tags.** Add `tags` to the existing D134
    filter object and its eligibility path; switch filtered relation/observation evidence to
    the D156 §4.4 rule (supporting from matching documents, contradictions from everywhere,
@@ -22,8 +24,9 @@ Each step merges with its tests and, where it changes user-facing behaviour, its
    `tool_version` bumps. This is the step agents feel, so it carries the end-to-end check:
    a memory holding two tagged products answers a product-filtered question with that
    product's support and the other product's contradiction marked out of filter.
-4. **SQL view.** `memory_v1.document_tags_live`, its manifest entry and a saved-query example
-   that joins facts to tags through supporting claims.
+4. **SQL views.** `memory_v1.tags_current` and `memory_v1.document_tags_live`, their
+   manifest entries and a saved-query example that joins facts to tags through supporting
+   claims.
 
 Step 3 depends on step 2's eligibility work; steps 1 and 4 are independent of the
 retrieval changes.

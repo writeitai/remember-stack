@@ -36,9 +36,10 @@ operation forgets a source contribution, not every independently obtained copy o
 > **Amended 2026-09-23 (D134).** D134's `document_metadata`, `document_people` and
 > `document_names` rows are deleted with the lineage.
 
-> **Amended 2026-11-13 (D156).** The lineage's `document_tags` rows are deleted
-> with it. Normal deletion (D135) keeps them for audit; a deleted lineage never
-> matches a filter and its tags are never returned.
+> **Amended 2026-11-13 (D156).** The lineage's `document_tags` assignment rows are
+> deleted with it. The deployment's tag registry (`tags`) is vocabulary, not
+> source content, and is unaffected. Normal deletion (D135) keeps assignments for
+> audit; a deleted lineage never matches a filter and its tags are never returned.
 
 > **Amended 2026-08-26 (D95–D96).** `profile_summary` and the profile embedding
 > are a **derived cache**. Forgetting a lineage that contributed to a **shared**

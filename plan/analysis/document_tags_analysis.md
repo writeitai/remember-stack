@@ -86,21 +86,60 @@ either split identities or give one entity conflicting labels.
 
 ## 5. What a label looks like
 
-**Chosen: free strings, normalized, with a documented `key:value`
-convention.** The engine parses nothing.
+**Chosen: a declared tag registry.** Each tag is created before use with a
+name and a description; assignments point at the tag's ID. Names keep their
+declared spelling, are unique and matched case-insensitively, and follow a
+documented `key:value` convention that the engine does not parse.
 
-- *Structured `{key, value}` pairs* were considered. They allow "any
-  `project:` value" queries and typed values, but add schema, validation and
-  a second matching mode, while the questions in §1 are all exact-match.
-  The convention gives most of the readability without the machinery.
-- *Prefix or wildcard matching* (`project:*`, `repo:writeitai/*`) was
-  considered and left out. `any` lists cover the observed questions, and
-  prefix matching would make tag text a hierarchy the engine has to
-  interpret. Adoption trigger: agents repeatedly need to select an open-ended
-  family of tags that cannot be listed.
-- *Case-sensitive tags* were rejected: `Project:Autoboard` vs
-  `project:autoboard` is a common, silent mistake, and a label gains nothing
-  from case.
+The first draft of D156 used free strings, lower-cased on write, created
+implicitly by being used. The owner chose a registry instead. Comparing the
+two:
+
+| | Free strings | Registry (chosen) |
+|---|---|---|
+| Can an agent find out which tags exist? | Only by sampling documents | `list_tags` returns names, descriptions and counts |
+| A typo on write | Silently creates a new tag | Refused with `unknown_tag` |
+| A typo in a filter | Silently returns nothing | Refused with `unknown_tag` |
+| What a tag means | Only in the caller's head | The description, written for agents |
+| Rename | Rewrite every assignment | One row |
+| Extra work | None | Declare each tag once |
+
+The declaration step is cheap: a connector or sync job declares its tags
+once at setup. The description is also the natural input for the
+[classification rules proposal](../proposals/tag_classification_rules.md):
+a classifier can choose among tags by reading what they mean.
+
+**Must a tag be created first, or is it created on first use?** Created
+first (owner decision). Creating on first use is more convenient but brings
+back silent typo tags, which is the main problem the registry solves.
+
+**Rejected alternatives:**
+
+- *Tag groups* (a `project` group whose values are alternatives, optionally
+  "at most one per document"). They would let the engine enforce one product
+  per document, but add a second concept, constraint checks on every write,
+  and a migration whenever a tag moves between groups. The owner chose no
+  groups. Where "at most one" matters, as in classifying a document's
+  product, the classification rules proposal puts the constraint on the rule
+  ("choose at most one of these tags"), not on the tags.
+- *Structured `{key, value}` pairs.* They allow "any `project:` value"
+  queries and typed values, but add schema, validation and a second matching
+  mode, while the questions in §1 are all exact-match. The naming convention
+  gives most of the readability without the machinery.
+- *Prefix or wildcard matching* (`project:*`). `any` lists cover the
+  observed questions, and `list_tags` makes the full list easy to build.
+  Adoption trigger: agents repeatedly need to select an open-ended family of
+  tags that cannot be listed.
+- *Case-sensitive names.* `Project:Autoboard` vs `project:autoboard` is a
+  common, silent mistake, and a label gains nothing from case.
+- *Name aliases after a rename.* A renamed tag's old name stops resolving.
+  Aliases would make one tag answer to several names indefinitely; failing
+  with `unknown_tag` tells the caller to update.
+
+**Assignment origin.** Every assignment records who made it. Only `caller`
+exists in D156; the column lets rule-based assignment (the proposal above)
+manage its own assignments, and a person's corrections, without ever
+overwriting a caller's tags.
 
 ## 6. Setting labels
 
@@ -157,10 +196,12 @@ the facts and claims they then read.
 
 ## 9. Empty results
 
-Tags are free text, so a filter on a misspelled tag matches nothing. The
-envelope says whether the filter matched any live document, so an agent can
-tell "no document has `project:autobaord`" from "Autoboard's documents say
-nothing about this".
+With a registry, a misspelled tag in a filter fails with `unknown_tag`. A
+registered tag can still match no live document (just created, or its
+documents deleted), and the other D134 fields can match nothing too. The
+envelope therefore says whether the filter matched any live document, so an
+agent can tell "no document matches this filter" from "the matching
+documents say nothing about this".
 
 ## 10. Performance
 
@@ -188,7 +229,8 @@ fact helper.
 
 Tags enter no keyed input: not the extraction header, `extraction_input_hash`,
 `embedding_text_hash`, the D80 location header, or the Claimify window.
-Tagging, retagging and clearing cause no model calls and create no versions.
+Registry changes and tagging, retagging and clearing cause no model calls
+and create no versions.
 This must be proven with the provider-call-counting reuse tests, because a
 label added to the extraction header "for context" would silently re-extract
 every relabelled document.

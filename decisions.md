@@ -8192,16 +8192,20 @@ organizes it; `source_ref` is identity and cannot double as a label; and the
 context operations agents use most accept no document filter at all.
 
 **Decision.**
-1. **Tags on the lineage only.** A caller attaches free-text tags
-   (NFC-normalized, lower-cased, 1–128 characters, no whitespace; a
-   `key:value` convention is documented, never parsed) to a document lineage.
-   They are stored once, in `document_tags`, and are not versioned. Every
-   version, including versions selected by a D140 time scope, carries the
-   lineage's current tags.
-2. **Setting tags.** `ingest` adds tags and never removes them (one lineage
-   can be reached by several callers); `update_document_tags` adds, removes
-   or replaces them atomically. Identical bytes with new tags create no
-   version.
+1. **A tag registry.** Each tag is created before use (`create_tag(name,
+   description)`), with a name unique case-insensitively (a `key:value`
+   convention is documented, never parsed) and a description written for
+   agents. `list_tags` makes the vocabulary discoverable; renames and
+   deletes happen in one place. There are no tag groups.
+2. **Assignments on the lineage only.** Registered tags are assigned to a
+   document lineage, stored once in `document_tags` with their origin (only
+   `caller` in this decision), and not versioned. Every version, including
+   versions selected by a D140 time scope, carries the lineage's current
+   tags. `ingest` adds tags and never removes them (one lineage can be
+   reached by several callers); `update_document_tags` adds, removes or
+   replaces them atomically. Identical bytes with new tags create no
+   version. Any unregistered tag in a write or filter fails with
+   `unknown_tag`.
 3. **Tags never reach processing.** They enter no reuse key, header,
    embedding input or extraction window; a tag write causes no model call and
    no version (D56).
@@ -8219,18 +8223,22 @@ context operations agents use most accept no document filter at all.
    them. This applies to every `documents` filter and replaces D134 item 3's
    evidence limit for facts.
 6. **Honest empties.** Filtered envelopes say whether any live document
-   matched the filter, so a misspelled tag is distinguishable from a real
-   negative.
+   matched the filter, so "nothing matches this filter" is distinguishable
+   from "the matching documents say nothing about this".
 
-**Alternatives and consequences.** Copying tags onto claims, chunks or facts,
-tags on versions or entities, structured key/value tags, prefix matching,
-per-filter re-adjudication, a `source_ref` prefix filter and bulk retag were
-rejected (analysis §4–§7, §12). Operation versions advance
+**Alternatives and consequences.** Free-text tags created by use, creation on
+first use, tag groups, copying tags onto claims, chunks or facts, tags on
+versions or entities, structured key/value tags, prefix matching, rename
+aliases, per-filter re-adjudication, a `source_ref` prefix filter and bulk
+retag were rejected (analysis §4–§7, §12). Automatic tagging is kept as the
+unchosen [classification rules proposal](plan/proposals/tag_classification_rules.md). Operation versions advance
 (`claims_and_sources_context@5`, `facts_context@5`, `combined_context@6`), MCP
 tools `ingest`, `search_documents` and the three context tools raise their
-`tool_version`, `update_document_tags` joins the catalogue, and
-`memory_v1.document_tags_live` joins the view catalog. Hard forget deletes tag
-rows; normal deletion keeps them for audit. Tags organize one memory; bodies
+`tool_version`, `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
+`update_document_tags` join the catalogue, and `memory_v1.tags_current` and
+`memory_v1.document_tags_live` join the view catalog. Hard forget deletes a
+lineage's assignments and leaves the registry; normal deletion keeps
+assignments for audit. Tags organize one memory; bodies
 of work that must never share entities or facts still use separate
 deployments.
 

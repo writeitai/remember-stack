@@ -52,10 +52,12 @@ registry, full/profile/card postures and extraction eligibility — see
 [the workspace family design](designs/workspace_formats_design.md#7-office-pdf-email-and-notebook-details);
 for finding files and
 filtering by author or date, [D134 document metadata and search](designs/document_metadata_and_search_design.md).
-For caller-assigned labels on documents (`project:…`, `kind:…`) and filtering every
-read — including the context operations — by them, see
+For the tag registry, caller-assigned tags on documents (`project:…`, `kind:…`) and
+filtering every read — including the context operations — by them, see
 [D156 document tags](designs/document_tags_design.md), its
 [analysis](analysis/document_tags_analysis.md) and [delivery order](plans/document_tags.md).
+Automatic tagging is the unchosen
+[classification rules proposal](proposals/tag_classification_rules.md).
 The families actually shipped for workspaces, and how they serve coding agents, are
 [D138 workspace formats](designs/workspace_formats_design.md).
 The [analysis](analysis/format_coverage_and_conversion_architecture.md) records the

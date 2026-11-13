@@ -122,9 +122,9 @@ over MCP: `ingest`, `pipeline_readiness`, `delete_document`,
 `combined_context`, `adjacent_chunks`, `source_open`, `query_sql`, `explain_sql`,
 `describe_query_space`, `search_query_space`, `list_saved_queries`,
 `describe_saved_query`, `run_saved_query`, `search_documents` (D134),
-`update_document_tags` (D156's write tool for adding, removing or replacing a
-lineage's caller tags, `POST /documents/{doc_id}/tags`,
-[document tags design §3.3](document_tags_design.md#33-setting-and-changing-tags)), and D140's
+D156's tag tools — `list_tags` (read), `create_tag`, `update_tag`,
+`delete_tag` and `update_document_tags` (write)
+([document tags design §6](document_tags_design.md#6-surfaces)) — and D140's
 `document_references` and `section_history` (reading cross-references and a section's
 versions, [effective time design §6.2](effective_time_and_section_references_design.md#62-reading-references)).
 (`adjacent_chunks` is D130/D137's
