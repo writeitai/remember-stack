@@ -38,6 +38,7 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG}
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME}
     REMEMBERSTACK_SELFHOST_API_PORT: "8000"
+    REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S: ${REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S:-86400}
     # Processing layers (D143). Both default to true; facts requires claims.
     # Switching one off stops new work for that layer and hides it from
     # retrieval; switching it back on backfills it oldest version first.

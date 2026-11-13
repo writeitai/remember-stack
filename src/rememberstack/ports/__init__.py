@@ -11,6 +11,7 @@ from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.object_store import PresignedReadPort
 from rememberstack.ports.object_store import StreamingReadPort
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
+from rememberstack.ports.purge import CorpusCachePurgePort
 from rememberstack.ports.purge import KGitPurgePort
 from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.ports.purge import ProjectionPurgePort
@@ -33,6 +34,7 @@ __all__ = (
     "PostgresReadPoolPort",
     "ObjectPurgePort",
     "ProjectionPurgePort",
+    "CorpusCachePurgePort",
     "SystemOnePort",
     "TaskQueuePort",
     "TelemetryPort",

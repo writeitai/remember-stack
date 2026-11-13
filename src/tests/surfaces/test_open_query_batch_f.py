@@ -688,7 +688,7 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
             mounts=None,
         )
     )
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "4.0.1"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "4.1.0"
     assert skill.content.startswith("---\n")
     # first prose after the skill title block is the bound headline
     assert TWO_LAYER_HEADLINE in skill.content
@@ -1269,7 +1269,6 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     profile = SelfHostProfile(
         settings=SelfHostSettings(
             deployment_id=_DEPLOYMENT,
-            projection_work_root=projection_work_root,
             forget_manifest_root=forget_manifest_root,
             migration_config=_ROOT / "alembic.ini",
         ),

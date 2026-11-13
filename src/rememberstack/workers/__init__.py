@@ -36,9 +36,7 @@ from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
-from rememberstack.workers.forget import CorpusForgetRebuilder
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
-from rememberstack.workers.forget import ForgetProjectionRebuilder
 from rememberstack.workers.forget import HardForgetHandler
 from rememberstack.workers.forget import HardForgetReadiness
 from rememberstack.workers.forget import HardForgetService
@@ -72,9 +70,6 @@ from rememberstack.workers.p1 import label_relation_component_version
 from rememberstack.workers.p1 import LabelFactsHandler
 from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.p1 import P1Settings
-from rememberstack.workers.p3 import CorpusFsBuilder
-from rememberstack.workers.p3 import CorpusFsSettings
-from rememberstack.workers.p3 import P3_BUILDER_VERSION
 from rememberstack.workers.reconcile import CycleFinalizer
 from rememberstack.workers.reconcile import DeletionService
 from rememberstack.workers.reconcile import DocumentDeleter
@@ -139,17 +134,12 @@ __all__ = (
     "HandlerOutcome",
     "HandlerRegistry",
     "ForgetKnowledgeRebuilder",
-    "ForgetProjectionRebuilder",
     "HardForgetHandler",
     "HardForgetReadiness",
     "HardForgetService",
     "KnowledgeCycleForgetRebuilder",
-    "CorpusForgetRebuilder",
     "RunResult",
     "StageHandler",
-    "CorpusFsBuilder",
-    "CorpusFsSettings",
-    "P3_BUILDER_VERSION",
     "CycleFinalizer",
     "DeletionService",
     "DocumentDeleter",

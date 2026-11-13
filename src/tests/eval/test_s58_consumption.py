@@ -158,12 +158,10 @@ def skill_surface(database_engine: Engine) -> ConsumptionSkillSurface:
 
 
 def _mounts() -> PublishedMounts:
-    """The exact four mounted views handed to the cold harness."""
+    """The corpus and standalone K views handed to the cold harness."""
     return PublishedMounts(
         deployment_id=_DEPLOYMENT_ID,
         p3="/memory/p3",
-        artifacts="/memory/artifacts",
-        raw="/memory/raw",
         knowledge="/memory/knowledge",
         read_only=True,
     )

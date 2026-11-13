@@ -18,7 +18,7 @@ deployment as the shipped `compose.yaml` runs it.
 | Piece | What it does |
 |---|---|
 | **PostgreSQL** | Holds the memory: every document and version, every claim, entity and fact, the decisions that changed them, and the queue of pipeline work. The search indexes and the graph are in the same database. |
-| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs SeaweedFS. |
+| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and live corpus copies and navigation. Any S3-compatible store; Compose runs SeaweedFS. |
 | **The API** | One process that answers HTTP. Ingest stores the original and records a version; reads run against PostgreSQL. |
 | **The workers** | One process per [pipeline stage](/docs/concepts/pipeline), from `convert` to `label_relation`. Each takes work from the queue in PostgreSQL, calls models where the stage needs one, and writes its results back. |
 | **`setup`** | Runs once before the others start: database migrations, buckets, the deployment record. |
@@ -47,7 +47,7 @@ can fall behind.
 | The query space `memory_v1` for [SQL queries](/docs/concepts/retrieval#sql-queries-over-the-query-space) | PostgreSQL views and functions | A read-only view of the authority. |
 | Original files | Object storage, bucket `remember-raw` | Authority. Identical bytes are stored once. |
 | Converted Markdown and the files produced with it | Object storage, bucket `remember-artifacts` | Derived from the original. Chunks point at positions in it, so it is kept, not rebuilt. |
-| Filesystem-view snapshots | Object storage, bucket `remember-corpusfs` | Derived. Rebuilt on demand. |
+| Live corpus folders | Object storage, bucket `remember-corpusfs` | Derived. Published per document; repaired by reconcile. |
 
 The bucket names are the defaults of a Compose deployment. Everything in
 PostgreSQL and the first two buckets belongs together: back them up at the

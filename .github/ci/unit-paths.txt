@@ -148,6 +148,7 @@ src/tests/workers/test_e2_occurrence_provenance.py
 src/tests/surfaces/test_direct_admission.py
 src/tests/surfaces/test_client_connection.py
 src/tests/surfaces/test_client_login.py
+src/tests/surfaces/test_cli_mount.py
 src/tests/surfaces/test_section_history_clients.py
 src/tests/adapters/test_perimeter_trust.py
 src/tests/workers/test_self_reference_naming.py
@@ -174,3 +175,5 @@ src/tests/surfaces/test_per_request_perimeter.py
 src/tests/surfaces/test_request_embeddings.py
 src/tests/adapters/test_object_operations.py
 src/tests/surfaces/test_pagination_documentation.py
+src/tests/adapters/test_mount_provisioning.py
+src/tests/benchmarks/test_locomo_corpus_attestation.py

@@ -331,7 +331,6 @@ def capture(*, engine: Engine, version_id: UUID) -> dict[str, Any]:
     """Run the four assured operations and readiness; normalise volatile values."""
     from rememberstack.model import ReadinessRequirements
     from rememberstack.profiles.selfhost import _expected_components
-    from rememberstack.spine.projection import ProjectionCatalog
     from rememberstack.spine.readiness import PipelineReadinessCatalog
     from rememberstack.surfaces.http_api import build_api
     from rememberstack.surfaces.operation_surface import OperationSurface
@@ -368,9 +367,7 @@ def capture(*, engine: Engine, version_id: UUID) -> dict[str, Any]:
             "body": response.json(),
         }
     report = PipelineReadinessCatalog(
-        engine=engine,
-        expected_components=_expected_components(),
-        projections=ProjectionCatalog(engine=engine),
+        engine=engine, expected_components=_expected_components()
     ).inspect(
         deployment_id=DEPLOYMENT_ID,
         version_ids=(version_id,),

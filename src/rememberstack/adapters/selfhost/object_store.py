@@ -170,21 +170,36 @@ class LocalFSObjectStore:
         self._prune_parents(path.parent, root=self._root)
         self._prune_parents(self._class_path(key=key).parent, root=self._metadata_root)
 
+    def iter_purge_keys(self) -> Iterator[ObjectKey]:
+        """Local storage retains neither object versions nor multipart uploads."""
+        yield from self.iter_keys(prefix="")
+        yield from self._iter_metadata_keys()
+
     def purge_objects(
-        self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
+        self,
+        *,
+        keys: tuple[ObjectKey, ...],
+        prefixes: tuple[ObjectKey, ...],
+        before_write: Callable[[], None] | None = None,
     ) -> None:
         """Use exact deletion for boundary-safe, idempotent erasure."""
         for key in keys:
             self._path_for(key=key)
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         for key in keys:
+            if before_write:
+                before_write()
             self.delete(key=key)
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
+                if before_write:
+                    before_write()
                 self.delete(key=key)
         # Include orphaned metadata records when object bytes are already absent.
         for key in self._iter_metadata_keys():
             if any(matches_object_prefix(key.root, prefix=p) for p in boundaries):
+                if before_write:
+                    before_write()
                 self.delete(key=key)
 
     def verify_objects_purged(

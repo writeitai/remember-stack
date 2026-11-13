@@ -83,7 +83,7 @@ class _Search:
                     version_no=1,
                     status="ready",
                     file_name="Q3_sales_2025.xlsx",
-                    p3_path=f"documents/{_DOC}",
+                    p3_path="spreadsheet/q3-sales--2a43bb03e2c419e141d5fbd9",
                     family="office",
                 ),
             ),

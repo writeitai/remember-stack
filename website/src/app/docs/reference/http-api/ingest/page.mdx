@@ -342,7 +342,7 @@ whether the capabilities you need are ready. It only reads; it never waits.
 | `require.pipeline` | boolean | yes | Every expected stage has finished for every version. |
 | `require.p1` | boolean | yes | The search index (claims, chunks, facts) is published. |
 | `require.live_graph` | boolean | yes | The live graph passes its health checks. |
-| `require.p3` | boolean | yes | A filesystem snapshot built after the versions finished has been published. |
+| `require.p3` | boolean | yes | Every requested served version's corpus publication marker matches its current export inputs. |
 
 Unknown fields are rejected (`422`).
 
@@ -368,7 +368,7 @@ Capability `reason` values:
 |---|---|---|
 | `pipeline` | `ready` | `stage_incomplete` |
 | `p1` | `ready` | `search_channel_incomplete` |
-| `p3` | `ready` | `corpus_snapshot_incomplete` |
+| `p3` | `ready` | `corpus_publication_incomplete`, `p3_version_not_served` |
 | `live_graph` | `ready` | `graph_server_version_mismatch`, `graph_extension_version_mismatch`, `graph_role_contract_mismatch`, `graph_helper_contract_mismatch`, `graph_catalog_mismatch`, `graph_role_runtime_limits_mismatch`, `graph_smoke_identifier_collision`, `graph_one_hop_guard_smoke_failed`, `graph_one_hop_smoke_failed`, `graph_neighborhood_smoke_failed`, `graph_path_smoke_failed`, `graph_citation_smoke_failed`, `graph_database_or_permission_failed`, `graph_smoke_contract_failed` |
 
 A version id the deployment does not know is not an error: every stage reads
@@ -547,14 +547,17 @@ newest version that did, with the others in `other_matching_version_ids`.
 Filters and names always use the returned version's own metadata. Deleted
 documents and deleted versions never match.
 
-Each result's `p3_path` is the document's stable path in the
-[filesystem view](/docs/self-hosting/filesystem-views), relative to its root:
-`documents/<doc_id>`. It exists there only when the deployment publishes the
-filesystem view; `source_path` is where the file came from instead. That
-path always shows the document's served version (its newest processed one),
-so `p3_path` is `null`, and `served_version` is `false`, when the result
-describes another version. Open the described version with `version_id` and
-`representation_id` instead.
+`p3_path` is the relative corpus folder only when the described version is
+served and its nullable publication marker matches the current export inputs.
+It is `null` before publication, during updates, after a failed publication,
+for raw-only versions and for historical editions, including non-periodised
+history. `served_version` describes authority currency independently of P3.
+Re-resolve by `filters.doc_ids` after a type/topic/title move, or use
+[offline suffix lookup](/docs/self-hosting/filesystem-views#layout).
+A newer pending upload leaves the served folder intact. A temporal query that
+selects no edition returns no document; suffix lookup does not override it.
+Keep `version_id` and `representation_id` for exact source identity; no public
+`source_open` operation returns whole historical files yet.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -642,7 +645,7 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
-      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "p3_path": "spreadsheet/sales/q3-sales-2025--2a43bb03e2c419e141d5fbd9",
       "served_version": true,
       "representation_id": "7c2e4b1a-9d3f-4e8a-b6c5-2f1a0e9d8c7b",
       "effective": [],

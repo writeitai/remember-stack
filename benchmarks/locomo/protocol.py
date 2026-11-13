@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v46"
-DEFAULT_PROTOCOL_KEY: Final = "full-v46"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-reader-catalog-v45"
-"""Current Full-v46: inherit the reader and require bounded visual-label readings."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v47"
+DEFAULT_PROTOCOL_KEY: Final = "full-v47"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-corpus-markers-v47"
+"""Current Full-v47: attest per-version markers and frozen ready-folder inventories."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -219,7 +219,7 @@ normal memory agent and follow this retrieval hierarchy:
    recursive helpers for bounded work over the live PostgreSQL graph, and saved
    queries for shipped patterns.
 4. P3 mount: list, search, and read the corpus filesystem for orientation and
-   source context. P3 is a snapshot; verify load-bearing current claims
+   source context. P3 is a live corpus with frozen run inventories; verify load-bearing current claims
    through a live fact/evidence path.
 
 Respect every response envelope's grain, negative, freshness, truncation, and

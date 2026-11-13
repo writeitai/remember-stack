@@ -87,6 +87,13 @@ traces so they can be regraded without repeating ingestion or answering.
 
 ### How a LoCoMo run works
 
+The current Full-v47 protocol uses per-version publication markers, ready folder
+identities and frozen file inventories, including binary reader files and
+navigation. It rejects changed local bytes and requires the same evidence for
+resume and ablations. Global P3 version/timestamps are absent. This attestation
+change establishes no new score; earlier results remain tied to their recorded
+protocol and source revision.
+
 The harness lives in `benchmarks/locomo/` and runs as
 `python -m benchmarks.locomo`.
 
@@ -102,7 +109,7 @@ The harness lives in `benchmarks/locomo/` and runs as
    operations, eight lower-level lookups (`resolve`, `lookup_relations`,
    `transcript_relation`, `lookup_observations`, `search_claims`,
    `search_chunks`, `adjacent_chunks`, `hydrate_relation`), the seven SQL
-   query tools, and three tools over the filesystem view snapshot. It may
+   query tools, and three tools over the live corpus with frozen run inventories. It may
    make at most 8 tool calls and 9 model calls per question.
 4. **Judge**, per conversation. A judge model labels each answer `CORRECT`
    or not against the gold answer.
@@ -388,7 +395,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v46 \
+  --output .benchmark-runs/smoke --protocol full-v47 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -396,9 +403,8 @@ uv run python -m benchmarks.locomo ingest \
   --max-documents 100 --max-evaluator-cost-usd 5 \
   --execute --confirm-isolated-deployment conv-26
 
-# Wait until every document is processed. Then build and publish the
-# filesystem view snapshot (see Filesystem views) and pass its directory
-# as --p3-root below.
+# Wait for each served document's p3 readiness. Mount/copy the live corpus
+# read-only (see Filesystem views) and pass its directory as --p3-root below.
 
 uv run python -m benchmarks.locomo answer \
   --run .benchmark-runs/smoke --sample conv-26 \

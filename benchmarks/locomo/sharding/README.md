@@ -178,7 +178,7 @@ as source-derived data.
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v46` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v47` | prepare-time protocol key |
 | `LOCOMO_IMAGE_INPUTS` | required for fresh preparation | immutable `prepare-images` bundle for the tier's selected samples; copied into the run and included in GCS archives |
 | `LOCOMO_MOUNT_ROOT` | `$RUN_DIR/.mounts` | host/container-identical P3 mount root |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |
@@ -265,7 +265,7 @@ extraction. It makes the saved deployment ID, revision, and non-secret model
 and routing bindings authoritative over the operator-supplied secret-bearing
 base env and parent shell; secrets are never copied into backup metadata.
 Startup refuses an API image whose stamped revision differs from the manifest.
-Absolute P3 snapshot pointers are rebased to the restored mount root, so
+The corpus directory and frozen run inventories are restored together, so
 recovery does not depend on the source host's filesystem path.
 Then assert that the sample has no unanswered items and run the ordinary answer
 preflight with an invalid evaluator key to prove sample lineage, readiness, and

@@ -376,8 +376,8 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
 
 def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v46"
-    assert DEFAULT_PROTOCOL_KEY == "full-v46"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v47"
+    assert DEFAULT_PROTOCOL_KEY == "full-v47"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     # Measured main8e338379a baseline; consolidation must not grow the prompt.
     assert len(prompt) <= 18_284
@@ -513,10 +513,10 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v46",)
-    protocol = PROTOCOL_REGISTRY["full-v46"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v47",)
+    protocol = PROTOCOL_REGISTRY["full-v47"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v46"
+    assert protocol.name == "RS-LoCoMo-Full-v47"
     assert protocol.answer_agent_model == "openai/gpt-6-luna"
     assert protocol.answer_agent_reasoning_effort == "high"
     assert protocol.judge_reasoning_effort == "high"
@@ -567,7 +567,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v46"]
+    assert selected == ["full-v47"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -742,7 +742,7 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v46")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v47")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 

@@ -175,8 +175,9 @@ the edit, not the document — full design: `evidence_lifecycle_design.md` §2/�
 **Deletion / forget (cascade).** Normal removal tombstones the lineage, purges its unshared **raw +
 artifacts** objects, ends its testimony currency, and reaches K through the citation tombstone path
 (lifecycle §8; schema §13.1). Irreversible hard-forget is D74's separate fail-closed workflow: it
-also scrubs retained source payloads, explicitly purges P1 and resets P3 and its controlled
-serving copies before repair, erases affected K history, and records a portable restore
+also scrubs retained source payloads, explicitly purges P1, erases the document’s P3
+copies and controlled serving caches, regenerates navigation, erases affected K history,
+and records a portable restore
 barrier. A rebuild alone is not erasure (§6.7; `hard_forget_design.md`).
 
 ## 3. The conversion module (raw → Markdown) — D38
@@ -718,6 +719,28 @@ creates the read-only mountable session; its authentication route, ticket format
 and session lifecycle implementation belong to the cloud repo. These commands
 are a thin client wrapper, not an engine mount scheduler or new truth surface.
 
+Use the CLI's existing D136 connection precedence for the API key and project;
+the signed key's `org` identifies the organisation. The issuer metadata's
+`remember_account_endpoint` supplies the remember.dev API base, independently of
+the engine URL. Resolve a project name or the key's default through the existing
+`remember_project_endpoint`; an explicit UUID needs no deployment lookup. Send
+`POST <API base>/v1/orgs/{org_id}/mount-sessions` with `Authorization: Bearer <key>`
+and JSON `{"project_id":"<uuid>","idempotency_key":"<uuid4>"}`. Generate a fresh
+UUID4 per invocation. The key needs `memory:read` on that project. A 201 or 200
+response contains `session_id`, secret `ticket` and RFC3339 `expires_at`; the
+ticket is single-use and valid for five minutes. Do not follow POST redirects
+or echo response bodies in errors. Explain 401/403/404 failures without exposing
+credentials.
+
+Mountable stays in the foreground and emits JSON lines. Wait for
+`{"event":"mounted","path":"<canonical DIR>",...}`, add `session_id` to that
+event, and flush it immediately. Keep the wrapper attached until mountable exits,
+forwarding its events, diagnostics and exit status with the ticket redacted.
+Another terminal can run `remember unmount DIR`, which invokes
+`mountable unmount DIR` with no ticket or cloud credential lookup. Missing
+mountable reports the supported npm/uv installation commands. This lifecycle
+follows [mountable's CLI source](https://github.com/writeitai/mountable/blob/d936589b1e200e347f03dfc32609c5d368668ae2/cmd/mountable/mount.go).
+
 **Self-host.** Mount the configured corpus bucket using any S3 FUSE tool with
 read-only credentials/options and bounded stat/list/data caching. A local
 filesystem adapter serves the same live directory tree; it uses atomic file
@@ -919,7 +942,7 @@ directory summaries, facets, `documents/<doc_id>/`, `by-source/`, `by-time/`,
 Folder paths change only when their type, topic or title changes; index pagination
 does not move them. Consumers store `doc_id` (and a version/representation handle for a citation).
 Resolve through MCP `p3_path`; for offline browsing compute `corpus_suffix(doc_id)`
-and run `find <mount> -path '*-<suffix>/*'`, substituting its 24 hex characters.
+and run `find <root> -type d -name '*--<suffix>'`, substituting its 24 hex characters.
 This searches the mounted tree and may cost a full listing; there is no `_paths/`
 id index, alias directory or persistent path map. Verify the folder's `doc_id`
 and displayed version in `document.json` before opening it as a particular edition.
@@ -969,8 +992,19 @@ index regeneration, normal removal, reconcile and forget's authorized internal
 calls. Reuse caller lock ownership for internal calls. Re-read authority after
 taking the lock. Keep the claim alive while streaming. Before each object write
 or delete, confirm ownership of that advisory lock on the same PostgreSQL session
-and that the work claim is still live; abort further mutations on loss. Check
-before each multipart request too, so one bounded part is the largest upload
+and that the work claim is still live; abort further mutations on loss.
+
+Hold D74's existing shared admission/drain fence on an independent PostgreSQL session through all issued requests and own-upload cleanup, acquiring
+it before the publication lock. Check that original session's identity and lock
+ownership too. If the publication backend dies, the admission fence still makes
+forget wait for IO; if the admission backend dies, the publication lock still
+prevents P3 erasure from completing before IO returns. These are the existing
+D74/P3 locks, with no new coordination table or lock namespace. Losing all DB
+sessions still requires D74's external-write quiescence acknowledgement; database
+or lease state alone never proves that requests stopped.
+
+Check both locks and the live claim before each multipart request too, so one
+bounded part is the largest upload
 unit. Configure bounded S3 connect/read timeouts and disable automatic write
 retries that could issue a new request after lock loss. No detached uploads
 survive a handler.

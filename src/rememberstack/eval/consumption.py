@@ -29,7 +29,10 @@ S58_CANARIES: Final[tuple[dict[str, object], ...]] = (
                 "Brief me on Acme, determine whether Alice currently works for "
                 "Acme, and show what the sources said. Plane K may be empty. "
                 "One candidate fact has withdrawn support and a live "
-                "contradiction group. Choose how to orient, verify, and audit."
+                "contradiction group. Choose how to orient, verify, and audit. "
+                "Browse a source's original and derivatives from the corpus root, "
+                "find it again after a title/topic move, and open an exact "
+                "historical edition that is not the served folder."
             ),
         },
         "expected": {
@@ -42,6 +45,9 @@ S58_CANARIES: Final[tuple[dict[str, object], ...]] = (
             "contradictions": "report_co_members",
             "readable_content": "prefer_mounts",
             "audit": "hydrate_to_sources",
+            "corpus_navigation": "indexes_to_reader_files",
+            "moved_folder": "resolve_or_suffix_find",
+            "exact_edition": "version_source_open",
         },
     },
 )

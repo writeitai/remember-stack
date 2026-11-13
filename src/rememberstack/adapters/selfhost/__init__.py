@@ -10,7 +10,6 @@ from rememberstack.adapters.selfhost.managed_metering import ControlPlaneMeterRe
 from rememberstack.adapters.selfhost.minio import MinIOObjectStore
 from rememberstack.adapters.selfhost.minio import MinIOSettings
 from rememberstack.adapters.selfhost.mounts import AuditedRawReader
-from rememberstack.adapters.selfhost.mounts import LocalMountPublisher
 from rememberstack.adapters.selfhost.mounts import RawAccessDenied
 from rememberstack.adapters.selfhost.mounts import storage_class_for
 from rememberstack.adapters.selfhost.object_store import LocalFSObjectStore
@@ -37,7 +36,6 @@ __all__ = (
     "JsonLineTelemetry",
     "LocalFSObjectStore",
     "AuditedRawReader",
-    "LocalMountPublisher",
     "MinIOObjectStore",
     "MinIOSettings",
     "RawAccessDenied",

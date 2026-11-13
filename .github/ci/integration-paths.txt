@@ -1,4 +1,3 @@
-src/tests/adapters/test_mount_provisioning.py
 src/tests/adapters/test_p1_ranked_pg.py
 src/tests/adapters/test_postgres_p1_document_filters.py
 src/tests/adapters/test_selfhost_queue.py
@@ -93,3 +92,5 @@ src/tests/spine/test_d153_eligibility_pg.py
 src/tests/adapters/test_minio_object_operations.py
 src/tests/adapters/test_minio_corpus_lock_loss.py
 src/tests/adapters/test_minio_corpus_publication.py
+src/tests/adapters/test_minio_corpus_forget.py
+src/tests/adapters/test_minio_corpus_consumption.py

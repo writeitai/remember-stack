@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Self
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
@@ -13,18 +14,21 @@ from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
 from rememberstack.model import ForgetManifest
 from rememberstack.model import PipelineStage
+from rememberstack.ports.forget import ForgetManifestPort
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.ports.purge import CorpusCachePurgePort
+from rememberstack.ports.purge import KGitPurgePort
+from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine import ProjectionCatalog
+from rememberstack.spine.corpus_export import CorpusReaderCatalog
+from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
-from rememberstack.workers import CorpusForgetRebuilder
-from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeletionService
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import HardForgetHandler
@@ -32,6 +36,8 @@ from rememberstack.workers import HardForgetReadiness
 from rememberstack.workers import HardForgetService
 from rememberstack.workers import KnowledgeCommitDriver
 from rememberstack.workers import KnowledgeCycleForgetRebuilder
+from rememberstack.workers.corpus_publication import CorpusPublisher
+from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 
 
 class SelfHostHardForget:
@@ -61,30 +67,66 @@ class SelfHostHardForget:
         model_provider: ModelProviderPort,
         embedding_model: str,
         manifest_root: Path,
-        object_roots: tuple[Path, ...],
-        snapshot_root: Path,
-        mount_root: Path,
+        raw_root: Path,
+        artifact_root: Path,
+        corpus_root: Path,
         knowledge_repository: Path,
         knowledge_author_name: str,
         knowledge_author_email: str,
         knowledge_driver: KnowledgeCommitDriver,
     ) -> Self:
         """Compose only existing production workers and selected self-host stores."""
-        if not object_roots:
-            raise ValueError("hard-forget requires at least one ordinary object root")
         catalog = ForgetCatalog(engine=engine)
-        manifest_store = LocalFSForgetManifestStore(root=manifest_root)
-        object_purgers = tuple(LocalFSObjectStore(root=root) for root in object_roots)
-        snapshot_store = LocalFSObjectStore(root=snapshot_root)
-        projection_catalog = ProjectionCatalog(engine=engine)
-        k_git = LocalGitRepository(
-            repository=knowledge_repository,
-            path_catalog=catalog,
-            author_name=knowledge_author_name,
-            author_email=knowledge_author_email,
+        raw = LocalFSObjectStore(root=raw_root)
+        artifacts = LocalFSObjectStore(root=artifact_root)
+        corpus = LocalFSObjectStore(root=corpus_root)
+        return cls.from_stores(
+            engine=engine,
+            model_provider=model_provider,
+            embedding_model=embedding_model,
+            manifest_store=LocalFSForgetManifestStore(root=manifest_root),
+            object_purgers=(raw, artifacts),
+            corpus_store=corpus,
+            publisher=CorpusPublisher(
+                catalog=CorpusPublicationCatalog(engine=engine),
+                readers=CorpusReaderCatalog(engine=engine),
+                raw_store=raw,
+                artifact_store=artifacts,
+                corpus_store=corpus,
+            ),
+            k_git=LocalGitRepository(
+                repository=knowledge_repository,
+                path_catalog=catalog,
+                author_name=knowledge_author_name,
+                author_email=knowledge_author_email,
+            ),
+            knowledge_rebuilder=KnowledgeCycleForgetRebuilder(driver=knowledge_driver),
         )
+
+    @classmethod
+    def from_stores(
+        cls,
+        *,
+        engine: Engine,
+        model_provider: ModelProviderPort,
+        embedding_model: str,
+        manifest_store: ForgetManifestPort,
+        object_purgers: tuple[ObjectPurgePort, ...],
+        corpus_store: ObjectPurgePort,
+        publisher: CorpusPublisher,
+        k_git: KGitPurgePort | None = None,
+        knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
+        caches: CorpusCachePurgePort | None = None,
+    ) -> Self:
+        """D147: compose the same erasure/replay over the deployment's actual stores.
+
+        The stock API profile has no K store. If K history is present, its host
+        must supply both K capabilities; absence never silently acknowledges it.
+        """
+        catalog = ForgetCatalog(engine=engine)
+        absent_k = _NoKnowledgeStore(engine=engine)
         service = HardForgetService(
-            catalog=catalog, manifest_store=manifest_store, k_git=k_git
+            catalog=catalog, manifest_store=manifest_store, k_git=k_git or absent_k
         )
         profile_refresher = EntityProfileRefresher(
             engine=engine,
@@ -99,18 +141,11 @@ class SelfHostHardForget:
             ),
             profile_refresher=profile_refresher,
             object_purgers=object_purgers,
-            projection_rebuilder=CorpusForgetRebuilder(
-                corpus=CorpusFsBuilder(
-                    catalog=projection_catalog, snapshot_store=snapshot_store
-                )
-            ),
             projection_purger=SelfHostProjectionPurger(
-                object_purger=snapshot_store,
-                catalog=projection_catalog,
-                mount_root=mount_root,
+                publisher=publisher, object_purger=corpus_store, caches=caches
             ),
-            knowledge_rebuilder=KnowledgeCycleForgetRebuilder(driver=knowledge_driver),
-            k_git=k_git,
+            knowledge_rebuilder=knowledge_rebuilder or absent_k,
+            k_git=k_git or absent_k,
         )
         readiness = HardForgetReadiness(
             catalog=catalog,
@@ -125,6 +160,10 @@ class SelfHostHardForget:
             handler=handler,
             readiness=readiness,
         )
+
+    @property
+    def handler(self) -> HardForgetHandler:
+        return self._handler
 
     def register(self, *, registry: HandlerRegistry) -> None:
         """Install the one unlaned hard-forget worker handler."""
@@ -178,4 +217,49 @@ class SelfHostHardForget:
             source_kind=source_kind,
             source_ref=source_ref,
             content_hash=content_hash,
+        )
+
+
+class _NoKnowledgeStore:
+    """The source/claims/facts profile has no Plane-K serving store to acknowledge."""
+
+    def __init__(self, *, engine: Engine) -> None:
+        self._engine = engine
+
+    def blocking_redaction_paths(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[str, ...]:
+        with self._engine.connect() as connection:
+            present = connection.execute(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM knowledge_artifacts WHERE deployment_id = :d)"
+                ),
+                {"d": deployment_id},
+            ).scalar_one()
+        if present:
+            raise RuntimeError(
+                "K history requires a composed K purge and rebuild capability"
+            )
+        return ()
+
+    def recompile_without_lineage(
+        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
+    ) -> None:
+        if artifact_ids:
+            raise RuntimeError(
+                "K history requires a composed K purge and rebuild capability"
+            )
+
+    def purge_artifacts(
+        self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
+    ) -> None:
+        self.recompile_without_lineage(
+            deployment_id=deployment_id, artifact_ids=artifact_ids
+        )
+
+    def verify_artifacts_purged(
+        self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
+    ) -> None:
+        self.recompile_without_lineage(
+            deployment_id=deployment_id, artifact_ids=artifact_ids
         )

@@ -219,7 +219,6 @@ def profiles(
                 if deployment_id == _DEPLOYMENT_A
                 else 240,
                 forget_manifest_root=root / "forget",
-                projection_work_root=root / "projection",
             ),
             engine=engine,
             raw_store=(  # type: ignore[arg-type]

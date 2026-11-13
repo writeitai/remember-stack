@@ -203,6 +203,12 @@ class ForgetCatalog:
                 )
             if row["manifest"] is not None:
                 _require_same_manifest(row=row, manifest=manifest)
+                connection.execute(
+                    text("""UPDATE forget_manifests SET status = 'accepted',
+                    completed_at = NULL, last_verified_at = NULL WHERE deployment_id = :deployment_id
+                    AND forget_id = :forget_id"""),
+                    parameters,
+                )
                 return
             connection.execute(_MATERIALIZE_PREPARING, parameters)
 
@@ -327,15 +333,6 @@ class ForgetCatalog:
                         for value in _text_values(
                             connection=connection,
                             statement=_OBJECT_KEYS,
-                            deployment_id=deployment_id,
-                            doc_id=doc_id,
-                        )
-                    ),
-                    projection_prefixes=tuple(
-                        ObjectKey(value)
-                        for value in _text_values(
-                            connection=connection,
-                            statement=_PROJECTION_PREFIXES,
                             deployment_id=deployment_id,
                             doc_id=doc_id,
                         )
@@ -1127,16 +1124,6 @@ _OBJECT_KEYS = text(
     """
 )
 
-_PROJECTION_PREFIXES = text(
-    """
-    SELECT DISTINCT gcs_uri
-    FROM projection_snapshots
-    WHERE deployment_id = :deployment_id
-      AND plane = 'P3_corpusfs'
-    ORDER BY gcs_uri
-    """
-)
-
 _STORE_MANIFEST = text(
     """
     UPDATE forget_manifests
@@ -1211,6 +1198,7 @@ _POSTGRES_SCRUB = (
         """
         UPDATE documents
         SET current_version_id = NULL,
+            corpus_published_revision = NULL,
             document_entity_id = NULL,
             source_ref = NULL,
             source_uri = NULL,
@@ -1648,6 +1636,11 @@ _POSTGRES_SCRUB = (
     # edit must not silently strand titles/stats/failure envelopes of a
     # forgotten document.
     text(
+        """UPDATE document_representations r SET current_structure_generation_id = NULL
+        FROM document_versions v WHERE r.version_id = v.version_id
+        AND r.deployment_id = :deployment_id AND v.doc_id = :doc_id"""
+    ),
+    text(
         """
         DELETE FROM document_structure_generations
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
@@ -1719,7 +1712,10 @@ _POSTGRES_SCRUB = (
     text(
         """
         UPDATE processing_state
-        SET payload = NULL, last_error = NULL
+        SET payload = CASE WHEN stage = 'publish_corpus'
+                           THEN jsonb_build_object('doc_id', CAST(:doc_id AS text))
+                           ELSE NULL END,
+            last_error = NULL
         WHERE deployment_id = :deployment_id
           AND stage <> 'hard_forget'
           AND (
@@ -1795,6 +1791,7 @@ _VERIFY_POSTGRES_SCRUB = text(
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
           AND (source_ref IS NOT NULL OR source_uri IS NOT NULL OR title IS NOT NULL
                OR current_version_id IS NOT NULL OR document_entity_id IS NOT NULL
+               OR corpus_published_revision IS NOT NULL OR corpus_paths IS NOT NULL
                OR deleted_at IS NULL)
         UNION ALL
         SELECT 1 FROM document_representations representation
@@ -2038,7 +2035,12 @@ _VERIFY_POSTGRES_SCRUB = text(
         SELECT 1 FROM processing_state
         WHERE deployment_id = :deployment_id
           AND stage <> 'hard_forget'
-          AND (payload IS NOT NULL OR last_error IS NOT NULL)
+          AND (last_error IS NOT NULL OR (
+            payload IS NOT NULL AND NOT (
+                stage = 'publish_corpus'
+                AND payload = jsonb_build_object('doc_id', CAST(:doc_id AS text))
+            )
+          ))
           AND (
               target_id = :doc_id
               OR target_id = ANY(:chunk_ids)

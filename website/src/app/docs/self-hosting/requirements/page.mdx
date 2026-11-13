@@ -111,17 +111,21 @@ schedule (see [Upgrades and migrations](/docs/self-hosting/upgrades)).
 
 ## S3-compatible object storage
 
-Original files, converted Markdown and other artifacts, and filesystem
-snapshots live in object storage, in three buckets (`remember-raw`,
+Original files, converted Markdown and other artifacts, and corpus
+copies live in object storage, in three buckets (`remember-raw`,
 `remember-artifacts`, `remember-corpusfs`). The `setup` step creates them.
 
 Compose runs [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for this
 (image `chrislusf/seaweedfs`, pinned to `4.44` by digest). The engine talks
-to it through the S3 API with path-style addressing and SigV4 signing. It
-writes every object with a conditional create (`If-None-Match: *`), so an
-object is never silently replaced. The project's checks exercise SeaweedFS
+to it through the S3 API with path-style addressing and SigV4 signing. Immutable E0 writes use conditional create (`If-None-Match: *`). Corpus
+publication uses complete-object replacement, streaming large files through multipart
+uploads, with digest metadata and paged listings. The project's checks exercise SeaweedFS
 and real MinIO adapter contracts. Another S3-compatible store has to support
-path-style requests, conditional writes and user metadata on objects.
+path-style requests, conditional writes and user metadata on objects. Complete-object replacement, multipart streaming and fully paged listings
+are also required for the corpus. Hard-forget reads the bucket's versioning policy;
+when versions are retained, it must list and delete every matching object version
+and delete marker. Grant those operations to the purge adapter. An unknown policy
+or failed retained-version purge keeps admission closed.
 
 SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
 of them, so the bundled store holds up to about 100 GiB before writes fail
@@ -174,7 +178,7 @@ below and [Scaling](/docs/self-hosting/scaling)).
   Each of these also carries a 1,536-dimension embedding, about 6 KB, plus
   its share of the vector index.
 - `object-store-data` holds each uploaded file as sent, its converted
-  Markdown and other artifacts, and filesystem snapshots. The bundled store
+  Markdown and other artifacts, and corpus copies. The bundled store
   is capped at about 100 GiB (see
   [S3-compatible object storage](#s3-compatible-object-storage)).
 

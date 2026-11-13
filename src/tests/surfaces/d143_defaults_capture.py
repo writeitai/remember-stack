@@ -21,6 +21,7 @@ Run as a script to print the JSON.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import inspect
 import json
@@ -47,10 +48,17 @@ class _OpenBoundary:
 class _UnconfiguredLayers:
     """What ``ProcessingLayerCatalog.states`` reports with no configuration row."""
 
+    def __init__(self, *, claims: bool = True, facts: bool = True) -> None:
+        self.claims = claims
+        self.facts = facts
+
     def states(self, *, deployment_id: UUID) -> object:
         from remember.models import ProcessingLayerStates  # type: ignore[attr-defined]
 
-        return ProcessingLayerStates(claims="enabled", facts="enabled")
+        return ProcessingLayerStates(
+            claims="enabled" if self.claims else "disabled",
+            facts="enabled" if self.facts else "disabled",
+        )
 
 
 def _accepts(callable_: Any, name: str) -> bool:
@@ -87,7 +95,9 @@ def _ports() -> dict[str, Any]:
     }
 
 
-def _http(ports: dict[str, Any]) -> tuple[Any, Any]:
+def _http(
+    ports: dict[str, Any], *, claims: bool = True, facts: bool = True
+) -> tuple[Any, Any]:
     """``GET /operations`` and ``GET /deployment`` of a fully composed API."""
     from rememberstack.model import DeploymentBuildInfo
     from rememberstack.surfaces.http_api import build_api
@@ -99,7 +109,7 @@ def _http(ports: dict[str, Any]) -> tuple[Any, Any]:
     )
     extra: dict[str, Any] = {}
     if _accepts(build_api, "processing_layers"):
-        extra["processing_layers"] = _UnconfiguredLayers()
+        extra["processing_layers"] = _UnconfiguredLayers(claims=claims, facts=facts)
     app = build_api(
         engine=MagicMock(),
         deployment_id=_DEPLOYMENT,
@@ -117,13 +127,15 @@ def _http(ports: dict[str, Any]) -> tuple[Any, Any]:
     return operations.json(), deployment.json()
 
 
-def _in_process_mcp(ports: dict[str, Any]) -> Any:
+def _in_process_mcp(
+    ports: dict[str, Any], *, claims: bool = True, facts: bool = True
+) -> Any:
     """The engine's own MCP server (``rememberstack.surfaces.mcp``) tool list."""
     from rememberstack.surfaces.mcp import OperationMcpServer
 
     extra: dict[str, Any] = {}
     if _accepts(OperationMcpServer.__init__, "processing_layers"):
-        extra["processing_layers"] = _UnconfiguredLayers()
+        extra["processing_layers"] = _UnconfiguredLayers(claims=claims, facts=facts)
     return OperationMcpServer(**ports, **extra).list_tools()["tools"]
 
 
@@ -191,10 +203,46 @@ def capture_defaults() -> dict[str, Any]:
     }
 
 
+def capture_layers_off() -> dict[str, Any]:
+    """Pin availability and the full source-discovery descriptor with layers off.
+
+    The default fixture already pins every other schema. Keep this fixture
+    focused on whether the same tools and corpus instructions remain available.
+    """
+
+    def catalogue(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            tool if tool["name"] == "search_documents" else {"name": tool["name"]}
+            for tool in tools
+        ]
+
+    result = {}
+    for name, claims in (("claims_only", True), ("sources_only", False)):
+        operations, deployment = _http(_ports(), claims=claims, facts=False)
+        result[name] = {
+            "operations": [operation["name"] for operation in operations],
+            "deployment": deployment,
+            "mcp_in_process_tools": catalogue(
+                _in_process_mcp(_ports(), claims=claims, facts=False)
+            ),
+            "mcp_engine_tools": {
+                host: catalogue(tools)
+                for host, tools in _engine_mcp(deployment).items()
+            },
+        }
+    return result
+
+
 def render(defaults: dict[str, Any]) -> str:
     """The fixture's on-disk form: sorted keys, two-space indent, newline."""
     return json.dumps(defaults, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
 if __name__ == "__main__":
-    print(render(capture_defaults()), end="")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--layers-off", action="store_true")
+    arguments = parser.parse_args()
+    print(
+        render(capture_layers_off() if arguments.layers_off else capture_defaults()),
+        end="",
+    )

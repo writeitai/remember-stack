@@ -88,6 +88,11 @@ def bucket(minio_settings: MinIOSettings) -> Iterator[_Bucket]:
         yield _Bucket(store, client, name, minio_settings)
     finally:
         # Independent provider cleanup also handles an adapter test failing mid-upload.
+        for page in client.get_paginator("list_object_versions").paginate(Bucket=name):
+            for item in (*page.get("Versions", ()), *page.get("DeleteMarkers", ())):
+                client.delete_object(
+                    Bucket=name, Key=item["Key"], VersionId=item["VersionId"]
+                )
         for page in client.get_paginator("list_objects_v2").paginate(Bucket=name):
             for item in page.get("Contents", ()):
                 client.delete_object(Bucket=name, Key=item["Key"])
@@ -109,6 +114,41 @@ def store(bucket: _Bucket) -> MinIOObjectStore:
 
 class TestMinIOObjectOperations(ObjectOperationContract):
     pass
+
+
+def test_retained_versions_delete_markers_and_hidden_uploads_are_erased(
+    bucket: _Bucket,
+) -> None:
+    """Current-key absence is insufficient, including with suspended versioning."""
+    client = bucket.client
+    client.put_bucket_versioning(
+        Bucket=bucket.name, VersioningConfiguration={"Status": "Enabled"}
+    )
+    key = ObjectKey("forgotten/old-folder/original.pdf")
+    for content in (b"private version one", b"private version two"):
+        bucket.store.replace_stream(key=key, chunks=(content,), storage_class="hot")
+    bucket.store.delete(key=key)
+    client.put_bucket_versioning(
+        Bucket=bucket.name, VersioningConfiguration={"Status": "Suspended"}
+    )
+    client.create_multipart_upload(Bucket=bucket.name, Key="forgotten/unindexed/media")
+    bucket.store.write_bytes(
+        key=ObjectKey("forgotten-other/control"),
+        content=b"control",
+        storage_class="hot",
+    )
+    assert not list(bucket.store.iter_keys(prefix="forgotten"))
+    assert {key.root for key in bucket.store.iter_purge_keys()} >= {
+        key.root,
+        "forgotten/unindexed/media",
+    }
+    with pytest.raises(RuntimeError, match="version:"):
+        bucket.store.verify_objects_purged(keys=(), prefixes=(ObjectKey("forgotten"),))
+    bucket.store.purge_objects(keys=(), prefixes=(ObjectKey("forgotten"),))
+    bucket.store.verify_objects_purged(keys=(), prefixes=(ObjectKey("forgotten"),))
+    assert {key.root for key in bucket.store.iter_purge_keys()} == {
+        "forgotten-other/control"
+    }
 
 
 def test_real_listing_crosses_provider_pages_and_purge_keeps_siblings(

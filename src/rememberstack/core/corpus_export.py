@@ -26,7 +26,7 @@ from rememberstack.core.format_registry import FAMILIES
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import FORMAT_MIMES
 
-CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11c:d155"
+CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11d:d155"
 CORPUS_TYPES: Final = (
     "email",
     "chat",
@@ -365,6 +365,23 @@ def desired_export_revision(
     ).hexdigest()
 
 
+def published_corpus_revision(
+    document: CorpusDocument,
+    *,
+    version_id: UUID,
+    policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
+) -> str | None:
+    """The shared path/readiness guard for one requested served reading.
+
+    A marker certifies publication of the current inputs once. It does not
+    certify a whole-tree snapshot or independently restored object storage.
+    """
+    if document.version_id != version_id or document.corpus_published_revision is None:
+        return None
+    revision = desired_export_revision(document, policy=policy)
+    return revision if document.corpus_published_revision == revision else None
+
+
 def render_document(
     document: CorpusDocument,
     *,
@@ -672,7 +689,8 @@ def render_navigation(
         "New stored uploads leave the served reading intact until processing completes.",
         "Folders move when type, topic or title changes. Store doc_id and re-resolve through MCP p3_path.",
         "Offline lookup: sha256(doc_id.bytes).hexdigest()[:24], then",
-        "find <mount> -path '*-<suffix>/*'",
+        "find <root> -type d -name '*--<suffix>'",
+        "The suffix is the only stable part of a folder path; navigation pages do not move folders.",
         "Verify doc_id and displayed version in document.json.",
         "Files are individually complete; this tree is not a point-in-time snapshot.",
         "",

@@ -633,6 +633,14 @@ in force now); it takes the same values as in [`search_chunks`](#search_chunks).
 What matches, and how, is in
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
 
+The result's `p3_path` is relative to the corpus root and non-null only when
+that version is served and its nullable publication marker matches current
+export inputs. Historical, raw-only, unpublished, updating and failed
+publications return `None`. `served_version` describes currency independently.
+Resolve again with `DocumentSearchFilters(doc_ids=(doc_id,))` after a
+folder move; [suffix lookup](/docs/self-hosting/filesystem-views#layout) works
+offline. Only the suffix is stable within a folder path.
+
 ```python
 from remember import Client, DocumentSearchFilters
 

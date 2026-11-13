@@ -3,7 +3,9 @@
 from dataclasses import replace
 import hashlib
 import json
+from pathlib import Path
 import posixpath
+import subprocess
 from urllib.parse import unquote
 from uuid import UUID
 
@@ -18,6 +20,7 @@ from rememberstack.core.corpus_export import CorpusPolicy
 from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.core.corpus_export import GeneratedFile
 from rememberstack.core.corpus_export import original_name
+from rememberstack.core.corpus_export import published_corpus_revision
 from rememberstack.core.corpus_export import render_navigation
 from rememberstack.core.corpus_export import title_slug
 from rememberstack.core.format_registry import FAMILIES
@@ -432,3 +435,66 @@ def test_db_only_digest_covers_immutable_inventory_and_active_structure(
     assert desired_export_revision(
         replace(source, **{field: "changed"})
     ) != desired_export_revision(source)
+
+
+def test_publication_guard_requires_exact_served_inputs_and_policy() -> None:
+    source = document()
+    revision = desired_export_revision(source)
+    for marker in (None, "stale"):
+        assert (
+            published_corpus_revision(
+                replace(source, corpus_published_revision=marker),
+                version_id=source.version_id,
+            )
+            is None
+        )
+    published = replace(source, corpus_published_revision=revision)
+    assert (
+        published_corpus_revision(published, version_id=source.version_id) == revision
+    )
+    assert published_corpus_revision(published, version_id=UUID(int=99)) is None
+    assert (
+        published_corpus_revision(
+            replace(published, title="Changed"), version_id=source.version_id
+        )
+        is None
+    )
+    assert (
+        published_corpus_revision(
+            published,
+            version_id=source.version_id,
+            policy=CorpusPolicy(member_limit=32),
+        )
+        is None
+    )
+
+
+def test_offline_suffix_lookup_survives_navigation_pages_and_scrub(
+    tmp_path: Path,
+) -> None:
+    source = document(placement_path=None)
+    folder = tmp_path / source.path
+    folder.mkdir(parents=True)
+    suffix = corpus_suffix(source.doc_id)
+    docs = [source, *(document(i + 2, placement_path=None) for i in range(40))]
+    for members in (docs[:32], docs, docs[:32]):
+        for key, content in render_navigation(
+            members, policy=CorpusPolicy(member_limit=32)
+        ).items():
+            target = tmp_path / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        scrubbed = replace(
+            source,
+            title=None,
+            file_name=None,
+            lineage_title=None,
+            source_ref=None,
+            source_uri=None,
+            placement_path=None,
+            root_summary=None,
+        )
+        assert corpus_suffix(scrubbed.doc_id) == suffix
+        assert subprocess.check_output(
+            ["find", str(tmp_path), "-type", "d", "-name", f"*--{suffix}"], text=True
+        ).strip() == str(folder)

@@ -426,7 +426,7 @@ def _parser() -> argparse.ArgumentParser:
         "--p3-root",
         type=Path,
         required=True,
-        help="published P3 directory whose snapshot marker must match readiness",
+        help="live P3 directory whose ready folder identities must match per-version publication markers",
     )
     answer.add_argument(
         "--max-questions",

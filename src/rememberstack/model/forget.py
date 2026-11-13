@@ -49,7 +49,6 @@ class ForgetManifest(BaseModel):
     fact_ids: tuple[UUID, ...] = ()
     entity_ids: tuple[UUID, ...] = ()
     object_keys: tuple[ObjectKey, ...] = ()
-    projection_prefixes: tuple[ObjectKey, ...] = ()
     k_artifact_ids: tuple[UUID, ...] = ()
 
     @model_validator(mode="after")
@@ -64,7 +63,6 @@ class ForgetManifest(BaseModel):
             "fact_ids",
             "entity_ids",
             "object_keys",
-            "projection_prefixes",
             "k_artifact_ids",
         )
         for field in fields:

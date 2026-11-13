@@ -122,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
             "mcp": _run_mcp,
             "login": _run_login,
             "logout": _run_logout,
+            "mount": _run_mount,
+            "unmount": _run_unmount,
         }
         handler = handlers.get(args.command)
         if handler is not None:
@@ -1035,6 +1037,24 @@ def _run_logout(args: argparse.Namespace) -> int:
         return logout(http=http)
 
 
+def _run_mount(args: argparse.Namespace) -> int:
+    """Mount the managed corpus through a one-time stdin ticket (D155)."""
+    from remember.connection import resolve_connection
+    from remember.mount import mount
+
+    _warn_if_expiring()
+    connection = resolve_connection(api_key=args.api_key, project=args.project)
+    with _issuer_http() as http:
+        return mount(args.directory, connection=connection, http=http)
+
+
+def _run_unmount(args: argparse.Namespace) -> int:
+    """Unmount locally without obtaining another ticket."""
+    from remember.mount import unmount
+
+    return unmount(args.directory)
+
+
 def _split_arg(pair: str) -> tuple[str, str]:
     """Split one ``key=value`` argument, or raise a clear error."""
     key, separator, value = pair.partition("=")
@@ -1494,6 +1514,31 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         help=f"key issuer URL (default: REMEMBER_ISSUER, else {DEFAULT_ISSUER})",
     )
     commands.add_parser("logout", help="revoke the stored key and remove it")
+
+    mount = commands.add_parser(
+        "mount",
+        help="mount a remember.dev project's corpus read-only (requires mountable)",
+        description=(
+            "Mount the remember.dev corpus read-only using the signed key's org "
+            "and selected project. Requires memory:read on the project. Prints "
+            "JSON events, including the session_id when mounted, and stays in the "
+            "foreground until unmounted. Use 'remember unmount DIR' in another "
+            "terminal to stop it. Install mountable with 'npm install --global "
+            "--ignore-scripts mountable-cli' or 'uv tool install mountable'."
+        ),
+    )
+    mount.add_argument("directory", metavar="DIR", help="existing mount directory")
+    mount.add_argument(
+        "--api-key", help="remember.dev key (overrides REMEMBER_API_KEY and stored key)"
+    )
+    mount.add_argument(
+        "--project",
+        help="project id or name (overrides REMEMBER_PROJECT and stored default)",
+    )
+    unmount = commands.add_parser(
+        "unmount", help="unmount DIR using mountable; no new ticket or sign-in required"
+    )
+    unmount.add_argument("directory", metavar="DIR", help="directory to unmount")
 
     setup = commands.add_parser(
         "setup", help="bootstrap AI coding harnesses for Remember"

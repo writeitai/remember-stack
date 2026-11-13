@@ -86,3 +86,6 @@ class S58Answer(BaseModel):
     contradictions: Literal["report_co_members", "pick_one", "ignore"]
     readable_content: Literal["prefer_mounts", "prefer_api", "prefer_raw"]
     audit: Literal["hydrate_to_sources", "read_k_only", "use_claims_as_fact"]
+    corpus_navigation: Literal["indexes_to_reader_files", "raw_mount", "entity_folder"]
+    moved_folder: Literal["resolve_or_suffix_find", "reuse_path", "id_index"]
+    exact_edition: Literal["version_source_open", "served_folder", "ignore_time"]

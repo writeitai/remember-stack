@@ -42,7 +42,6 @@ from rememberstack.spine.operations import OperationalSettings
 from rememberstack.spine.profile_convergence import ConvergingProfileRefresher
 from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.spine.profile_refresher import ProfileRefreshResult
-from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.references import ReferenceCatalog
 from rememberstack.spine.resolver import CascadeResolver
@@ -98,7 +97,6 @@ __all__ = (
     "KnowledgeCompileContextMissingError",
     "KnowledgeControlPlane",
     "KnowledgeDispatchUnavailableError",
-    "ProjectionCatalog",
     "PipelineReadinessCatalog",
     "AssuredOperationRegistry",
     "CANONICAL_OPERATIONS",

@@ -14,8 +14,8 @@ from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
-#: Bumped for concrete-value completeness and bounded source-chunk continuation.
-CONSUMPTION_SKILL_VERSION: Final = "4.0.1"
+#: D155 document-folder navigation, nullable publication guard and exact editions.
+CONSUMPTION_SKILL_VERSION: Final = "4.1.0"
 
 
 def render_consumption_skill(
@@ -300,11 +300,7 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
             "orientation, readable artifacts, and query operations."
         )
     else:
-        views = [
-            f"- P3 corpus tree: `{mounts.p3}`",
-            f"- E0 artifacts: `{mounts.artifacts}`",
-            f"- raw originals (off the navigation path; audited): `{mounts.raw}`",
-        ]
+        views = [f"- P3 corpus tree: `{mounts.p3}`"]
         if mounts.knowledge is not None:
             views.append(f"- plane K checkout: `{mounts.knowledge}`")
         availability = "These read-only mounts are available:\n\n" + "\n".join(views)
@@ -314,9 +310,35 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
         "When mounts exist, prefer them for navigation, reading, and grep. Reserve "
         "API/CLI/MCP for operations with no filesystem equivalent: open SQL, "
         "semantic/lexical SRFs, graph traversal, temporal as-of queries, "
-        "hydration, transcripts, and deltas. Start in P3 or K, not raw. Follow an "
-        "explicit raw pointer only when the original is needed, and use the "
-        "deployment's audited raw-access mechanism."
+        "hydration, transcripts, and deltas. K is a standalone repository.\n\n"
+        "In P3 follow `llms.txt → type/topic/page _index.md → folder _index.md` "
+        "to `document.md`, `original<extension>`, `pageindex.json`, available "
+        "`source_map.json` and reader media. This sources-layer tree has the "
+        "same shape with claims/facts on or off. A pending newer upload leaves "
+        "the served reading in place. Raw-only documents have no folder.\n\n"
+        "Store `doc_id` and exact version/representation citation handles. "
+        "Resolve the current folder with MCP `search_documents` using `doc_ids`. "
+        "`p3_path` is relative to the corpus root and is non-null only for the "
+        "served selected version with a matching nullable publication marker. "
+        "`served_version` describes authority currency independently of publication. "
+        "Unpublished, updating, failed and historical results have no path. "
+        "Readiness `p3` checks the same guard for every requested version; an "
+        "unrelated successful publication proves nothing.\n\n"
+        "Type/topic/title changes move folders. Re-resolve after moves; only "
+        "the suffix is stable. Offline compute "
+        "`sha256(UUID(doc_id).bytes).hexdigest()[:24]`, then run "
+        "`find <root> -type d -name '*--<suffix>'`. This may list the whole tree. "
+        "Navigation page splits do not move folders. Check `doc_id` and displayed "
+        "version in `document.json`; an asset path component below another "
+        "document folder cannot identify a second document.\n\n"
+        "Files replace atomically, folders do not. Check the ready folder's "
+        "publication identity before and after a read; `updating` or changing "
+        "identities require a retry. The marker certifies current inputs were "
+        "published once, not a whole-tree snapshot or an independently restored "
+        "bucket. For exact historical editions, or when no edition is in force, "
+        "retain exact `version_id` / `representation_id` source handles (`source_open` in the design). No public `source_open` operation ships yet. "
+        "Suffix lookup may find the served folder even then; it never overrides "
+        "the temporal selection."
     )
 
 

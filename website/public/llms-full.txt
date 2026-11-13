@@ -2492,7 +2492,14 @@ capabilities you need. It reports each capability separately and a single
 | `pipeline` | Every stage above has succeeded (or been skipped) for every version you asked about. | Claims and facts from those versions exist. |
 | `p1` | The deployment's search indexes are built for all seven channels: semantic search over chunks, claims, relations, observations and entities, and BM25 keyword search over chunks and claims. | Search-backed operations can find them. This is deployment-wide, not per version. |
 | `live_graph` | The deployment's PostgreSQL graph passes its health checks. | Graph traversal and the neighbourhood expansion in `facts_context`. Deployment-wide. |
-| `p3` | A filesystem snapshot of the corpus has been published after your versions finished. | The read-only filesystem views. Self-hosted only; see [Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views). |
+| `p3` | Each requested served version's corpus publication marker matches its current export inputs. | The read-only filesystem views. Self-hosted only; see [Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views). |
+
+The `p3` check uses the same per-version guard as document search's
+`p3_path`. An unrelated publish cannot satisfy it. A ready single-version
+request exposes its export digest as `version`; multiple versions return
+`version: null`, and `built_at` / `published_at` are always null. A matching
+marker records publication once, not an atomic tree or an independently
+restored bucket. A missing local mount does not invalidate a remote publish.
 
 For ordinary recall, require `pipeline`, `p1` and `live_graph`, and leave
 `p3` off unless you read the filesystem views.
@@ -2550,7 +2557,7 @@ deployment as the shipped `compose.yaml` runs it.
 | Piece | What it does |
 |---|---|
 | **PostgreSQL** | Holds the memory: every document and version, every claim, entity and fact, the decisions that changed them, and the queue of pipeline work. The search indexes and the graph are in the same database. |
-| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs SeaweedFS. |
+| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and live corpus copies and navigation. Any S3-compatible store; Compose runs SeaweedFS. |
 | **The API** | One process that answers HTTP. Ingest stores the original and records a version; reads run against PostgreSQL. |
 | **The workers** | One process per [pipeline stage](https://remember.dev/docs/concepts/pipeline), from `convert` to `label_relation`. Each takes work from the queue in PostgreSQL, calls models where the stage needs one, and writes its results back. |
 | **`setup`** | Runs once before the others start: database migrations, buckets, the deployment record. |
@@ -2579,7 +2586,7 @@ can fall behind.
 | The query space `memory_v1` for [SQL queries](https://remember.dev/docs/concepts/retrieval#sql-queries-over-the-query-space) | PostgreSQL views and functions | A read-only view of the authority. |
 | Original files | Object storage, bucket `remember-raw` | Authority. Identical bytes are stored once. |
 | Converted Markdown and the files produced with it | Object storage, bucket `remember-artifacts` | Derived from the original. Chunks point at positions in it, so it is kept, not rebuilt. |
-| Filesystem-view snapshots | Object storage, bucket `remember-corpusfs` | Derived. Rebuilt on demand. |
+| Live corpus folders | Object storage, bucket `remember-corpusfs` | Derived. Published per document; repaired by reconcile. |
 
 The bucket names are the defaults of a Compose deployment. Everything in
 PostgreSQL and the first two buckets belongs together: back them up at the
@@ -4718,7 +4725,7 @@ points sized for single documents, where processing takes minutes. Raise
 
 It checks three capabilities for you: the pipeline stages for your
 versions, the search index (`p1`) and the live graph (`live_graph`). Pass
-`require_p3=True` only if you also read the published corpus snapshot
+`require_p3=True` only if you also read the published corpus folders
 (filesystem views on a self-hosted deployment).
 
 `wait_for_readiness` accepts version IDs as strings or UUIDs. A readiness
@@ -4751,6 +4758,13 @@ except remember.PipelineDeadLettered as error:
 dead-lettered, and the message names them too. What to do next is under
 [When a version fails](#when-a-version-fails).
 
+The `p3` check uses the same per-version guard as document search's
+`p3_path`. An unrelated publish cannot satisfy it. A ready single-version
+request exposes its export digest as `version`; multiple versions return
+`version: null`, and `built_at` / `published_at` are always null. A matching
+marker records publication once, not an atomic tree or an independently
+restored bucket. A missing local mount does not invalidate a remote publish.
+
 ## Read the report
 
 `pipeline_readiness` and `wait_for_readiness` return a
@@ -4781,7 +4795,8 @@ Capability reasons when not ready:
 | `pipeline` | `stage_incomplete` | At least one stage of one version has not finished. |
 | `p1` | `search_channel_incomplete` | The search index is not ready. |
 | `live_graph` | a `graph_…` reason, such as `graph_catalog_mismatch` | The live graph failed its catalog or health check. This is a deployment problem, not a problem with your document. |
-| `p3` | `corpus_snapshot_incomplete` | No published corpus snapshot newer than your versions. |
+| `p3` | `corpus_publication_incomplete` | A requested served version has no matching publication marker yet. |
+| `p3` | `p3_version_not_served` | A requested historical edition is not the corpus's served reading. |
 
 The check reads state; it never starts or speeds up work.
 
@@ -4848,7 +4863,7 @@ algorithm. Your agent's instructions should say the same:
    `stages[]`.
 
 Require `pipeline`, `p1` and `live_graph`, and set `p3` to `false` unless
-the agent also reads a published corpus snapshot. `ready: true` means the
+the agent also reads a published corpus folders. `ready: true` means the
 assured operations can see the content; whether a given question finds it
 still depends on relevance.
 
@@ -7128,17 +7143,21 @@ schedule (see [Upgrades and migrations](https://remember.dev/docs/self-hosting/u
 
 ## S3-compatible object storage
 
-Original files, converted Markdown and other artifacts, and filesystem
-snapshots live in object storage, in three buckets (`remember-raw`,
+Original files, converted Markdown and other artifacts, and corpus
+copies live in object storage, in three buckets (`remember-raw`,
 `remember-artifacts`, `remember-corpusfs`). The `setup` step creates them.
 
 Compose runs [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for this
 (image `chrislusf/seaweedfs`, pinned to `4.44` by digest). The engine talks
-to it through the S3 API with path-style addressing and SigV4 signing. It
-writes every object with a conditional create (`If-None-Match: *`), so an
-object is never silently replaced. The project's checks exercise SeaweedFS
+to it through the S3 API with path-style addressing and SigV4 signing. Immutable E0 writes use conditional create (`If-None-Match: *`). Corpus
+publication uses complete-object replacement, streaming large files through multipart
+uploads, with digest metadata and paged listings. The project's checks exercise SeaweedFS
 and real MinIO adapter contracts. Another S3-compatible store has to support
-path-style requests, conditional writes and user metadata on objects.
+path-style requests, conditional writes and user metadata on objects. Complete-object replacement, multipart streaming and fully paged listings
+are also required for the corpus. Hard-forget reads the bucket's versioning policy;
+when versions are retained, it must list and delete every matching object version
+and delete marker. Grant those operations to the purge adapter. An unknown policy
+or failed retained-version purge keeps admission closed.
 
 SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
 of them, so the bundled store holds up to about 100 GiB before writes fail
@@ -7191,7 +7210,7 @@ below and [Scaling](https://remember.dev/docs/self-hosting/scaling)).
   Each of these also carries a 1,536-dimension embedding, about 6 KB, plus
   its share of the vector index.
 - `object-store-data` holds each uploaded file as sent, its converted
-  Markdown and other artifacts, and filesystem snapshots. The bundled store
+  Markdown and other artifacts, and corpus copies. The bundled store
   is capped at about 100 GiB (see
   [S3-compatible object storage](#s3-compatible-object-storage)).
 
@@ -7316,12 +7335,12 @@ RememberStack image, and starts everything in dependency order:
 | Service | Command | Role |
 |---|---|---|
 | `postgres` | `postgres` | PostgreSQL 19 prerelease with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
-| `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
+| `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and the live corpus. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --class convert` | Turns an uploaded file into Markdown using the configured [converter](https://remember.dev/docs/self-hosting/converters), one file at a time. |
 | `worker-llm` | `worker --class llm` | Runs every other pipeline stage, up to 20 items at once: finds sections and writes summaries, checks supplied references, splits documents into chunks, embeds them, selects the sentences that state something and turns them into claims, resolves entities into relations and facts, decides whether a new statement confirms, contradicts or replaces a fact, embeds claims and facts, writes relation labels, settles each version's lifecycle, and rechecks fact dates when declared periods change. |
-| `projections` | `project --plane p3` | Profile `operations` only. Builds a [filesystem view](https://remember.dev/docs/self-hosting/filesystem-views) snapshot on demand. |
+| `projections` | `project --plane p3` | Profile `operations` only. Verifies and reconciles the live [corpus](https://remember.dev/docs/self-hosting/filesystem-views) on demand; ordinary publication and periodic verification also run through the workers. |
 
 Each worker wakes when new work for one of its stages is committed. The
 `llm` worker finishes items further along the pipeline before it starts
@@ -7408,9 +7427,9 @@ Compose names volumes after the project, `rememberstack`:
 | Volume | Mounted at | Holds |
 |---|---|---|
 | `rememberstack_postgres-data` | `/var/lib/postgresql` in `postgres` | The database: every document, version, claim, fact and entity, the work queue and the cost ledger |
-| `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
+| `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and corpus copies |
 | `rememberstack_app-state` | `/var/lib/rememberstack` in the app containers | Working directories; the optional debug capture of invalid model output |
-| `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Hard-forget manifests. Empty in a Compose deployment. |
+| `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Portable hard-forget intent, replayed before serving restored data. |
 
 The first two hold the memory. Back them up together; see
 [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#back-up).
@@ -8784,7 +8803,7 @@ The report has five parts:
 | `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`), split by `defer_reason`: `no_route`, `admission` or `budget` for parked work, `scheduled` for work due later, `retry_backoff` for a failure waiting to retry, `null` otherwise. A large `pending` count with no reason on one stage shows where the pipeline is behind. |
 | `dead_letters` | Items that ran out of attempts: a total, groups by stage and error class, and individual items with their `processing_id`, attempts and `last_error`. |
 | `poison_targets` | Items that dead-lettered under two or more component versions: an upgrade did not fix them. |
-| `latest_projections` | The latest filesystem snapshot, if any. |
+| `latest_projections` | Historical projection metadata; live corpus readiness is checked per requested document through `/readiness`. |
 | `currency` | A consistency check between each claim's cached "current" flag and the ledger it is derived from. `mismatch_total` should be 0. |
 
 Lists in the report are capped at `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT`
@@ -8896,15 +8915,17 @@ It also checks the versions of `pgvector`,
 ## When a hard forget is in progress
 
 While a hard forget is running, the API answers `503` with
-`{"code": "forget_in_progress"}`, and `replay`, `resume-no-route`,
-`rebuild`, the projection build and `mounts` refuse to run. This protects
-data that is being removed from being served or copied mid-removal.
+`{"code": "forget_in_progress"}`. Ordinary claims, publication and reconcile
+refuse to run. The coordinator alone can erase source bytes and regenerate
+navigation under the closed barrier.
 
-A deployment started from `compose.yaml` has no command that starts a hard
-forget, so it does not enter this state on its own. The API also refuses to
-start if the `forget-manifests` volume holds hard-forget manifests for this
-deployment, as it would after restoring data from an installation that ran
-a hard forget; see [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#back-up).
+The Python hard-forget coordinator and ordinary workers use the same purge path.
+There is no public CLI command that starts a hard forget. API startup and
+`project --plane p3` replay every portable manifest before serving or repairing
+restored data, including manifests previously marked complete. Any error keeps
+admission closed. A host with controlled mount sessions must acknowledge stopping
+them and erasing their caches; operator-managed FUSE mounts must be stopped and
+remounted. See [restore ordering](https://remember.dev/docs/self-hosting/upgrades#hard-forget-manifests).
 
 ---
 
@@ -9311,9 +9332,9 @@ Every code is in [Errors and status codes](https://remember.dev/docs/reference/e
 
 The API answers `503` with `{"code": "forget_in_progress"}` while a hard
 forget is running, and the operator commands that copy or replay data
-refuse to run. A deployment started from `compose.yaml` has no command that
-starts a hard forget, so it should not enter this state on its own. If
-you restored data from an installation that ran one, see
+refuse to run. There is no public CLI command that starts hard-forget. Startup
+also closes admission while replaying portable intent from a restore, and a
+failed replay leaves it closed for retry. See
 [Hard-forget manifests](https://remember.dev/docs/self-hosting/upgrades#hard-forget-manifests) and
 [When a hard forget is in progress](https://remember.dev/docs/self-hosting/operating#when-a-hard-forget-is-in-progress).
 
@@ -9416,7 +9437,7 @@ Sentry, GlitchTip or Bugsink. It is off unless you set a DSN.
 
 `compose.yaml` passes all three. Set them in `.env` and run
 `docker compose up -d`. The `setup`, `api` and worker
-processes report errors; the projection and mount commands do not.
+processes report errors; the one-shot projection command does not.
 
 Events are stripped to metadata before they leave the process: the
 exception type and stack trace stay; the exception message is replaced by
@@ -9774,10 +9795,10 @@ A deployment's state lives in four Docker volumes:
 |---|---|
 | `rememberstack_postgres-data` | Yes: the database |
 | `rememberstack_object-store-data` | Yes: original files and derived artifacts |
-| `rememberstack_forget-manifests` | Yes, with the others: hard-forget manifests |
+| `rememberstack_forget-manifests` | Yes, separately durable: never roll portable intent back with an older data backup |
 | `rememberstack_app-state` | Optional: working directories and debug captures |
 
-Filesystem-view snapshots in the object store can be rebuilt; everything else in the
+Corpus folders in the object store can be reconciled; everything else in the
 first three volumes cannot. The database and the object store refer to
 each other, so back them up at the same moment.
 
@@ -9800,13 +9821,18 @@ docker compose start
 Keep the `backup/` directory and your `.env` together: a restore needs the
 same deployment id and the same database and object-store credentials.
 
-To restore it into an empty stack on the same or another machine, with the
-same `.env`:
+For a same-machine restore, retain the current `forget-manifests` volume.
+Restore only the ordinary data volumes from the older backup, with the same
+`.env`. On another machine, first provision the manifest volume from your latest
+separately durable intent store; the copy captured with an older data backup can
+be missing later forget requests.
 
 ```bash
-docker compose down -v          # deletes the current volumes
-docker compose create           # creates empty volumes and containers
-for volume in postgres-data object-store-data forget-manifests app-state; do
+docker compose down
+# Keep rememberstack_forget-manifests and its latest accepted intent.
+docker volume rm rememberstack_postgres-data rememberstack_object-store-data rememberstack_app-state
+docker compose create
+for volume in postgres-data object-store-data app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/target" \
     -v "$PWD/backup:/backup:ro" \
@@ -9841,12 +9867,22 @@ has not tested this path.
 
 ### Hard-forget manifests
 
-The `forget-manifests` volume holds the list of documents that were
-permanently removed, so a restore can remove them again from an older
-backup. A deployment started from `compose.yaml` has no command that
-creates such manifests. If the volume does hold manifests for your
-deployment, the API refuses to start: honouring them needs a recovery
-procedure the Compose deployment does not include.
+The `forget-manifests` volume holds portable, content-free intent for permanently
+removed documents. Keep it independently durable and carry all accepted intent
+into a restore. An older database or object bucket cannot undo that intent.
+
+Before any API or controlled mount reopens, startup rematerializes every manifest,
+scrubs restored authority, scans the corpus for the document's deterministic
+suffix, erases its copies/uploads and retained versions, and regenerates shared
+indexes. It repeats this even when PostgreSQL still says `complete`, covering
+bucket-only, database-only and combined restores. A failure leaves admission
+closed for retry. Other documents' originals and media remain in place.
+
+The PostgreSQL + real MinIO canary exercises these independent data restores;
+transporting production backups, backup expiry and provisioning remain operator
+responsibilities. Stop and remount operator-managed FUSE sessions. A composing
+host must supply cache acknowledgements for sessions it controls, and K purge and
+rebuild capabilities when K history exists.
 
 ---
 
@@ -9854,128 +9890,136 @@ Source: https://remember.dev/docs/self-hosting/filesystem-views
 
 # Filesystem views
 
-Some agents work best with files. A filesystem view gives them one: a
-directory tree with a page per document and per entity, grouped by source,
-by month and by topic, with an index in every directory. An agent can
-`cat` the index, follow a path, and `grep` the tree without calling the
-API.
+The `remember-corpusfs` bucket is a live filesystem for readers. Each completed
+source has one folder containing its original, exact converted Markdown, active
+PageIndex, available source map and reader media. Publication runs automatically
+through the ordinary `llm` worker class. It makes no model calls.
 
-The tree is generated from the database. It holds no information the
-memory does not, and it is a snapshot: it shows the memory as it was when
-you built it, until you build it again.
+A newer stored or parked upload leaves the previous completed reading in place.
+A source with no completed reading has no corpus folder; its original remains
+available through the version-addressed API.
 
-## Build a snapshot
+## Mount the corpus
+
+Use an S3 filesystem tool with read-only credentials and options to mount the
+configured corpus bucket. Bound its stat, listing and data caches. The bucket
+root is the filesystem root; separate raw and artifact mounts are unnecessary.
+RememberStack does not provision a FUSE mount or enforce local permissions.
+Provider access logging must include reads of corpus originals.
+
+## Layout
+
+```text
+<corpus root>/
+├── llms.txt
+├── _index.md
+├── pdf/
+│   ├── _index.md
+│   └── finance/annual-reports/
+│       ├── _index.md
+│       └── annual-report--9bf3e4c0c2d4861075a6ef82/
+│           ├── _index.md
+│           ├── document.json
+│           ├── original.pdf
+│           ├── document.md
+│           ├── pageindex.json
+│           ├── source_map.json
+│           └── media/
+└── …
+```
+
+The fixed types are `email`, `chat`, `image`, `audio`, `video`, `pdf`,
+`spreadsheet`, `presentation`, `document`, `data` and `other`. A document can
+have an optional topic under its type. Large member tables use navigation pages
+under a reserved `~/` subtree; pagination never moves document folders.
+
+Start at `llms.txt`, follow type/topic indexes, then open a folder's `_index.md`.
+`document.json` records the document, displayed version, representation,
+inventory and deterministic publication identity. Pipeline manifests, extraction
+state and historical readings are excluded. Plane K is a separate repository.
+
+Resolve a folder through MCP `search_documents` with `doc_ids`, the SDK's
+`search_documents(filters=DocumentSearchFilters(doc_ids=(doc_id,)))`, or
+`POST /documents/search` with `filters.doc_ids`. `p3_path` is relative to the
+corpus root. It is non-null only when the selected version is served and its
+nullable publication marker matches its current export inputs. Raw-only,
+unpublished, updating, failed and historical results carry `null`.
+`served_version` describes authority currency independently of publication.
+
+Title, topic or type changes can move the folder. Re-resolve after a move;
+only the suffix is stable within its path. Keep the `doc_id`; its suffix
+is the first 24 hex characters of SHA-256 over the UUID's 16 bytes. For offline
+lookup, substitute that suffix in:
+
+```bash
+find <root> -type d -name '*--<suffix>'
+```
+
+Check `doc_id` and the displayed version in `document.json` before treating the
+folder as a particular edition. The search can cost a full tree listing.
+A matching asset directory beneath another document folder is not a separate
+document: verify the first document-folder component and its `document.json`.
+A suffix match can locate the served folder even when a temporal query selects
+another edition or no edition is in force; it does not change that selection.
+There is no public `source_open` operation for whole historical files yet.
+
+The corpus is a sources-layer projection: switching claims or facts off does
+not change its layout. K remains a standalone repository and may be checked
+out separately.
+
+## Publication and repair
+
+Each object is replaced completely, but the folder and tree are not atomic.
+During an update, complete old and new files can coexist while the folder index
+says `updating`; a move can briefly expose two folders. Check the ready folder's
+publication identity before and after a read when consistency matters.
+
+`require_p3=True` in [readiness](https://remember.dev/docs/guides/wait-for-readiness) checks each
+requested served version's current publication marker. It reports
+`corpus_publication_incomplete` for missing or mismatching markers and
+`p3_version_not_served` for a historical edition. An unrelated publication cannot
+satisfy this check. `version` is the export digest for one ready requested version and null for
+multiple versions. `built_at` and `published_at` are null.
+
+Digest-verifying repair runs daily through the existing delayed-work ledger,
+leases, retries and delivery. Configure
+`REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S` to a positive number of seconds;
+its default is `86400`. Setup seeds the first task and a successful verification
+seeds its successor. A dead-lettered task remains visible for operator replay.
+To verify and reconcile immediately:
 
 ```bash
 docker compose --profile operations run --rm projections
 ```
 
-The `projections` service runs `project --plane p3`. It renders the whole
-tree, writes it to the `remember-corpusfs` bucket in the object store under a new
-version, and marks that version as the latest. It prints a short report
-with the `snapshot_id`, the `version` and the number of `files`. Each run
-builds the tree from scratch.
+This runs `project --plane p3`, repairs the same live tree and prints the number
+of served documents reconciled. Matching digests avoid recopying originals and
+media. Ordinary publication touches only the changed document and its navigation
+ancestors.
 
-Nothing builds snapshots on a schedule. Run the command again, from cron or
-by hand, when you want the view to catch up.
+## Deletion, forget and restore
 
-## Publish it to a directory
+Normal document deletion removes that document's recorded corpus folders and
+repairs navigation before reporting success. A store failure reports failure and
+leaves durable retry work.
 
-`mounts` copies the latest snapshot out of the object store into a directory:
+Before coordinating hard-forget on operator-managed processes, stop ordinary
+writers and wait for their outstanding storage calls. An expired work lease is
+not proof that an issued provider request has stopped.
 
-```bash
-mkdir -p memory-views
-docker compose run --rm --no-deps \
-  --user "$(id -u):$(id -g)" \
-  -v "$PWD/memory-views:/memory-views" \
-  api mounts --root /memory-views
-```
+Hard-forget closes admission, drains work, erases every matching suffix folder,
+unfinished upload and retained object version, then regenerates navigation from
+scrubbed database authority. It preserves other document files in place. When a
+provider does not implement multipart-upload listing, purge records
+`provider_managed` coverage and logs a warning; unfinished-part cleanup follows
+that provider's policy. Published-object absence is still verified.
 
-`--user` makes the files yours rather than the container user's. `p3` is a
-relative symbolic link to the snapshot directory beside it, so the tree
-works on the host whatever path you mount it at inside the container.
-
-The command prints where each view is, as paths inside the container:
-
-```json
-{"deployment_id": "…", "p3": "/memory-views/<deployment-id>/p3", "artifacts": "/memory-views/<deployment-id>/artifacts", "raw": "/memory-views/<deployment-id>/raw", "read_only": true}
-```
-
-Publishing is atomic: `p3` is a link that switches from one complete
-snapshot directory to the next, so an agent reading the tree never sees a
-half-copied one. Old snapshot directories stay in place; delete them when
-you no longer need them.
-
-## The three views
-
-| View | Contents |
-|---|---|
-| `p3` | The corpus tree described below. |
-| `artifacts` | The converted Markdown and other artifacts, **if** you pass `--artifacts-root` pointing at a directory where the `remember-artifacts` bucket is mounted. Otherwise an empty directory. |
-| `raw` | The original files, **if** you pass `--raw-root` pointing at a directory where the `remember-raw` bucket is mounted. Otherwise an empty directory. Nothing in the corpus tree links into it: reaching an original means following the `raw_uri` in a document's page on purpose. |
-
-`--raw-root` and `--artifacts-root` must be existing directories. They
-default to `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` and
-`REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT`. RememberStack does not mount
-buckets itself; use an S3 filesystem tool of your choice.
-
-## Layout of the corpus tree
-
-```text
-p3/
-├── _index.md              how to navigate; which paths are stable
-├── llms.txt               the facets and where things live
-├── documents/
-│   ├── _index.md          one row per document
-│   └── <doc_id>/_index.md one page per document
-├── entities/
-│   ├── _index.md          one row per entity
-│   └── <entity_id>/_index.md one page per entity, listing the documents that mention it
-├── by-source/<source_kind>/<title>-<doc_id>.md
-├── by-time/<yyyy>/<mm>/<title>-<doc_id>.md
-└── by-topic/<topic path>/<title>-<doc_id>.md
-```
-
-Every directory, including the intermediate ones, carries an `_index.md`
-listing what is in it with a one-line summary per entry, and an
-`llms.txt` for orientation. An agent reads one index to learn what a
-directory holds instead of opening every file.
-
-Paths come in two kinds:
-
-- **Stable paths:** `documents/<doc_id>/` and `entities/<entity_id>/`.
-  They are addressed by id and do not move between snapshots, including
-  when a document gets a new version. Store these.
-- **View paths:** everything under `by-source/`, `by-time/` and
-  `by-topic/`. They may be reorganised as the memory grows. Every page
-  there names its stable path in its front matter.
-
-A document appears in `by-source/` under its `source_kind`, in `by-time/`
-under the month of its `source_modified_at` (or its publication time), and
-in `by-topic/` when structuring proposed a topic path for it. A directory
-with more than 150 entries is split into sub-directories by name prefix
-(`REMEMBERSTACK_P3_SHARD_THRESHOLD`).
-
-A document page holds front matter (`doc_id`, `canonical_path`,
-`version_id`, `content_hash`, `artifact_uri`, `raw_uri`, `mime`,
-`source_kind`, `source_ref` and the state of the latest stored version),
-the title and the document's summary. It does not hold the document's
-text; `artifact_uri` points to the converted Markdown.
-
-## Read-only is your job
-
-The views are meant to be read, never written: changes go through the API
-and the pipeline, and PostgreSQL is the authority. `mounts` does not set
-file permissions. If agents or users should not be able to change the tree,
-make the directory read-only for them, for example by mounting it read-only
-into the agent's container. The same applies to bucket mounts you pass as
-`--raw-root` and `--artifacts-root`, and reads of the raw originals are
-logged only if your mount tool logs them.
-
-## When it refuses
-
-Building a snapshot and publishing the views both refuse to run while a
-hard forget is in progress ([Operating the pipeline](https://remember.dev/docs/self-hosting/operating#when-a-hard-forget-is-in-progress)).
+Before restoring traffic, the startup gate replays every portable manifest,
+including ones previously marked complete. Keep that intent outside the ordinary
+restore set. A replay failure keeps admission closed. Engine-controlled sessions
+must stop serving and acknowledge cache erasure; operator-managed FUSE mounts
+must be stopped and remounted for forget. See
+[hard-forget recovery](https://remember.dev/docs/self-hosting/upgrades#hard-forget-manifests).
 
 ---
 
@@ -10678,7 +10722,7 @@ whether the capabilities you need are ready. It only reads; it never waits.
 | `require.pipeline` | boolean | yes | Every expected stage has finished for every version. |
 | `require.p1` | boolean | yes | The search index (claims, chunks, facts) is published. |
 | `require.live_graph` | boolean | yes | The live graph passes its health checks. |
-| `require.p3` | boolean | yes | A filesystem snapshot built after the versions finished has been published. |
+| `require.p3` | boolean | yes | Every requested served version's corpus publication marker matches its current export inputs. |
 
 Unknown fields are rejected (`422`).
 
@@ -10704,7 +10748,7 @@ Capability `reason` values:
 |---|---|---|
 | `pipeline` | `ready` | `stage_incomplete` |
 | `p1` | `ready` | `search_channel_incomplete` |
-| `p3` | `ready` | `corpus_snapshot_incomplete` |
+| `p3` | `ready` | `corpus_publication_incomplete`, `p3_version_not_served` |
 | `live_graph` | `ready` | `graph_server_version_mismatch`, `graph_extension_version_mismatch`, `graph_role_contract_mismatch`, `graph_helper_contract_mismatch`, `graph_catalog_mismatch`, `graph_role_runtime_limits_mismatch`, `graph_smoke_identifier_collision`, `graph_one_hop_guard_smoke_failed`, `graph_one_hop_smoke_failed`, `graph_neighborhood_smoke_failed`, `graph_path_smoke_failed`, `graph_citation_smoke_failed`, `graph_database_or_permission_failed`, `graph_smoke_contract_failed` |
 
 A version id the deployment does not know is not an error: every stage reads
@@ -10883,14 +10927,17 @@ newest version that did, with the others in `other_matching_version_ids`.
 Filters and names always use the returned version's own metadata. Deleted
 documents and deleted versions never match.
 
-Each result's `p3_path` is the document's stable path in the
-[filesystem view](https://remember.dev/docs/self-hosting/filesystem-views), relative to its root:
-`documents/<doc_id>`. It exists there only when the deployment publishes the
-filesystem view; `source_path` is where the file came from instead. That
-path always shows the document's served version (its newest processed one),
-so `p3_path` is `null`, and `served_version` is `false`, when the result
-describes another version. Open the described version with `version_id` and
-`representation_id` instead.
+`p3_path` is the relative corpus folder only when the described version is
+served and its nullable publication marker matches the current export inputs.
+It is `null` before publication, during updates, after a failed publication,
+for raw-only versions and for historical editions, including non-periodised
+history. `served_version` describes authority currency independently of P3.
+Re-resolve by `filters.doc_ids` after a type/topic/title move, or use
+[offline suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout).
+A newer pending upload leaves the served folder intact. A temporal query that
+selects no edition returns no document; suffix lookup does not override it.
+Keep `version_id` and `representation_id` for exact source identity; no public
+`source_open` operation returns whole historical files yet.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -10978,7 +11025,7 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
-      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "p3_path": "spreadsheet/sales/q3-sales-2025--2a43bb03e2c419e141d5fbd9",
       "served_version": true,
       "representation_id": "7c2e4b1a-9d3f-4e8a-b6c5-2f1a0e9d8c7b",
       "effective": [],
@@ -14934,9 +14981,9 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `ready` | boolean | |
 | `checked_at` | date-time | |
 | `reason` | string | `ready`, or why not (see [Ingest](https://remember.dev/docs/reference/http-api/ingest#post-readiness)). |
-| `version` | string, nullable | `p3` only: the snapshot version. |
-| `built_at` | date-time, nullable | `p3` only. |
-| `published_at` | date-time, nullable | `p3` only. |
+| `version` | string, nullable | `p3`: the export digest for one ready requested document; null for multiple documents or incomplete publication. |
+| `built_at` | date-time, nullable | Null for the live corpus, which has no global snapshot build time. |
+| `published_at` | date-time, nullable | Null for the live corpus, which has no global snapshot publication time. |
 
 ## Documents
 
@@ -15025,8 +15072,8 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
-| `p3_path` | string, nullable | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. The path shows the served version, so it is `null` when `served_version` is `false`. |
-| `served_version` | boolean | Whether `version_id` is the document's served version. Default `true`. |
+| `p3_path` | string, nullable | Relative corpus folder, only for the served selected version with a matching nullable publication marker. Null for raw-only, unpublished, updating, failed and historical results. Type/topic/title changes move it; re-resolve by `doc_id` or use [suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout). |
+| `served_version` | boolean | Whether `version_id` is the document's served version, independently of P3 publication. Default `true`. |
 | `representation_id` | UUID, nullable | The described version's converted reading; with `version_id` it opens exactly that version. |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The described version's in-force intervals, for a document with declared effective periods. |
 | `matching_editions` | array of [`MatchingEdition`](#matchingedition) | Every candidate edition that matched, earliest period first, for a document with declared effective periods. |
@@ -17442,6 +17489,14 @@ in force now); it takes the same values as in [`search_chunks`](#search_chunks).
 What matches, and how, is in
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
+The result's `p3_path` is relative to the corpus root and non-null only when
+that version is served and its nullable publication marker matches current
+export inputs. Historical, raw-only, unpublished, updating and failed
+publications return `None`. `served_version` describes currency independently.
+Resolve again with `DocumentSearchFilters(doc_ids=(doc_id,))` after a
+folder move; [suffix lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout) works
+offline. Only the suffix is stable within a folder path.
+
 ```python
 from remember import Client, DocumentSearchFilters
 
@@ -18580,6 +18635,17 @@ periods while retaining the document's declared effective-time mode.
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
+When requested, `p3` checks the nullable publication marker of each served
+version. An unrelated successful publication cannot satisfy it. A ready
+single-version request exposes its export digest as `version`; aggregate
+version and publication timestamps are null.
+
+Document search's `p3_path` is relative to the corpus root and non-null only
+for a served selected version with a matching marker. Raw-only, unpublished,
+updating, failed and historical results carry `null`; `served_version` describes
+currency independently. Re-resolve with `filters.doc_ids` after type/topic/title
+moves. Only the suffix is stable; [offline lookup](https://remember.dev/docs/self-hosting/filesystem-views#layout)
+also works.
 A `failed` stage has a retry pending; polling continues. A `dead_letter` stage
 stops with PipelineDeadLettered and the full report. The readiness deadline
 covers routing, HTTP and polling waits, retaining the last validated report.
@@ -19315,12 +19381,11 @@ orchestration.
 | `setup` | Applies database migrations and prepares the deployment. Runs once; the other services start after it succeeds. |
 | `api` | The HTTP API. Listens on `REMEMBERSTACK_SELFHOST_API_HOST` (default `0.0.0.0`) and `REMEMBERSTACK_SELFHOST_API_PORT` (default `8000`). This is the image's default command. |
 | `worker --class CLASS [--concurrency N]` | One pipeline worker for a class of stages. `convert` runs the `convert` stage; `llm` runs every other stage (`structure`, `crossref`, `chunk`, `embed_chunk`, `extract_claims`, `ground_claims`, `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `embed_claim`, `reconcile`, `label_relation`, `review_fact_windows`). `N` is how many items it runs at once (default `1` for `convert`, `20` for `llm`). Run one process per class; add processes to add capacity. |
-| `project --plane p3` | Builds the filesystem view snapshot once. In `compose.yaml` it belongs to the `operations` profile. |
-| `mounts --root PATH [--raw-root PATH] [--artifacts-root PATH]` | Publishes the latest snapshot under a local directory. |
+| `project --plane p3` | Verifies and reconciles the live corpus once. In `compose.yaml` it belongs to the `operations` profile. |
 
 The pipeline stages are explained in
 [The pipeline and readiness](https://remember.dev/docs/concepts/pipeline); configuration in
-[Configuration](https://remember.dev/docs/self-hosting/configuration); snapshots and mounts in
+[Configuration](https://remember.dev/docs/self-hosting/configuration); corpus folders and read-only mounts in
 [Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views).
 
 ## Credential file
@@ -19702,6 +19767,15 @@ different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The
 token needs `read` scope. How matching and paging work:
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+`p3_path` resolves the selected served version's corpus folder only behind a
+matching nullable publication marker. It is `null` for historical, raw-only,
+unpublished, updating and failed publications. `served_version` describes
+currency independently. After a type/topic/title move call `search_documents`
+again with `doc_ids`. Offline compute `sha256(UUID(doc_id).bytes).hexdigest()[:24]`
+and run `find <root> -type d -name '*--<suffix>'`; only the suffix is stable.
+Check `doc_id` and displayed version in `document.json`. See
+[Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views#layout).
 
 ### `section_history`
 
@@ -20264,9 +20338,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_MINIO_READ_TIMEOUT_S` | `30` | finite seconds, > 0 | Socket read timeout for each S3 request. Multipart uploads send at most 8 MiB per part. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for filesystem-view snapshots. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` | unset | path | Default `--raw-root` for `mounts`. |
-| `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | Default `--artifacts-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for live corpus folders and navigation. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | Working directory created by `setup`. |
 | `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | Where hard-forget manifests are read. |
 | `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` | unset | string | Keep hard-forget manifests in this dedicated bucket instead of the manifest root. Never one of the three data buckets. |
@@ -20425,10 +20497,8 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S` | `86400` | finite float > 0 | Cadence in seconds for digest-verifying corpus reconcile through the ordinary delayed-work ledger. |
 | `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT` | `20` | int 1–1000 | Cap on lists in `remember ops inspect`. |
-| `REMEMBERSTACK_P3_SNAPSHOT_PREFIX` | `corpusfs/snapshots` | string | Object prefix of filesystem-view snapshots. |
-| `REMEMBERSTACK_P3_FACETS` | `["by-source", "by-time", "by-topic"]` | JSON array | Top-level view directories of the corpus tree. |
-| `REMEMBERSTACK_P3_SHARD_THRESHOLD` | `150` | int ≥ 2 | Entries above which a directory is split. |
 | `REMEMBERSTACK_COST_EXPORT_BIND` | unset | `host:port`, `[ipv6]:port` or `unix:/path` | Address of the HTTP cost export. Unset: off. |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | unset | secret, ≥ 32 bytes | Bearer token for the cost export. |
 
@@ -20799,6 +20869,13 @@ traces so they can be regraded without repeating ingestion or answering.
 
 ### How a LoCoMo run works
 
+The current Full-v47 protocol uses per-version publication markers, ready folder
+identities and frozen file inventories, including binary reader files and
+navigation. It rejects changed local bytes and requires the same evidence for
+resume and ablations. Global P3 version/timestamps are absent. This attestation
+change establishes no new score; earlier results remain tied to their recorded
+protocol and source revision.
+
 The harness lives in `benchmarks/locomo/` and runs as
 `python -m benchmarks.locomo`.
 
@@ -20814,7 +20891,7 @@ The harness lives in `benchmarks/locomo/` and runs as
    operations, eight lower-level lookups (`resolve`, `lookup_relations`,
    `transcript_relation`, `lookup_observations`, `search_claims`,
    `search_chunks`, `adjacent_chunks`, `hydrate_relation`), the seven SQL
-   query tools, and three tools over the filesystem view snapshot. It may
+   query tools, and three tools over the live corpus with frozen run inventories. It may
    make at most 8 tool calls and 9 model calls per question.
 4. **Judge**, per conversation. A judge model labels each answer `CORRECT`
    or not against the gold answer.
@@ -21097,7 +21174,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v46 \
+  --output .benchmark-runs/smoke --protocol full-v47 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -21105,9 +21182,8 @@ uv run python -m benchmarks.locomo ingest \
   --max-documents 100 --max-evaluator-cost-usd 5 \
   --execute --confirm-isolated-deployment conv-26
 
-# Wait until every document is processed. Then build and publish the
-# filesystem view snapshot (see Filesystem views) and pass its directory
-# as --p3-root below.
+# Wait for each served document's p3 readiness. Mount/copy the live corpus
+# read-only (see Filesystem views) and pass its directory as --p3-root below.
 
 uv run python -m benchmarks.locomo answer \
   --run .benchmark-runs/smoke --sample conv-26 \
@@ -21249,6 +21325,21 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## Unreleased — corpus consumption
+
+Document search's `p3_path` resolves a type/topic/title folder only when the
+selected version is served and its nullable publication marker matches current
+export inputs. Readiness uses the same guard per requested version. Pending,
+raw-only, updating, failed and historical results have no browse path.
+Only the suffix remains stable across folder moves; the consumption skill and
+MCP descriptions teach re-resolution and offline `find`. Corpus originals and
+reader derivatives remain independent of claims/facts switches, and K stays a
+separate repository. The managed mount CLI wrapper is not included.
+
+The benchmark harness's fresh Full-v47 protocol attests publication markers,
+ready-folder identities and frozen file inventories. This change establishes
+no new benchmark result and does not reinterpret stored evidence.
 
 ## Unreleased — retrieval SQL and online schema upgrade
 
@@ -21747,17 +21838,12 @@ absent from the current release; nothing here has a date.
 
 ## Knowledge
 
-- **Self-contained document folders on mounted filesystems.** The current
-  [filesystem view](https://remember.dev/docs/self-hosting/filesystem-views) links to originals
-  and converted artifacts; it does not place their bytes together in one
-  document folder.
-
 - **Compiled pages.** RememberStack does not write summary pages that
   combine what it knows about a topic; the envelope's `pages` field and the
   `compiled` grain exist but stay empty, and the `k` install extra installs
   nothing.
-- **Opening a source from an agent.** No MCP tool returns a whole original
-  source file; agents read passages through search and `adjacent_chunks`
+- **Opening an exact source through a client.** No API/SDK/MCP `source_open`
+  operation returns a whole original or historical representation; agents read passages through search and `adjacent_chunks`
   (a self-hosted engine can publish its sources as files, see
   [Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views)).
 

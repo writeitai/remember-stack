@@ -336,6 +336,15 @@ description tells the agent to narrow the filter instead of guessing. The
 token needs `read` scope. How matching and paging work:
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
 
+`p3_path` resolves the selected served version's corpus folder only behind a
+matching nullable publication marker. It is `null` for historical, raw-only,
+unpublished, updating and failed publications. `served_version` describes
+currency independently. After a type/topic/title move call `search_documents`
+again with `doc_ids`. Offline compute `sha256(UUID(doc_id).bytes).hexdigest()[:24]`
+and run `find <root> -type d -name '*--<suffix>'`; only the suffix is stable.
+Check `doc_id` and displayed version in `document.json`. See
+[Filesystem views](/docs/self-hosting/filesystem-views#layout).
+
 ### `section_history`
 
 Follows one section of a document across its versions. A section key is the

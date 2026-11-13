@@ -1,13 +1,29 @@
-"""Read-only D155 selection. Publication and the existing P3 profile are separate."""
+"""Read-only D155 served-reading selection, with no object-store IO."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.core.corpus_export import CorpusDocument
+
+
+def served_corpus_documents_on(
+    *, connection: Connection, deployment_id: UUID, doc_ids: tuple[UUID, ...]
+) -> dict[UUID, CorpusDocument]:
+    """Batch served selections for consumers in their existing authority cut."""
+    if not doc_ids:
+        return {}
+    return {
+        row["doc_id"]: CorpusDocument(**dict(row))
+        for row in connection.execute(
+            text(_DOCUMENTS + " AND d.doc_id = ANY(CAST(:ids AS uuid[]))"),
+            {"deployment_id": deployment_id, "ids": list(doc_ids)},
+        ).mappings()
+    }
 
 
 class CorpusReaderCatalog:

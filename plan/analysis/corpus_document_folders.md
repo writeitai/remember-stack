@@ -302,3 +302,36 @@ The amendment reconciles the binding E0, retrieval, media, layer, forget, overvi
 schema, benchmark-attestation and requirement contracts. It does not implement them, design a hosted
 control-plane route, change K's standalone repositories, or add a migration,
 compatibility alias, alternate view or native GCS adapter.
+
+## Slice-4 drain integration: independent sessions for the existing locks (2026-11-13)
+
+A publication can lose its PostgreSQL session while an already-issued S3 request
+is still running. Ordinary publication accepts the possibility of one late request
+and repairs its digest later. Forget cannot report erasure while that request can
+still recreate the forgotten file. In particular, a synchronous delete/reconcile
+caller has no running work row, and reaping a lease is not evidence that IO ended.
+
+Holding D74's admission fence on the publication-lock session is insufficient:
+killing that backend releases both locks while the Python process and its HTTP
+request can survive. A new IO journal, external fencing generation or request
+registry would be larger than the accepted design. Reuse the two existing locks
+on independent PostgreSQL sessions instead: the shared D74 admission/drain fence,
+then the exclusive publication lock. Check both original session identities and
+lock ownership before mutations; keep both checked-out sessions until synchronous
+IO and own-upload cleanup return. This costs one additional held connection per
+publisher, with no new durable state or lock namespace.
+
+If the publication backend dies, its independent admission fence keeps forget's
+preparation waiting for the request to return. If the admission backend dies,
+the surviving publication lock keeps P3 erasure waiting. Ordinary successors can
+still proceed after publication-session loss because their admission locks are
+shared; D155's accepted ordinary late-request race and periodic repair remain.
+Loss of all database sessions is still not an external-IO drain acknowledgement:
+D74's qualified process/session quiescence and restore gate remain required.
+
+The PostgreSQL + real MinIO regression pauses an issued original upload, kills
+either backend, observes the eraser waiting on the actual PostgreSQL lock, then
+releases the request. Both variants verify suffix/index absence, controlled-cache
+acknowledgement and unchanged control bytes with zero control mutations. The
+caller deliberately has no work claim, proving that the guard does not depend on
+a lease or on the reaper's status transition.
