@@ -19901,8 +19901,9 @@ still stop preparation. Frozen run inputs are independent of ambient caches
 and are included by the ordinary GCS run archive. Changed image input requires
 a new run and fresh ingestion. Image restoration keeps retrieval budgets and
 core generations unchanged. Full-v42 additionally restores the historical
-branch's semantic judge template. Full-v46 extends the answer instructions
-without changing that judge or the models.
+branch's semantic judge template. Full-v45 extended the answer instructions
+without changing that judge or the models; Full-v46 inherits that reader,
+including PR593, and adds new `desc-prompt-v2` visual readings.
 
 The answerer checks question completeness, distinct events and participants,
 and adjacent dialogue. If a relevant reply lacks the question that elicited
@@ -19928,7 +19929,7 @@ provided. This remains a prompt instruction, not an accuracy guarantee.
 
 The reader's displayed tool catalog retains input schemas and tool contracts,
 but omits repeated output JSON Schemas. Public tool schemas, runtime validation
-and retrieved evidence remain complete. Full-v46 records this prompt-rendering
+and retrieved evidence remain complete. Full-v45 introduced this prompt-rendering
 change; a smaller prompt alone does not establish a score or latency improvement.
 
 ### Independent Mem0-like grading of saved answers

@@ -37,7 +37,7 @@ from rememberstack.model import ToolDescriptor
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v46"
 DEFAULT_PROTOCOL_KEY: Final = "full-v46"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-reader-catalog-v45"
-"""Current Full-v46: preserve qualified values and trim repeated reader output schemas."""
+"""Current Full-v46: inherit the reader and require bounded visual-label readings."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2

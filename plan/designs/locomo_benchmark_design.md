@@ -228,6 +228,11 @@ own their work-ledger retry policy. The measured answer-reader failure above is
 handled only in the benchmark answer loop, where its two additional attempts
 are fingerprinted and charged to the existing agent-call budgets.
 
+Full-v46 inherits the Full-v45 reader, including the PR593 completeness update,
+and adds `desc-prompt-v2` image readings. It requires new visual products;
+ingested representations can differ. The document-adapter format stays at the
+reader-catalog-v45 generation because that wire/rendering format is unchanged.
+
 ## 3. Ingestion mapping
 
 Each conversation runs in a clean isolated deployment. Each session is one immutable Markdown
@@ -618,9 +623,9 @@ relaxes a caller's explicit entity filter, and broader retrieval does not prove
 attribution. This conditional search uses the existing public tools and the
 same call budget; it adds no ranking model or ingestion work.
 
-Full-v46 records these prompt changes under a new identity; the restored
+Full-v45 introduced these reader changes under a new identity; the restored
 Full-v42 judge, models, retrieval depth, eight-tool/nine-model-call cap and all
-ingestion/reuse generations stay unchanged. Missing context can require another
+ingestion/reuse generations were unchanged by those reader changes. Missing context can require another
 public tool read and reader continuation within that same cap. Budget exhaustion
 or provider/tool failures remain visible; no hidden retry or answer repair is
 introduced. Offline checks establish identity integrity, not a score gain.
@@ -636,7 +641,7 @@ The ordinary reader's displayed tool catalog omits each descriptor's complete
 continuation. It retains the full input schema and descriptor contracts, grain,
 intent and descriptions. Public schemas, catalog hashing, runtime validation
 and durable tool records remain complete. MCP-shaped catalogs are unchanged.
-This rendering change receives the Full-v46 adapter identity; it changes no
+This rendering change retains the Full-v45 reader-catalog adapter identity; it changes no
 paid ingestion input or reuse generation. The reader observes actual typed
 response fields in its unfiltered trace. Omitting schemas establishes neither
 better answers nor faster inference; those need separate development evidence.

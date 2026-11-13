@@ -27,15 +27,17 @@ ingestion revision: `13ce4a5224709b3e3cda65c429d5915d47e95e89`.
 
 ## Reader protocol
 
-Full-v46 strengthens conversational context instructions: when a relevant
+Since Full-v45, the reader uses stronger conversational context instructions: when a relevant
 reply lacks its initiating question, the answerer reads adjacent chunks even
 if another candidate looks plausible. It checks which turn owns an attached
 description and answers questions about a work's content with its supported
 subject or premise. These remain prompt instructions within the existing
-eight-tool/nine-model-call budget. Models, judge and ingestion generations
-are unchanged; prompt changes require a new immutable run identity.
+eight-tool/nine-model-call budget. Those reader changes left models, judge and
+ingestion generations unchanged; prompt changes require a new immutable identity.
+Full-v46 inherits that reader, including PR593, and adds new `desc-prompt-v2`
+visual readings, so its ingested image representations can differ.
 
-Full-v46 additionally preserves source-qualified restrictions under informal
+The Full-v45 reader additionally preserves source-qualified restrictions under informal
 question wording, checks object kind/medium and unnamed references, and combines
 concrete subjects from owned images with source text. It prefers compact requested
 values with affirmative qualifiers. These instructions contain no named answers
@@ -47,7 +49,7 @@ and distinguishes the time of the attitude from a future event it concerns,
 while preserving identity, subject and time scope. No expected state names are
 provided. The broader failed completeness candidate is not retained.
 
-Full-v46 also omits repeated output JSON Schemas from the reader's displayed
+Since Full-v45, the reader omits repeated output JSON Schemas from the reader's displayed
 tool catalog while retaining full inputs and result contracts. Public schemas,
 runtime validation and retrieved evidence remain complete. This is a prompt-size
 change, with no score or latency improvement established by offline checks.
