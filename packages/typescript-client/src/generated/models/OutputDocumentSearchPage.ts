@@ -10,9 +10,10 @@ import type { OutputScopePending } from './OutputScopePending';
  */
 export type OutputDocumentSearchPage = {
     as_of: string;
-    cursor: string | null;
     documents: Array<OutputDocumentSearchResult>;
+    next_cursor: string | null;
     people_matched: Array<OutputDocumentPeopleMatch>;
     scope_pending: OutputScopePending | null;
+    truncated: boolean;
 };
 

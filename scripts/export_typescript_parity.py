@@ -155,7 +155,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "predicate": "works_at",
                 "object_entity_id": OTHER_ID,
                 "valid_at": "2026-10-02T12:00:00+02:00",
-                "k": 3,
+                "limit": 3,
             },
         ),
         ("transcript_relation", {"relation_id": ID}, {"relation_id": OTHER_ID}),
@@ -198,7 +198,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "valid_at": "2026-10-02T12:00:00+02:00",
                 "believed_at": "2026-10-02T12:00:00+02:00",
                 "limit": 7,
-                "continuation": "fixture-cursor",
+                "cursor": "fixture-cursor",
                 "include_paths": True,
             },
         ),
@@ -276,7 +276,7 @@ def scenarios() -> list[dict[str, Any]]:
                     "filters": {"language": "en", "authors": ["alice"]},
                     "cursor": "next",
                     "versions": "all",
-                    "k": 3,
+                    "limit": 3,
                 }
             },
         ),
@@ -291,7 +291,7 @@ def scenarios() -> list[dict[str, Any]]:
                     "from": "2026-10-02T12:00:00+02:00",
                     "to": STAMP,
                 },
-                "k": 3,
+                "limit": 3,
                 "cursor": "next",
             },
         ),
@@ -303,7 +303,7 @@ def scenarios() -> list[dict[str, Any]]:
                     "doc_id": ID,
                     "section_key": "part/4:per-diem",
                     "time": {"mode": "at", "at": STAMP},
-                    "k": 3,
+                    "limit": 3,
                     "cursor": "next",
                 }
             },
@@ -348,7 +348,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "direction": "incoming",
                 "kinds": ["amends", "refers_to"],
                 "time": {"mode": "at", "at": "2026-10-02T12:00:00+02:00"},
-                "k": 3,
+                "limit": 3,
                 "cursor": "next",
             },
         ),
@@ -362,7 +362,7 @@ def scenarios() -> list[dict[str, Any]]:
                     "direction": "outgoing",
                     "kinds": ["cites"],
                     "time": {"mode": "overlap", "from": STAMP, "to": STAMP},
-                    "k": 3,
+                    "limit": 3,
                     "cursor": "next",
                 }
             },
@@ -1101,7 +1101,7 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
     ]
     pairs.extend(
         [
-            ("section_history", {"doc_id": ID, "section_key": "key", "k": 0}),
+            ("section_history", {"doc_id": ID, "section_key": "key", "limit": 0}),
             (
                 "section_history",
                 {"doc_id": ID, "section_key": "key", "time": {"at": STAMP}},
