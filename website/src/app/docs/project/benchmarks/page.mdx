@@ -160,6 +160,12 @@ retrying; the command refuses a nonempty output. No automatic paid retry occurs.
 
 ### The current protocol
 
+Reader refinements within this family have distinct saved prompt hashes and
+protocol fingerprints. Reports must identify that fingerprint; the family name
+alone does not identify the prompt. A prior-prompt run stays inspectable, but
+cannot resume with changed instructions. Use a separate retained-ingestion fork
+for a new reader comparison. The published result below remains frozen.
+
 Execution uses one profile, `RS-LoCoMo-Full-v45` (key `full-v45`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for

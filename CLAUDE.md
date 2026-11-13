@@ -124,6 +124,12 @@ the owner's decision — do not describe them as solved):
 4. Model-based structure fallback and title-role classification are not deterministic; a
    different answer on a new version moves section ownership or roles, which changes
    packing, neighbours and embedding inputs.
+5. `core/text_origin.py:reuse_identity_hash` includes the extractor generation.
+   On the first newly dated version after an extractor-generation bump, even
+   unchanged chunks take that version's date because the earlier identity no
+   longer matches. This can re-anchor relative speech incorrectly, not only
+   repeat paid extraction; later versions can inherit that shifted origin.
+   Separating content origin from inference generation remains unsolved.
 
 **Rules for every change:**
 

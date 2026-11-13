@@ -361,12 +361,6 @@ When a question asks about a person's hobbies or interests, distinguish activiti
 stated as personal hobbies or ongoing interests from routine daily tasks, one-off chores, or
 casual passing mentions. Do not pool routine daily activities into a person's stated hobbies.
 
-When retrieved evidence supports multiple distinct values that directly
-satisfy the question (e.g. listing emotions, topics, items, or reasons),
-examine all retrieved passages covering that topic and return the complete union
-of all distinct matching values across all of them. Do not stop after the first
-or highest-ranked match. Exclude merely related facts that do not satisfy the
-question's requested action or relationship.
 Interpret short personal-memory questions by their everyday intent, rather
 than imposing an unrequested technical classification. For a person's stated
 limitations, incompatibilities or restrictions, include every relevant concrete
@@ -394,11 +388,6 @@ that all referenced parties participate in or agree on the attribute. Do not
 attribute an individual participant's solo attribute or activity to the shared set
 unless the other participant(s) also explicitly express or share it.
 
-If a retrieved conversation turn or passage ends on an unanswered question or
-reference directly relevant to the target topic (e.g. one speaker asking about it),
-inspect the immediately following turn(s) or surrounding session before concluding
-that the information is missing or answering prematurely.
-
 For deductive questions involving negative constraints (e.g. finding options
 that avoid stated allergies, conflicts, or restrictions), deduce the compatible
 choices from the stated constraints using sound reasoning rather than answering
@@ -423,27 +412,33 @@ TOOL TRACE SO FAR:
 {trace}
 {guard_feedback}
 
-For preference or ambiguous-reference questions, check before answering that
-the independent source search was made without entity_ids. Check unnamed candidates and the utterances owning
-relevant attachment continuations. Include their concrete subjects and requested
-properties when needed to preserve supported ambiguity. Keep practical constraints
-with affirmative source labels, and remove category contrasts not explicitly
-stated by a source. Then identify the distinct evidence needed by the question.
-A duration needs its start and end; a list or count needs the distinct items
-or events across the relevant time range; a shared attribute needs support
-for each participant. Search for missing parts rather than repeatedly
-retrieving the same evidence. Check event identity and chronology before
-combining or counting mentions.
-When a preference or reference depends on dialogue, inspect the initiating
-turn and reply together. Use adjacent_chunks for missing context even when
-another answer looks plausible, and verify attachment ownership across chunk
-boundaries. Use source text to check a derived claim when their attributions
-conflict. Before finalizing, check that no relevant source item was dropped solely because
-its category label differs from the question's informal wording. For illustrated
-objects, retain the concrete depicted subject as well as textual themes, and
-exclude preferences for a different object kind or medium. State the requested
-values directly; retain source labels as brief affirmative parentheticals. Check that the
-answer covers every requested part and includes the requested type of value. Stay within the existing tool and model-call budgets.
+Before finalizing, keep the requested concrete names, dates and values; do not
+reduce a supplied place name to "the lake" or another generic description.
+A duration needs its start and end. When evidence supports multiple distinct values that directly satisfy the question,
+return the complete union of all distinct matching values for a list or count
+across the retrieved chunks and facts. Do not stop after the first or highest-ranked match.
+Exclude merely related facts; keep owners, chronology, and planned versus completed events distinct.
+For shared, mutual, or collective attributes, require support for each participant.
+
+For preference or ambiguous-reference questions, verify the independent source
+search was made without entity_ids. Check unnamed candidates and attachment
+owners, retaining concrete depicted subjects as well as textual themes. Keep
+supported practical constraints with affirmative source labels; do not drop
+an item solely because its source label differs from the question's wording.
+Exclude preferences for a different object kind or medium.
+
+If an unanswered question or reference directly relevant to the requested detail
+remains, inspect the initiating turn and reply together. Use adjacent_chunks for
+missing owners or dialogue even when another answer seems plausible. Its ordered
+results include the supplied center chunk_id. When a needed utterance is still
+missing, continue from the first or last returned chunk_id on that side; do not
+repeat the same call. Fewer than window neighbors on a side establish the document
+boundary only when there are no drops or truncation and the center is present.
+Otherwise do not infer a boundary from missing rows. Stop expanding a known
+boundary, once the requested parts are supported, or at the existing call budget.
+Use source text to check a derived claim when attribution conflicts. Preserve
+necessary qualifications; never invent missing items or ownership to complete a
+list. State requested values directly and check every requested part is covered.
 For feelings questions, include attitudes expressed in clauses as well as named
 states; the time of an attitude and the time of the event it concerns can differ.
 

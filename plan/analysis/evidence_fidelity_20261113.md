@@ -1,8 +1,7 @@
 # Evidence fidelity: dates, visible labels and complete answers
 
 Non-binding analysis, 2026-11-13. This supports the companion
-[proposal](../proposals/evidence_fidelity_20261113.md); it is not acceptance or
-proof of implemented improvement.
+[consumption contract](../designs/retrieval_design.md#8-the-consumption-skill--a-shipped-versioned-deliverable-d51); it does not establish a measured score improvement.
 
 ## Problem and observed evidence
 

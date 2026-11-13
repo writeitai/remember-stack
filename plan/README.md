@@ -132,3 +132,9 @@ matching and exact storage evidence acknowledgement, see the
 [analysis](analysis/storage_capture_consumer_20261111.md). It extends D61's
 substrate evidence boundary without adopting the broader financial-permission
 proposal or claiming that capture is implemented or qualified.
+
+For concrete answer values and bounded source-chunk continuation, see the
+[consumption contract](designs/retrieval_design.md#8-the-consumption-skill--a-shipped-versioned-deliverable-d51)
+and [evidence-fidelity analysis](analysis/evidence_fidelity_20261113.md). That
+analysis also records the unresolved extractor-generation/text-origin coupling;
+no date-reuse correction is claimed.
