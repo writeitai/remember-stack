@@ -893,11 +893,10 @@ Minimum rows:
 | E3 prompt | names + governed predicates; no REGISTRY TYPES; bare-noun refusal |
 | `resolve` primitive | drop `type?` |
 | LoCoMo answer loop | reject terminal `Unknown` after identity-only reads; require one content-bearing testimony/fact/context attempt; retain the existing bounded invalid-completion retry |
-| P3 Tier 1 | `entities/<entity_id>/` — not `entities/<type>/<entity_id>/` (`e0_files_design.md`) |
+| P3 | No entity directories or entity export in the D155 document tree (`e0_files_design.md` §6); entity identity remains available through retrieval |
 
 **Type-cut consumer checklist** (same PR as the schema drop; not
-compatibility): `workers/p2.py`, `spine/projection.py` Entity export,
-`workers/p3.py` + P3 path above, P1 entity search, `memory_v1.entities_current`,
+compatibility): `workers/p2.py`, P1 entity search, `memory_v1.entities_current`,
 `GraphNode` / envelope, `query_engine` `resolve`/`predicate_absence`,
 `http_api.py` / `sdk.py`, `assured_operations.py`, bootstrap/`core_manifest`
 type seed, eval type strata, migration tests. Dropping the SQL column
@@ -907,8 +906,8 @@ Schema: drop `entities.type` NOT NULL (column dropped or unused). Drop
 or stop writing `mentions.emitted_type`. `predicate_signatures` unused.
 `entity_types` unused for identity (may remain as dead registry until
 migration removes it). Migrations amend `postgres_schema_design.md` in
-the same implementation PR. Re-ensure the live graph catalog and
-rebuild P3. Existing type values are
+the same implementation PR. Re-ensure the live graph catalog. P3 has no entity
+consumer under D155. Existing type values are
 **not** migrated into hats; they are discarded as identity. If a fact
 “X is a bank” exists, it is already an observation.
 

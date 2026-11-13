@@ -32,12 +32,11 @@ gold evidence, each tool call with its result, and the answer, so you can
 check which of the two failed before blaming either the memory or the
 model.
 
-<Callout type="warning">
+<Callout type="note" title="89.94% accuracy on LoCoMo">
 
-No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v45`. The numbers under [Recorded results](#recorded-results)
-belong to earlier protocols and earlier engine builds. Do not compare them
-with other systems' published scores.
+Agents using RememberStack answered **1,385 of 1,540 questions correctly**
+across ten long conversations and 272 sessions. The full publication run
+used `RS-LoCoMo-Full-v45`; see [Recorded results](#recorded-results).
 
 </Callout>
 
@@ -161,7 +160,17 @@ retrying; the command refuses a nonempty output. No automatic paid retry occurs.
 
 ### The current protocol
 
-Execution uses one profile, `RS-LoCoMo-Full-v45` (key `full-v45`). It selects
+Reader refinements have distinct saved prompt hashes and protocol fingerprints.
+Reports must identify that fingerprint, not only the family name. A prior-prompt
+run remains inspectable but cannot resume with changed instructions.
+
+Full-v46 changes the image-description fingerprint to preserve bounded legible
+identity labels alongside OCR. It needs matching new visual readings; historical
+bundles and published results remain frozen. For reader-only retained v45
+comparisons use the PR593 revision; current v46 code does not execute retired
+protocol names. No v46 score is claimed.
+
+Execution uses one profile, `RS-LoCoMo-Full-v46` (key `full-v46`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
 answering and judging. All these Luna seats prefer OpenAI Flex and permit
@@ -216,8 +225,9 @@ still stop preparation. Frozen run inputs are independent of ambient caches
 and are included by the ordinary GCS run archive. Changed image input requires
 a new run and fresh ingestion. Image restoration keeps retrieval budgets and
 core generations unchanged. Full-v42 additionally restores the historical
-branch's semantic judge template. Full-v45 extends the answer instructions
-without changing that judge or the models.
+branch's semantic judge template. Full-v45 extended the answer instructions
+without changing that judge or the models; Full-v46 inherits that reader,
+including PR593, and adds new `desc-prompt-v2` visual readings.
 
 The answerer checks question completeness, distinct events and participants,
 and adjacent dialogue. If a relevant reply lacks the question that elicited
@@ -243,7 +253,7 @@ provided. This remains a prompt instruction, not an accuracy guarantee.
 
 The reader's displayed tool catalog retains input schemas and tool contracts,
 but omits repeated output JSON Schemas. Public tool schemas, runtime validation
-and retrieved evidence remain complete. Full-v45 records this prompt-rendering
+and retrieved evidence remain complete. Full-v45 introduced this prompt-rendering
 change; a smaller prompt alone does not establish a score or latency improvement.
 
 ### Independent Mem0-like grading of saved answers
@@ -315,6 +325,7 @@ engine revision.
 
 | Date | Protocol | Engine revision | Tier | Judge accuracy | Official F1 |
 |---|---|---|---|---|---|
+| 2026-11-13 | `RS-LoCoMo-Full-v45` | serving `1187ca0f`, processing `13ce4a52` | publication | **1,385 / 1,540 (89.94%)** | — |
 | 2026-07-31 | `RS-LoCoMo-Full-v5-strong` | extractor `07j` | publication | 517 / 1,540 (33.6%) | 0.3054 |
 | before 2026-08-10 | `RS-LoCoMo-Full-v8-strong` | `0ef54549` | publication, assembled from two partial runs | 1,100 / 1,540 (71.43%) | not recorded |
 | 2026-08-10 | `RS-LoCoMo-Full-v11` | `213551c7` | publication | 979 / 1,540 (63.57%) | 0.5417 |
@@ -327,9 +338,12 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-This results table contains no protocol after v18. The Full-v45 prompt
-change establishes no score. Any additional published result must identify
-its protocol, revision, tier, cost and failure counts.
+The Full-v45 publication run used `openai/gpt-6-luna-pro` at high reasoning
+for answering and grading, Luna at low reasoning for ingestion and vision,
+and Jev for adjudication. Retrieval used `k=50`, `candidate_k=200` per search
+channel and eight simultaneous questions per conversation. The saved run
+retains its answers, tool traces, model settings, costs and failure records
+for regrading.
 
 ## Reproduce a LoCoMo run
 
@@ -374,7 +388,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v45 \
+  --output .benchmark-runs/smoke --protocol full-v46 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -407,7 +421,7 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v45 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
+LOCOMO_PROTOCOL=full-v46 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
   LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```

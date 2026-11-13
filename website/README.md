@@ -150,7 +150,7 @@ envelope, readiness. `project/glossary` defines them; do not use synonyms.
 
 **Voice.** Second person, present tense, active voice. Say what happens,
 then why it matters. One idea per paragraph. Clarity over brevity, never
-padding. Examples use one running scenario (Dana, the product lead; Ravi, an
+padding. Examples use one running scenario (Dana, the product lead; John, an
 engineer; the billing migration). Banned: seamless, powerful, robust,
 leverage, unlock, supercharge, cutting-edge, effortless, simply, easily,
 enterprise-grade, production-ready, "dive into", "let's", emoji,

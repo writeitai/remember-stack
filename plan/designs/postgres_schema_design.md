@@ -16,7 +16,7 @@
 > `communities`, `entity_graph_metrics`, the `v_graph_*` Ladybug COPY boundary,
 > and latest-P2 analytics writeback are removed by the D98 migration. Current
 > graph degree is derived from PostgreSQL relation adjacency. Section 10 below
-> records the resulting P3-only snapshot registry and live-graph schema
+> records D155's nullable publication marker and the live-graph schema
 > boundary; [`p2_graph_design.md`](p2_graph_design.md) owns executable graph
 > DDL. P1 remains a logical rebuildable search plane but, under D94, has one
 > current in-database generation and no snapshot-registry row.
@@ -208,10 +208,10 @@ CREATE TYPE pipeline_component     AS ENUM (
   'ingester','converter','blockizer','structurer','crossreferencer','chunker','context_prefixer',  -- context_prefixer: legacy LLM location; D80 uses embedding_input_policy + embedder generations
   'embedding_input_policy',
   'extractor','grounder','resolver','normalizer','adjudicator','embedder','fact_labeler',
-  'profile_summarizer','snapshot_builder','knowledge_planner',
+  'profile_summarizer','corpus_publisher','knowledge_planner',
   'knowledge_writer','knowledge_reflector','knowledge_linter','judge','forgetter');
-CREATE TYPE processing_target      AS ENUM ('document','document_section','chunk','claim','relation','observation','entity','snapshot','knowledge_artifact','document_version','knowledge_dispatch');
-CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','build_snapshot','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget','review_fact_windows');
+CREATE TYPE processing_target      AS ENUM ('document','document_section','chunk','claim','relation','observation','entity','knowledge_artifact','document_version','knowledge_dispatch','corpus_publication');
+CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','publish_corpus','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget','review_fact_windows');
 CREATE TYPE processing_status      AS ENUM ('pending','running','succeeded','failed','dead_letter','skipped');
 -- D67: only plane-E routes use operational lanes. K/P (and other scheduled aggregate) jobs
 -- represent their single unlaned route with SQL NULL, never a synthetic third enum value.
@@ -281,8 +281,7 @@ CREATE TYPE adjudication_outcome   AS ENUM ('add','noop','supersede','contradict
 -- exclusively the RE-EXTRACTION zero-support flag, D54 — never removal, never deletion.)
 CREATE TYPE adjudication_method    AS ENUM ('novelty_gate','exact','fuzzy','embedding','small_model','frontier_llm');
 
-CREATE TYPE projection_plane       AS ENUM ('P3_corpusfs'); -- D94/D98: only P3 has immutable snapshot generations
-CREATE TYPE snapshot_status        AS ENUM ('building','validating','published','superseded','failed');
+-- D155: no immutable projection snapshots, plane enum or snapshot status.
 
 CREATE TYPE knowledge_layer        AS ENUM ('K1','K2','K3');  -- K1/K2 are shipped scope labels; legacy K3 is inert compatibility only (D73)
 CREATE TYPE knowledge_page_kind    AS ENUM ('compiled','authored');  -- D46: machine-owned body vs human/agent-owned body
@@ -342,7 +341,7 @@ CREATE TABLE deployments (
   default_language text NOT NULL DEFAULT 'en', -- primary corpus language; gates the multilingual matching path (registries §5)
   raw_bucket      text NOT NULL,               -- gs:// raw bucket (immutable originals; mounted read-only OFF the navigation path, audit-logged — D37/D51)
   artifacts_bucket text NOT NULL,              -- gs:// artifacts bucket (markdown/pageindex, mount-readable) — D37
-  corpusfs_bucket text NOT NULL,               -- gs:// P3 corpus-filesystem bucket (snapshots + latest) — D40
+  corpusfs_bucket text NOT NULL,               -- dedicated mutable S3-compatible corpus root — D155
   knowledge_repo_uri text,                     -- plane-K git remote (git is truth for K; PG holds provenance only) — D1
   document_binding_generation text,            -- NULL disables D102 replay; document-t0-v1 only after binding build/verification
   status          deployment_status NOT NULL DEFAULT 'active',
@@ -479,6 +478,8 @@ CREATE INDEX ix_forget_content_guard ON forget_manifests USING gin (content_hash
 -- and stable (a document re-upload resolves to the same doc_id via documents' UNIQUE(deployment,
 -- content_hash); sub-document targets are deterministic), the (target,stage,version) tuple IS the
 -- content+version idempotency key D12 calls for. content_hash is carried for diagnostics/replay.
+-- D155 publish_corpus uses a fresh corpus_publication event UUID per committed trigger,
+-- stored only in this ledger with payload doc_id; no request table or revision counter (§10).
 -- Lane is intentionally not part of that key: it routes one logical unit of work. A duplicate
 -- steady enqueue may promote pending/failed backfill work (never the reverse); an explicit
 -- dead-letter replay may also reroute it. Promotion clears only defer_reason='budget' and resets
@@ -489,7 +490,7 @@ CREATE TABLE processing_state (
   processing_id   uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
   target_kind     processing_target NOT NULL,  -- hard_forget reuses document; no deletion-only target kind
-  target_id       uuid NOT NULL,               -- LOGICAL FK → the target table's PK (kind tells you which)
+  target_id       uuid NOT NULL,               -- LOGICAL FK → target PK; corpus_publication is an event UUID with payload doc_id (§10)
   stage           pipeline_stage NOT NULL,     -- the processing stage (see pipeline_stage enum, §1)
   component_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions(version); the version this attempt ran
   content_hash    text NOT NULL,               -- sha256 carried for diagnostics/replay; = doc raw-bytes hash, or parent-hash+salt for sub-document targets
@@ -1135,7 +1136,7 @@ idempotency/dedup key, stored and converted once even across lineages); a **docu
 (`doc_id`) = the logical document over time, identified by connector-native
 `(source_kind, source_ref)` (a Drive file ID, a message ID — renames/moves are metadata over a
 stable ref); a **document version** = one observed immutable snapshot of a lineage pointing at
-one content object. Everything durable (P3 paths, K citations, crossrefs, GCS path prefixes)
+one content object. Everything durable (P3 doc_id handles, K citations, crossrefs, E0 path prefixes)
 anchors on the lineage; per-snapshot state lives on the version. Full design:
 `evidence_lifecycle_design.md` §2.
 
@@ -1153,7 +1154,7 @@ CREATE TABLE content_objects (
   content_hash    text NOT NULL,               -- sha256 of raw bytes — THE idempotency key (D12)
   mime            text NOT NULL,               -- detected MIME, drives the conversion router (D38)
   byte_size       bigint,
-  raw_uri         text NOT NULL,               -- gs://…-raw/<doc_id-of-first-observer>/<content_hash>/original.<ext> (D51 raw mount)
+  raw_uri         text NOT NULL,               -- gs://…-raw/<doc_id-of-first-observer>/<content_hash>/original.<ext> (D155 private source store; corpus serves copies)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   purged_at       timestamptz,                 -- hard-forget: bytes erased when no live version references this object (§13)
   PRIMARY KEY (deployment_id, content_hash)
@@ -1163,7 +1164,7 @@ COMMENT ON TABLE content_objects IS
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- documents — one row per DOCUMENT LINEAGE (D55): the logical document over time, identified
--- by connector-native (source_kind, source_ref). Stable anchor for P3 paths, K citations,
+-- by connector-native (source_kind, source_ref). Stable anchor for P3 handles, K citations,
 -- crossrefs, GCS path prefixes. Per-snapshot state lives on document_versions. A hard-delete
 -- SOFT-TOMBSTONES the lineage (deleted_at set) rather than removing it (§13) — auditors can
 -- tell "forgotten" from "never existed".
@@ -1177,7 +1178,8 @@ CREATE TABLE documents (
   versioning_mode versioning_mode NOT NULL DEFAULT 'snapshot', -- D55: snapshot (fail-safe) | living (currency follows the current version, D54)
   origin          document_origin NOT NULL DEFAULT 'external', -- D42: external | system_generated — stamped at ingest, per lineage
   current_version_id uuid,                     -- → document_versions; the SERVED version: newest non-deleted version whose representation completed processing (real FK added after that table)
-  title           text,                        -- best-effort current title (the human name lives in P3, not the canonical path)
+  title           text,                        -- best-effort current title; P3 friendly path can move
+  corpus_published_revision text,              -- nullable D155 digest of successfully published DB inputs/path/policy; no desired counter
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
   deleted_at      timestamptz,                 -- lineage tombstone for hard-delete/forget (§13)
@@ -1403,6 +1405,34 @@ CREATE TABLE document_people (
 );
 CREATE INDEX ix_document_people_name    ON document_people USING gin (normalized_name gin_trgm_ops);
 CREATE INDEX ix_document_people_address ON document_people (deployment_id, normalized_address);
+
+-- D156: the deployment's tag registry and tag assignments on document lineages. Tags are
+-- created before use; names are unique case-insensitively. Assignments are stored only here;
+-- chunks, claims and facts inherit through their documents. Not versioned and never part of a
+-- reuse key, so a tag write causes no processing. document_tags_design.md §5.
+CREATE TABLE tags (
+  deployment_id uuid NOT NULL,
+  tag_id        uuid NOT NULL,
+  name          text NOT NULL,              -- NFC, 1–128 chars, no whitespace/control
+  description   text NOT NULL,              -- up to 2,000 chars; written for agents
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, tag_id),
+  CHECK (char_length(name) BETWEEN 1 AND 128),
+  CHECK (char_length(description) <= 2000)
+);
+CREATE UNIQUE INDEX ux_tags_name ON tags (deployment_id, lower(name));
+
+CREATE TABLE document_tags (
+  deployment_id uuid NOT NULL,
+  doc_id        uuid NOT NULL,
+  tag_id        uuid NOT NULL,
+  assigned_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, doc_id, tag_id),
+  FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, tag_id) REFERENCES tags (deployment_id, tag_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag_id, doc_id);
 ```
 
 > **Documents are not entities (D134; replaces the D18-era Document-typed bridge).** Entity types
@@ -1437,7 +1467,7 @@ CREATE TABLE document_sections (
   page_end        integer,
   ordinal         integer NOT NULL,            -- order among siblings
   summary         text,                        -- per-section summary (D39): context for E1 prefixes/navigation/Selection-explainability; NOT a fact source
-  placement_path  text,                        -- per-section placement hint for P3 (advisory; D39/D40)
+  placement_path  text,                        -- root-only nullable normalized topic path; no type/filename (D39/D155)
   structurer_version text,                     -- LOGICAL FK → pipeline_component_versions; matches documents.structurer_version
   section_key     text,                        -- D140: stable key from a trailing heading attribute {#key}; NULL when absent (never model-produced)
   own_content_hash text,                       -- D140: hash of the section's own ordered block hashes (children excluded); NULL = pre-D140, awaiting backfill
@@ -2232,38 +2262,49 @@ CREATE INDEX ix_obsadjud_live        ON observation_adjudications (observation_i
 
 ---
 
-## 10. P3 snapshot registry and live graph catalog (D40, D94, D98)
+## 10. Corpus publication progress and live graph catalog (D155, D98)
 
-P1 search is live derived state in PostgreSQL under D94 and has no immutable
-snapshot-registry row. The live graph is a set of read-only views over
-authority data under D98 and likewise has no data snapshot, generation,
-object URI, or analytics writeback. P3 is therefore the only remaining
-immutable projection generation registered here.
+P1 and the live graph are current PostgreSQL-derived state, without immutable
+snapshot registries. D155 P3 is an idempotently maintained document tree; its only
+new per-document state is nullable `documents.corpus_published_revision` (§3).
+It records the deterministic digest of the successfully published DB-selected
+version/representation/structure, reader inventory/hashes, title/type/topic,
+desired folder path and builder policy. The desired digest is computed, never a
+stored lineage counter. There are no corpus request, receipt, pending-path,
+suffix-reservation or directory-membership tables.
 
-```sql
-CREATE TABLE projection_snapshots (
-  snapshot_id     uuid PRIMARY KEY,
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  plane           projection_plane NOT NULL DEFAULT 'P3_corpusfs',
-  version         text NOT NULL,
-  gcs_uri         text NOT NULL,
-  status          snapshot_status NOT NULL DEFAULT 'building',
-  is_latest       boolean NOT NULL DEFAULT false,
-  row_counts      jsonb,
-  validation      jsonb,
-  built_from_watermark timestamptz,
-  built_at        timestamptz NOT NULL DEFAULT now(),
-  published_at    timestamptz,
-  UNIQUE (deployment_id, plane, version),
-  UNIQUE (deployment_id, snapshot_id),
-  CHECK (plane = 'P3_corpusfs')
-);
-COMMENT ON TABLE projection_snapshots IS
-  'Registry of immutable P3 corpus-filesystem generations only (D40). P1 is current PostgreSQL derived state; D98 live graph catalog metadata has no snapshot row.';
-CREATE UNIQUE INDEX ux_snapshot_latest
-  ON projection_snapshots (deployment_id, plane)
-  WHERE is_latest;
-```
+The folder suffix is `sha256(doc_id.bytes).hexdigest()[:24]` (96 bits), derived
+from the UUID's canonical 16 bytes. It requires neither a column nor a uniqueness
+reservation, and remains computable after scrub or restore; see
+[E0 §6.3](e0_files_design.md#63-type-first-optional-topic-safe-names-and-bounded-navigation)
+for the collision bound and path rules.
+
+Projection-relevant authority transactions clear the marker and enqueue unlaned
+`publish_corpus` work. Each committed trigger uses a fresh event UUID as its
+`corpus_publication` target, with only `doc_id` in `processing_state.payload`.
+This event has no separate target table: its ordinary processing row contains all
+attempt/lease/retry/DLQ state. New commits have new targets, so an earlier success
+does not suppress a later publish; duplicate delivery retries the same row.
+Neither the payload nor diagnostic `content_hash` is authority for desired output.
+A delayed handler always recomputes from the DB, including A→B→A and deletion.
+No ingestion work identity or attempt semantics change.
+
+The [E0 procedure](e0_files_design.md#65-incremental-work-publication-order-and-reader-observations)
+uses a deployment advisory lock, paged suffix discovery, files-first writes,
+old-copy deletion and index regeneration from DB authority. Only after success
+and a final input check does it set the nullable marker. `p3_path` and readiness
+compare it with the computed current digest; no stored published path, inventory
+receipt or publication timestamp is needed. Shared-index membership and counts
+are SQL results over live served selections, not another projection table.
+Successful null topic has a non-null placement generation and null root placement
+path; failure has no complete placement generation.
+
+D74 uses manifest `doc_id` to erase only that document's suffix-bearing folders,
+clear its marker and regenerate/prune navigation indexes from scrubbed authority.
+It leaves surviving original/media objects in place. Retry and restore replay
+need no historic path list; complete local markers never skip independently
+restored stores. Work-row scrub/retention follows existing D74 rules and cannot
+reintroduce scrubbed authority.
 
 The graph schema consists of private current/history node and edge views
 (`rememberstack_graph_internal`), the normalized `memory_v1` hydration views,
@@ -2816,8 +2857,8 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
    `resolution_exclusions` and `relation_adjudications` reference them and D21 mandates retaining
    merge history for un-merge. Retired entities disappear from later live-graph statements.
 8. **Derived reads**: PostgreSQL P1 indexes and live-graph views reflect the committed authority
-   change without a projection generation. P3 stops materializing the record on its next rebuild
-   (D40).
+   change without a projection generation. D155 enqueues/finishes affected P3 removal or republish; normal delete
+   reports success only after its corpus copies/index membership are removed.
 
 ### 13.2 Hard forget (GDPR — erase the bytes *and* the derived text)
 
@@ -2834,7 +2875,9 @@ test fails when a new source-bearing field is not classified. At minimum it cove
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
   audit rationales/features, every `document_entity_bindings` row for the lineage, the
   lineage's `document_metadata`, `document_people` and `document_names`
-  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), and
+  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), its
+  `document_tags` assignment rows (D156; the deployment's tag registry is not source content
+  and is unaffected), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
@@ -2940,7 +2983,7 @@ Labs."*
 | D4 supersession blocking + cheap-first cascade | `ix_relations_block_subj/obj`; `relation_adjudications.method` (incl. `novelty_gate`) |
 | D5 governed predicate registry + `other:` | `predicates` (`synonyms`, `tier='other'` upsert, `usage_count` funnel) |
 | D6/D98 graph is a read-only view; validity has one home | adjudicated validity only on `relations`; generated `status`; claim-validity is evidence, not a second home (D41); live views/property graphs/functions in `p2_graph_design.md` |
-| D7/D94/D98 projection amendment | `projection_snapshots` is P3-only; P1 is current PostgreSQL derived state and live graph metadata has no generation |
+| D7/D94/D98/D155 projection amendment | no projection snapshots; P1/graph are current PostgreSQL state; P3 uses a nullable per-document publication marker and DB-derived navigation (§10) |
 | D143 processing layers | `deployment_processing_layers` (enabled layers); `processing_layer_gaps` (versions a layer has not processed; drives the lineage-ordered backfill and derived coverage) |
 | D94 PostgreSQL-native P1 | one `chunk_search` sidecar; one current embedding on natural claim/relation/observation/entity rows; current-only `p1_search_channels` readiness; normalized joins for filters; no opaque cross-store refs or generalized mirror tables |
 | D9 search/rerank; evidence-count + graph-distance | `relations.evidence_count`; bounded live-graph frontier distance; degree is computed from indexed live adjacency only where consumed |
@@ -2962,16 +3005,16 @@ Labs."*
 | D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_reference_generations.crossref_version` |
 | D140 effective periods, section keys, version-aware references | `document_effective_periods` (+ view `memory_v1.document_effective_periods_live`, function `memory_v1.versions_in_scope`); `document_effective_time_events`; `document_version_scope` (projection); `document_versions.version_key`; `document_sections.section_key`/`own_content_hash`/`subtree_content_hash`; `chunks.text_origin_at`/`reuse_identity_hash`; `document_crossrefs` (version-grain, generation, binding, origin, section keys) + `document_reference_generations` |
 | D39 PageIndex sections + placement | `document_sections` (path/role/span/summary/placement) |
-| D40 P3 corpus filesystem | `projection_snapshots (plane='P3_corpusfs')` + `document(_sections).placement*` |
+| D40/D155 P3 corpus filesystem | `documents.corpus_published_revision` + nullable root placement generation/path; ordinary `publish_corpus` work; suffix/path/membership computed from authority |
 | D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); an ordinary SQL filter in `claims_as_of`, and a confirmation predicate in D142 ranked nomination |
 | D45 planned K compilation (planner/writer/driver; mechanical routing; manifest staleness) | `knowledge_page_rules`, `knowledge_rule_keys`, `knowledge_plan_decisions`, `knowledge_compilations`; `knowledge_artifacts.inputs_hash/page_summary/parent_artifact_id` |
 | D46 compiled vs authored pages; ownership + quarantine | `knowledge_artifacts.page_kind/curation_path/content_hash` (+ `status='quarantined'`); citations binding in `knowledge_artifact_evidence`; authored review flags via `knowledge_refresh_queue ('authored_review')` |
 | D47/D73 one K mechanism, N scopes; no shipped K3 tier | `knowledge_artifacts.layer` (K1/K2 used by built-in configuration; legacy K3 label inert); scope model page = an artifact all writer runs in that scope depend on; authored K2 pages hold principles and stances |
 | E→K trigger surface (k_layers §5; the signal channel D42 deferred) | `knowledge_subscriptions`, `knowledge_page_watches`, `knowledge_dispatches`; rules owned by page XOR subscription; D42 `origin` guards re-ingested plans |
 | D48 propose/dispose hydration | no tables — an API-layer contract over existing spine reads (by-ID re-verification; drop counts in the envelope) |
-| D49 response envelope (grain / contradictions / freshness / negatives) | wire contract, not schema; the K freshness block reads `knowledge_artifacts` + `knowledge_compilations`; horizons read `projection_snapshots` |
+| D49 response envelope (grain / contradictions / freshness / negatives) | wire contract, not schema; the K freshness block reads `knowledge_artifacts` + `knowledge_compilations`; P3 readiness compares `documents.corpus_published_revision` with computed current inputs |
 | D50/D87 zero-LLM primitives; four closed assured operations | `assured_operations` (§11.A) + `assured_operation_name`/`assured_result_contract`/grain/intent enums; the canonical tuple CHECK |
-| D51 filesystem-first mounts + consumption skill | `deployments.raw_bucket`/`content_objects.raw_uri` comments (raw mounted off-path, D37 refined); the skill is a shipped versioned artifact, not schema |
+| D51 filesystem-first mounts + consumption skill | `deployments.corpusfs_bucket` plus the D155 publication marker and authoritative E0 reader inventory; raw stays authoritative and P3 originals are copies; the skill is versioned, not schema |
 | D54 testimony currency + counting rule | `testimony_currency_events` (partitioned ledger + reconciliation idempotency key) + `claims.is_current_testimony` (cache); `evidence_count`/`contradict_count` redefined (distinct current lineages — write-once `doc_id` on evidence rows makes the recount single-table); `review_item_kind = 'support_withdrawn'` |
 | D55 document lineages + versions | `documents` (lineage: `source_kind/source_ref`, `versioning_mode`, three-column current-version FK), `document_versions` (append-only; `source_modified_at` → `asserted_at`; `sync_cycle_id`), `content_objects`; `connector_sync_cycles` (the retract barrier); `adjudication_outcome='retracted_source_removal'` (living removal retracts — no review softener) |
 | D56 content-addressed reuse | `chunks.chunk_content_hash` + `chunks.extraction_input_hash` (+ `ix_chunks_reuse`); `chunk_claims` — the exact claim-occurrence map (fresh + reused attachments) |
@@ -3014,12 +3057,11 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
    `merge_events.pre_merge_membership_snapshot` correctly re-adjudicates relation windows closed
    under a merged identity (`relation_adjudications.superseded_by` supports it; the procedure needs a
    test).
-7. ~~**P3/D40 wording reconciliation.**~~ **RESOLVED** — the cross-link-only model is adopted
-   everywhere (D40 refinement note; `requirements_v3.md` §Plane P, `overall_design.md` §5,
-   README updated; `questions.md` #25 closed). This schema already followed the binding design;
-   no schema change was needed.
-8. **P3 snapshot retention depth** (latest-only vs latest-N): pick the
-   debugging-history depth against storage cost.
+7. **P3 contract (D155): resolved.** Mutable reader folders and a nullable success marker replace
+   snapshot/stub/entity/K layouts; see E0 §§5–7. No K dependency remains.
+8. **P3 performance measurements:** streamed-copy memory, publication lock wait,
+   shard threshold/churn, suffix-scan cost and per-document erasure/reconcile duration.
+   The object-version erasure rule is in E0 §6.7.
 9. **Claim asserted-validity (D41) — measure before locking.** (a) Precision/recall of the extracted
    `claim_valid_*` interval on a golden slice + a per-fact canary for window false-extraction (D35).
    (b) Fiscal-calendar expansion ("FY2023" ≠ calendar 2023 for off-calendar years) — `precision` + the

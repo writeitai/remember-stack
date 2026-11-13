@@ -17,7 +17,7 @@ exact characters of the source that support it. A claim records *what a
 source said*, not whether it is true. Deciding what is true is the job of
 [facts](/docs/concepts/facts). Claims are the transcript; facts are the verdict.
 
-![Three sources make claims about Ravi. Two support the fact that he works on the billing migration; the retro supports a new fact, that he works on the search team from 1 June, and closes the earlier fact on that date.](/docs/diagrams/claims-and-facts.svg)
+![Three sources make claims about John. Two support the fact that he works on the billing migration; the retro supports a new fact, that he works on the search team from 1 June, and closes the earlier fact on that date.](/docs/diagrams/claims-and-facts.svg)
 
 ## What a claim is
 
@@ -25,18 +25,18 @@ A claim is one coherent assertion from one document version, rewritten so a
 reader needs no surrounding context. From a meeting transcript dated
 2026-03-04:
 
-> **Ravi:** Dana and I agreed yesterday to move the cutover to June 8.
+> **John:** Dana and I agreed yesterday to move the cutover to June 8.
 
 RememberStack might store:
 
 | Field | Value |
 |---|---|
-| `claim_text` | `Ravi said that Dana and Ravi agreed on 2026-03-03 to move the billing migration cutover to June 8.` |
+| `claim_text` | `John said that Dana and John agreed on 2026-03-03 to move the billing migration cutover to June 8.` |
 | `source_span` | `Dana and I agreed yesterday to move the cutover to June 8.` |
 | `is_attributed` | `true` |
 | `asserted_at` | `2026-03-04T15:00:00Z` |
 
-The claim resolves pronouns ("I" becomes Ravi), partial references ("the
+The claim resolves pronouns ("I" becomes John), partial references ("the
 cutover" becomes the billing migration cutover, when the document says so)
 and relative dates ("yesterday" becomes 2026-03-03 when the document carries a
 date). The original wording is kept in `source_span`.
@@ -44,7 +44,7 @@ date). The original wording is kept in `source_span`.
 A claim keeps an assertion together even when its support spans several
 sentences, and keeps apart things that differ: independently dated events,
 statements by different speakers, and propositions that sound alike but are
-not. "Ravi finished the migration", "Ravi worked on the migration" and "Ravi
+not. "John finished the migration", "John worked on the migration" and "John
 enjoyed the migration" are three different claims.
 
 Every claim carries:
@@ -205,11 +205,11 @@ the edit, not the size of the document.
 ## Attributed claims
 
 `is_attributed` is `true` when the claim records someone's statement or
-stance rather than asserting something directly: "Ravi said the cutover
+stance rather than asserting something directly: "John said the cutover
 moved", "Dana believes June is too tight".
 
-Attribution is never dropped. "Ravi said he finished the migration" does not
-become "Ravi finished the migration". When the claim becomes a fact, an
+Attribution is never dropped. "John said he finished the migration" does not
+become "John finished the migration". When the claim becomes a fact, an
 attributed claim becomes an observation about the speaker's stance, not a
 fact about the subject (see [Facts](/docs/concepts/facts#observations)).
 

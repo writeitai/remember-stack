@@ -373,12 +373,12 @@ Most surprising answers are the result of how the question was asked:
 
 | What happened | Why it is not a bug | What to do instead |
 |---|---|---|
-| "Who works on the billing migration?" leaves out Ravi, who worked on it until June. | `facts_context` defaults to the `current` time mode, which returns only facts true now. | Ask with `time={"mode": "history"}`, or `at` a date. See [Time](/docs/concepts/time#asking-about-time). |
+| "Who works on the billing migration?" leaves out John, who worked on it until June. | `facts_context` defaults to the `current` time mode, which returns only facts true now. | Ask with `time={"mode": "history"}`, or `at` a date. See [Time](/docs/concepts/time#asking-about-time). |
 | A fact dated "sometime" appears in an answer about March. | Its window is missing or partial, so it comes back with `temporal_match: "possible"`. | Treat `possible` as a lead, not an answer. |
 | The old June deadline still appears after the notes moved it to October. | `claims_and_sources_context` returns what sources said, including the earlier statement. Claims never change. | Use `facts_context` for what holds now; use claims to show who said what. See [Facts](/docs/concepts/facts). |
 | "Dana" returns facts about the wrong Dana, or nothing. | `resolve_entity` returns every entity that matches and never picks one for you. | Resolve first; ask which one, or pass the right `entity_ids`. See [Handle unknowns and ambiguity](/docs/guides/unknowns-and-ambiguity#names-that-match-more-than-one-entity). |
-| The agent says "Ravi has no tasks" after a `boundary` negative. | `boundary` means the lookup could not run as asked, not that nothing exists. | Follow `workaround`. Brief your agent as in [Handle unknowns and ambiguity](/docs/guides/unknowns-and-ambiguity#brief-your-agent). |
-| "Ravi owns three components" when he owns more. | The list was truncated. | Check `truncation`; raise `k` or narrow the question. |
+| The agent says "John has no tasks" after a `boundary` negative. | `boundary` means the lookup could not run as asked, not that nothing exists. | Follow `workaround`. Brief your agent as in [Handle unknowns and ambiguity](/docs/guides/unknowns-and-ambiguity#brief-your-agent). |
+| "John owns three components" when he owns more. | The list was truncated. | Check `truncation`; raise `k` or narrow the question. |
 | A SQL query returns no rows, and the agent concludes nothing exists. | SQL results carry no `negative`; an empty result can come from a rejected statement or a truncated one. | Check `termination_reason`, `error_code` and `truncated` first. |
 | The answer picks one side of a disagreement. | Both facts stand, in one `contradiction_group`. | Report both sides with their sources. See [Contradictions](/docs/concepts/contradictions). |
 | `422` `invalid_parameter` "unknown argument(s)" from an operation. | Each operation accepts a fixed set of arguments. | See [Assured operations](/docs/reference/assured-operations). |

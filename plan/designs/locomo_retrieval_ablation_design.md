@@ -14,8 +14,9 @@
 
 The canonical LoCoMo answer loop exposes a benchmark-composed 22-tool catalog.
 It does not tell us how a normal MCP surface compares with direct access to the
-P3 corpus. P3 is the published, navigable corpus snapshot: an ordinary directory
-tree whose `.snapshot-version` identifies the immutable publication.
+P3 corpus. D155 P3 is an incrementally published document-folder tree. A local
+benchmark copy freezes its selected publication identities and file inventory;
+it is an evaluation input, not an immutable engine snapshot projection.
 
 This design adds an **answer-and-judge-only development experiment** over one
 already-processed LoCoMo sample. It does not change the canonical
@@ -47,8 +48,11 @@ python -m benchmarks.locomo retrieval-ablation \
 
 `--p3-root` is required by `full` and profiles whose key contains `p3`. It is an
 ordinary local directory obtained through the existing OSS publication,
-restore or copy workflow. Its `.snapshot-version` must equal the P3 version in
-the source run's checkpointed readiness.
+restore or copy workflow. Its publication/inventory attestation must match the
+source protocol's checkpointed evidence. D155 runs compare selected per-document
+publication markers, ready-folder metadata and a frozen file-inventory hash.
+Historical source runs retain their original snapshot-marker evidence; input attestation is
+source-pinned and never silently translated into another protocol's identity.
 
 Every profile answers every prepared item belonging to `--sample`.
 `--max-questions` is a run-absolute authorization ceiling, not a first-N
@@ -85,7 +89,7 @@ files and requires:
 - the ablation output is either empty or already has the identical immutable
   ablation configuration.
 
-`codex-p3` is deliberately offline after source-file and P3-marker validation;
+`codex-p3` is deliberately offline after source-file and P3-publication validation;
 it does not require a live database merely to read an already-published tree.
 
 The ablation configuration binds its schema version, source protocol
@@ -149,7 +153,7 @@ only a `corpus/` link to the P3 root:
 
 ```text
 $TEMP/question/
-└── corpus/ -> validated P3 snapshot
+└── corpus/ -> validated frozen P3 input
 ```
 
 The route instruction says:
@@ -361,7 +365,7 @@ The implementation is complete only when tests prove:
 2. MCP definitions omit result schemas and write tools;
 3. MCP error bits and decoded content drive trace, error and `Unknown`
    classification correctly;
-4. P3 marker mismatch fails before a model call;
+4. P3 publication/inventory mismatch fails before a model call;
 5. mocked native Codex runs reject zero-content, more than eight actions, web,
    file changes, subagents, dynamic tools and non-experiment MCP while auditing
    shell requests without result bodies for manual write/escape review;

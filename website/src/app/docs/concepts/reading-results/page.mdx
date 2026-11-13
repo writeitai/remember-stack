@@ -71,7 +71,7 @@ Each field is explained under [Field reference](#field-reference).
 
 ## An annotated example
 
-Ravi's `entity_id` was found with `resolve_entity`. This asks what he is
+John's `entity_id` was found with `resolve_entity`. This asks what he is
 working on now:
 
 ```python
@@ -79,7 +79,7 @@ import remember
 
 with remember.Client() as memory:
     result = memory.facts_context(
-        "what is Ravi working on",
+        "what is John working on",
         entity_ids=["0b6c4f7e-3d2a-4e91-8c1f-5a7d9e2b4c60"],
     )
     print(result.model_dump_json(indent=2, by_alias=True))
@@ -99,7 +99,7 @@ with remember.Client() as memory:
     {
       "fact_id": "7d2e9a14-58c3-4f0b-a6e1-3c9b2d7f8e05",
       "kind": "relation",
-      "label": "Ravi works on search team",
+      "label": "John works on search team",
       "evidence_count": 2,
       "validity": {
         "valid_from": "2026-06-01T00:00:00Z",
@@ -116,7 +116,7 @@ with remember.Client() as memory:
     {
       "fact_id": "c41f0b8e-92a7-4d63-b5e2-8f1a6c3d9e27",
       "kind": "observation",
-      "label": "Ravi is on call for billing incidents.",
+      "label": "John is on call for billing incidents.",
       "evidence_count": 1,
       "validity": {
         "valid_from": null,
@@ -136,8 +136,8 @@ with remember.Client() as memory:
       "claim_id": "e5a8c2d1-6f3b-4a97-8d0e-1b4c7f2a9e36",
       "doc_id": "3f9d1c6a-2b8e-5c47-9a1d-6e0f3b8c2d74",
       "chunk_id": "91c7e4b2-0d5a-4f86-b3e9-7a2c1d8f6e40",
-      "claim_text": "Ravi moved from the billing migration to the search team on 2026-06-01.",
-      "source_span": "Ravi moved from the billing migration to the search team on 1 June.",
+      "claim_text": "John moved from the billing migration to the search team on 2026-06-01.",
+      "source_span": "John moved from the billing migration to the search team on 1 June.",
       "char_start": 412,
       "char_end": 479,
       "evidence_spans": [{"char_start": 412, "char_end": 479}],
@@ -157,8 +157,8 @@ with remember.Client() as memory:
       "claim_id": "2b7f9d3e-4c1a-4e58-a0d6-9f3e2c7b1a85",
       "doc_id": "8a2e6d4f-1c9b-5f30-8e7a-2d5c9b1f4e63",
       "chunk_id": "4e8a1f6c-7b3d-4c29-9e05-3a6d8f2c1b97",
-      "claim_text": "Ravi is on call for billing incidents.",
-      "source_span": "Ravi is on call for billing incidents.",
+      "claim_text": "John is on call for billing incidents.",
+      "source_span": "John is on call for billing incidents.",
       "char_start": 96,
       "char_end": 134,
       "evidence_spans": [{"char_start": 96, "char_end": 134}],
@@ -234,7 +234,7 @@ Reading it top to bottom:
   (`mode: "current"`), as of 2026-09-23 08:15 UTC, using today's identities.
 - **The first fact** is a relation, true since 2026-06-01 and still open,
   supported by 2 distinct documents. Its window is complete, so its time
-  match is `confirmed`. Ravi's earlier billing migration work is not here:
+  match is `confirmed`. John's earlier billing migration work is not here:
   it ended on 2026-06-01, and this is a `current` read.
 - **The second fact** has no date. It is returned because nothing rules it
   out, and marked `possible` so the agent does not mistake it for a
@@ -246,7 +246,7 @@ Reading it top to bottom:
 - **`evidence_totals`**: the relation has 2 supporting documents and only
   1 claim was returned, so there is more evidence to fetch
   (`hydrate_relation`). Nothing contradicts either fact.
-- **`nodes`**: the graph expansion from Ravi reached the search team, one
+- **`nodes`**: the graph expansion from John reached the search team, one
   hop away.
 - **`truncation`**: both matching facts were returned; the total is exact.
 - **`negative: null`**: the answer is not empty.

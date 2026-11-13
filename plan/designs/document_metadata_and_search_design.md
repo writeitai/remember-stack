@@ -7,6 +7,9 @@ eligibility (a document's own name is not minted), and the E2 Claimify
 instructions (self-references name the document). **Composes with:** D133
 ([format conversion](format_conversion_design.md)).
 **Rejected alternative kept as a proposal:** [document subject entities](../proposals/document_subject_entities.md).
+**Refined by D156** ([document tags](document_tags_design.md)): caller tags
+join the filter fields, the filter reaches the context operations, and a
+filtered fact read discloses contradictions from outside the filter (§4).
 
 ## 1. The problem
 
@@ -118,7 +121,9 @@ search_documents(query?, filters?, k) → documents
 
 - **`filters`** use the general fields: `family`, `authors`, `recipients`
   (each matches a name or an address), `created` and `modified` ranges,
-  `language`, `thread_ref`, and an explicit `doc_ids` set.
+  `language`, `thread_ref`, an explicit `doc_ids` set, and D156's caller
+  `tags` (`all` / `any` / `none`, tested on the lineage;
+  [document tags design §4.1](document_tags_design.md#41-the-tags-selector)).
 - **Results are documents (lineages), judged by one version.** By default
   each lineage is judged by its **current** version: filters and name
   matching use that version's metadata, and the result returns it. With
@@ -138,9 +143,12 @@ search_documents(query?, filters?, k) → documents
   audit of all editions uses `time: history`; there is no option that ignores
   the scope ([effective time design §3.5](effective_time_and_section_references_design.md#35-search_documents)).
   Results carry their in-force intervals, their version id, and a P3 path only
-  when the judged version is the served one (`served_version`), with
-  `source_open(version_id)` otherwise, so an agent never opens a different
-  edition than it was shown. Filter-only paging uses the pinned `as_of` as the
+  when the judged version is the served one (`served_version`) **and** its
+  D155 nullable publication marker matches the computed current export digest
+  (including version, representation and desired path), with `source_open(version_id)`
+  otherwise. This publication guard applies without declared periods too; derive
+  a movable P3 path from DB authority only behind that guard. Thus an agent never
+  opens a different edition than it was shown. Filter-only paging uses the pinned `as_of` as the
   belief instant for declarations, so a correction between pages moves no row.
   Lineages without periods ignore `time` and behave as above
   ([effective time design §3](effective_time_and_section_references_design.md#3-time-scoped-retrieval)).
@@ -170,8 +178,9 @@ search_documents(query?, filters?, k) → documents
   change. Ranked queries (with `query`) return one page of `k` results,
   disclose `truncated`, and refuse a cursor (D154).
 - **Each result** carries the document and version, `file_name`, `title`,
-  family and posture, processing status, the general metadata, the overview
-  or summary, and how to reach it: its P3 path and `source_open`.
+  family and posture, processing status, the general metadata, the lineage's
+  tags (D156), the overview or summary, and how to reach it: its P3 path and
+  `source_open`.
 - **People matching is disclosed.** When `authors: ["Alice"]` matches several
   distinct people ("Alice Novak <alice@acme.com>", "Alice Chen
   <achen@x.io>"), the result lists each matched person with a count, so the
@@ -180,10 +189,14 @@ search_documents(query?, filters?, k) → documents
 It is exposed on the HTTP API, SDK, CLI and MCP: "find the file" is an
 intent an agent must be able to discover, like `source_open` (D115).
 
-## 4. Document filters on `search`
+## 4. Document filters on `search` and the context operations
 
 `search` (and the recipes built on it) accepts a `documents` filter with the
-same fields as §3. It restricts results to evidence from matching documents:
+same fields as §3, including D156 tags. The context operations
+`claims_and_sources_context`, `facts_context` and `combined_context` accept the
+same filter with the same per-grain rules
+([document tags design §4.2–§4.5](document_tags_design.md#42-where-the-filter-is-accepted)).
+It restricts results to evidence from matching documents:
 
 - **chunks** — the chunk's document version matches;
 - **claims** — at least one live **occurrence** of the claim (a
@@ -195,8 +208,12 @@ same fields as §3. It restricts results to evidence from matching documents:
   carry no copied filter values (D80); this refines D80's "join through the
   origin chunk" to "join through occurrences" for inclusion;
 - **relations and observations** — the fact has at least one live
-  supporting claim from a matching document; the returned evidence is limited
-  to those claims.
+  supporting claim from a matching document. Returned **supporting** evidence
+  is limited to matching documents; **contradicting** evidence and
+  contradiction co-members come from every document, each marked in or out
+  of the filter, with exact totals for both (D156,
+  [document tags design §4.4](document_tags_design.md#44-fact-evidence-under-a-filter-support-from-the-scope-contradictions-from-everywhere)).
+  The filter never changes a fact's value or status.
 
 The filter is applied in the ranked search's confirmation step, before the
 top results are cut (D94, executed as D142's nominate–confirm–continue loop),

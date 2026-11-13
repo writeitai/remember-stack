@@ -95,7 +95,7 @@ passage that moved from one file to another within one sync counts as a
 change of support, never as a retraction followed by a re-assertion.
 
 This is how a living source takes something back: by no longer saying it.
-Removing "Ravi owns the schema change" from the spec retracts that fact if
+Removing "John owns the schema change" from the spec retracts that fact if
 no other document supports it.
 
 ## Retraction is recorded, not deleted
@@ -118,7 +118,7 @@ keeps them apart:
 
 | What changed | Example | A fact that loses its only support |
 |---|---|---|
-| **The source itself** | The spec no longer says "Ravi owns the schema change". | Is retracted in a `living` document (`invalidated_at` set, recorded as `retracted_source_removal`). In a `snapshot` document the old version still supports it, so it does not lose support. |
+| **The source itself** | The spec no longer says "John owns the schema change". | Is retracted in a `living` document (`invalidated_at` set, recorded as `retracted_source_removal`). In a `snapshot` document the old version still supports it, so it does not lose support. |
 | **Only the reading of it** | A new release re-reads an unchanged file with a newer extractor, converter or chunker, and does not find the claim again. | Is not retracted. It is marked `support: "withdrawn"`, flagged for review and still returned. |
 
 The first is the source speaking: it stopped saying something. The second

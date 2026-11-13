@@ -66,8 +66,8 @@ as tools. `GET /operations` lists them with their full schemas.
 ### When to use each
 
 **Start with `resolve_entity`** whenever the question names someone or
-something. It turns "Ravi" into an `entity_id`, or tells you there are two
-Ravis, or that there is none. Pass the chosen IDs to the next call as
+something. It turns "John" into an `entity_id`, or tells you there are two
+Johns, or that there is none. Pass the chosen IDs to the next call as
 `entity_ids`. See [Entities](/docs/concepts/entities#resolving-a-name-at-query-time).
 
 **Use `facts_context` for what is true.** Current state, who owns what, what
@@ -88,8 +88,8 @@ with `evidence_count` 10. Arguments:
 
 With `entity_ids` and a `current` or `at` time scope, `facts_context` first
 expands the graph `hops` steps out from those entities, then searches fact
-text inside that neighbourhood. That is how "what is Ravi working on?" finds
-the facts about Ravi's projects, not only facts with Ravi in the text.
+text inside that neighbourhood. That is how "what is John working on?" finds
+the facts about John's projects, not only facts with John in the text.
 
 **Use `claims_and_sources_context` for what was said.** Exact wording,
 quotes, tone, who said what and when, or anything the fact layer did not
@@ -108,13 +108,13 @@ side, never blended. It takes `query`, `entity_ids`, `k`, `candidate_k`, `hops`,
 import remember
 
 with remember.Client() as memory:
-    who = memory.resolve_entity("Ravi")
-    ravi = who.entities[0].entity_id if len(who.entities) == 1 else None
+    who = memory.resolve_entity("John")
+    john = who.entities[0].entity_id if len(who.entities) == 1 else None
 
     facts = memory.facts_context(
-        "what is Ravi working on", entity_ids=[ravi] if ravi else None
+        "what is John working on", entity_ids=[john] if john else None
     )
-    said = memory.claims_and_sources_context("Ravi cutover date")
+    said = memory.claims_and_sources_context("John cutover date")
     both = memory.combined_context("billing migration cutover")
 ```
 

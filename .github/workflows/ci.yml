@@ -190,11 +190,14 @@ jobs:
     permissions:
       contents: read
     env:
+      REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL: http://127.0.0.1:59000
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
       - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
+      - name: Start real MinIO for D155 object contracts
+        run: .github/ci/start-minio.sh
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.12.6"

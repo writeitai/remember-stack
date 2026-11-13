@@ -52,6 +52,12 @@ registry, full/profile/card postures and extraction eligibility — see
 [the workspace family design](designs/workspace_formats_design.md#7-office-pdf-email-and-notebook-details);
 for finding files and
 filtering by author or date, [D134 document metadata and search](designs/document_metadata_and_search_design.md).
+For the tag registry, caller-assigned tags on documents (`project:…`, `kind:…`) and
+filtering every read — including the context operations — by them, see
+[D156 document tags](designs/document_tags_design.md), its
+[analysis](analysis/document_tags_analysis.md) and [delivery order](plans/document_tags.md).
+Automatic tagging is the unchosen
+[classification rules proposal](proposals/tag_classification_rules.md).
 The families actually shipped for workspaces, and how they serve coding agents, are
 [D138 workspace formats](designs/workspace_formats_design.md).
 The [analysis](analysis/format_coverage_and_conversion_architecture.md) records the
@@ -62,8 +68,15 @@ For conversational anaphora and question-affirmation resolution across dialogue 
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
 
+For the customer corpus mount — type-first document folders containing copied originals
+and reader derivatives, idempotent publication, stable handles and per-document erasure —
+start with [D155 in E0 §§5–7](designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem),
+its [analysis](analysis/corpus_document_folders.md) and
+[implementation order](plans/corpus_document_folders.md). This is an accepted
+design amendment, not a claim that the replacement or mount wrapper ships.
+
 For byte-authoritative ingest MIME and explicit classes on every object write,
-see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--gcs-holds-bodies-postgres-holds-the-index)
+see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--object-storage-holds-bodies-postgres-holds-the-index)
 and the [analysis](analysis/content_detection_and_object_classes_20260923.md).
 
 For deleting a document through the API, SDK, CLI or MCP, see D135 in the
@@ -137,3 +150,13 @@ For the shared browse, ranked-result and SQL pagination contracts, see
 [D154](../decisions.md#d154-one-pagination-contract-browse-lists-page-ranked-results-disclose-sql-caps-refuse-silence),
 the [retrieval envelope](designs/retrieval_design.md#5-the-response-envelope--the-contract-is-the-answers-self-account-d49),
 and the [review corrections analysis](analysis/pagination_review_20261113.md).
+
+For concrete answer values and bounded source-chunk continuation, see the
+[consumption contract](designs/retrieval_design.md#8-the-consumption-skill--a-shipped-versioned-deliverable-d51)
+and [evidence-fidelity analysis](analysis/evidence_fidelity_20261113.md). That
+analysis also records the unresolved extractor-generation/text-origin coupling;
+no date-reuse correction is claimed.
+
+For bounded legible identity labels in image observations, with independent OCR
+and explicit cache/downstream costs, see [media §2](designs/media_design.md#2-converter-routes-extends-the-d38-router-table)
+and the [visual-label analysis](analysis/visual_identity_text_20261113.md).

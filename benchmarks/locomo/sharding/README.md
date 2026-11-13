@@ -178,7 +178,7 @@ as source-derived data.
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v45` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v46` | prepare-time protocol key |
 | `LOCOMO_IMAGE_INPUTS` | required for fresh preparation | immutable `prepare-images` bundle for the tier's selected samples; copied into the run and included in GCS archives |
 | `LOCOMO_MOUNT_ROOT` | `$RUN_DIR/.mounts` | host/container-identical P3 mount root |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |

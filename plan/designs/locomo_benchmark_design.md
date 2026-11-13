@@ -15,8 +15,9 @@ run must satisfy these gates:
 
 - exact dataset and manifests validate locally;
 - the stock self-host profile composes all eleven continuous handlers;
-- P3 can be built explicitly over the same stores the API reads, while graph
-  readiness and committed-edge visibility are verified directly in PostgreSQL;
+- D155 P3 publications for selected versions are complete over the same stores
+  the API reads; full reconcile is available as repair. Live-graph readiness and
+  committed-edge visibility are verified directly in PostgreSQL;
 - readiness is machine-verifiable through the public API;
 - the answer agent can use the complete shipped read plane: assured operations,
   direct primitives, open query, P1/live graph, and the published P3 mount;
@@ -32,7 +33,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v45 (full-v45)
+protocol                 RS-LoCoMo-Full-v46 (full-v46)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -228,6 +229,11 @@ own their work-ledger retry policy. The measured answer-reader failure above is
 handled only in the benchmark answer loop, where its two additional attempts
 are fingerprinted and charged to the existing agent-call budgets.
 
+Full-v46 inherits the Full-v45 reader, including the PR593 completeness update,
+and adds `desc-prompt-v2` image readings. It requires new visual products;
+ingested representations can differ. The document-adapter format stays at the
+reader-catalog-v45 generation because that wire/rendering format is unchanged.
+
 ## 3. Ingestion mapping
 
 Each conversation runs in a clean isolated deployment. Each session is one immutable Markdown
@@ -355,25 +361,31 @@ All use the same deployment ID, PostgreSQL authority/P1 database, object stores,
 adapter. One route per process preserves the existing queue/rate-limit design; no workflow engine
 is introduced.
 
-### Aggregate projection
+### Corpus publication and repair (D155)
 
-P3 rebuilds after all selected session versions are E/P1-ready:
+Ordinary per-document `publish_corpus` work publishes source folders; answering
+waits for selected sessions' pipeline/P1 and matching nullable P3 publication markers.
+An operator can run the existing one-shot projection service as full reconcile:
 
 ```bash
 docker compose --profile operations run --rm projections
 ```
 
-The one-shot service builds P3 into the corpusfs bucket. It does not run on
-every document and does not remain resident. The live graph is already
-queryable from PostgreSQL after the write commits; no graph build or snapshot
-bucket exists.
+This repairs the same live corpus store; it is not a prerequisite after each
+upload. The graph is already queryable from PostgreSQL after authority commits;
+no graph build or snapshot bucket exists.
 
-After the build, the ordinary self-host `mounts` command materializes the latest
-registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
-P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
-version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v20; no benchmark-specific
-object-store reader or HTTP endpoint exists.
+The answer adapter reads the ordinary read-only P3 directory/mount. Before model
+calls, verify selected folder `document.json`/ready-index identities against
+checkpointed public `p3` readiness and its publication markers. Freeze
+publication identities and a sorted file-inventory hash for the run; a mismatched
+or changing input refuses answering rather than mixing runs. No benchmark-only
+object-store reader, engine snapshot layout or HTTP endpoint is introduced.
+
+D155 P3 content/attestation is a protocol change and requires a fresh protocol
+identity and results. Historical source-pinned runs retain their original global
+snapshot marker/build evidence; no existing Full-v43 or earlier result is
+reinterpreted as a document-folder measurement.
 
 ### Plane K
 
@@ -537,7 +549,7 @@ before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-Full-v45 requires the best-supported answer to each scored question, including
+Full-v46 requires the best-supported answer to each scored question, including
 an inference when the conclusion is not stated verbatim. Prefer direct statements,
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
@@ -618,9 +630,9 @@ relaxes a caller's explicit entity filter, and broader retrieval does not prove
 attribution. This conditional search uses the existing public tools and the
 same call budget; it adds no ranking model or ingestion work.
 
-Full-v45 records these prompt changes under a new identity; the restored
+Full-v45 introduced these reader changes under a new identity; the restored
 Full-v42 judge, models, retrieval depth, eight-tool/nine-model-call cap and all
-ingestion/reuse generations stay unchanged. Missing context can require another
+ingestion/reuse generations were unchanged by those reader changes. Missing context can require another
 public tool read and reader continuation within that same cap. Budget exhaustion
 or provider/tool failures remain visible; no hidden retry or answer repair is
 introduced. Offline checks establish identity integrity, not a score gain.
@@ -636,7 +648,7 @@ The ordinary reader's displayed tool catalog omits each descriptor's complete
 continuation. It retains the full input schema and descriptor contracts, grain,
 intent and descriptions. Public schemas, catalog hashing, runtime validation
 and durable tool records remain complete. MCP-shaped catalogs are unchanged.
-This rendering change receives the Full-v45 adapter identity; it changes no
+This rendering change retains the Full-v45 reader-catalog adapter identity; it changes no
 paid ingestion input or reuse generation. The reader observes actual typed
 response fields in its unfiltered trace. Omitting schemas establishes neither
 better answers nor faster inference; those need separate development evidence.
@@ -670,12 +682,12 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v45 \
+  --protocol full-v46 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Execution uses `full-v45`; later stages
+`--protocol` exists only on `prepare`. Execution uses `full-v46`; later stages
 read the immutable current choice from the saved run. Historical protocols are
 read-only and cannot be selected as an execution fallback.
 
@@ -778,7 +790,7 @@ zero-scored missing records unless the operator resumes with an explicitly highe
 Provider-side account limits remain the hard monetary boundary because a process can die after
 billing but before checkpointing.
 
-A missing, unreadable, or readiness-version-mismatched P3 mount is a terminal
+A missing, unreadable, updating, or publication/inventory-mismatched P3 mount is a terminal
 pre-answer failure for every remaining item. The command checkpoints those
 zeroes to preserve the denominator; a repaired mount therefore requires a
 fresh prepared run and fresh ingestion rather than resuming over those records.
@@ -799,10 +811,11 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All eleven workers are running.
 - Every prepared session has an ingest record.
-- P3 one-shot build completed; live-graph catalog/grant/helper readiness and a
-  committed-edge visibility probe passed.
-- The ordinary mount publisher completed and its P3 `.snapshot-version` equals
-  readiness.
+- Selected document P3 publication markers match current export inputs; live-graph
+  catalog/grant/helper readiness and a committed-edge visibility probe passed.
+- The ordinary corpus mount's ready-folder publication identities and frozen
+  file inventory match checkpointed readiness; no global snapshot marker is used
+  for D155 runs.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
 - Public readiness reports `document_binding_generation=document-t0-v1`, and
@@ -812,3 +825,16 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.
 - No claim is made that K ran.
 - Raw artifacts and failures will be retained for publication review.
+
+### Concrete values and bounded continuation (2026-11-13)
+
+The reader consolidates list and final-answer reminders rather than growing its
+prompt. It retains supplied concrete names/dates, accounts for distinct supported
+items, and expands missing owner/reply context from returned edge chunk IDs within
+existing limits. A short adjacency side means a boundary only without missing
+center, drops or truncation. The reader-only PR593 checkpoint changes no
+ingestion/image/model/judge profile or budget and retains v45 for independent
+retained-store comparisons. The visual-label profile is v46; prompt hashes and immutable
+fingerprints identify each reader. Old-prompt runs remain inspectable but cannot
+resume under changed instructions. Prepare a new retained-ingestion fork; do not
+edit prior records. This instruction change establishes no score improvement.

@@ -176,11 +176,11 @@ As for [`POST /graph/neighborhood`](#post-graphneighborhood).
 curl -s -X POST "$REMEMBER_API_URL/graph/path" \
   -H "Authorization: Bearer $REMEMBER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"from_entity_id\": \"$DANA_ID\", \"to_entity_id\": \"$RAVI_ID\", \"max_hops\": 3}"
+  -d "{\"from_entity_id\": \"$DANA_ID\", \"to_entity_id\": \"$JOHN_ID\", \"max_hops\": 3}"
 ```
 
 ```python
-envelope = memory.graph_path(from_entity_id=dana_id, to_entity_id=ravi_id, max_hops=3)
+envelope = memory.graph_path(from_entity_id=dana_id, to_entity_id=john_id, max_hops=3)
 ```
 
 ## POST /graph/citation-path

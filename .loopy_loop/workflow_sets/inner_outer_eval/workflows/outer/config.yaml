@@ -1,8 +1,0 @@
-enabled: true
-priority: 10
-run_every: 1
-must_follow: null
-not_before_iteration: 0
-description: |
-  Own the layer plan, accept or return leaf work, maintain the handoff, select
-  the next leaf, and decide when the scoped goal is complete.

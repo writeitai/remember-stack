@@ -121,7 +121,10 @@ over MCP: `ingest`, `pipeline_readiness`, `delete_document`,
 `resolve_entity`, `facts_context`, `claims_and_sources_context`,
 `combined_context`, `adjacent_chunks`, `source_open`, `query_sql`, `explain_sql`,
 `describe_query_space`, `search_query_space`, `list_saved_queries`,
-`describe_saved_query`, `run_saved_query`, `search_documents` (D134), and D140's
+`describe_saved_query`, `run_saved_query`, `search_documents` (D134),
+D156's tag tools — `list_tags` (read), `create_tag`, `update_tag`,
+`delete_tag` and `update_document_tags` (write)
+([document tags design §6](document_tags_design.md#6-surfaces)) — and D140's
 `document_references` and `section_history` (reading cross-references and a section's
 versions, [effective time design §6.2](effective_time_and_section_references_design.md#62-reading-references)).
 (`adjacent_chunks` is D130/D137's

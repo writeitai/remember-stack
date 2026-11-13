@@ -1,21 +1,43 @@
-# RS-LoCoMo-Full-v45 setup
+# RS-LoCoMo-Full-v46 setup
 
 One current execution profile uses Luna 6 for ingestion and vision at low
 reasoning, Luna 6 for answering and judging at high reasoning, and Jev
 for adjudication. All Luna seats prefer OpenAI Flex and allow normal OpenAI
 Luna as the only fallback; actual provider usage records the higher price when
 standard processing serves a call. Historical protocols are retained in saved run artifacts
-and Git, not as runnable branches. No new benchmark score is claimed.
+and Git, not as runnable branches.
 
-Full-v45 strengthens conversational context instructions: when a relevant
+Full-v46 uses the bounded visual-label description prompt. Old image bundles
+are not relabelled: preparing this profile requires matching new visual readings,
+while independent OCR checkpoints may be reused. For a reader-only comparison
+on retained v45 stores, use the PR593 reader revision before adopting this
+profile; v46 retires the executable v45 name. The published result below is the
+unchanged v45 result, not a v46 measurement.
+
+## Published result
+
+**89.94% LLM-judge accuracy: 1,385 / 1,540 correct**, across all category 1–4
+questions in ten conversations and 272 sessions, completed November 13, 2026.
+The recorded Full-v45 publication run used `openai/gpt-6-luna-pro` at high reasoning for both
+answering and grading, Luna at low reasoning for ingestion and vision, and Jev
+for fact adjudication. It reused the frozen OCR/Luna image inputs and used
+`k=50`, `candidate_k=200` per search channel, with eight simultaneous questions
+per conversation. Serving revision: `1187ca0fbd84a43a15b152f4d79b0e641661b618`;
+ingestion revision: `13ce4a5224709b3e3cda65c429d5915d47e95e89`.
+
+## Reader protocol
+
+Since Full-v45, the reader uses stronger conversational context instructions: when a relevant
 reply lacks its initiating question, the answerer reads adjacent chunks even
 if another candidate looks plausible. It checks which turn owns an attached
 description and answers questions about a work's content with its supported
 subject or premise. These remain prompt instructions within the existing
-eight-tool/nine-model-call budget. Models, judge and ingestion generations
-are unchanged; prompt changes require a new immutable run identity.
+eight-tool/nine-model-call budget. Those reader changes left models, judge and
+ingestion generations unchanged; prompt changes require a new immutable identity.
+Full-v46 inherits that reader, including PR593, and adds new `desc-prompt-v2`
+visual readings, so its ingested image representations can differ.
 
-Full-v45 additionally preserves source-qualified restrictions under informal
+The Full-v45 reader additionally preserves source-qualified restrictions under informal
 question wording, checks object kind/medium and unnamed references, and combines
 concrete subjects from owned images with source text. It prefers compact requested
 values with affirmative qualifiers. These instructions contain no named answers
@@ -27,10 +49,18 @@ and distinguishes the time of the attitude from a future event it concerns,
 while preserving identity, subject and time scope. No expected state names are
 provided. The broader failed completeness candidate is not retained.
 
-Full-v45 also omits repeated output JSON Schemas from the reader's displayed
+Since Full-v45, the reader omits repeated output JSON Schemas from the reader's displayed
 tool catalog while retaining full inputs and result contracts. Public schemas,
 runtime validation and retrieved evidence remain complete. This is a prompt-size
 change, with no score or latency improvement established by offline checks.
+
+The reader-only PR593 checkpoint consolidates completeness reminders, preserves
+concrete requested values and continues bounded adjacency only when needed.
+That checkpoint retains the v45 family and identical processing/image profile for retained
+store comparisons; each prompt has a distinct saved hash/fingerprint. Quote that
+fingerprint in results. Prior-prompt runs remain inspectable/summarizable, but
+cannot resume under a different prompt. Prepare a separate reuse-ingestion fork;
+never edit a finished run's identity. No new score is established by this change.
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -80,13 +110,13 @@ Once a bundle exists, preparation is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v45 \
+  --protocol full-v46 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v45` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v46` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -110,7 +140,7 @@ missing/Unknown answer is wrong. Equivalent calendar and relative dates are
 accepted without a fixed date-error tolerance. Luna high still judges; old
 Sol grades are not relabeled. This is a new protocol identity, not a new score.
 
-Full-v45 asks the answerer to give its best-supported answer to every scored
+Full-v46 asks the answerer to give its best-supported answer to every scored
 question, including a qualified inference when evidence is indirect. It forbids
 terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
 `possibly` attached to an actual answer. The prompt still forbids invented source
@@ -306,7 +336,7 @@ retrying; the command refuses a nonempty output. No automatic paid retry occurs.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v45 sample and
+The additive D124 runner reuses one completely processed Full-v46 sample and
 compares answer routes or full-surface prompt variants without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -393,7 +423,7 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v45 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v46 protocol and
 its source state are never modified by this command.
 
 ## Sharded runs

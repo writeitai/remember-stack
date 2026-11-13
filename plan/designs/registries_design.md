@@ -136,8 +136,8 @@ blast-radius calculation.
 
 The registry caches two derived fields per entity, and they are **inputs to the cascade
 below**, so their maintenance is owned here. `profile_summary` — a short blurb ("Czech ML
-researcher at CTU; works on entity resolution") — is exposed on the live graph vertex and the P3
-entity index, and is given to **T4 adjudication as candidate context** (comparing a new
+researcher at CTU; works on entity resolution") — is exposed on the live graph vertex
+and retrieval (P3 has no entity index under D155), and is given to **T4 adjudication as candidate context** (comparing a new
 "J. Novak" mention against a candidate is a much easier judgment when the candidate carries a
 profile — the Graphiti lesson). The **profile embedding and its attestation**
 live as private derived columns on the canonical entity row (D94); there is no

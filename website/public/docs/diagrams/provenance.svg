@@ -87,7 +87,7 @@
   <g class="s7">
     <rect class="card" x="60" y="320" width="1080" height="96" rx="16"/>
     <text class="sm mono" x="84" y="354">## Team changes</text>
-    <text class="b mono" x="84" y="386" style="font-size:14px">Ravi moved to the search team on 1 June.</text>
+    <text class="b mono" x="84" y="386" style="font-size:14px">John moved to the search team on 1 June.</text>
     <text class="b mono" x="761" y="386" style="font-size:14px">Launch stays in October.</text>
     <rect x="435" y="368" width="324" height="26" rx="6" fill="#5cc8b6" fill-opacity=".9"/>
     <text class="b mono" x="441" y="386" style="font-size:14px;fill:#0a1230">Dana now leads the billing migration.</text>

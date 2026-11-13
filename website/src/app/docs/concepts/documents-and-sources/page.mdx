@@ -243,7 +243,7 @@ family, authors, recipients, dates, language and thread.
 
 Each result is a document judged by one version, its current one by
 default, and it reports that version's status, so a file still being
-processed can already be found by name. Say Ravi uploaded
+processed can already be found by name. Say John uploaded
 `billing-migration-draft.md` and later sent the same file as
 `billing-migration.md`: searching for either name finds the one document.
 See [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
@@ -255,14 +255,14 @@ call (`DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
 `remember documents delete`, or the `delete_document` MCP tool).
 
 Say Dana uploaded a draft of the billing migration plan that says "the
-migration finishes in March", and Ravi's status note says the same. Dana
+migration finishes in March", and John's status note says the same. Dana
 deletes the draft. From then on:
 
 - the draft is gone from `GET /documents`, search, facts, the graph and SQL
   queries;
 - its claims stop counting as evidence (their currency ends with reason
   `version_deleted`);
-- "the migration finishes in March" stays believed, because Ravi's note still
+- "the migration finishes in March" stays believed, because John's note still
   supports it; it now has one supporter instead of two;
 - a fact that only the draft supported is closed, and the closure is recorded
   as a retraction (`retracted_source_removal`), exactly as when a living
