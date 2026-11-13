@@ -572,8 +572,6 @@ class _MountPublisher:
         return PublishedMounts(
             deployment_id=deployment_id,
             p3="mount://p3",
-            artifacts="mount://artifacts",
-            raw="mount://raw",
             knowledge="mount://knowledge",
             read_only=True,
         )

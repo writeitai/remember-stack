@@ -20,10 +20,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from rememberstack.core import chunker_version as packing_generation
 from rememberstack.core import ChunkerParams
-from rememberstack.core.corpus_export import CorpusDocument
 from rememberstack.core.corpus_export import CorpusPolicy
 from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
-from rememberstack.core.corpus_export import desired_export_revision
+from rememberstack.core.corpus_export import published_corpus_revision
 from rememberstack.model import CapabilityReadiness
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import PipelineStage
@@ -31,7 +30,7 @@ from rememberstack.model import PipelineStageReadiness
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import VersionPipelineReadiness
 from rememberstack.model.client import ProcessingLayer
-from rememberstack.spine.corpus_export import _DOCUMENTS
+from rememberstack.spine.corpus_export import served_corpus_documents_on
 from rememberstack.spine.graph_catalog import graph_catalog_problems
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_ONE_HOP
@@ -395,16 +394,11 @@ def _corpus_readiness_on(
     )
     # Readiness accepts 1,000 versions. Keep this a bounded batch rather than
     # two round trips per version, within the same consistent authority cut.
-    documents = {
-        row["doc_id"]: CorpusDocument(**dict(row))
-        for row in connection.execute(
-            text(_DOCUMENTS + " AND d.doc_id = ANY(CAST(:ids AS uuid[]))"),
-            {
-                "deployment_id": deployment_id,
-                "ids": list(set(version_documents.values())),
-            },
-        ).mappings()
-    }
+    documents = served_corpus_documents_on(
+        connection=connection,
+        deployment_id=deployment_id,
+        doc_ids=tuple(set(version_documents.values())),
+    )
     revisions: list[str] = []
     for version_id in version_ids:
         document = documents.get(version_documents.get(version_id))
@@ -412,8 +406,10 @@ def _corpus_readiness_on(
             return False, "corpus_publication_incomplete", None
         if document.version_id != version_id:
             return False, "p3_version_not_served", None
-        revision = desired_export_revision(document, policy=policy)
-        if document.corpus_published_revision != revision:
+        revision = published_corpus_revision(
+            document, version_id=version_id, policy=policy
+        )
+        if revision is None:
             return False, "corpus_publication_incomplete", None
         revisions.append(revision)
     return True, "ready", revisions[0] if len(revisions) == 1 else None

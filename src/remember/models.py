@@ -422,12 +422,11 @@ class DocumentSearchResult(BaseModel):
     title: str | None = None
     source_path: str | None = None
     p3_path: str | None = None
-    """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
-    the corpus root; present in a published snapshot only where the
-    deployment builds the filesystem view. The path opens the lineage's
-    served version, so for a document with declared effective periods it is
-    null when the result describes another edition (``served_version``
-    false)."""
+    """Relative corpus folder for this served version, only when its nullable
+    publication marker matches the current export inputs. Null for historical,
+    raw-only, unpublished, updating or failed publications. Type/topic/title
+    changes move it: re-resolve by doc_id; only the folder suffix is stable.
+    Use version_id and representation_id with source_open for exact editions."""
     served_version: bool = True
     """Whether ``version_id`` is the lineage's served (current) version."""
     representation_id: UUID | None = None

@@ -1,4 +1,4 @@
-"""D51/D61 portable publication boundary for four read-only mount views."""
+"""D51/D61 portable locations for the read-only corpus and standalone K."""
 
 from typing import Protocol
 from typing import runtime_checkable
@@ -9,8 +9,8 @@ from rememberstack.model import PublishedMounts
 
 @runtime_checkable
 class MountPublisherPort(Protocol):
-    """Publish P3, artifact, raw, and Plane-K views without mount mechanics."""
+    """Expose corpus and optional Plane-K locations without mount mechanics."""
 
     def publish(self, *, deployment_id: UUID) -> PublishedMounts:
-        """Publish and return the exact four read-only deployment views."""
+        """Return the read-only corpus and optional standalone K checkout."""
         ...

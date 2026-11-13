@@ -55,16 +55,34 @@ Start at `llms.txt`, follow type/topic indexes, then open a folder's `_index.md`
 inventory and deterministic publication identity. Pipeline manifests, extraction
 state and historical readings are excluded. Plane K is a separate repository.
 
-Title, topic or type changes can move the folder. Keep the `doc_id`; its suffix
+Resolve a folder through MCP `search_documents` with `doc_ids`, the SDK's
+`search_documents(filters=DocumentSearchFilters(doc_ids=(doc_id,)))`, or
+`POST /documents/search` with `filters.doc_ids`. `p3_path` is relative to the
+corpus root. It is non-null only when the selected version is served and its
+nullable publication marker matches its current export inputs. Raw-only,
+unpublished, updating, failed and historical results carry `null`.
+`served_version` describes authority currency independently of publication.
+
+Title, topic or type changes can move the folder. Re-resolve after a move;
+only the suffix is stable within its path. Keep the `doc_id`; its suffix
 is the first 24 hex characters of SHA-256 over the UUID's 16 bytes. For offline
 lookup, substitute that suffix in:
 
 ```bash
-find <mount> -path '*--<suffix>/*'
+find <root> -type d -name '*--<suffix>'
 ```
 
 Check `doc_id` and the displayed version in `document.json` before treating the
-folder as a particular edition.
+folder as a particular edition. The search can cost a full tree listing.
+A matching asset directory beneath another document folder is not a separate
+document: verify the first document-folder component and its `document.json`.
+A suffix match can locate the served folder even when a temporal query selects
+another edition or no edition is in force; it does not change that selection.
+There is no public `source_open` operation for whole historical files yet.
+
+The corpus is a sources-layer projection: switching claims or facts off does
+not change its layout. K remains a standalone repository and may be checked
+out separately.
 
 ## Publication and repair
 
@@ -77,7 +95,8 @@ publication identity before and after a read when consistency matters.
 requested served version's current publication marker. It reports
 `corpus_publication_incomplete` for missing or mismatching markers and
 `p3_version_not_served` for a historical edition. An unrelated publication cannot
-satisfy this check. Global snapshot version and publication-time fields are null.
+satisfy this check. `version` is the export digest for one ready requested version and null for
+multiple versions. `built_at` and `published_at` are null.
 
 Digest-verifying repair runs daily through the existing delayed-work ledger,
 leases, retries and delivery. Configure

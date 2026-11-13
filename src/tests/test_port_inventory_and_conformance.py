@@ -123,8 +123,6 @@ class FakeMountPublisher:
         return PublishedMounts(
             deployment_id=deployment_id,
             p3="mount://p3",
-            artifacts="mount://artifacts",
-            raw="mount://raw",
             knowledge="mount://knowledge",
             read_only=True,
         )
@@ -301,14 +299,16 @@ def test_object_store_fake_rejects_immutable_key_replacement() -> None:
     assert store.read_bytes(key=key) == b"first"
 
 
-def test_mount_fake_returns_exact_four_read_only_surfaces() -> None:
-    """Exercise the D51 four-surface publication result without mount mechanics."""
+def test_mount_fake_returns_corpus_and_standalone_knowledge() -> None:
+    """Expose only the D155 corpus and standalone K locations."""
     deployment_id = uuid4()
     published = FakeMountPublisher().publish(deployment_id=deployment_id)
 
     assert published.deployment_id == deployment_id
     assert published.read_only is True
-    assert {"p3", "artifacts", "raw", "knowledge"} <= set(PublishedMounts.model_fields)
+    assert {"deployment_id", "p3", "knowledge", "read_only"} == set(
+        PublishedMounts.model_fields
+    )
 
 
 def test_model_fake_validates_caller_declared_response_schema() -> None:

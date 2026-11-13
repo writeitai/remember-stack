@@ -205,8 +205,17 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     ' result is a document judged by its current version (versions="all"'
     " searches every live version and returns the newest match); it carries"
     " doc_id, version_id, file_name, title, family, processing status, authors,"
-    " recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem"
-    " view, where one is published) and a short overview when one exists."
+    " recipients, dates and a short overview when one exists. p3_path is the"
+    " relative corpus folder only when this version is served and its current"
+    " export has a matching publication marker; otherwise null, including"
+    " historical, raw-only, updating or failed publications. served_version"
+    " describes authority currency independently of publication. Resolve by"
+    " filters.doc_ids (the doc_ids argument) again after type/topic/title moves."
+    " Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run"
+    " find <root> -type d -name '*--<suffix>'; only the suffix is stable."
+    " Verify doc_id and displayed version in document.json. For historical or"
+    " no-edition-in-force selections use exact-version source_open handles;"
+    " a suffix match does not override temporal selection."
     " When a people"
     " filter matches several different people, people_matched lists each with"
     " a document count: narrow the filter (for example by address) instead of"
@@ -813,7 +822,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_SEARCH_DOCUMENTS_DESCRIPTION,
         input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
         permission="memory:read",
-        tool_version=2,
+        tool_version=3,
         http_route="POST /documents/search",
     ),
     ToolDefinition(

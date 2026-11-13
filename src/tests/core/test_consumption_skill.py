@@ -26,8 +26,6 @@ def _context(
         PublishedMounts(
             deployment_id=_DEPLOYMENT_ID,
             p3="/memory/corpus",
-            artifacts="/memory/artifacts",
-            raw="/memory/raw",
             knowledge="/memory/knowledge",
             read_only=True,
         )
@@ -90,7 +88,7 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
         context=_context(mounted=True, knowledge_page_count=2)
     )
 
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "4.0.1"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "4.1.0"
     assert skill.filename == "SKILL.md"
     assert TWO_LAYER_HEADLINE_FULL in skill.content
     assert TWO_LAYER_HEADLINE_NOTE in skill.content
@@ -181,3 +179,22 @@ def test_noncore_rows_are_not_advertised_as_assured_operations() -> None:
 
     assert "`claims_as_of` —" not in skill.content
     assert "`examples.claims_as_of`" in skill.content
+
+
+def test_corpus_navigation_resolution_and_exact_editions() -> None:
+    skill = render_consumption_skill(
+        context=_context(mounted=True, knowledge_page_count=2)
+    )
+    for instruction in (
+        "llms.txt → type/topic/page _index.md → folder _index.md",
+        "find <root> -type d -name '*--<suffix>'",
+        "matching nullable publication marker",
+        "only the suffix is stable",
+        "version-addressed `source_open`",
+        "K is a standalone repository",
+        "same shape with claims/facts on or off",
+        "before and after a read",
+    ):
+        assert instruction in skill.content
+    assert "/memory/raw" not in skill.content
+    assert "/memory/artifacts" not in skill.content

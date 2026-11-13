@@ -768,8 +768,8 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
-| `p3_path` | string, nullable | Live-corpus folder resolution through this field is not implemented yet. Locate folders using [suffix lookup](/docs/self-hosting/filesystem-views#layout). |
-| `served_version` | boolean | Whether `version_id` is the document's served version. Default `true`. |
+| `p3_path` | string, nullable | Relative corpus folder, only for the served selected version with a matching nullable publication marker. Null for raw-only, unpublished, updating, failed and historical results. Type/topic/title changes move it; re-resolve by `doc_id` or use [suffix lookup](/docs/self-hosting/filesystem-views#layout). |
+| `served_version` | boolean | Whether `version_id` is the document's served version, independently of P3 publication. Default `true`. |
 | `representation_id` | UUID, nullable | The described version's converted reading; with `version_id` it opens exactly that version. |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The described version's in-force intervals, for a document with declared effective periods. |
 | `matching_editions` | array of [`MatchingEdition`](#matchingedition) | Every candidate edition that matched, earliest period first, for a document with declared effective periods. |

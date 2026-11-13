@@ -514,10 +514,17 @@ newest version that did, with the others in `other_matching_version_ids`.
 Filters and names always use the returned version's own metadata. Deleted
 documents and deleted versions never match.
 
-Live-corpus folder resolution through `p3_path` is not implemented yet. Use
-[suffix lookup](/docs/self-hosting/filesystem-views#layout) to find a served
-folder. The API's version-addressed source handles retain their exact-version
-meaning independently of the filesystem.
+`p3_path` is the relative corpus folder only when the described version is
+served and its nullable publication marker matches the current export inputs.
+It is `null` before publication, during updates, after a failed publication,
+for raw-only versions and for historical editions, including non-periodised
+history. `served_version` describes authority currency independently of P3.
+Re-resolve by `filters.doc_ids` after a type/topic/title move, or use
+[offline suffix lookup](/docs/self-hosting/filesystem-views#layout).
+A newer pending upload leaves the served folder intact. A temporal query that
+selects no edition returns no document; suffix lookup does not override it.
+Keep `version_id` and `representation_id` for exact source identity; no public
+`source_open` operation returns whole historical files yet.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -604,7 +611,7 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
-      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "p3_path": "spreadsheet/sales/q3-sales-2025--2a43bb03e2c419e141d5fbd9",
       "served_version": true,
       "representation_id": "7c2e4b1a-9d3f-4e8a-b6c5-2f1a0e9d8c7b",
       "effective": [],
