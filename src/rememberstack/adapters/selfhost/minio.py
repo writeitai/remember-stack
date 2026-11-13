@@ -48,8 +48,8 @@ class MinIOSettings(BaseSettings):
     access_key: SecretStr
     secret_key: SecretStr
     region: str = "us-east-1"
-    connect_timeout_s: float = Field(default=5, gt=0)
-    read_timeout_s: float = Field(default=30, gt=0)
+    connect_timeout_s: float = Field(default=5, gt=0, allow_inf_nan=False)
+    read_timeout_s: float = Field(default=30, gt=0, allow_inf_nan=False)
 
 
 class _StreamingBody(Protocol):

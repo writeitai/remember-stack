@@ -182,26 +182,28 @@ class LocalFSObjectStore:
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
                 self.delete(key=key)
-        # Include orphaned class records when object bytes are already absent.
-        for key in self._iter_class_keys():
+        # Include orphaned metadata records when object bytes are already absent.
+        for key in self._iter_metadata_keys():
             if any(matches_object_prefix(key.root, prefix=p) for p in boundaries):
                 self.delete(key=key)
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
     ) -> None:
-        """Verify both reader bytes and private class records are absent."""
+        """Verify reader bytes and private class/digest records are absent."""
         remaining = [
             key.root
             for key in keys
-            if self._path_for(key=key).is_file() or self._class_path(key=key).exists()
+            if self._path_for(key=key).is_file()
+            or self._class_path(key=key).exists()
+            or self._digest_path(key=key).exists()
         ]
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         for boundary in boundaries:
             remaining.extend(key.root for key in self.iter_keys(prefix=boundary))
         remaining.extend(
             key.root
-            for key in self._iter_class_keys()
+            for key in self._iter_metadata_keys()
             if any(matches_object_prefix(key.root, prefix=p) for p in boundaries)
         )
         if remaining:
@@ -225,11 +227,13 @@ class LocalFSObjectStore:
     def _digest_path(self, *, key: ObjectKey) -> Path:
         return self._metadata_root / "digests" / validate_object_path(key.root)
 
-    def _iter_class_keys(self) -> Iterator[ObjectKey]:
-        root = self._metadata_root / "classes"
-        for path in root.rglob("*"):
-            if path.is_file():
-                yield ObjectKey(path.relative_to(root).as_posix())
+    def _iter_metadata_keys(self) -> Iterator[ObjectKey]:
+        """Include orphaned class or digest records after interrupted cleanup."""
+        for kind in ("classes", "digests"):
+            root = self._metadata_root / kind
+            for path in root.rglob("*"):
+                if path.is_file():
+                    yield ObjectKey(path.relative_to(root).as_posix())
 
     @staticmethod
     def _prune_parents(path: Path, *, root: Path) -> None:

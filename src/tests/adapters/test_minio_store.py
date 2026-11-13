@@ -559,3 +559,23 @@ def test_s3_requests_have_configured_bounds_and_no_automatic_retries() -> None:
     assert (config.connect_timeout, config.read_timeout) == (2, 7)
     assert config.retries["total_max_attempts"] == 1
     client.close()  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("field", ["connect_timeout_s", "read_timeout_s"])
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_s3_timeout_bounds_must_be_positive_and_finite(
+    field: str, value: float
+) -> None:
+    from pydantic import ValidationError
+
+    from rememberstack.adapters.selfhost.minio import MinIOSettings
+
+    with pytest.raises(ValidationError):
+        MinIOSettings.model_validate(
+            {
+                "endpoint_url": "https://s3.example.invalid",
+                "access_key": "key",
+                "secret_key": "secret",
+                field: value,
+            }
+        )
