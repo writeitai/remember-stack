@@ -36,7 +36,7 @@ export default {
         "returns": "Self"
       },
       "ingest_file": {
-        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
+        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None",
         "property": false,
         "returns": "IngestedVersion"
       }
@@ -93,10 +93,20 @@ export default {
         "property": false,
         "returns": "tuple[ConnectorDescriptor, ...]"
       },
+      "create_tag": {
+        "arguments": "self, *, name: str, description: str",
+        "property": false,
+        "returns": "Tag"
+      },
       "delete_document": {
         "arguments": "self, *, doc_id: UUID | str",
         "property": false,
         "returns": "DocumentDeletion"
+      },
+      "delete_tag": {
+        "arguments": "self, *, tag: UUID | str",
+        "property": false,
+        "returns": "Tag"
       },
       "deployment_build_info": {
         "arguments": "self",
@@ -159,7 +169,7 @@ export default {
         "returns": "Envelope"
       },
       "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None",
         "property": false,
         "returns": "IngestedVersion"
       },
@@ -177,6 +187,11 @@ export default {
         "arguments": "self, *, namespace: str | None=None, status: str | None=None",
         "property": false,
         "returns": "list[dict[str, object]]"
+      },
+      "list_tags": {
+        "arguments": "self, *, query: str | None=None",
+        "property": false,
+        "returns": "TagList"
       },
       "lookup_observations": {
         "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10",
@@ -288,6 +303,16 @@ export default {
         "property": false,
         "returns": "Envelope"
       },
+      "update_document_tags": {
+        "arguments": "self, *, doc_id: UUID | str, add: Sequence[str] | None=None, remove: Sequence[str] | None=None, set: Sequence[str] | None=None",
+        "property": false,
+        "returns": "DocumentTags"
+      },
+      "update_tag": {
+        "arguments": "self, *, tag: UUID | str, name: str | None=None, description: str | None=None",
+        "property": false,
+        "returns": "Tag"
+      },
       "wait_for_readiness": {
         "arguments": "self, version_ids: Sequence[str | UUID], *, timeout: float=1800.0, poll_interval: float=15.0, require_p3: bool=False",
         "property": false,
@@ -321,6 +346,7 @@ export default {
     "DocumentSearchRequest",
     "DocumentSearchResult",
     "DocumentSummary",
+    "DocumentTags",
     "DocumentVersionSummary",
     "EffectiveInterval",
     "EffectivePeriodInput",
@@ -359,8 +385,11 @@ export default {
     "SectionHistoryRow",
     "SectionHistorySection",
     "StoredKeyRefused",
+    "Tag",
+    "TagList",
     "TemporalMatch",
     "ToolDescriptor",
+    "UnknownTag",
     "VersionPipelineReadiness",
     "__version__",
     "resolve_connection"
@@ -581,6 +610,21 @@ export default {
         "SectionHistoryBackend": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
+        "TAG_READ_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "TAG_READ_TOOL_NAMES"
+        },
+        "TAG_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "TAG_TOOL_NAMES"
+        },
+        "TAG_WRITE_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "TAG_WRITE_TOOL_NAMES"
+        },
+        "TagBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
         "ToolArgumentError": {
           "disposition": "public client support export",
           "typescript": "ToolArgumentError"
@@ -610,6 +654,9 @@ export default {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_section_history_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_tag_tool": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "invalid_arguments": {

@@ -1,6 +1,6 @@
 import {Agent as HttpAgent,request as httpRequest} from 'node:http';
 import {Agent as HttpsAgent,request as httpsRequest} from 'node:https';
-import { AbortError, InputValidationError, LayerUnavailable, MemoryApiError, NumericPrecisionError, RateLimited, RequestTimeoutError } from './errors';
+import { AbortError, InputValidationError, LayerUnavailable, MemoryApiError, NumericPrecisionError, RateLimited, RequestTimeoutError, UnknownTag } from './errors';
 import { parseJson } from './json';
 import constants from './constants.generated';
 
@@ -200,6 +200,11 @@ export async function checkedResponse({ response, path }: { response: Response; 
         } else detail = 'deployment API returned a malformed structured error';
       } else if (detailObject.code === 'layer_unavailable') {
         throw new LayerUnavailable({ detail: detailObject.message ? String(detailObject.message) : '', layer: detailObject.layer ? String(detailObject.layer) : '' });
+      } else if (detailObject.code === 'unknown_tag' && Array.isArray(detailObject.tags)) {
+        throw new UnknownTag({ tags: detailObject.tags.map(tag => String(tag)), statusCode: response.status });
+      } else if ((detailObject.code === 'conflict' || detailObject.code === 'tag_limit_exceeded') && typeof detailObject.message === 'string') {
+        // D156 refusals keep their code: a duplicate tag name and a tag limit.
+        code = detailObject.code; detail = detailObject.message;
       } else if (detailObject.code === 'invalid_parameter' && typeof detailObject.message === 'string') {
         // The structured 422 of operation arguments and of a D143 layers selection keeps its code.
         code = 'invalid_parameter'; detail = detailObject.message;

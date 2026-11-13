@@ -2157,6 +2157,14 @@ export default {
           "title": "Status",
           "type": "string"
         },
+        "tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
         "thread_ref": {
           "anyOf": [
             {
@@ -2248,6 +2256,14 @@ export default {
           "default": null,
           "title": "Source Uri"
         },
+        "tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
         "title": {
           "anyOf": [
             {
@@ -2269,6 +2285,80 @@ export default {
         "serving"
       ],
       "title": "DocumentSummary",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentTags": {
+      "additionalProperties": false,
+      "description": "A document's tag names after a tag write.",
+      "properties": {
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "doc_id",
+        "tags"
+      ],
+      "title": "DocumentTags",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentTagsUpdate": {
+      "additionalProperties": false,
+      "description": "Change one document's tags atomically: ``add``/``remove``, or ``set``.\n\n``set`` replaces the whole set and excludes ``add`` and ``remove``; an\nempty ``set`` clears the document's tags. Removing a tag the document\ndoes not have is not an error.",
+      "properties": {
+        "add": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Add",
+          "type": "array"
+        },
+        "remove": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Remove",
+          "type": "array"
+        },
+        "set": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Set"
+        }
+      },
+      "title": "DocumentTagsUpdate",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -6389,6 +6479,120 @@ export default {
         "version"
       ],
       "title": "StoredCredentials",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "Tag": {
+      "additionalProperties": false,
+      "description": "One registered tag: a name callers and agents use, and what it means.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "tag_id": {
+          "format": "uuid",
+          "title": "Tag Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tag_id",
+        "name",
+        "description",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Tag",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TagCreate": {
+      "additionalProperties": false,
+      "description": "Register one tag. A name already registered, in any case, is refused.",
+      "properties": {
+        "description": {
+          "maxLength": 2000,
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "TagCreate",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TagList": {
+      "additionalProperties": false,
+      "description": "The deployment's registered tags, by name (``list_tags``).",
+      "properties": {
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/Tag"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tags"
+      ],
+      "title": "TagList",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TagUpdate": {
+      "additionalProperties": false,
+      "description": "Rename or re-describe one tag; its assignments are unaffected.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "title": "TagUpdate",
       "type": "object",
       "x-extra": "forbid"
     },

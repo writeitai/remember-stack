@@ -7196,6 +7196,480 @@
       ]
     },
     {
+      "method": "list_tags",
+      "options": {},
+      "responses": [
+        {
+          "tags": [
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:fixture",
+              "tag_id": "10000000-0000-0000-0000-000000000001",
+              "updated_at": "2026-10-02T12:00:00Z"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "tags": [
+          {
+            "created_at": "2026-10-02T12:00:00Z",
+            "description": "Fixture tag.",
+            "name": "project:fixture",
+            "tag_id": "10000000-0000-0000-0000-000000000001",
+            "updated_at": "2026-10-02T12:00:00Z"
+          }
+        ]
+      },
+      "typescriptMethod": "listTags",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/tags",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "list_tags",
+      "options": {
+        "query": "Fixture"
+      },
+      "responses": [
+        {
+          "tags": [
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:fixture",
+              "tag_id": "10000000-0000-0000-0000-000000000001",
+              "updated_at": "2026-10-02T12:00:00Z"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "tags": [
+          {
+            "created_at": "2026-10-02T12:00:00Z",
+            "description": "Fixture tag.",
+            "name": "project:fixture",
+            "tag_id": "10000000-0000-0000-0000-000000000001",
+            "updated_at": "2026-10-02T12:00:00Z"
+          }
+        ]
+      },
+      "typescriptMethod": "listTags",
+      "typescriptOptions": {
+        "query": "Fixture"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/tags",
+          "query": [
+            [
+              "query",
+              "Fixture"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "create_tag",
+      "options": {
+        "description": "",
+        "name": "project:fixture"
+      },
+      "responses": [
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:fixture",
+          "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        }
+      ],
+      "result": {
+        "created_at": "2026-10-02T12:00:00Z",
+        "description": "Fixture tag.",
+        "name": "project:fixture",
+        "tag_id": "10000000-0000-0000-0000-000000000001",
+        "updated_at": "2026-10-02T12:00:00Z"
+      },
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": "project:fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "description": "",
+            "name": "project:fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/tags",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "create_tag",
+      "options": {
+        "description": "Fixture tag.",
+        "name": "cafe\u0301:menu"
+      },
+      "responses": [
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:fixture",
+          "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        }
+      ],
+      "result": {
+        "created_at": "2026-10-02T12:00:00Z",
+        "description": "Fixture tag.",
+        "name": "project:fixture",
+        "tag_id": "10000000-0000-0000-0000-000000000001",
+        "updated_at": "2026-10-02T12:00:00Z"
+      },
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "Fixture tag.",
+        "name": "cafe\u0301:menu"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "description": "Fixture tag.",
+            "name": "caf\u00e9:menu"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/tags",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "update_tag",
+      "options": {
+        "description": "Renamed.",
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:fixture",
+          "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        }
+      ],
+      "result": {
+        "created_at": "2026-10-02T12:00:00Z",
+        "description": "Fixture tag.",
+        "name": "project:fixture",
+        "tag_id": "10000000-0000-0000-0000-000000000001",
+        "updated_at": "2026-10-02T12:00:00Z"
+      },
+      "typescriptMethod": "updateTag",
+      "typescriptOptions": {
+        "description": "Renamed.",
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "description": "Renamed."
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "PATCH",
+          "path": "/tags/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "update_tag",
+      "options": {
+        "description": "",
+        "name": "project:renamed",
+        "tag": "Project:Fixture"
+      },
+      "responses": [
+        {
+          "tags": [
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:fixture",
+              "tag_id": "10000000-0000-0000-0000-000000000001",
+              "updated_at": "2026-10-02T12:00:00Z"
+            }
+          ]
+        },
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:fixture",
+          "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        }
+      ],
+      "result": {
+        "created_at": "2026-10-02T12:00:00Z",
+        "description": "Fixture tag.",
+        "name": "project:fixture",
+        "tag_id": "10000000-0000-0000-0000-000000000001",
+        "updated_at": "2026-10-02T12:00:00Z"
+      },
+      "typescriptMethod": "updateTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": "project:renamed",
+        "tag": "Project:Fixture"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/tags",
+          "query": [
+            [
+              "query",
+              "Project:Fixture"
+            ]
+          ]
+        },
+        {
+          "body": {
+            "description": "",
+            "name": "project:renamed"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "PATCH",
+          "path": "/tags/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "delete_tag",
+      "options": {
+        "tag": "10000000000000000000000000000001"
+      },
+      "responses": [
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:fixture",
+          "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        }
+      ],
+      "result": {
+        "created_at": "2026-10-02T12:00:00Z",
+        "description": "Fixture tag.",
+        "name": "project:fixture",
+        "tag_id": "10000000-0000-0000-0000-000000000001",
+        "updated_at": "2026-10-02T12:00:00Z"
+      },
+      "typescriptMethod": "deleteTag",
+      "typescriptOptions": {
+        "tag": "10000000000000000000000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "DELETE",
+          "path": "/tags/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "delete_tag",
+      "options": {
+        "tag": "PROJECT:FIXTURE"
+      },
+      "responses": [
+        {
+          "tags": [
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:fixture",
+              "tag_id": "10000000-0000-0000-0000-000000000001",
+              "updated_at": "2026-10-02T12:00:00Z"
+            }
+          ]
+        },
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:fixture",
+          "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        }
+      ],
+      "result": {
+        "created_at": "2026-10-02T12:00:00Z",
+        "description": "Fixture tag.",
+        "name": "project:fixture",
+        "tag_id": "10000000-0000-0000-0000-000000000001",
+        "updated_at": "2026-10-02T12:00:00Z"
+      },
+      "typescriptMethod": "deleteTag",
+      "typescriptOptions": {
+        "tag": "PROJECT:FIXTURE"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/tags",
+          "query": [
+            [
+              "query",
+              "PROJECT:FIXTURE"
+            ]
+          ]
+        },
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "DELETE",
+          "path": "/tags/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "update_document_tags",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "tags": [
+            "project:fixture"
+          ]
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "tags": [
+          "project:fixture"
+        ]
+      },
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {},
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/tags",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "update_document_tags",
+      "options": {
+        "add": [
+          "project:fixture",
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000002",
+        "remove": [
+          "old"
+        ]
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "tags": [
+            "project:fixture"
+          ]
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "tags": [
+          "project:fixture"
+        ]
+      },
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "add": [
+          "project:fixture",
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "docId": "10000000-0000-0000-0000-000000000002",
+        "remove": [
+          "old"
+        ]
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "add": [
+              "project:fixture",
+              "10000000-0000-0000-0000-000000000001"
+            ],
+            "remove": [
+              "old"
+            ]
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000002/tags",
+          "query": []
+        }
+      ]
+    },
+    {
       "method": "connectors",
       "options": {},
       "responses": [
@@ -9338,6 +9812,244 @@
       ]
     },
     {
+      "method": "update_document_tags",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "set": []
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "tags": [
+            "project:fixture"
+          ]
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "tags": [
+          "project:fixture"
+        ]
+      },
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "set": []
+      },
+      "variant": "set-clears",
+      "wire": [
+        {
+          "body": {
+            "set": []
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/tags",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "update_document_tags",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "set": [
+          "project:fixture"
+        ]
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "tags": [
+            "project:fixture"
+          ]
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "tags": [
+          "project:fixture"
+        ]
+      },
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "set": [
+          "project:fixture"
+        ]
+      },
+      "variant": "set-replaces",
+      "wire": [
+        {
+          "body": {
+            "set": [
+              "project:fixture"
+            ]
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/tags",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "ingest",
+      "options": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md",
+        "tags": [
+          "project:fixture",
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "responses": [
+        {
+          "content_hash": "fixture",
+          "created": false,
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "mime": null,
+          "parked": null,
+          "title": null,
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
+          "versioning_mode": null
+        }
+      ],
+      "result": {
+        "content_hash": "fixture",
+        "created": false,
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "mime": null,
+        "parked": null,
+        "processing_admission": "not_required",
+        "title": null,
+        "version_id": "10000000-0000-0000-0000-000000000002",
+        "version_key": null,
+        "versioning_mode": null
+      },
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md",
+        "tags": [
+          "project:fixture",
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "variant": "tags",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "bm90ZQ==",
+          "contentType": "application/octet-stream",
+          "method": "POST",
+          "path": "/ingest",
+          "query": [
+            [
+              "filename",
+              "fixture.md"
+            ],
+            [
+              "mime",
+              "text/markdown"
+            ],
+            [
+              "versioning_mode",
+              "snapshot"
+            ],
+            [
+              "tags",
+              "project:fixture"
+            ],
+            [
+              "tags",
+              "10000000-0000-0000-0000-000000000001"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "ingest_file",
+      "options": {
+        "file_path": "$FILE",
+        "tags": [
+          "project:fixture"
+        ]
+      },
+      "responses": [
+        {
+          "content_hash": "fixture",
+          "created": false,
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "mime": null,
+          "parked": null,
+          "title": null,
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
+          "versioning_mode": null
+        }
+      ],
+      "result": {
+        "content_hash": "fixture",
+        "created": false,
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "mime": null,
+        "parked": null,
+        "processing_admission": "not_required",
+        "title": null,
+        "version_id": "10000000-0000-0000-0000-000000000002",
+        "version_key": null,
+        "versioning_mode": null
+      },
+      "typescriptMethod": "ingestFile",
+      "typescriptOptions": {
+        "filePath": "$FILE",
+        "tags": [
+          "project:fixture"
+        ]
+      },
+      "variant": "tags",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "bm90ZQ==",
+          "contentType": "application/octet-stream",
+          "method": "POST",
+          "path": "/ingest",
+          "query": [
+            [
+              "filename",
+              "fixture.md"
+            ],
+            [
+              "mime",
+              "text/markdown"
+            ],
+            [
+              "versioning_mode",
+              "snapshot"
+            ],
+            [
+              "tags",
+              "project:fixture"
+            ]
+          ]
+        }
+      ]
+    },
+    {
       "method": "section_history_request",
       "options": {
         "request": {
@@ -10743,6 +11455,88 @@
       "variant": "malformed-response"
     },
     {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "GET /tags returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "list_tags",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "listTags",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "POST /tags returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "create_tag",
+      "options": {
+        "description": "",
+        "name": "project:fixture"
+      },
+      "status": 200,
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": "project:fixture"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "DELETE /tags/{tag_id} returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "delete_tag",
+      "options": {
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 200,
+      "typescriptMethod": "deleteTag",
+      "typescriptOptions": {
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "POST /documents/{doc_id}/tags returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "update_document_tags",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 200,
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "malformed-response"
+    },
+    {
       "body": [],
       "error": {
         "class": "MemoryApiError",
@@ -11116,6 +11910,206 @@
         "sql": "SELECT 1"
       },
       "variant": "layer-unavailable"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "unknown_tag",
+          "message": "unknown tags: typo, oops",
+          "tags": [
+            "typo",
+            "oops"
+          ]
+        }
+      },
+      "error": {
+        "class": "UnknownTag",
+        "code": "unknown_tag",
+        "detail": "unknown tags: typo, oops",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 422
+      },
+      "method": "update_document_tags",
+      "options": {
+        "add": [
+          "typo",
+          "oops"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 422,
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "add": [
+          "typo",
+          "oops"
+        ],
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "tag-refusal"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "unknown_tag",
+          "message": "unknown tags: typo",
+          "tags": [
+            "typo"
+          ]
+        }
+      },
+      "error": {
+        "class": "UnknownTag",
+        "code": "unknown_tag",
+        "detail": "unknown tags: typo",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 422
+      },
+      "method": "ingest",
+      "options": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md",
+        "tags": [
+          "typo"
+        ]
+      },
+      "status": 422,
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md",
+        "tags": [
+          "typo"
+        ]
+      },
+      "variant": "tag-refusal"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "unknown_tag",
+          "message": "unknown tags: x",
+          "tags": [
+            "10000000-0000-0000-0000-000000000001"
+          ]
+        }
+      },
+      "error": {
+        "class": "UnknownTag",
+        "code": "unknown_tag",
+        "detail": "unknown tags: 10000000-0000-0000-0000-000000000001",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 404
+      },
+      "method": "delete_tag",
+      "options": {
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 404,
+      "typescriptMethod": "deleteTag",
+      "typescriptOptions": {
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "tag-refusal"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "conflict",
+          "message": "a tag named 'project:fixture' is already registered"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": "conflict",
+        "detail": "a tag named 'project:fixture' is already registered",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 409
+      },
+      "method": "create_tag",
+      "options": {
+        "description": "",
+        "name": "project:fixture"
+      },
+      "status": 409,
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": "project:fixture"
+      },
+      "variant": "tag-refusal"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "tag_limit_exceeded",
+          "message": "a document carries at most 64 tags"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": "tag_limit_exceeded",
+        "detail": "a document carries at most 64 tags",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 409
+      },
+      "method": "update_document_tags",
+      "options": {
+        "add": [
+          "project:fixture"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 409,
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "add": [
+          "project:fixture"
+        ],
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "tag-refusal"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "unknown_tag",
+          "message": "no tag list"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "{'code': 'unknown_tag', 'message': 'no tag list'}",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 422
+      },
+      "method": "update_document_tags",
+      "options": {
+        "add": [
+          "project:fixture"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 422,
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "add": [
+          "project:fixture"
+        ],
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "tag-refusal"
     },
     {
       "body": {
@@ -11648,6 +12642,103 @@
         "filename": "note.md",
         "sourceKind": "policy",
         "sourceRef": "expenses"
+      }
+    },
+    {
+      "method": "create_tag",
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": "two words"
+      }
+    },
+    {
+      "method": "create_tag",
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": ""
+      }
+    },
+    {
+      "method": "create_tag",
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": "bell\u0007"
+      }
+    },
+    {
+      "method": "create_tag",
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "",
+        "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "method": "create_tag",
+      "typescriptMethod": "createTag",
+      "typescriptOptions": {
+        "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "name": "ok"
+      }
+    },
+    {
+      "method": "update_tag",
+      "typescriptMethod": "updateTag",
+      "typescriptOptions": {
+        "tag": "10000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "method": "update_tag",
+      "typescriptMethod": "updateTag",
+      "typescriptOptions": {
+        "name": "two words",
+        "tag": "10000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "method": "update_document_tags",
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "add": [
+          "a"
+        ],
+        "docId": "../operations"
+      }
+    },
+    {
+      "method": "update_document_tags",
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "add": [
+          "b"
+        ],
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "set": [
+          "a"
+        ]
+      }
+    },
+    {
+      "method": "update_document_tags",
+      "typescriptMethod": "updateDocumentTags",
+      "typescriptOptions": {
+        "add": "project:fixture",
+        "docId": "10000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "method": "ingest",
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "note.md",
+        "tags": "project:fixture"
       }
     }
   ],
@@ -12710,6 +13801,12 @@
       "rows": [],
       "too_broad": null
     },
+    "document_tags": {
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "tags": [
+        "project:fixture"
+      ]
+    },
     "effective_cleared": {
       "cleared_at": "2026-10-02T12:00:00Z",
       "doc_id": "10000000-0000-0000-0000-000000000001",
@@ -12936,6 +14033,24 @@
         }
       ],
       "section_key": "part/4:per-diem"
+    },
+    "tag": {
+      "created_at": "2026-10-02T12:00:00Z",
+      "description": "Fixture tag.",
+      "name": "project:fixture",
+      "tag_id": "10000000-0000-0000-0000-000000000001",
+      "updated_at": "2026-10-02T12:00:00Z"
+    },
+    "tag_list": {
+      "tags": [
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:fixture",
+          "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        }
+      ]
     }
   },
   "tools": [
@@ -12957,6 +14072,7 @@
         "source_modified_at": null,
         "source_ref": null,
         "source_version_ref": null,
+        "tags": [],
         "title": null,
         "version_key": null,
         "versioning_mode": "snapshot"
@@ -13270,6 +14386,203 @@
         }
       },
       "name": "document_references",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "query": "fixture"
+      },
+      "name": "list_tags",
+      "result": {
+        "query": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "query": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "list_tags",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "description": "Fixture.",
+        "name": "cafe\u0301:menu"
+      },
+      "name": "create_tag",
+      "result": {
+        "request": {
+          "description": "Fixture.",
+          "name": "caf\u00e9:menu"
+        }
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "description": "Fixture.",
+        "name": "cafe\u0301:menu",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "create_tag",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "description": "Renamed.",
+        "tag": "project:fixture"
+      },
+      "name": "update_tag",
+      "result": {
+        "request": {
+          "description": "Renamed.",
+          "name": null
+        },
+        "tag": "project:fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "description": "Renamed.",
+        "tag": "project:fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "update_tag",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "delete_tag",
+      "result": {
+        "tag": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "tag": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "delete_tag",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "add": [
+          "a"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "remove": [
+          "b"
+        ]
+      },
+      "name": "update_document_tags",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "request": {
+          "add": [
+            "a"
+          ],
+          "remove": [
+            "b"
+          ],
+          "set": null
+        }
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "add": [
+          "a"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "remove": [
+          "b"
+        ],
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "update_document_tags",
       "variant": "unknown-key"
     },
     {
@@ -13745,6 +15058,7 @@
         "source_modified_at": null,
         "source_ref": "expenses",
         "source_version_ref": null,
+        "tags": [],
         "title": null,
         "version_key": "edition-2",
         "versioning_mode": "snapshot"
@@ -13848,6 +15162,476 @@
       },
       "name": "document_references",
       "variant": "two-sources"
+    },
+    {
+      "arguments": {
+        "filename": "note.md",
+        "tags": [
+          "a",
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "text": "note"
+      },
+      "name": "ingest",
+      "result": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effective_from": null,
+        "effective_until": null,
+        "filename": "note.md",
+        "mime": "text/markdown",
+        "source_kind": null,
+        "source_modified_at": null,
+        "source_ref": null,
+        "source_version_ref": null,
+        "tags": [
+          "a",
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "title": null,
+        "version_key": null,
+        "versioning_mode": "snapshot"
+      },
+      "variant": "tags"
+    },
+    {
+      "arguments": {
+        "filename": "note.md",
+        "tags": "a",
+        "text": "note"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "ingest",
+      "variant": "invalid-tags"
+    },
+    {
+      "arguments": {
+        "filename": "note.md",
+        "tags": [
+          "a",
+          "a"
+        ],
+        "text": "note"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "ingest",
+      "variant": "invalid-tags"
+    },
+    {
+      "arguments": {
+        "filename": "note.md",
+        "tags": [
+          ""
+        ],
+        "text": "note"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "ingest",
+      "variant": "invalid-tags"
+    },
+    {
+      "arguments": {
+        "filename": "note.md",
+        "tags": [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ],
+        "text": "note"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "ingest",
+      "variant": "invalid-tags"
+    },
+    {
+      "arguments": {
+        "filename": "note.md",
+        "tags": [
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t",
+          "t"
+        ],
+        "text": "note"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "ingest",
+      "variant": "invalid-tags"
+    },
+    {
+      "arguments": {},
+      "name": "list_tags",
+      "result": {
+        "query": null
+      },
+      "variant": "defaults"
+    },
+    {
+      "arguments": {
+        "query": ""
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "list_tags",
+      "variant": "empty-query"
+    },
+    {
+      "arguments": {
+        "description": "",
+        "name": "two words"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "create_tag",
+      "variant": "invalid"
+    },
+    {
+      "arguments": {
+        "name": "ok"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "create_tag",
+      "variant": "invalid"
+    },
+    {
+      "arguments": {
+        "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "name": "ok"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "create_tag",
+      "variant": "invalid"
+    },
+    {
+      "arguments": {
+        "tag": "a"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "update_tag",
+      "variant": "nothing"
+    },
+    {
+      "arguments": {
+        "name": "Project:B",
+        "tag": "a"
+      },
+      "name": "update_tag",
+      "result": {
+        "request": {
+          "description": null,
+          "name": "Project:B"
+        },
+        "tag": "a"
+      },
+      "variant": "rename"
+    },
+    {
+      "arguments": {},
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "delete_tag",
+      "variant": "missing"
+    },
+    {
+      "arguments": {
+        "doc_id": "nope"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "update_document_tags",
+      "variant": "invalid"
+    },
+    {
+      "arguments": {
+        "add": [
+          "a"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "set": []
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "update_document_tags",
+      "variant": "invalid"
+    },
+    {
+      "arguments": {
+        "add": [
+          "a",
+          "a"
+        ],
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "update_document_tags",
+      "variant": "invalid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "set": []
+      },
+      "name": "update_document_tags",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "request": {
+          "add": [],
+          "remove": [],
+          "set": []
+        }
+      },
+      "variant": "set-clears"
     }
   ]
 }

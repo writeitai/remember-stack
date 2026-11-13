@@ -13,6 +13,14 @@ export const SEARCH_DOCUMENTS_TOOL_NAME='search_documents';
 export const ADJACENT_CHUNKS_TOOL_NAME='adjacent_chunks';
 export const SECTION_HISTORY_TOOL_NAME='section_history';
 export const DOCUMENT_REFERENCES_TOOL_NAME='document_references';
+export const LIST_TAGS_TOOL_NAME='list_tags';
+export const CREATE_TAG_TOOL_NAME='create_tag';
+export const UPDATE_TAG_TOOL_NAME='update_tag';
+export const DELETE_TAG_TOOL_NAME='delete_tag';
+export const UPDATE_DOCUMENT_TAGS_TOOL_NAME='update_document_tags';
+export const TAG_READ_TOOL_NAMES=Object.freeze([LIST_TAGS_TOOL_NAME]);
+export const TAG_WRITE_TOOL_NAMES=Object.freeze([CREATE_TAG_TOOL_NAME,UPDATE_TAG_TOOL_NAME,DELETE_TAG_TOOL_NAME,UPDATE_DOCUMENT_TAGS_TOOL_NAME]);
+export const TAG_TOOL_NAMES=Object.freeze([...TAG_READ_TOOL_NAMES,...TAG_WRITE_TOOL_NAMES]);
 export const OPEN_QUERY_TOOL_NAMES=Object.freeze(['query_sql','explain_sql','describe_query_space','search_query_space','list_saved_queries','describe_saved_query','run_saved_query']);
 export const OPERATION_TOOL_NAMES=Object.freeze(['resolve_entity','claims_and_sources_context','facts_context','combined_context']);
 export const MEMORY_WRITE_TOOL_NAMES=Object.freeze([INGEST_TOOL_NAME,PIPELINE_READINESS_TOOL_NAME]);
@@ -122,6 +130,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
       return {chunk_id:uuid({value:args.chunk_id,field:'chunk_id'}),window};
     }
     if(name===SECTION_HISTORY_TOOL_NAME||name===DOCUMENT_REFERENCES_TOOL_NAME)return {request:modelDump({name:name===SECTION_HISTORY_TOOL_NAME?'SectionHistoryRequest':'DocumentReferencesRequest',value:args})};
+    if(TAG_TOOL_NAMES.includes(name))return parseTagTool({name,args});
     if(name==='search_documents') {
       const top=new Set(['query','versions','time','k','cursor']);const payload:Record<string,unknown>={filters:{}};
       for(const [key,value]of Object.entries(args)) if(top.has(key))payload[key]=value;else (payload.filters as Record<string,unknown>)[key]=value;
@@ -131,6 +140,37 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
     const missing=(required??[]).filter(key=>!(key in args)).sort();if(missing.length)refuse({detail:`Missing required arguments: ${missing.join(', ')}.`});
     assertJson({value:args});return {...args};
   }catch(error) {if(error instanceof ToolArgumentError)throw error;if(error instanceof InputValidationError)refuse({detail:error.message});throw error;}
+}
+/** An optional list of tag names or ids, each 1-128 characters, none repeated. */
+function tagList({args,key}:{args:Record<string,unknown>;key:string}):string[]|null {
+  const raw=args[key];if(raw==null)return null;
+  if(!Array.isArray(raw)||raw.length>64||!raw.every(item=>typeof item==='string'&&Array.from(item).length>=1&&Array.from(item).length<=128))refuse({detail:`${key} must be a list of at most 64 tag names or tag_ids, each 1 to 128 characters.`});
+  if(new Set(raw).size!==raw.length)refuse({detail:`${key} lists a tag twice.`});
+  return [...raw as string[]];
+}
+/** Python's tag-name rule: NFC, 1-128 characters, no whitespace or control characters. */
+function tagNameArgument({value}:{value:unknown}):unknown {
+  if(typeof value!=='string')return value;
+  const normalized=value.normalize('NFC');const length=Array.from(normalized).length;
+  if(length<1||length>128||/[\p{White_Space}\p{Cc}]/u.test(normalized))refuse({detail:'a tag name is 1 to 128 characters with no whitespace or control characters.'});
+  return normalized;
+}
+/** Parse the D156 tag tools into the tag, document and request each backend takes. */
+function parseTagTool({name,args}:{name:string;args:Record<string,unknown>}):Record<string,unknown> {
+  const tag=():string=>{const value=args.tag;if(typeof value!=='string'||Array.from(value).length<1||Array.from(value).length>128)refuse({detail:'tag must be a tag name or tag_id.'});return value;};
+  if(name===LIST_TAGS_TOOL_NAME) {
+    const query=args.query;if(query!=null&&(typeof query!=='string'||Array.from(query).length<1||Array.from(query).length>200))refuse({detail:'query must be 1 to 200 characters.'});
+    return {query:query??null};
+  }
+  if(name===CREATE_TAG_TOOL_NAME)return {request:modelDump({name:'TagCreate',value:{...args,...('name' in args?{name:tagNameArgument({value:args.name})}:{})}})};
+  if(name===UPDATE_TAG_TOOL_NAME) {
+    const value=tag();const {tag:_omitted,...rest}=args;
+    return {tag:value,request:modelDump({name:'TagUpdate',value:{...rest,...(rest.name!=null?{name:tagNameArgument({value:rest.name})}:{})}})};
+  }
+  if(name===DELETE_TAG_TOOL_NAME)return {tag:tag()};
+  let docId:string;try{docId=uuid({value:args.doc_id,field:'doc_id'});}catch{refuse({detail:'doc_id must be a document UUID.'});}
+  const payload=Object.fromEntries(['add','remove','set'].filter(key=>key in args).map(key=>[key,tagList({args,key})]));
+  return {doc_id:docId,request:modelDump({name:'DocumentTagsUpdate',value:payload})};
 }
 /** Resolve text/base64 or a caller-owned path and apply source lineage/body rules. */
 async function parseIngest({args,pathResolver,maxBodyBytes}:{args:Record<string,unknown>;pathResolver?:PathBodyResolver;maxBodyBytes?:number}):Promise<Record<string,unknown>> {
@@ -146,6 +186,7 @@ async function parseIngest({args,pathResolver,maxBodyBytes}:{args:Record<string,
     if(args.effective_from!=null)effective_from=utcTimestamp({value:args.effective_from as string,field:'effective_from'});
     if(args.effective_until!=null)effective_until=utcTimestamp({value:args.effective_until as string,field:'effective_until'});}
   catch(error) {refuse({detail:(error as Error).message});}
+  const tags=tagList({args,key:'tags'})??[];
   if((source_kind===null)!==(source_ref===null)||(source_kind===null&&(source_modified_at!==null||source_version_ref!==null||versioning_mode!=='snapshot'||version_key!==null||effective_from!==null||effective_until!==null)))throw new ToolArgumentError({error:new ToolError({code:'source_lineage_pair',detail:'source_kind and source_ref must be supplied together with lineage fields.',status_code:null,retryable:false,agent_action:'Send both source_kind and source_ref, or neither.'})});
   if(effective_until!==null&&effective_from===null)refuse({detail:'effective_until requires effective_from.'});
   if(effective_from!==null) {
@@ -171,5 +212,5 @@ async function parseIngest({args,pathResolver,maxBodyBytes}:{args:Record<string,
     const inferred=inferUploadMime({filename});body={content,filename,mime:mime??(text!==null&&!inferred.startsWith('text/')?'text/plain':inferred)};
   }
   bodySize({content:body.content,maxBodyBytes});
-  return {...body,title:title||null,source_kind,source_ref,source_modified_at,versioning_mode,source_version_ref,version_key,effective_from,effective_until};
+  return {...body,title:title||null,source_kind,source_ref,source_modified_at,versioning_mode,source_version_ref,version_key,effective_from,effective_until,tags};
 }

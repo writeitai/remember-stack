@@ -86,6 +86,49 @@ export default {
       }
     }
   },
+  "DELETE /tags/{tag_id}": {
+    "method": "DELETE",
+    "operationId": "delete_tag_tags__tag_id__delete",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "tag_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Tag Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/tags/{tag_id}",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Tag"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "unknown_tag"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
   "GET /chunks/{chunk_id}/adjacent": {
     "method": "GET",
     "operationId": "adjacent_chunks_chunks__chunk_id__adjacent_get",
@@ -1150,6 +1193,54 @@ export default {
       }
     }
   },
+  "GET /tags": {
+    "method": "GET",
+    "operationId": "list_tags_tags_get",
+    "parameters": [
+      {
+        "in": "query",
+        "name": "query",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Query"
+        }
+      }
+    ],
+    "path": "/tags",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/TagList"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
   "GET /transcript/relation/{relation_id}": {
     "method": "GET",
     "operationId": "transcript_relation_transcript_relation__relation_id__get",
@@ -1177,6 +1268,61 @@ export default {
           }
         },
         "description": "Successful Response"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
+  "PATCH /tags/{tag_id}": {
+    "method": "PATCH",
+    "operationId": "update_tag_tags__tag_id__patch",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "tag_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Tag Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/tags/{tag_id}",
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/TagUpdate"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Tag"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "unknown_tag"
+      },
+      "409": {
+        "description": "conflict"
       },
       "422": {
         "content": {
@@ -1320,6 +1466,54 @@ export default {
           }
         },
         "description": "Validation Error"
+      }
+    }
+  },
+  "POST /documents/{doc_id}/tags": {
+    "method": "POST",
+    "operationId": "update_document_tags_documents__doc_id__tags_post",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/tags",
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DocumentTagsUpdate"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DocumentTags"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found"
+      },
+      "409": {
+        "description": "tag_limit_exceeded"
+      },
+      "422": {
+        "description": "unknown_tag"
       }
     }
   },
@@ -1633,6 +1827,28 @@ export default {
           ],
           "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
           "title": "Effective Until"
+        }
+      },
+      {
+        "description": "Registered tags (name or tag_id; repeat the parameter) added to the document's tags. Ingest never removes a tag, and tags never decide whether a version is created. Any unregistered tag refuses the ingest with 422 unknown_tag before anything is stored.",
+        "in": "query",
+        "name": "tags",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Registered tags (name or tag_id; repeat the parameter) added to the document's tags. Ingest never removes a tag, and tags never decide whether a version is created. Any unregistered tag refuses the ingest with 422 unknown_tag before anything is stored.",
+          "title": "Tags"
         }
       },
       {
@@ -2085,6 +2301,47 @@ export default {
           }
         },
         "description": "Successful Response"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
+  "POST /tags": {
+    "method": "POST",
+    "operationId": "create_tag_tags_post",
+    "parameters": [],
+    "path": "/tags",
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/TagCreate"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Tag"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "409": {
+        "description": "conflict | tag_limit_exceeded"
       },
       "422": {
         "content": {
