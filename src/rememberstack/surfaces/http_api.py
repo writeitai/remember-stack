@@ -175,6 +175,8 @@ SavedQueryStatus = Literal[
 """The saved-query version states `GET /query/saved?status=` may filter on."""
 
 LOOKUP_K_MAX: Final = 400
+LOOKUP_BROWSE_LIMIT_DEFAULT: Final = 50
+LOOKUP_BROWSE_LIMIT_MAX: Final = 200
 """Largest `k` a fact lookup returns in one call; more is reported as truncated."""
 
 
@@ -392,8 +394,8 @@ class GraphQueryPort(Protocol):
         predicates: tuple[str, ...] = (),
         valid_at: datetime | None = None,
         believed_at: datetime | None = None,
-        limit: int = 500,
-        continuation: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
         include_paths: bool = False,
     ) -> Envelope: ...
 
@@ -434,8 +436,8 @@ class GraphNeighborhoodRequest(BaseModel):
     predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
     valid_at: UTCInstant | None = None
     believed_at: UTCInstant | None = None
-    limit: int = Field(default=500, ge=1, le=500)
-    continuation: str | None = Field(default=None, max_length=200)
+    limit: int = Field(default=100, ge=1, le=500)
+    cursor: str | None = Field(default=None, max_length=200)
     include_paths: bool = False
 
     @model_validator(mode="after")
@@ -483,7 +485,7 @@ class SqlQueryRequest(BaseModel):
 
     sql: str
     parameters: list[Any] = Field(default_factory=list)
-    max_rows: int | None = Field(default=None, ge=0)
+    max_rows: int | None = Field(default=None, ge=0, le=1000)
 
 
 class SqlExplainRequest(BaseModel):
@@ -502,7 +504,7 @@ class RunSavedQueryRequest(BaseModel):
 
     version: int | None = Field(default=None, ge=1)
     parameters: list[Any] = Field(default_factory=list)
-    max_rows: int | None = Field(default=None, ge=0)
+    max_rows: int | None = Field(default=None, ge=0, le=1000)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -796,17 +798,24 @@ def build_api(
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: UTCInstant | None = None,
-        k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 50,
+        limit: Annotated[
+            int, Query(ge=1, le=LOOKUP_BROWSE_LIMIT_MAX)
+        ] = LOOKUP_BROWSE_LIMIT_DEFAULT,
+        cursor: Annotated[str | None, Query()] = None,
     ) -> Envelope:
-        """Relations matching an (s, p, o) pattern — current, or as-of (S9)."""
-        return deployment.engine.lookup_relations(
-            deployment_id=deployment.deployment_id,
-            subject_entity_id=subject_entity_id,
-            predicate=predicate,
-            object_entity_id=object_entity_id,
-            valid_at=valid_at,
-            k=k,
-        )
+        """Browse relations matching an (s, p, o) pattern — current, or as-of (S9)."""
+        try:
+            return deployment.engine.lookup_relations(
+                deployment_id=deployment.deployment_id,
+                subject_entity_id=subject_entity_id,
+                predicate=predicate,
+                object_entity_id=object_entity_id,
+                valid_at=valid_at,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/transcript/relation/{relation_id}", response_model=Envelope)
     def transcript_relation(deployment: _Deployment, relation_id: UUID) -> Envelope:
@@ -821,14 +830,23 @@ def build_api(
         entity_id: UUID,
         property_query: str | None = None,
         k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 10,
+        limit: Annotated[
+            int, Query(ge=1, le=LOOKUP_BROWSE_LIMIT_MAX)
+        ] = LOOKUP_BROWSE_LIMIT_DEFAULT,
+        cursor: Annotated[str | None, Query()] = None,
     ) -> Envelope:
-        """Live observations on one entity, semantic over statements (S2)."""
-        return deployment.engine.lookup_observations(
-            deployment_id=deployment.deployment_id,
-            entity_id=entity_id,
-            property_query=property_query,
-            k=k,
-        )
+        """Live observations on one entity (browse or ranked property match)."""
+        try:
+            return deployment.engine.lookup_observations(
+                deployment_id=deployment.deployment_id,
+                entity_id=entity_id,
+                property_query=property_query,
+                k=k,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/search/claims", response_model=Envelope)
     def search_claims(
@@ -1288,7 +1306,7 @@ def _mount_graph(*, app: FastAPI) -> None:
                 valid_at=body.valid_at,
                 believed_at=body.believed_at,
                 limit=body.limit,
-                continuation=body.continuation,
+                cursor=body.cursor,
                 include_paths=body.include_paths,
             )
         # D143 §7.3: an empty answer while facts backfill is a boundary.
