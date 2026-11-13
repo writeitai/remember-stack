@@ -383,8 +383,9 @@ section history, document references, `GET /lookup/relations`, and
 page's `next_cursor` back as `cursor`.
 
 `GET /ops/cost-export/v1` is outside these list rules: it is a resumable
-feed with its own contract (echoed `cursor`, always-present `next_cursor`
-when receipts are present, limits 1–500 default 100). See
+feed with its own contract: an issued first-page `cursor`, echoed request
+`cursor` thereafter, and `next_cursor` carrying a fresh horizon even on empty
+batches (limits 1–500, default 100). See
 [Deployment — cost export](/docs/reference/http-api/deployment#get-opscost-exportv1)
 and the binding design
 [`request_path_metering_and_cost_export_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/request_path_metering_and_cost_export_design.md).

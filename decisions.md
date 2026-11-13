@@ -7969,9 +7969,10 @@ document references, and `GET /lookup/relations` plus
 resumable feed consumed by the remember.dev billing pipeline. It keeps its own
 contract from
 [request_path_metering_and_cost_export_design.md](plan/designs/request_path_metering_and_cost_export_design.md):
-limits 1–500 (default 100), echoed request `cursor` on every page,
-`next_cursor` always present when the batch has receipts (and null only on an
-empty batch), and the existing cursor encoding without a listing-scope hash so
+limits 1–500 (default 100), an issued zero-key replay `cursor` on the first
+page and echoed request `cursor` thereafter, `next_cursor` carrying a fresh
+horizon even on an empty batch, and the existing cursor encoding without a
+listing-scope hash so
 already-stored engine cursors stay valid across deploys. D154 does not rename
 or reshape that feed.
 
