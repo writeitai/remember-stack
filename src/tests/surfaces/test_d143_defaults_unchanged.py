@@ -1,16 +1,15 @@
 """D143 §8 / §9.1: an unconfigured deployment's default surfaces are pre-D143 bytes.
 
 ``fixtures/d143_defaults.json`` was captured by
-:func:`tests.surfaces.d143_defaults_capture.capture_defaults` on the pre-D143
-base (fbcd489bd). It holds the serialized ``GET /operations`` list, the
-``GET /deployment`` body with its tools map, the in-process MCP tool list and
-the ``remember-mcp`` engine-mode tool lists (names and input schemas), the
-readiness expected stages with their component versions, and the
-query-surface manifest hash. The three manifest identity fields were updated
-for the independently accepted p9_42/p9_45/D153 view optimization, and the
-tool lists, ``ingest`` schema and manifest for the accepted D156 document tags
-(five tag tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views); all
-other captured values remain from the pre-D143 baseline. The current branch, composed the way the
+:func:`tests.surfaces.d143_defaults_capture.capture_defaults`. It holds the
+serialized ``GET /operations`` list, the ``GET /deployment`` body with its
+tools map, the in-process MCP tool list and the ``remember-mcp`` engine-mode
+tool lists (names and input schemas), the readiness expected stages with
+their component versions, and the query-surface manifest hash. Originally
+taken on the pre-D143 base (fbcd489bd); refreshed for the p9_42/p9_45/D153
+view optimization and again for D154's pagination rename (browse ``limit`` /
+``next_cursor``, MCP tool schemas), and for D156 document tags (five tag
+tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views). The current branch, composed the way the
 self-host profile composes it (layers port included, reporting no
 configuration), must reproduce every byte.
 """

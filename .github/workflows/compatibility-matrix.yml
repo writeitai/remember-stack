@@ -17,7 +17,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine-version: ["0.15.0", "0.16.0", "candidate"]
+        # D154 changed list, graph and SQL wire shapes, so clients from this
+        # version on need an engine that carries D154. Add released engines
+        # here from the first release that includes it.
+        engine-version: ["candidate"]
 
     steps:
       - uses: actions/checkout@v4

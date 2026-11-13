@@ -5,6 +5,8 @@ export const metadata = {
 
 # Explore memory with SQL
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 The assured operations answer the common questions in one call. Some
@@ -281,9 +283,25 @@ Queries sent over the API run in the interactive tier:
 | Concurrent queries | 2 per caller, 8 per deployment |
 | Statement time per minute | 30 seconds per caller, 120 per deployment |
 
-A `max_rows` above the cap is lowered to the cap, not refused. When rows
-were cut, `truncated` is `True` and `truncation_reason` says why. The
-`limits` field of every result states the caps it ran under.
+A `max_rows` above 1,000 is refused with `422` (D154); it is not silently
+clamped. When rows were cut at the cap, `truncated` is `True` and
+`truncation_reason` says why. The `limits` field of every result states the
+caps it ran under.
+
+For larger scans, page in the statement with your own keyset `WHERE` and
+`LIMIT` rather than raising `max_rows`:
+
+```sql
+SELECT fact_id, ingested_at, fact_label
+FROM facts_current
+WHERE (ingested_at, fact_id) < ($1::timestamptz, $2::uuid)
+ORDER BY ingested_at DESC, fact_id DESC
+LIMIT 200
+```
+
+Pass the last row's `ingested_at` and `fact_id` as the next page's
+parameters. See [Pagination and
+truncation](/docs/reference/http-api#pagination-and-truncation).
 
 A second tier (analytical: 10,000 rows, 60 seconds) exists for operators;
 the API does not select it.

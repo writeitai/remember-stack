@@ -41,7 +41,7 @@ paged by a keyset cursor that pins the evaluation and belief instants. Each
 direction walks reference rows in that order in batches (the outgoing walk on
 ``ix_crossrefs_from``, the incoming one on ``ix_crossrefs_incoming``),
 evaluates scope for each batch at the pinned belief instant and stops after
-scanning 10 × ``k`` rows with a short page and a cursor rather than scanning
+scanning 10 × ``limit`` rows with a short page and a cursor rather than scanning
 on.
 
 The tables are private; this is a fixed, authorization-checked operation
@@ -58,7 +58,6 @@ from dataclasses import field
 from dataclasses import replace
 from datetime import datetime
 from datetime import UTC
-import hashlib
 import json
 from typing import Final
 from typing import Literal
@@ -82,6 +81,8 @@ from remember.models import EffectiveInterval
 from remember.models import NamedReferenceTarget
 from remember.models import ReadTime
 from remember.models import ReferenceWindow
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.model import ChunkNotFoundError
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.spine.effective_time import belief_watermark
@@ -89,7 +90,7 @@ from rememberstack.spine.effective_time import belief_watermark
 Direction = Literal["outgoing", "incoming"]
 
 SCAN_FACTOR: Final = 10
-"""A page scans at most ``SCAN_FACTOR × k`` reference rows (§3.6 starting point)."""
+"""A page scans at most ``SCAN_FACTOR × limit`` reference rows (§3.6 starting point)."""
 
 _DIRECTIONS: Final[tuple[Direction, ...]] = ("outgoing", "incoming")
 _ZERO: Final = UUID(int=0)
@@ -308,7 +309,7 @@ class DocumentReferences:
         ``ChunkNotFoundError`` for a chunk of no live version, and
         ``ValueError`` for a malformed cursor or one minted for another call.
         """
-        scope_hash = _scope_hash(request=request)
+        scope_hash = _scope_hash(request=request, deployment_id=deployment_id)
         cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
         if cursor is not None:
             evaluated_at, believed_at = cursor[0], cursor[1]
@@ -340,12 +341,12 @@ class DocumentReferences:
                 plan=plan_or_broad,
                 directions=_directions(request=request),
                 position=position,
-                k=request.k,
+                limit=request.limit,
             )
             rows = reader.finish(drafts=drafts)
         return DocumentReferencesPage(
             rows=tuple(rows),
-            cursor=None
+            next_cursor=None
             if next_position is None
             else _encode_cursor(
                 scope_hash=scope_hash,
@@ -595,12 +596,12 @@ class _Reader:
         plan: SourcePlan,
         directions: tuple[Direction, ...],
         position: Position | None,
-        k: int,
+        limit: int,
     ) -> tuple[list[DraftRow], Position | None]:
-        """Walk the directions from ``position`` and take up to ``k`` rows."""
+        """Walk the directions from ``position`` and take up to ``limit`` rows."""
         rows: list[tuple[Position, DraftRow]] = []
         scanned = 0
-        cap = SCAN_FACTOR * k
+        cap = SCAN_FACTOR * limit
         for direction in directions:
             if position is not None and _DIRECTIONS.index(
                 direction
@@ -613,7 +614,7 @@ class _Reader:
             )
             while True:
                 batch = self._candidates(
-                    direction=direction, plan=plan, after=after, limit=k + 1
+                    direction=direction, plan=plan, after=after, limit=limit + 1
                 )
                 scanned += len(batch)
                 for candidate in batch:
@@ -639,12 +640,24 @@ class _Reader:
                     after = Position(
                         direction=direction, triple=batch[-1].triple, row=None
                     )
-                if len(rows) > k:
-                    return [draft for _, draft in rows[:k]], rows[k - 1][0]
-                if len(batch) < k + 1:
+                if len(rows) > limit:
+                    return [draft for _, draft in rows[:limit]], rows[limit - 1][0]
+                if len(batch) < limit + 1:
                     break  # this direction is exhausted
                 if scanned >= cap:
-                    return [draft for _, draft in rows], after
+                    # At most one candidate per remaining direction: the cap
+                    # can coincide with the end of this direction or the walk.
+                    remaining = directions[directions.index(direction) :]
+                    more = any(
+                        self._candidates(
+                            direction=following,
+                            plan=plan,
+                            after=after if following == direction else None,
+                            limit=1,
+                        )
+                        for following in remaining
+                    )
+                    return [draft for _, draft in rows], after if more else None
         return [draft for _, draft in rows], None
 
     def _candidates(
@@ -1071,14 +1084,12 @@ def _window_order(window: Window) -> str:
     return _instant_key(window.lo)
 
 
-def _scope_hash(*, request: DocumentReferencesRequest) -> str:
-    """Identify the call a cursor belongs to (everything but ``k`` and ``cursor``)."""
-    payload = json.dumps(
-        request.model_dump(mode="json", by_alias=True, exclude={"k", "cursor"}),
-        sort_keys=True,
-        separators=(",", ":"),
+def _scope_hash(*, request: DocumentReferencesRequest, deployment_id: UUID) -> str:
+    """Identify the call a cursor belongs to (everything but ``limit`` and ``cursor``)."""
+    return cursor_scope_hash(
+        request.model_dump(mode="json", by_alias=True, exclude={"limit", "cursor"}),
+        deployment_id=deployment_id,
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _encode_cursor(
@@ -1122,13 +1133,12 @@ def _decode_cursor(
             row = tuple(str(part) for part in row)
             if len(row) != 3:
                 raise ValueError("bad row key")
-        matches = payload["s"] == scope_hash
+        payload_scope = payload["s"]
     except (ValueError, KeyError, TypeError) as error:
         raise ValueError("cursor is malformed") from error
     if evaluated_at.tzinfo is None or believed_at.tzinfo is None:
         raise ValueError("cursor is malformed")
-    if not matches:
-        raise ValueError("cursor belongs to a different document_references call")
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
     return (
         evaluated_at,
         believed_at,

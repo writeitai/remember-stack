@@ -29,17 +29,26 @@ lineage is new. A *re-ingested* one keeps its place, which is the truthful
 answer for an inventory: it is the same document, first seen when it was first
 seen. `ix_documents_inventory_order` covers exactly this order, so a page
 costs the page size rather than a scan of the corpus.
+
+The inventory always reads the newest live version and serving flag as they
+are now; there is no pinned read instant. Keyset paging on the immutable
+`(first_seen_at, doc_id)` key means unchanged rows are never repeated or
+skipped. A row whose filtered status changes between pages may enter or leave
+the listing (D154).
 """
 
 from __future__ import annotations
 
 import base64
 from datetime import datetime
+import json
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentSummary
@@ -133,7 +142,8 @@ class DocumentInventory:
         pages, dropping one and repeating the other.
         """
         size = max(1, min(int(limit), MAX_PAGE_SIZE))
-        cursor_at, cursor_doc = _decode_cursor(cursor)
+        scope = cursor_scope_hash({"status": status}, deployment_id=deployment_id)
+        cursor_at, cursor_doc = _decode_cursor(cursor=cursor, scope_hash=scope)
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -174,44 +184,57 @@ class DocumentInventory:
             for row in page
         )
         next_cursor = (
-            _encode_cursor(page[-1]["first_seen_at"], page[-1]["doc_id"])
+            _encode_cursor(
+                scope_hash=scope,
+                first_seen_at=page[-1]["first_seen_at"],
+                doc_id=page[-1]["doc_id"],
+            )
             if more and page
             else None
         )
-        return DocumentPage(documents=documents, cursor=next_cursor)
+        return DocumentPage(documents=documents, next_cursor=next_cursor)
 
 
-def _encode_cursor(first_seen_at: datetime, doc_id: UUID) -> str:
-    """Opaque keyset position: the sort key, never an offset.
+def _encode_cursor(*, scope_hash: str, first_seen_at: datetime, doc_id: UUID) -> str:
+    """Opaque keyset position plus the status-filter scope hash.
 
-    An offset re-reads rows that shifted while somebody was paging. This
-    carries the sort key itself, and because that key never changes, the
-    position it names stays meaningful for as long as the reader takes.
+    The inventory always reads the newest live version and serving flag as
+    they are now — there is no cheap as-of snapshot — so the cursor carries
+    only the immutable ``(first_seen_at, doc_id)`` keyset. Unchanged rows are
+    never repeated or skipped; a row whose filtered status changes between
+    pages may enter or leave the listing.
     """
-    raw = f"{first_seen_at.isoformat()}|{doc_id}".encode()
+    raw = json.dumps(
+        {"s": scope_hash, "a": first_seen_at.isoformat(), "i": str(doc_id)},
+        separators=(",", ":"),
+    ).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _decode_cursor(cursor: str | None) -> tuple[datetime | None, UUID | None]:
-    """Read a cursor back, or refuse one that does not parse.
+def _decode_cursor(
+    *, cursor: str | None, scope_hash: str
+) -> tuple[datetime | None, UUID | None]:
+    """Read a cursor back, or refuse one that does not parse or fit this call.
 
     Rejecting beats silently restarting: handing page one to somebody who
     asked for page three repeats documents they have already seen and reads as
     duplicates in the corpus rather than as the bug it is.
-
-    This checks that a cursor *parses*, not that this deployment issued it —
-    the values are a timestamp and a document id, both of which a caller could
-    write. That is acceptable because the cursor is not a capability: the query
-    is scoped to the caller's own deployment either way, so the worst a
-    hand-written one can do is start somebody at an odd place in their own
-    corpus.
     """
     if cursor is None:
         return None, None
     padding = "=" * (-len(cursor) % 4)
     try:
-        raw = base64.urlsafe_b64decode(cursor + padding).decode()
-        at_text, doc_text = raw.split("|")
-        return datetime.fromisoformat(at_text), UUID(doc_text)
-    except (ValueError, UnicodeDecodeError) as error:
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode())
+        if not isinstance(payload, dict) or any(
+            not isinstance(payload.get(key), str) for key in ("a", "i", "s")
+        ):
+            raise ValueError("cursor fields must be strings")
+        first_seen_at = datetime.fromisoformat(payload["a"])
+        doc_id = UUID(payload["i"])
+        payload_scope = payload["s"]
+    except (ValueError, KeyError, TypeError, UnicodeDecodeError) as error:
         raise ValueError("cursor is malformed") from error
+    if first_seen_at.tzinfo is None:
+        raise ValueError("cursor is malformed")
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
+    return first_seen_at, doc_id

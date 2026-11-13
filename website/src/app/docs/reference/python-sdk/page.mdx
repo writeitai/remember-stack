@@ -5,6 +5,8 @@ export const metadata = {
 
 # Python SDK
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 The `remember` package is the Python client for RememberStack. You use it to
@@ -581,7 +583,7 @@ MemoryClient.list_documents(
 
 Returns one page of the deployment's documents, newest document first, as a
 [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
-returned `cursor` to read the next page; it is `None` on the last page.
+returned `next_cursor` as `cursor` to read the next page; it is `None` on the last page.
 `status` keeps only documents whose newest version has that status. `limit`
 is 1 to 200; the deployment answers `422` outside that range. Deleted
 documents are not listed. See
@@ -593,9 +595,9 @@ while True:
     page = memory.list_documents(cursor=cursor)
     for document in page.documents:
         print(document.doc_id, document.title, document.serving)
-    if page.cursor is None:
+    if page.next_cursor is None:
         break
-    cursor = page.cursor
+    cursor = page.next_cursor
 ```
 
 #### `search_documents`
@@ -607,6 +609,7 @@ MemoryClient.search_documents(
     filters: DocumentSearchFilters | None = None,
     versions: Literal["current", "all"] = "current",
     k: int = 20,
+    limit: int = 50,
     cursor: str | None = None,
     time: ReadTime | None = None,
 ) -> DocumentSearchPage
@@ -620,8 +623,9 @@ and their text, and returns a
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
 `recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
 and `doc_ids`. With a `query` the results are ranked and not paged; without
-one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
-`query`, a date without a timezone, or `k` outside 1 to 200 raises
+one they are newest ingested first and `limit` (default 50) / `cursor` pages them.
+Read `next_cursor` for continuation; ranked responses disclose `truncated`. Passing `cursor` with a
+`query`, a date without a timezone, or `k` / `limit` outside 1 to 200 raises
 `pydantic.ValidationError` before any request. A malformed cursor raises
 `MemoryApiError` with `status_code` 400. `time` decides which editions of a
 document with declared effective periods are candidates (default: the ones
@@ -635,7 +639,7 @@ from remember import Client, DocumentSearchFilters
 memory = Client()
 page = memory.search_documents("audit report")
 emails = memory.search_documents(
-    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), limit=50
 )
 if len(emails.people_matched) > 1:
     print("several people matched:", emails.people_matched)
@@ -843,7 +847,7 @@ MemoryClient.section_history(
     doc_id: UUID | str,
     section_key: str,
     time: ReadTime | None = None,
-    k: int = 50,
+    limit: int = 50,
     cursor: str | None = None,
 ) -> SectionHistoryPage
 ```
@@ -851,7 +855,7 @@ MemoryClient.section_history(
 Follows one keyed section across the document's versions. `time` defaults
 to `{"mode": "history"}`. Each row is a version with its `effective`
 intervals and a `status` of `present`, `absent`, `not_indexed` or
-`processing`. Raises `pydantic.ValidationError` for a malformed key or `k`
+`processing`. Raises `pydantic.ValidationError` for a malformed key or `limit`
 outside 1 to 200, and `MemoryApiError` with `status_code` 404 for an
 unknown or deleted document. `section_history_request(request=…)` sends a
 prepared `SectionHistoryRequest`. See
@@ -872,7 +876,7 @@ MemoryClient.document_references(
     direction: Literal["outgoing", "incoming", "both"] = "both",
     kinds: Sequence[ReferenceKind] | None = None,
     time: ReadTime | None = None,
-    k: int = 50,
+    limit: int = 50,
     cursor: str | None = None,
 ) -> DocumentReferencesPage
 ```
@@ -1084,14 +1088,15 @@ MemoryClient.lookup_relations(
     predicate: str | None = None,
     object_entity_id: UUID | None = None,
     valid_at: datetime | None = None,
-    k: int = 50,
+    limit: int = 50,
+    cursor: str | None = None,
 ) -> Envelope
 ```
 
 Returns the relations (facts between two entities) that match the pattern.
 With `valid_at`, returns the relations that were valid at that instant;
-without it, the current ones. At most `k` (1–400) come back; the envelope's
-`truncation` says when more matched.
+without it, the current ones. `limit` is 1–200 (default 50). Pass the envelope's
+`next_cursor` as `cursor` until it is `None`.
 
 ```python
 memory.lookup_relations(subject_entity_id=dana_id, predicate="leads")
@@ -1101,12 +1106,15 @@ memory.lookup_relations(subject_entity_id=dana_id, predicate="leads")
 
 ```python
 MemoryClient.lookup_observations(
-    *, entity_id: UUID, property_query: str | None = None, k: int = 10
+    *, entity_id: UUID, property_query: str | None = None, k: int = 10,
+    limit: int = 50, cursor: str | None = None,
 ) -> Envelope
 ```
 
 Returns the current observations (facts about one entity), optionally
-narrowed by `property_query` text, at most `k`.
+narrowed by `property_query` text. With a property query, `k` bounds ranked results
+and `truncation.truncated` discloses the cap; a cursor is refused. Without a property
+query, `limit` (default 50, range 1–200) / `cursor` pages through `next_cursor`.
 
 ```python
 memory.lookup_observations(entity_id=dana_id, property_query="role")
@@ -1229,15 +1237,15 @@ MemoryClient.graph_neighborhood(
     predicates: tuple[str, ...] = (),
     valid_at: datetime | None = None,
     believed_at: datetime | None = None,
-    limit: int = 500,
-    continuation: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
     include_paths: bool = False,
 ) -> Envelope
 ```
 
 Returns the entities and relations around one entity. The engine accepts
 `hops` 1–4, `limit` 1–500 and at most 100 `predicates`. Pass the envelope's
-`truncation.continuation` back as `continuation` to read the next page.
+`next_cursor` back as `cursor` to read the next page.
 
 ```python
 around_dana = memory.graph_neighborhood(entity_id=dana_id, hops=1)
@@ -1294,7 +1302,7 @@ MemoryClient.query_sql(
 ```
 
 Runs one statement with positional parameters (`$1`, `$2`, …). Returns the
-`QueryResult/v1` object as a dict. `max_rows` must be 0 or more.
+`QueryResult/v1` object as a dict. `max_rows` must be between 0 and 1,000; larger values are refused.
 
 #### `open_query`
 

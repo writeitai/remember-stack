@@ -23,6 +23,7 @@ from datetime import datetime
 from datetime import UTC
 from functools import wraps
 from itertools import batched
+import json
 import math
 from time import monotonic
 from typing import Any
@@ -48,6 +49,8 @@ from remember.retrieval import DEFAULT_CONTEXT_K
 from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from remember.retrieval import MAX_CONTEXT_K
 from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -128,8 +131,10 @@ from rememberstack.ports.p1_index import P1SearchIds
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
+from rememberstack.spine.effective_time import belief_watermark
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.processing_layers import admit_layers_on
 from rememberstack.spine.retrieval_eligibility import candidate_mention_coverage_ctes
@@ -150,6 +155,12 @@ DEFAULT_DELTA_LIMIT = 500
 """How many change-feed rows one `delta` page returns before truncating —
 a starting point to measure, not a committed constant (retrieval §13)."""
 
+DEFAULT_LOOKUP_BROWSE_LIMIT = 50
+"""Default page size for filter-only relation/observation browse (D154)."""
+
+MAX_LOOKUP_BROWSE_LIMIT = 200
+"""Maximum page size for filter-only relation/observation browse (D154)."""
+
 DEFAULT_TRANSCRIPT_LIMIT = 40
 """How many decision-history rows one `transcript` returns before truncating
 — recent-first. A starting point to measure, not a committed constant: long
@@ -161,12 +172,12 @@ DEFAULT_SCAN_BATCH = 1_000
 """How many rows the batch `scan` cursor fetches per round-trip."""
 
 CONTRADICTION_COMEMBER_CAP = 25
-"""How many co-members a contradiction block returns inline before it pages
-(S23). Typical groups are 2–3 sides, so the cap is rarely reached — but when
-it is, the block still carries group_id/returned/total/continuation, never a
-one-sided answer. WP-5.6 measured this starting cap below its explicit 16 KiB
-inline-envelope budget; that budget is an operating target, not a protocol
-limit."""
+"""How many co-members a contradiction block returns inline before it caps
+(S23 / D154). Typical groups are 2–3 sides, so the cap is rarely reached — but
+when it is, the block still carries group_id/returned/total, never a one-sided
+answer. Paging co-members is out of scope. WP-5.6 measured this starting cap
+below its explicit 16 KiB inline-envelope budget; that budget is an operating
+target, not a protocol limit."""
 
 RESOLVE_CONTEXT_LIMIT: Final = 8
 """Maximum focal entities in WP-5.6's bounded S51 context tie-break."""
@@ -239,6 +250,89 @@ _BOUNDED_AGGREGATE_FORMS = frozenset(
 `count` and `timeline` are naturally bounded (one row / one row per year)."""
 
 
+def _encode_lookup_cursor(
+    *, scope_hash: str, evaluated_at: datetime, ingested_at: datetime, fact_id: UUID
+) -> str:
+    """Pack a browse-lookup keyset position with its pinned belief instant."""
+    raw = json.dumps(
+        {
+            "v": 1,
+            "s": scope_hash,
+            "e": evaluated_at.isoformat(),
+            "a": ingested_at.isoformat(),
+            "i": str(fact_id),
+        },
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_lookup_cursor(
+    token: str | None, *, scope_hash: str
+) -> tuple[datetime, tuple[datetime, UUID] | None]:
+    """Unpack a browse-lookup cursor, or raise when it is malformed."""
+    if token is None:
+        return datetime.now(tz=UTC), None
+    padding = "=" * (-len(token) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(token + padding).decode())
+        if int(payload["v"]) != 1:
+            raise ValueError("bad version")
+        evaluated_at = datetime.fromisoformat(payload["e"])
+        ingested_at = datetime.fromisoformat(payload["a"])
+        fact_id = UUID(str(payload["i"]))
+        payload_scope = payload["s"]
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ) as error:
+        raise ValueError(f"invalid lookup cursor: {token!r}") from error
+    if evaluated_at.tzinfo is None or ingested_at.tzinfo is None:
+        raise ValueError(f"invalid lookup cursor: {token!r}")
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
+    return evaluated_at, (ingested_at, fact_id)
+
+
+def _lookup_relations_scope_hash(
+    *,
+    deployment_id: UUID,
+    subject_entity_id: UUID | None,
+    predicate: str | None,
+    object_entity_id: UUID | None,
+    valid_at: datetime | None,
+) -> str:
+    """Scope of a relations browse listing (filters that define membership)."""
+    return cursor_scope_hash(
+        {
+            "subject_entity_id": None
+            if subject_entity_id is None
+            else str(subject_entity_id),
+            "predicate": predicate,
+            "object_entity_id": None
+            if object_entity_id is None
+            else str(object_entity_id),
+            "valid_at": None if valid_at is None else valid_at.isoformat(),
+        },
+        deployment_id=deployment_id,
+    )
+
+
+def _lookup_observations_scope_hash(
+    *, deployment_id: UUID, entity_id: UUID, valid_at: datetime | None
+) -> str:
+    """Scope of an observations browse listing."""
+    return cursor_scope_hash(
+        {
+            "entity_id": str(entity_id),
+            "valid_at": None if valid_at is None else valid_at.isoformat(),
+        },
+        deployment_id=deployment_id,
+    )
+
+
 def _encode_feed_cursor(*, at: datetime, item_id: UUID) -> str:
     """Pack a delta feed position into one opaque, resumable token."""
     raw = f"{at.isoformat()}|{item_id}".encode()
@@ -254,7 +348,7 @@ def _decode_feed_cursor(token: str | None) -> tuple[datetime, UUID] | None:
         at_text, id_text = raw.rsplit("|", 1)
         return (datetime.fromisoformat(at_text), UUID(id_text))
     except (ValueError, binascii.Error) as error:
-        raise ValueError(f"invalid delta continuation: {token!r}") from error
+        raise ValueError(f"invalid delta cursor: {token!r}") from error
 
 
 def _with_surface[**P, T](
@@ -1989,50 +2083,77 @@ class QueryEngine:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
-        k: int = 50,
+        limit: int = DEFAULT_LOOKUP_BROWSE_LIMIT,
+        cursor: str | None = None,
     ) -> Envelope:
-        """Relations matching the (s, p, o) pattern — fact grain (S1/S3/S9).
+        """Browse relations matching the (s, p, o) pattern — fact grain (S1/S3/S9).
 
-        At most `k` relations return, strongest evidence first; when more
-        match, the envelope's `truncation` says so (no silent top-k, S18).
-
-        Without `valid_at`, current means both clocks: still believed AND the
-        valid-time window covers now. With `valid_at`, the window test moves
-        to that instant (the S9-class as-of read; belief stays live — the
-        believed_at axis arrives with its own parameter). The applied instant
-        is echoed in the envelope. An existing entity with no matching facts
-        is `known_empty` (S39).
+        Filter-only browse list (D154): ``limit`` (default 50, max 200) and
+        opaque ``cursor`` in; ``Envelope.next_cursor`` out. Ordered by
+        ``(ingested_at DESC, relation_id DESC)``; the cursor pins the belief
+        instant. Without ``valid_at``, current means both clocks: still
+        believed AND the valid-time window covers now. With ``valid_at``, the
+        window test moves to that instant. An existing entity with no matching
+        facts is ``known_empty`` (S39).
         """
-        evaluated_at = datetime.now(tz=UTC)
-        as_of = valid_at or evaluated_at
-        with self._engine.connect() as connection:
-            rows = (
-                connection.execute(
-                    _LOOKUP_RELATIONS,
-                    {
-                        "deployment_id": deployment_id,
-                        "subject_entity_id": subject_entity_id,
-                        "predicate": predicate,
-                        "object_entity_id": object_entity_id,
-                        "as_of": as_of,
-                        "limit": k + 1,
-                        **_lookup_scope(
-                            valid_at=valid_at, evaluated_at=evaluated_at
-                        ).parameters(),
-                    },
-                )
-                .mappings()
-                .all()
+        if not 1 <= limit <= MAX_LOOKUP_BROWSE_LIMIT:
+            raise ValueError(
+                f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
             )
-        truncated = len(rows) > k
-        rows = rows[:k]
-        # Every candidate carries its own temporal_match; an undated fact is a
-        # flagged possible match here, exactly as in facts_context.
+        scope_hash = _lookup_relations_scope_hash(
+            deployment_id=deployment_id,
+            subject_entity_id=subject_entity_id,
+            predicate=predicate,
+            object_entity_id=object_entity_id,
+            valid_at=valid_at,
+        )
+        evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
+        with self._engine.connect() as connection:
+            # Wait for stamped declarations before opening the page snapshot.
+            if keyset is None:
+                evaluated_at = belief_watermark(
+                    connection=connection, deployment_id=deployment_id
+                )
+            connection = connection.execution_options(isolation_level="REPEATABLE READ")
+            with connection.begin():
+                as_of = valid_at or evaluated_at
+                rows = (
+                    connection.execute(
+                        _lookup_relations_sql(),
+                        {
+                            "deployment_id": deployment_id,
+                            "subject_entity_id": subject_entity_id,
+                            "predicate": predicate,
+                            "object_entity_id": object_entity_id,
+                            "as_of": as_of,
+                            "evaluated_at": evaluated_at,
+                            "cursor_at": keyset[0] if keyset else None,
+                            "cursor_id": keyset[1] if keyset else None,
+                            "limit": limit + 1,
+                            **_lookup_scope(
+                                valid_at=valid_at, evaluated_at=evaluated_at
+                            ).parameters(),
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="relation") for row in rows),
             kind="relation",
         )
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = _encode_lookup_cursor(
+                scope_hash=scope_hash,
+                evaluated_at=evaluated_at,
+                ingested_at=last["ingested_at"],
+                fact_id=last["fact_id"],
+            )
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=(
@@ -2044,7 +2165,7 @@ class QueryEngine:
             ),
             facts=facts,
             freshness=_freshness(),
-            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
+            next_cursor=next_cursor,
             negative=None
             if facts
             else Negative(
@@ -2063,59 +2184,122 @@ class QueryEngine:
         entity_id: UUID,
         property_query: str | None = None,
         k: int = 10,
+        limit: int = DEFAULT_LOOKUP_BROWSE_LIMIT,
+        cursor: str | None = None,
         valid_at: datetime | None = None,
     ) -> Envelope:
         """Observations on one entity — current, or as-of on the valid-time
         axis (S2/S9, D43): "headcount mid-2024" is the capped slice whose
         window covers that instant.
 
-        With a property query, the facts channel NOMINATES by label similarity
-        and the spine confirms live rows (D48); without one, the entity block
-        is read directly.
+        Without a property query this is a browse list (D154): ``limit`` /
+        ``cursor`` → ``next_cursor``, ordered by ``(ingested_at DESC, id)``.
+        With a property query the facts channel nominates by label similarity
+        and the spine confirms live rows (D48); ranked top-``k`` always
+        discloses ``truncation`` when more than ``k`` matched. ``cursor`` with
+        ``property_query`` is rejected.
         """
+        if property_query is not None and cursor is not None:
+            raise ValueError(
+                "cursor pages filter-only observation lookups; "
+                "drop property_query or cursor"
+            )
         dropped = 0
         truncated = False
-        evaluated_at = datetime.now(tz=UTC)
-        as_of = valid_at or evaluated_at
+        next_cursor = None
         if property_query is None:
-            with self._engine.connect() as connection:
-                rows = (
-                    connection.execute(
-                        _LOOKUP_OBSERVATIONS,
-                        {
-                            "deployment_id": deployment_id,
-                            "entity_id": entity_id,
-                            "as_of": as_of,
-                            "limit": k + 1,
-                            **_lookup_scope(
-                                valid_at=valid_at, evaluated_at=evaluated_at
-                            ).parameters(),
-                        },
-                    )
-                    .mappings()
-                    .all()
+            if not 1 <= limit <= MAX_LOOKUP_BROWSE_LIMIT:
+                raise ValueError(
+                    f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
                 )
-            truncated = len(rows) > k
-            rows = rows[:k]
-        else:
-            nominated = self._search_index.search_facts(
-                deployment_id=str(deployment_id),
-                vector=self._embed(
-                    query=property_query,
-                    call_site=SurfaceCallSite.LOOKUP_OBSERVATIONS,
-                    deployment_id=deployment_id,
-                ),
-                k=k,
-                kind="observation",
+            scope_hash = _lookup_observations_scope_hash(
+                deployment_id=deployment_id, entity_id=entity_id, valid_at=valid_at
             )
-            rows, dropped = self._confirm_observations(
+            evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
+            with self._engine.connect() as connection:
+                if keyset is None:
+                    evaluated_at = belief_watermark(
+                        connection=connection, deployment_id=deployment_id
+                    )
+                connection = connection.execution_options(
+                    isolation_level="REPEATABLE READ"
+                )
+                with connection.begin():
+                    as_of = valid_at or evaluated_at
+                    rows = (
+                        connection.execute(
+                            _lookup_observations_sql(),
+                            {
+                                "deployment_id": deployment_id,
+                                "entity_id": entity_id,
+                                "as_of": as_of,
+                                "evaluated_at": evaluated_at,
+                                "cursor_at": keyset[0] if keyset else None,
+                                "cursor_id": keyset[1] if keyset else None,
+                                "limit": limit + 1,
+                                **_lookup_scope(
+                                    valid_at=valid_at, evaluated_at=evaluated_at
+                                ).parameters(),
+                            },
+                        )
+                        .mappings()
+                        .all()
+                    )
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            if has_more and rows:
+                last = rows[-1]
+                next_cursor = _encode_lookup_cursor(
+                    scope_hash=scope_hash,
+                    evaluated_at=evaluated_at,
+                    ingested_at=last["ingested_at"],
+                    fact_id=last["fact_id"],
+                )
+        else:
+            if not 1 <= k <= 400:
+                raise ValueError("lookup k must be between 1 and 400")
+            evaluated_at = datetime.now(tz=UTC)
+            as_of = valid_at or evaluated_at
+            # Restrict to this entity before the k+1 cut so truncated /
+            # known_empty describe this entity's matches, not the corpus.
+            search_scored = getattr(self._search_index, "search_facts_scored", None)
+            vector = self._embed(
+                query=property_query,
+                call_site=SurfaceCallSite.LOOKUP_OBSERVATIONS,
+                deployment_id=deployment_id,
+            )
+            if search_scored is not None:
+                scored = search_scored(
+                    deployment_id=str(deployment_id),
+                    vector=vector,
+                    k=k + 1,
+                    kind="observation",
+                    entity_ids=(str(entity_id),),
+                    time=(
+                        CurrentFactTime()
+                        if valid_at is None
+                        else AtFactTime(at=valid_at)
+                    ),
+                    evaluated_at=evaluated_at,
+                )
+                nominated = tuple(item.item_id for item in scored)
+            else:
+                nominated = tuple(
+                    self._search_index.search_facts(
+                        deployment_id=str(deployment_id),
+                        vector=vector,
+                        k=k + 1,
+                        kind="observation",
+                    )
+                )
+            confirmed, dropped = self._confirm_observations(
                 deployment_id=deployment_id,
                 entity_id=entity_id,
                 observation_ids=tuple(UUID(item) for item in nominated),
                 as_of=as_of,
             )
-        # Every candidate carries its own temporal_match; an undated fact is a
-        # flagged possible match here, exactly as in facts_context.
+            truncated = len(nominated) > k
+            rows = confirmed[:k]
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="observation") for row in rows),
@@ -2134,6 +2318,7 @@ class QueryEngine:
             freshness=_freshness(),
             dropped_by_hydration=dropped,
             truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
+            next_cursor=next_cursor,
             negative=None
             if facts
             else Negative(
@@ -2840,15 +3025,6 @@ class QueryEngine:
             for envelope in inputs
             if envelope.truncation is not None
         )
-        continuations = tuple(
-            truncation.continuation
-            for truncation in truncations
-            if truncation.continuation is not None
-        )
-        if len(continuations) > 1:
-            raise ValueError(
-                "combine_evidence cannot merge multiple continuation tokens"
-            )
         evidence_by_id = {
             record.claim_id: record
             for envelope in inputs
@@ -2872,7 +3048,6 @@ class QueryEngine:
                 returned=len(evidence) + len(chunks),
                 estimated_total=estimated_total,
                 total_is_exact=all(item.total_is_exact for item in truncations),
-                continuation=continuations[0] if continuations else None,
                 reason=next((item.reason for item in truncations if item.reason), None),
             )
         # review r1 P1-1: an input that stopped early or answered with a
@@ -2956,7 +3131,7 @@ class QueryEngine:
         since: datetime,
         kinds: tuple[str, ...] | None = None,
         limit: int = DEFAULT_DELTA_LIMIT,
-        continuation: str | None = None,
+        cursor: str | None = None,
     ) -> Envelope:
         """The change feed as a query: what changed since `since` (S13/S14/S30).
 
@@ -2969,14 +3144,14 @@ class QueryEngine:
         of {relation, observation, claim, page}.
 
         Ordered newest-first over the FULL `(at, id)` key and bounded: hitting
-        `limit` sets a truncation marker carrying an opaque `continuation`.
-        Paginating means passing that token back (keeping the same `since`) —
-        it resumes strictly before the last row seen, so a page boundary that
-        splits rows sharing one timestamp never drops the tied remainder.
+        `limit` sets ``Envelope.next_cursor`` (D154). Paginating means passing
+        that token back (keeping the same `since`) — it resumes strictly
+        before the last row seen, so a page boundary that splits rows sharing
+        one timestamp never drops the tied remainder.
         """
         if limit < 1:
             raise ValueError("limit must be at least 1")
-        cursor = _decode_feed_cursor(continuation)
+        feed_cursor = _decode_feed_cursor(cursor)
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -2985,8 +3160,8 @@ class QueryEngine:
                         "deployment_id": deployment_id,
                         "since": since,
                         "kinds": list(kinds) if kinds else None,
-                        "cursor_at": cursor[0] if cursor else None,
-                        "cursor_id": str(cursor[1]) if cursor else None,
+                        "cursor_at": feed_cursor[0] if feed_cursor else None,
+                        "cursor_id": str(feed_cursor[1]) if feed_cursor else None,
                         "fetch": limit + 1,
                     },
                 )
@@ -3019,8 +3194,10 @@ class QueryEngine:
                 returned=len(changes),
                 estimated_total=len(changes),
                 total_is_exact=not truncated,
-                continuation=next_cursor,
-            ),
+            )
+            if truncated
+            else None,
+            next_cursor=next_cursor,
             negative=None
             if changes
             else Negative(
@@ -3714,7 +3891,7 @@ class QueryEngine:
 
         For every returned fact in a live contradiction group, the OTHER
         live sides come back inline (bounded by the cap, with
-        group_id/returned/total/continuation) — one-sided is never a valid
+        group_id/returned/total) — one-sided is never a valid
         answer. A fact under an open `support_withdrawn` review flag is
         marked `withdrawn` (flagged, not vanished). Two bounded batch reads,
         never one-per-fact.
@@ -3890,11 +4067,6 @@ class QueryEngine:
                 co_members=tuple(_co_member(member) for member in returned),
                 returned=len(returned),
                 total=len(others),
-                continuation=(
-                    str(returned[-1]["fact_id"])
-                    if len(returned) < len(others)
-                    else None
-                ),
             )
         return fact.model_copy(update=update) if update else fact
 
@@ -4140,8 +4312,10 @@ class QueryEngine:
                             "as_of": as_of,
                             # "at" the confirmed instant; for a current
                             # lookup that instant is the evaluation instant.
+                            # Ranked confirmation reads current belief through
+                            # the projection (same as a first browse page).
                             **_lookup_scope(
-                                valid_at=as_of, evaluated_at=as_of
+                                valid_at=as_of, evaluated_at=as_of, pinned_belief=False
                             ).parameters(),
                         },
                     )
@@ -4278,11 +4452,20 @@ class QueryEngine:
         return response.vectors[0]
 
 
-def _lookup_scope(*, valid_at: datetime | None, evaluated_at: datetime) -> TextScope:
-    """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current."""
+def _lookup_scope(
+    *, valid_at: datetime | None, evaluated_at: datetime, pinned_belief: bool = True
+) -> TextScope:
+    """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current.
+
+    Browse pages always pin ``believed_at`` to the evaluation clock (page one
+    pins the DB ``now()``; later pages reuse the cursor) so the as-of evidence
+    gate is the same predicate on every page (D154). Ranked confirmation keeps
+    ``pinned_belief=False`` and reads current belief through the projection.
+    """
     return TextScope.of(
         time=None if valid_at is None else AtFactTime(at=valid_at),
         evaluated_at=evaluated_at,
+        believed_at=evaluated_at if pinned_belief else None,
     )
 
 
@@ -4657,8 +4840,8 @@ def _unknown_context_entity(
 def _account_truncation(
     account: P1SearchAccount, *, returned: int
 ) -> Truncation | None:
-    """The D142 §8.6 disclosure of an early-stopped search, else ``None``."""
-    if account.termination.complete:
+    """Disclose a filled top-k or early-stopped search (D142 §8.6 / D154)."""
+    if account.termination is P1Termination.EXHAUSTED:
         return None
     return Truncation(
         truncated=True,
@@ -5423,15 +5606,30 @@ _RESOLVE_CONTEXT_HITS = text(
     """
 )
 
-_LOOKUP_RELATIONS = text(
-    f"""
+
+_LOOKUP_BELIEF_PREDICATE = (
+    "ingested_at <= :evaluated_at"
+    " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+)
+"""One as-of belief/ingest predicate for every browse-lookup page (D154).
+
+Page one pins ``evaluated_at`` from the database clock; later pages reuse the
+cursor. Rows ingested after that instant stay out; rows invalidated after it
+stay in. There is no first-page-only ``invalidated_at IS NULL`` branch.
+"""
+
+
+def _lookup_relations_sql() -> TextClause:
+    """Browse-relations statement; every page uses the as-of evidence gate."""
+    return text(
+        f"""
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
-      AND invalidated_at IS NULL
+      AND {_LOOKUP_BELIEF_PREDICATE}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (CAST(:subject_entity_id AS uuid) IS NULL
@@ -5439,28 +5637,42 @@ _LOOKUP_RELATIONS = text(
       AND (CAST(:predicate AS text) IS NULL OR predicate = :predicate)
       AND (CAST(:object_entity_id AS uuid) IS NULL
            OR object_entity_id = :object_entity_id)
-      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id")}
-    ORDER BY evidence_count DESC, ingested_at, relation_id
+      AND (
+            CAST(:cursor_at AS timestamptz) IS NULL
+            OR ingested_at < :cursor_at
+            OR (ingested_at = :cursor_at AND relation_id < CAST(:cursor_id AS uuid))
+          )
+      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id", pinned_belief=True)}
+    ORDER BY ingested_at DESC, relation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
-)
+    )
 
-_LOOKUP_OBSERVATIONS = text(
-    f"""
+
+def _lookup_observations_sql() -> TextClause:
+    """Browse-observations statement; every page uses the as-of evidence gate."""
+    return text(
+        f"""
     SELECT observation_id AS fact_id, statement AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
       AND subject_entity_id = :entity_id
-      AND invalidated_at IS NULL
+      AND {_LOOKUP_BELIEF_PREDICATE}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
-      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id")}
-    ORDER BY evidence_count DESC, ingested_at, observation_id
+      AND (
+            CAST(:cursor_at AS timestamptz) IS NULL
+            OR ingested_at < :cursor_at
+            OR (ingested_at = :cursor_at AND observation_id < CAST(:cursor_id AS uuid))
+          )
+      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id", pinned_belief=True)}
+    ORDER BY ingested_at DESC, observation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
-)
+    )
+
 
 _FACTS_CONTEXT_TIME_PREDICATE = """
       AND fact.ingested_at <= :evaluated_at

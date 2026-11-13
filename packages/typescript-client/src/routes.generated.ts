@@ -383,13 +383,13 @@ export default {
       },
       {
         "in": "query",
-        "name": "k",
+        "name": "limit",
         "required": false,
         "schema": {
           "default": 50,
           "maximum": 200,
           "minimum": 1,
-          "title": "K",
+          "title": "Limit",
           "type": "integer"
         }
       },
@@ -569,6 +569,34 @@ export default {
           "title": "K",
           "type": "integer"
         }
+      },
+      {
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      {
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cursor"
+        }
       }
     ],
     "path": "/lookup/observations",
@@ -669,14 +697,30 @@ export default {
       },
       {
         "in": "query",
-        "name": "k",
+        "name": "limit",
         "required": false,
         "schema": {
           "default": 50,
-          "maximum": 400,
+          "maximum": 200,
           "minimum": 1,
-          "title": "K",
+          "title": "Limit",
           "type": "integer"
+        }
+      },
+      {
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cursor"
         }
       }
     ],

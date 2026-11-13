@@ -33,7 +33,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.19.1/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.20.0/openapi.json).
 
 ## Base URL
 
@@ -363,20 +363,68 @@ first call already did the work. Every other route except
 
 ## Pagination and truncation
 
-Results are bounded everywhere, and a bound is never silent.
+Results are bounded everywhere, and a bound is never silent (D154).
 
-- **`GET /documents`**, `POST /documents/search` (without a query),
-  `section_history` and `document_references` page with an opaque `cursor`.
-  Pass the `cursor` from one page to get the next; `null` means there is no
-  next page. A page of the last three can hold fewer rows than asked for and
-  still carry a `cursor`.
-- **Envelope results** carry a `truncation` block when a cap applied:
-  `truncated`, `returned`, `estimated_total`, `total_is_exact`, an optional
-  `continuation` and an optional `reason`. Only `POST /graph/neighborhood`
-  accepts a `continuation` back today.
-- **SQL query results** (`QueryResult/v1`) carry `truncated`,
-  `truncation_reason` (`row_cap`, `byte_cap`, or a graph budget) and the
-  `limits` the statement ran under.
+### Browse lists
+
+Filter-only, exhaustive listings request `limit` (default 50, max 200) and
+an opaque `cursor`. The response carries `next_cursor`: `null` exactly at
+the end — the only "more exists" signal. A short or empty page with a
+non-null `next_cursor` is legal (for example when a document-search browse
+page hits its lineage scan cap before finding another match). Keyset order
+uses an immutable key plus an id tiebreak. Every cursor binds to the
+request's listing scope (its filters); reusing a cursor with a different
+scope is rejected as an invalid cursor (`400`, or the route's existing typed
+error). There are no totals, offsets, or `has_more`.
+
+Where the source can honour an as-of read cheaply, the cursor also pins that
+instant (document search browse, section history, document references, graph
+neighborhood clocks, lookup browse). Lookup browse uses one as-of
+belief/ingest predicate on every page: page one acquires a commit-visible belief watermark before opening its
+snapshot and is simply continuation with no position. `GET /documents` always reads the
+current newest live version and serving flag, so its cursor carries no
+instant: unchanged rows are never repeated or skipped; a row whose filtered
+status changes between pages may enter or leave the listing.
+
+Applies to: `GET /documents`, `POST /documents/search` without a `query`,
+section history, document references, `GET /lookup/relations`, and
+`GET /lookup/observations` without `property_query`. Pass the previous
+page's `next_cursor` back as `cursor`.
+
+`GET /ops/cost-export/v1` is outside these list rules: it is a resumable
+feed with its own contract: an issued first-page `cursor`, echoed request
+`cursor` thereafter, and `next_cursor` carrying a fresh horizon even on empty
+batches (limits 1–500, default 100). See
+[Deployment — cost export](/docs/reference/http-api/deployment#get-opscost-exportv1)
+and the binding design
+[`request_path_metering_and_cost_export_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/request_path_metering_and_cost_export_design.md).
+
+### Ranked results
+
+Any call with a `query`, `property_query`, or `name` requests top-`k` and
+takes no cursor (query + cursor is a validation error). The response always
+discloses the cap: Envelope routes set `truncation.truncated` whenever more
+than `k` matched; `DocumentSearchPage` in ranked mode sets `truncated` and
+leaves `next_cursor` null.
+
+### Envelope paging
+
+Envelope also carries top-level `next_cursor` for graph neighborhood and
+browse-mode lookups. The `truncation` block is disclosure only:
+`truncated`, `returned`, `estimated_total`, `total_is_exact`, and an
+optional `reason`. `POST /graph/neighborhood` pages with request `cursor`
+(pins `valid_at` / `believed_at`; default `limit` 100). Its keyset position
+survives deletion of already-returned edges. Browse cursors bind deployment
+identity and all membership filters; changing project or filters is an error,
+while page size may change. Deeper neighborhoods page within their 500-row
+ceiling and disclose any ceiling stop through `truncation.reason`.
+
+### SQL
+
+`POST /query/sql` and saved-query run keep `max_rows` with
+`truncated` / `truncation_reason` as a safety cap. `max_rows` above 1000 is
+`422`. For larger scans, page in the statement with your own
+`WHERE … LIMIT` (see [SQL](/docs/guides/sql)).
 
 See [Result types](/docs/reference/result-types).
 

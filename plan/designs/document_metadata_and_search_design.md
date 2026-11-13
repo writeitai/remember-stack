@@ -172,7 +172,11 @@ search_documents(query?, filters?, k) → documents
   **as-of instant**, and while paging each document is judged by its newest
   live version ingested at or before that instant, so neither a later
   version nor metadata filled in by conversion moves a row across pages.
-  Ranked queries (with `query`) return one page of `k` results.
+  Browse takes `limit` (default 50, maximum 200) and returns `next_cursor`,
+  null exactly at the end. The cursor scope includes deployment identity,
+  filters, versions and time; changing those is an error, while page size may
+  change. Ranked queries (with `query`) return one page of `k` results,
+  disclose `truncated`, and refuse a cursor (D154).
 - **Each result** carries the document and version, `file_name`, `title`,
   family and posture, processing status, the general metadata, the lineage's
   tags (D156), the overview or summary, and how to reach it: its P3 path and

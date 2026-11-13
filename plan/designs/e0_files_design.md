@@ -824,13 +824,19 @@ format. These are the fixed top-level document types, each with an `_index.md`:
 |---|---|
 | `email/` | Email source kind or email family (`message/rfc822`, validated MSG/email route) |
 | `chat/` | Chat/message-thread source kind or conversation route, excluding email |
-| `image/`, `audio/`, `video/` | Corresponding decided MIME/family |
+| `image/` | Image MIME or `image` family |
+| `audio/`, `video/` | Stored `audio/*` or `video/*` MIME, respectively; both belong to the `media` family |
 | `pdf/` | `application/pdf` |
-| `spreadsheet/` | Spreadsheet/workbook family, including CSV/TSV |
-| `presentation/` | Presentation/slide family |
-| `document/` | Prose text, Markdown, HTML, word-processing, RTF and notebook families |
-| `data/` | Remaining structured-data, code/configuration, archive/container families |
+| `spreadsheet/` | `spreadsheet` or `delimited` family, including CSV/TSV |
+| `presentation/` | `presentation` family |
+| `document/` | `text`, `markdown`, `html`, `word` (including RTF), `notebook` or `ebook` family |
+| `data/` | `dataset`, `code`, `config`, `archive`, `log` or `other_text` family |
 | `other/` | Anything unmatched, including unrecognized binary cards |
+
+The shared `media` family has no audio/video subtype of its own. The engine
+preserves each media format's MIME and ships the same generic `card` route for
+both, so that route cannot distinguish them. Media without an `audio/` or
+`video/` MIME falls to `other`, rather than guessing video.
 
 Registry subtypes extend these matches, not the set of top-level types. An email
 attachment ingested as its own lineage follows its own format; its email source
@@ -839,17 +845,23 @@ matches above mean the item itself is a message/thread, not merely fetched by an
 email/chat connector. Type-policy changes are versioned P3 changes.
 
 Below the type use the persisted root placement hint, or no topic for `null`, a
-failed/degraded call, or invalid input. Accept at most four topic components,
-normalize each by NFKC, lowercase, ASCII letters/digits with other runs replaced
-by `-`, trim and cap at 48 bytes; empty/reserved components, absolute paths,
+failed/degraded call, or invalid input. Accept at most four topic components.
+Validate separators and reserved names after NFKC normalization. For slugging,
+decompose each component with NFKD, lowercase, remove combining marks, and
+transliterate common non-decomposing Latin letters: `ß→ss`, `æ→ae`, `œ→oe`,
+`ø→o`, `ł→l`, `đ/ð→d`, `þ→th`. Keep ASCII letters/digits, replace other runs
+with `-`, trim and cap at 48 bytes. Empty/reserved components, absolute paths,
 `.`/`..`, slash/backslash inside a component, or excessive depth reject the hint
-as a whole. A valid empty/no-topic result is explicit `null`, not an error.
+as a whole. Scripts with no ASCII form therefore reject the topic. A valid
+empty/no-topic result is explicit `null`, not an error.
 The model may intentionally choose no topic; it never chooses the type or slug.
 No LLM calls occur in the publisher or repair.
 
 The leaf name is `<title-slug>--<suffix>`. Use the selected version's D134 title,
 then its filename, then the lineage title as fallback. The slug uses the same
-normalization, a 60-byte cap and `untitled` fallback. Define
+normalization, a 60-byte cap and `untitled` fallback, including titles with no
+ASCII form. For example, `Smlouva o dílo – Žluťoučký kůň 2024` becomes
+`smlouva-o-dilo-zlutoucky-kun-2024`. Define
 `corpus_suffix(doc_id) = sha256(doc_id.bytes).hexdigest()[:24]`, using the UUID's
 16 canonical bytes. Its 24 lowercase hex characters carry 96 bits: the accidental
 collision probability n(n−1)/(2 × 2^96) is below 6.4 × 10^-14 even for 100 million

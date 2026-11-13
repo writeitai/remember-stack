@@ -8,15 +8,16 @@ import type { OutputDocumentReferencesTooBroad } from './OutputDocumentReference
  * A page of ``document_references`` rows.
  *
  * Ordered by direction (outgoing first), source document, source version,
- * reference, window start and target version. ``cursor`` pins
+ * reference, window start and target version. ``next_cursor`` pins
  * ``evaluated_at`` and ``believed_at``; a page may be short when the scan
- * bound was reached and still carry a cursor. ``too_broad`` is set (and
- * ``rows`` empty) when the section has too many descendant keys.
+ * bound was reached and still carry a non-null ``next_cursor``. Null means
+ * the end. ``too_broad`` is set (and ``rows`` empty) when the section has
+ * too many descendant keys.
  */
 export type OutputDocumentReferencesPage = {
     believed_at: string;
-    cursor: string | null;
     evaluated_at: string;
+    next_cursor: string | null;
     rows: Array<OutputDocumentReference>;
     too_broad: OutputDocumentReferencesTooBroad | null;
 };

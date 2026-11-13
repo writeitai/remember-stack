@@ -7,6 +7,7 @@ against the live spine (D48), every answer carrying the D49 envelope.
 
 from collections.abc import Iterator
 from datetime import datetime
+from datetime import timedelta
 from datetime import UTC
 import json
 from pathlib import Path
@@ -577,8 +578,8 @@ def test_s1_current_employer_via_resolve_and_lookup(rig: _ApiRig) -> None:
     assert relations["freshness"]["pg_live_ts"] is not None
 
 
-def test_lookup_relations_caps_at_k_and_says_so(rig: _ApiRig) -> None:
-    """G28: a lookup never returns an unbounded list; a cap is disclosed."""
+def test_lookup_relations_pages_via_cursor(rig: _ApiRig) -> None:
+    """D154: browse relations page with limit/cursor → next_cursor."""
     alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
         "entities"
     ][0]
@@ -617,21 +618,42 @@ def test_lookup_relations_caps_at_k_and_says_so(rig: _ApiRig) -> None:
             {"second": second, "subject": alice["entity_id"]},
         )
     capped = rig.client.get(
-        "/lookup/relations", params={"subject_entity_id": alice["entity_id"], "k": 1}
+        "/lookup/relations",
+        params={"subject_entity_id": alice["entity_id"], "limit": 1},
     ).json()
     assert len(capped["facts"]) == 1
-    assert capped["truncation"]["truncated"] is True
-    assert capped["truncation"]["returned"] == 1
-    assert capped["truncation"]["reason"] == "lookup_k_limit"
-    assert capped["truncation"]["total_is_exact"] is False
+    assert capped["next_cursor"] is not None
+    assert capped["truncation"] is None
+
+    page2 = rig.client.get(
+        "/lookup/relations",
+        params={
+            "subject_entity_id": alice["entity_id"],
+            "limit": 1,
+            "cursor": capped["next_cursor"],
+        },
+    ).json()
+    assert len(page2["facts"]) == 1
+    assert page2["facts"][0]["fact_id"] != capped["facts"][0]["fact_id"]
 
     unfiltered = rig.client.get("/lookup/relations").json()
     assert len(unfiltered["facts"]) == 2
-    assert unfiltered["truncation"] is None
+    assert unfiltered["next_cursor"] is None
+
+    mismatched = rig.client.get(
+        "/lookup/relations",
+        params={
+            "subject_entity_id": acme["entity_id"],
+            "limit": 1,
+            "cursor": capped["next_cursor"],
+        },
+    )
+    assert mismatched.status_code == 400
+    assert "different listing" in mismatched.json()["detail"]
 
 
-def test_lookup_observations_honours_k_without_a_property_query(rig: _ApiRig) -> None:
-    """G28: the direct entity read is capped by `k` like the semantic one."""
+def test_lookup_observations_pages_without_a_property_query(rig: _ApiRig) -> None:
+    """D154: browse observations page with limit/cursor → next_cursor."""
     acme = rig.client.get("/resolve", params={"name": "Acme"}).json()["entities"][0]
     with rig.engine.begin() as connection:
         connection.execute(
@@ -659,16 +681,124 @@ def test_lookup_observations_honours_k_without_a_property_query(rig: _ApiRig) ->
             {"second": second, "entity": acme["entity_id"]},
         )
     capped = rig.client.get(
-        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 1}
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "limit": 1}
     ).json()
     assert len(capped["facts"]) == 1
-    assert capped["truncation"]["truncated"] is True
-    assert capped["truncation"]["reason"] == "lookup_k_limit"
+    assert capped["next_cursor"] is not None
+    assert capped["truncation"] is None
     whole = rig.client.get(
-        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 2}
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "limit": 2}
     ).json()
     assert len(whole["facts"]) == 2
-    assert whole["truncation"] is None
+    assert whole["next_cursor"] is None
+
+    alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
+        "entities"
+    ][0]
+    mismatched = rig.client.get(
+        "/lookup/observations",
+        params={
+            "entity_id": alice["entity_id"],
+            "limit": 1,
+            "cursor": capped["next_cursor"],
+        },
+    )
+    assert mismatched.status_code == 400
+    assert "different listing" in mismatched.json()["detail"]
+
+
+def test_lookup_page_one_keeps_fact_invalidated_after_pinned_instant(
+    rig: _ApiRig,
+) -> None:
+    """Page one uses the same as-of belief predicate as continuation pages.
+
+    Pin the evaluation instant, then invalidate the fact after that instant:
+    page one must still return it (the old ``invalidated_at IS NULL`` branch
+    would have skipped it).
+    """
+    alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
+        "entities"
+    ][0]
+    before = rig.client.get(
+        "/lookup/relations",
+        params={"subject_entity_id": alice["entity_id"], "predicate": "works_for"},
+    ).json()
+    (fact,) = before["facts"]
+    fact_id = fact["fact_id"]
+
+    with rig.engine.begin() as connection:
+        pinned = connection.execute(text("SELECT now()")).scalar_one()
+        connection.execute(
+            text(
+                "UPDATE relations SET invalidated_at = :after"
+                " WHERE relation_id = :fact_id"
+            ),
+            {"fact_id": fact_id, "after": pinned + timedelta(seconds=30)},
+        )
+
+    # Force page one to reuse the pinned instant by issuing a cursor-shaped
+    # continuation at the start position: encode evaluated_at=pinned with no
+    # prior keyset by calling the engine through a synthetic first-page path.
+    # Direct SQL proof of the shared predicate (same as page-one SQL).
+    with rig.engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT relation_id FROM relations"
+                    " WHERE relation_id = :fact_id"
+                    "   AND ingested_at <= :evaluated_at"
+                    "   AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+                ),
+                {"fact_id": fact_id, "evaluated_at": pinned},
+            )
+            .scalars()
+            .all()
+        )
+    assert rows == [UUID(fact_id)]
+
+    # Continuation with the pinned evaluated_at must still return the fact
+    # (page one shares that SQL). Position the keyset before this row.
+    scope_hash = query_engine_module._lookup_relations_scope_hash(
+        deployment_id=_DEPLOYMENT_ID,
+        subject_entity_id=UUID(alice["entity_id"]),
+        predicate="works_for",
+        object_entity_id=None,
+        valid_at=None,
+    )
+    # Position after a synthetic newer key so the real row is still in range.
+    newer_at = pinned + timedelta(seconds=60)
+    cursor = query_engine_module._encode_lookup_cursor(
+        scope_hash=scope_hash,
+        evaluated_at=pinned,
+        ingested_at=newer_at,
+        fact_id=uuid4(),
+    )
+    page = rig.client.get(
+        "/lookup/relations",
+        params={
+            "subject_entity_id": alice["entity_id"],
+            "predicate": "works_for",
+            "cursor": cursor,
+        },
+    ).json()
+    assert any(item["fact_id"] == fact_id for item in page["facts"])
+
+    # And a plain page-one read after the pin still includes it when we restore
+    # the row's invalidated_at into the future relative to DB now() — the live
+    # page-one path pins now() inside the same snapshot as the read.
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE relations SET invalidated_at = now() + interval '1 hour'"
+                " WHERE relation_id = :fact_id"
+            ),
+            {"fact_id": fact_id},
+        )
+    page_one = rig.client.get(
+        "/lookup/relations",
+        params={"subject_entity_id": alice["entity_id"], "predicate": "works_for"},
+    ).json()
+    assert any(item["fact_id"] == fact_id for item in page_one["facts"])
 
 
 def test_s2_headcount_via_semantic_observation_lookup(rig: _ApiRig) -> None:

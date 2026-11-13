@@ -708,18 +708,6 @@
             "title": "Co Members",
             "type": "array"
           },
-          "continuation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Continuation"
-          },
           "group_id": {
             "format": "uuid",
             "title": "Group Id",
@@ -1017,7 +1005,14 @@
       "DocumentPage": {
         "additionalProperties": false,
         "properties": {
-          "cursor": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSummary"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "next_cursor": {
             "anyOf": [
               {
                 "type": "string"
@@ -1027,14 +1022,7 @@
               }
             ],
             "default": null,
-            "title": "Cursor"
-          },
-          "documents": {
-            "items": {
-              "$ref": "#/components/schemas/DocumentSummary"
-            },
-            "title": "Documents",
-            "type": "array"
+            "title": "Next Cursor"
           }
         },
         "required": [
@@ -1411,14 +1399,19 @@
       },
       "DocumentReferencesPage": {
         "additionalProperties": false,
-        "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a cursor. ``too_broad`` is set (and\n``rows`` empty) when the section has too many descendant keys.",
+        "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``next_cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a non-null ``next_cursor``. Null means\nthe end. ``too_broad`` is set (and ``rows`` empty) when the section has\ntoo many descendant keys.",
         "properties": {
           "believed_at": {
             "format": "date-time",
             "title": "Believed At",
             "type": "string"
           },
-          "cursor": {
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "next_cursor": {
             "anyOf": [
               {
                 "type": "string"
@@ -1428,12 +1421,7 @@
               }
             ],
             "default": null,
-            "title": "Cursor"
-          },
-          "evaluated_at": {
-            "format": "date-time",
-            "title": "Evaluated At",
-            "type": "string"
+            "title": "Next Cursor"
           },
           "rows": {
             "items": {
@@ -1516,13 +1504,6 @@
             "default": null,
             "title": "Doc Id"
           },
-          "k": {
-            "default": 50,
-            "maximum": 200,
-            "minimum": 1,
-            "title": "K",
-            "type": "integer"
-          },
           "kinds": {
             "anyOf": [
               {
@@ -1548,6 +1529,13 @@
             ],
             "default": null,
             "title": "Kinds"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
           },
           "section_key": {
             "anyOf": [
@@ -1762,7 +1750,14 @@
             "title": "As Of",
             "type": "string"
           },
-          "cursor": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchResult"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "next_cursor": {
             "anyOf": [
               {
                 "type": "string"
@@ -1772,14 +1767,7 @@
               }
             ],
             "default": null,
-            "title": "Cursor"
-          },
-          "documents": {
-            "items": {
-              "$ref": "#/components/schemas/DocumentSearchResult"
-            },
-            "title": "Documents",
-            "type": "array"
+            "title": "Next Cursor"
           },
           "people_matched": {
             "default": [],
@@ -1799,6 +1787,11 @@
               }
             ],
             "default": null
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1844,7 +1837,7 @@
       },
       "DocumentSearchRequest": {
         "additionalProperties": false,
-        "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches and\nthere is no cursor. Without one they are every document the filters\nmatch, newest declared creation date first, paged by ``cursor``.",
+        "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches (top\n``k``); there is no cursor. Without a query they are every document the\nfilters match, newest judged-version ingest time first, paged by\n``limit`` and ``cursor`` (D154).",
         "properties": {
           "cursor": {
             "anyOf": [
@@ -1879,6 +1872,13 @@
             "maximum": 200,
             "minimum": 1,
             "title": "K",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
             "type": "integer"
           },
           "query": {
@@ -2723,6 +2723,18 @@
               }
             ],
             "default": null
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "nodes": {
             "default": [],
@@ -3600,17 +3612,17 @@
             ],
             "title": "Believed At"
           },
-          "continuation": {
+          "cursor": {
             "anyOf": [
               {
-                "maxLength": 200,
+                "maxLength": 2048,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Continuation"
+            "title": "Cursor"
           },
           "entity_id": {
             "format": "uuid",
@@ -3630,7 +3642,7 @@
             "type": "boolean"
           },
           "limit": {
-            "default": 500,
+            "default": 100,
             "maximum": 500.0,
             "minimum": 1.0,
             "title": "Limit",
@@ -5166,18 +5178,6 @@
             "title": "Co Members",
             "type": "array"
           },
-          "continuation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Continuation"
-          },
           "group_id": {
             "format": "uuid",
             "title": "Group Id",
@@ -5196,7 +5196,6 @@
         },
         "required": [
           "co_members",
-          "continuation",
           "group_id",
           "returned",
           "total"
@@ -5490,7 +5489,14 @@
       "OutputDocumentPage": {
         "additionalProperties": false,
         "properties": {
-          "cursor": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/OutputDocumentSummary"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "next_cursor": {
             "anyOf": [
               {
                 "type": "string"
@@ -5500,19 +5506,12 @@
               }
             ],
             "default": null,
-            "title": "Cursor"
-          },
-          "documents": {
-            "items": {
-              "$ref": "#/components/schemas/OutputDocumentSummary"
-            },
-            "title": "Documents",
-            "type": "array"
+            "title": "Next Cursor"
           }
         },
         "required": [
-          "cursor",
-          "documents"
+          "documents",
+          "next_cursor"
         ],
         "title": "DocumentPage",
         "type": "object",
@@ -5904,14 +5903,19 @@
       },
       "OutputDocumentReferencesPage": {
         "additionalProperties": false,
-        "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a cursor. ``too_broad`` is set (and\n``rows`` empty) when the section has too many descendant keys.",
+        "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``next_cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a non-null ``next_cursor``. Null means\nthe end. ``too_broad`` is set (and ``rows`` empty) when the section has\ntoo many descendant keys.",
         "properties": {
           "believed_at": {
             "format": "date-time",
             "title": "Believed At",
             "type": "string"
           },
-          "cursor": {
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "next_cursor": {
             "anyOf": [
               {
                 "type": "string"
@@ -5921,12 +5925,7 @@
               }
             ],
             "default": null,
-            "title": "Cursor"
-          },
-          "evaluated_at": {
-            "format": "date-time",
-            "title": "Evaluated At",
-            "type": "string"
+            "title": "Next Cursor"
           },
           "rows": {
             "items": {
@@ -5949,8 +5948,8 @@
         },
         "required": [
           "believed_at",
-          "cursor",
           "evaluated_at",
+          "next_cursor",
           "rows",
           "too_broad"
         ],
@@ -6011,13 +6010,6 @@
             "default": null,
             "title": "Doc Id"
           },
-          "k": {
-            "default": 50,
-            "maximum": 200,
-            "minimum": 1,
-            "title": "K",
-            "type": "integer"
-          },
           "kinds": {
             "anyOf": [
               {
@@ -6043,6 +6035,13 @@
             ],
             "default": null,
             "title": "Kinds"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
           },
           "section_key": {
             "anyOf": [
@@ -6099,8 +6098,8 @@
           "cursor",
           "direction",
           "doc_id",
-          "k",
           "kinds",
+          "limit",
           "section_key",
           "time"
         ],
@@ -6281,7 +6280,14 @@
             "title": "As Of",
             "type": "string"
           },
-          "cursor": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/OutputDocumentSearchResult"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "next_cursor": {
             "anyOf": [
               {
                 "type": "string"
@@ -6291,14 +6297,7 @@
               }
             ],
             "default": null,
-            "title": "Cursor"
-          },
-          "documents": {
-            "items": {
-              "$ref": "#/components/schemas/OutputDocumentSearchResult"
-            },
-            "title": "Documents",
-            "type": "array"
+            "title": "Next Cursor"
           },
           "people_matched": {
             "default": [],
@@ -6318,14 +6317,20 @@
               }
             ],
             "default": null
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
           "as_of",
-          "cursor",
           "documents",
+          "next_cursor",
           "people_matched",
-          "scope_pending"
+          "scope_pending",
+          "truncated"
         ],
         "title": "DocumentSearchPage",
         "type": "object",
@@ -6370,7 +6375,7 @@
       },
       "OutputDocumentSearchRequest": {
         "additionalProperties": false,
-        "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches and\nthere is no cursor. Without one they are every document the filters\nmatch, newest declared creation date first, paged by ``cursor``.",
+        "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches (top\n``k``); there is no cursor. Without a query they are every document the\nfilters match, newest judged-version ingest time first, paged by\n``limit`` and ``cursor`` (D154).",
         "properties": {
           "cursor": {
             "anyOf": [
@@ -6405,6 +6410,13 @@
             "maximum": 200,
             "minimum": 1,
             "title": "K",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Limit",
             "type": "integer"
           },
           "query": {
@@ -6469,6 +6481,7 @@
           "cursor",
           "filters",
           "k",
+          "limit",
           "query",
           "time",
           "versions"
@@ -7292,6 +7305,18 @@
             ],
             "default": null
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
           "nodes": {
             "default": [],
             "items": {
@@ -7397,6 +7422,7 @@
           "freshness",
           "grain",
           "negative",
+          "next_cursor",
           "nodes",
           "pages",
           "paths",
@@ -9392,23 +9418,6 @@
             "default": null,
             "title": "Evaluated At"
           },
-          "exact_total": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Exact Total"
-          },
-          "exact_total_known": {
-            "default": false,
-            "title": "Exact Total Known",
-            "type": "boolean"
-          },
           "execution_started_at": {
             "format": "date-time",
             "title": "Execution Started At",
@@ -9592,8 +9601,6 @@
           "error_code",
           "error_message",
           "evaluated_at",
-          "exact_total",
-          "exact_total_known",
           "execution_started_at",
           "grade",
           "graph_invocations",
@@ -10608,7 +10615,7 @@
       },
       "OutputSectionHistoryPage": {
         "additionalProperties": false,
-        "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``cursor`` pins ``evaluated_at`` and\n``believed_at`` for the following pages.",
+        "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``next_cursor`` pins ``evaluated_at``\nand ``believed_at`` for the following pages; null exactly at the end.",
         "properties": {
           "amendments": {
             "default": [],
@@ -10623,18 +10630,6 @@
             "title": "Believed At",
             "type": "string"
           },
-          "cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Cursor"
-          },
           "doc_id": {
             "format": "uuid",
             "title": "Doc Id",
@@ -10644,6 +10639,18 @@
             "format": "date-time",
             "title": "Evaluated At",
             "type": "string"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "periodised": {
             "title": "Periodised",
@@ -10664,9 +10671,9 @@
         "required": [
           "amendments",
           "believed_at",
-          "cursor",
           "doc_id",
           "evaluated_at",
+          "next_cursor",
           "periodised",
           "rows",
           "section_key"
@@ -10697,11 +10704,11 @@
             "title": "Doc Id",
             "type": "string"
           },
-          "k": {
+          "limit": {
             "default": 50,
             "maximum": 200,
             "minimum": 1,
-            "title": "K",
+            "title": "Limit",
             "type": "integer"
           },
           "section_key": {
@@ -10744,7 +10751,7 @@
         "required": [
           "cursor",
           "doc_id",
-          "k",
+          "limit",
           "section_key",
           "time"
         ],
@@ -11602,19 +11609,8 @@
       },
       "OutputTruncation": {
         "additionalProperties": false,
+        "description": "Disclosure that a ranked or safety cap applied (D154).",
         "properties": {
-          "continuation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Continuation"
-          },
           "estimated_total": {
             "minimum": 0,
             "title": "Estimated Total",
@@ -11648,7 +11644,6 @@
           }
         },
         "required": [
-          "continuation",
           "estimated_total",
           "reason",
           "returned",
@@ -12266,23 +12261,6 @@
             ],
             "default": null,
             "title": "Evaluated At"
-          },
-          "exact_total": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Exact Total"
-          },
-          "exact_total_known": {
-            "default": false,
-            "title": "Exact Total Known",
-            "type": "boolean"
           },
           "execution_started_at": {
             "format": "date-time",
@@ -13102,6 +13080,7 @@
           "max_rows": {
             "anyOf": [
               {
+                "maximum": 1000.0,
                 "minimum": 0.0,
                 "type": "integer"
               },
@@ -13466,7 +13445,7 @@
       },
       "SectionHistoryPage": {
         "additionalProperties": false,
-        "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``cursor`` pins ``evaluated_at`` and\n``believed_at`` for the following pages.",
+        "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``next_cursor`` pins ``evaluated_at``\nand ``believed_at`` for the following pages; null exactly at the end.",
         "properties": {
           "amendments": {
             "default": [],
@@ -13481,18 +13460,6 @@
             "title": "Believed At",
             "type": "string"
           },
-          "cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Cursor"
-          },
           "doc_id": {
             "format": "uuid",
             "title": "Doc Id",
@@ -13502,6 +13469,18 @@
             "format": "date-time",
             "title": "Evaluated At",
             "type": "string"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "periodised": {
             "title": "Periodised",
@@ -13553,11 +13532,11 @@
             "title": "Doc Id",
             "type": "string"
           },
-          "k": {
+          "limit": {
             "default": 50,
             "maximum": 200,
             "minimum": 1,
-            "title": "K",
+            "title": "Limit",
             "type": "integer"
           },
           "section_key": {
@@ -13996,6 +13975,7 @@
           "max_rows": {
             "anyOf": [
               {
+                "maximum": 1000.0,
                 "minimum": 0.0,
                 "type": "integer"
               },
@@ -14467,19 +14447,8 @@
       },
       "Truncation": {
         "additionalProperties": false,
+        "description": "Disclosure that a ranked or safety cap applied (D154).",
         "properties": {
-          "continuation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Continuation"
-          },
           "estimated_total": {
             "minimum": 0,
             "title": "Estimated Total",
@@ -14725,7 +14694,7 @@
   },
   "info": {
     "title": "RememberStack query API",
-    "version": "0.19.1"
+    "version": "0.20.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -15139,7 +15108,7 @@
     },
     "/documents/{doc_id}/sections/{section_key}/history": {
       "get": {
-        "description": "One section key across the document's versions.\n\nOne row per version the time scope selects (``mode``, default\n``history``; ``at`` for ``mode=at``, ``from``/``to`` for\n``mode=overlap``): the version, its in-force intervals, and the\nsection it holds under the key with ``changed``/``own_changed``\nagainst the previous row that held it \u2014 or ``absent``,\n``not_indexed`` or ``processing``. Ordered by effective start for a\nperiodised document, else by version number; ``cursor`` pages and\npins the evaluation and belief instants.",
+        "description": "One section key across the document's versions.\n\nOne row per version the time scope selects (``mode``, default\n``history``; ``at`` for ``mode=at``, ``from``/``to`` for\n``mode=overlap``): the version, its in-force intervals, and the\nsection it holds under the key with ``changed``/``own_changed``\nagainst the previous row that held it \u2014 or ``absent``,\n``not_indexed`` or ``processing``. Ordered by effective start for a\nperiodised document, else by version number; ``limit`` / ``cursor``\npage and pin the evaluation and belief instants (``next_cursor`` out).",
         "operationId": "section_history_documents__doc_id__sections__section_key__history_get",
         "parameters": [
           {
@@ -15230,13 +15199,13 @@
           },
           {
             "in": "query",
-            "name": "k",
+            "name": "limit",
             "required": false,
             "schema": {
               "default": 50,
               "maximum": 200,
               "minimum": 1,
-              "title": "K",
+              "title": "Limit",
               "type": "integer"
             }
           },
@@ -16010,7 +15979,7 @@
     },
     "/lookup/observations": {
       "get": {
-        "description": "Live observations on one entity, semantic over statements (S2).",
+        "description": "Live observations on one entity (browse or ranked property match).",
         "operationId": "lookup_observations_lookup_observations_get",
         "parameters": [
           {
@@ -16050,6 +16019,34 @@
               "title": "K",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
           }
         ],
         "responses": {
@@ -16084,7 +16081,7 @@
     },
     "/lookup/relations": {
       "get": {
-        "description": "Relations matching an (s, p, o) pattern \u2014 current, or as-of (S9).",
+        "description": "Browse relations matching an (s, p, o) pattern \u2014 current, or as-of (S9).",
         "operationId": "lookup_relations_lookup_relations_get",
         "parameters": [
           {
@@ -16156,14 +16153,30 @@
           },
           {
             "in": "query",
-            "name": "k",
+            "name": "limit",
             "required": false,
             "schema": {
               "default": 50,
-              "maximum": 400,
+              "maximum": 200,
               "minimum": 1,
-              "title": "K",
+              "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],

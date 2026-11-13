@@ -155,7 +155,7 @@ class DocumentSummary(BaseModel):
 class DocumentPage(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     documents: tuple[DocumentSummary, ...]
-    cursor: str | None = None
+    next_cursor: str | None = None
 
 
 class DocumentDeletion(BaseModel):
@@ -435,6 +435,8 @@ class EffectiveInterval(BaseModel):
 
 DOCUMENT_SEARCH_MAX_K: Final = 200
 DOCUMENT_SEARCH_DEFAULT_K: Final = 20
+DOCUMENT_SEARCH_DEFAULT_LIMIT: Final = 50
+DOCUMENT_SEARCH_MAX_LIMIT: Final = 200
 
 
 class DocumentSearchFilters(BaseModel):
@@ -463,9 +465,10 @@ class DocumentSearchFilters(BaseModel):
 class DocumentSearchRequest(BaseModel):
     """One ``search_documents`` call.
 
-    With a ``query`` the results are ranked by name and content matches and
-    there is no cursor. Without one they are every document the filters
-    match, newest declared creation date first, paged by ``cursor``.
+    With a ``query`` the results are ranked by name and content matches (top
+    ``k``); there is no cursor. Without a query they are every document the
+    filters match, newest judged-version ingest time first, paged by
+    ``limit`` and ``cursor`` (D154).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -477,6 +480,11 @@ class DocumentSearchRequest(BaseModel):
     are candidates (default ``current``: the ones in force now). Documents
     without declared periods are judged as without it."""
     k: int = Field(default=DOCUMENT_SEARCH_DEFAULT_K, ge=1, le=DOCUMENT_SEARCH_MAX_K)
+    """Ranked top-k when ``query`` is set."""
+    limit: int = Field(
+        default=DOCUMENT_SEARCH_DEFAULT_LIMIT, ge=1, le=DOCUMENT_SEARCH_MAX_LIMIT
+    )
+    """Browse page size when ``query`` is omitted."""
     cursor: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
@@ -571,7 +579,10 @@ class DocumentSearchPage(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     documents: tuple[DocumentSearchResult, ...]
-    cursor: str | None = None
+    next_cursor: str | None = None
+    """Browse mode only; null at the end. Ranked mode always leaves this null."""
+    truncated: bool = False
+    """Ranked mode: true when more than ``k`` documents matched."""
     as_of: datetime
     people_matched: tuple[DocumentPeopleMatch, ...] = ()
     scope_pending: ScopePending | None = None
@@ -607,8 +618,8 @@ class AdjacentChunksRequest(BaseModel):
     )
 
 
-SECTION_HISTORY_DEFAULT_K: Final = 50
-SECTION_HISTORY_MAX_K: Final = 200
+SECTION_HISTORY_DEFAULT_LIMIT: Final = 50
+SECTION_HISTORY_MAX_LIMIT: Final = 200
 SECTION_KEY_MAX_LEN: Final = 200
 
 
@@ -621,7 +632,9 @@ class SectionHistoryRequest(BaseModel):
         min_length=1, max_length=SECTION_KEY_MAX_LEN, pattern=r"^[A-Za-z0-9_.:/-]+$"
     )
     time: ReadTime = HistoryReadTime()
-    k: int = Field(default=SECTION_HISTORY_DEFAULT_K, ge=1, le=SECTION_HISTORY_MAX_K)
+    limit: int = Field(
+        default=SECTION_HISTORY_DEFAULT_LIMIT, ge=1, le=SECTION_HISTORY_MAX_LIMIT
+    )
     cursor: str | None = Field(default=None, min_length=1)
 
 
@@ -682,8 +695,8 @@ class SectionHistoryPage(BaseModel):
 
     Rows are ordered by effective start for a lineage with declared effective
     periods (``periodised``) and by ``version_no`` otherwise. ``amendments``
-    is filled on the first page only. ``cursor`` pins ``evaluated_at`` and
-    ``believed_at`` for the following pages.
+    is filled on the first page only. ``next_cursor`` pins ``evaluated_at``
+    and ``believed_at`` for the following pages; null exactly at the end.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -692,7 +705,7 @@ class SectionHistoryPage(BaseModel):
     periodised: bool
     rows: tuple[SectionHistoryRow, ...]
     amendments: tuple[SectionAmendment, ...] = ()
-    cursor: str | None = None
+    next_cursor: str | None = None
     evaluated_at: datetime
     believed_at: datetime
 
@@ -710,8 +723,8 @@ REFERENCE_SOURCE_LABEL_MAX_LEN: Final = 200
 REFERENCE_ERRORS_MAX: Final = 100
 """Most ``{item, field, reason}`` errors a rejected generation records."""
 
-DOCUMENT_REFERENCES_DEFAULT_K: Final = 50
-DOCUMENT_REFERENCES_MAX_K: Final = 200
+DOCUMENT_REFERENCES_DEFAULT_LIMIT: Final = 50
+DOCUMENT_REFERENCES_MAX_LIMIT: Final = 200
 DOCUMENT_REFERENCES_MAX_DESCENDANT_KEYS: Final = 1000
 """Most section keys one ``document_references`` call resolves a section to
 (the section and its descendants); beyond it the call is ``too_broad``."""
@@ -878,8 +891,10 @@ class DocumentReferencesRequest(BaseModel):
         default=None, min_length=1, max_length=7
     )
     time: ReadTime | None = None
-    k: int = Field(
-        default=DOCUMENT_REFERENCES_DEFAULT_K, ge=1, le=DOCUMENT_REFERENCES_MAX_K
+    limit: int = Field(
+        default=DOCUMENT_REFERENCES_DEFAULT_LIMIT,
+        ge=1,
+        le=DOCUMENT_REFERENCES_MAX_LIMIT,
     )
     cursor: str | None = Field(default=None, min_length=1)
 
@@ -1003,15 +1018,16 @@ class DocumentReferencesPage(BaseModel):
     """A page of ``document_references`` rows.
 
     Ordered by direction (outgoing first), source document, source version,
-    reference, window start and target version. ``cursor`` pins
+    reference, window start and target version. ``next_cursor`` pins
     ``evaluated_at`` and ``believed_at``; a page may be short when the scan
-    bound was reached and still carry a cursor. ``too_broad`` is set (and
-    ``rows`` empty) when the section has too many descendant keys.
+    bound was reached and still carry a non-null ``next_cursor``. Null means
+    the end. ``too_broad`` is set (and ``rows`` empty) when the section has
+    too many descendant keys.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     rows: tuple[DocumentReference, ...]
-    cursor: str | None = None
+    next_cursor: str | None = None
     evaluated_at: datetime
     believed_at: datetime
     too_broad: DocumentReferencesTooBroad | None = None
@@ -1326,7 +1342,6 @@ class Contradiction(BaseModel):
     co_members: tuple[CoMember, ...] = ()
     returned: int = Field(ge=0)
     total: int = Field(ge=0)
-    continuation: str | None = None
 
 
 class FactResult(BaseModel):
@@ -1562,12 +1577,13 @@ class ScanRow(BaseModel):
 
 
 class Truncation(BaseModel):
+    """Disclosure that a ranked or safety cap applied (D154)."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     truncated: bool
     returned: int = Field(ge=0)
     estimated_total: int = Field(ge=0)
     total_is_exact: bool = True
-    continuation: str | None = None
     reason: str | None = None
 
 
@@ -1592,6 +1608,8 @@ class Envelope(BaseModel):
     pages: tuple[PageRef, ...] = ()
     freshness: Freshness
     truncation: Truncation | None = None
+    next_cursor: str | None = None
+    """Browse / graph paging token; null exactly at the end (D154)."""
     dropped_by_hydration: int = 0
     excluded_unstamped: int = Field(default=0, ge=0)
     negative: Negative | None = None

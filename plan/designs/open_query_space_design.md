@@ -1078,8 +1078,9 @@ saved-query filter is not an authorization boundary.
 
 ### 4.3 Limits
 
-The gateway clamps a requested value to the interactive hard cap or rejects it
-when clamping would change query semantics. The analytical tier requires an
+HTTP, SDK and MCP execution requests accept `max_rows` from 0 to 1,000 and
+refuse values outside that range; HTTP returns 422 (D154). Executor-internal
+resource limits and stored defaults remain bounded by their tier caps. The analytical tier requires an
 operator entitlement and a separate one-concurrent-query pool; it retains the
 same language schemas, grammar, tenancy boundary, applicable D48 time boundary,
 QueryResult contract, and nomination/body/graph caps. The table below is the

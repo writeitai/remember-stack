@@ -61,7 +61,7 @@ points to measure, not committed constants (CLAUDE.md).
 > keyword+vector+structured channels without tuning score scales against each other;
 > **cross-encoder** — a small neural model that re-scores a query/result *pair* jointly —
 > more accurate than embedding distance, too slow for more than a final top-k re-sort (hence
-> optional and flagged); **continuation** — an opaque cursor a caller passes back to fetch
+> optional and flagged); **cursor** — an opaque position a caller passes back to fetch
 > the next page of a truncated result; **MCP** — the Model Context Protocol, the standard by
 > which agent harnesses discover and call external tools.
 
@@ -358,7 +358,7 @@ answer itself** — because the caller is an agent that must *reason about* the 
   results: [ { …typed record…,
         validity: {valid_from, valid_until, ingested_at, invalidated_at},
         evidence_count, confidence,
-        contradiction: {group_id, co_members[≤cap], returned, total, continuation} | null,
+        contradiction: {group_id, co_members[≤cap], returned, total} | null,
         provenance: {hydrate_handle, depth_available,
                      // D65 — on EVIDENCE-GRAIN items only (a claim has one derivation;
                      // a fact aggregates many — its evidence hydrates to per-claim records):
@@ -385,7 +385,8 @@ answer itself** — because the caller is an agent that must *reason about* the 
       pg: live_ts, p1: {max_write_lag, believed_at_horizon},
       graph: {live_at: pg.live_ts, believed_at_horizon},// horizons: §3 — beyond them, `boundary`
       k:  {compiled_at, stale: bool, open_flags: n} },  // ← k_layers spike 9 lands here
-  truncation:   {truncated: bool, returned, estimated_total, continuation} | null,  // S18/S49
+  truncation:   {truncated: bool, returned, estimated_total, total_is_exact, reason} | null,
+  next_cursor:  string | null,                         // browse continuation (D154)
   dropped_by_hydration: n,                             // §2 nominate-then-drop honesty (paths drop as units)
   negative:     null | {kind, explanation, workaround}  // §below
 }
@@ -430,10 +431,18 @@ Three rules that are contract, not garnish:
   path. The bounded form: co-members return **inline up to a guaranteed cap** (typical groups
   are 2–3 sides; both FY2023 revenue figures come back together, with per-side evidence
   handles); beyond the cap the contradiction block still *always* carries `group_id`,
-  `returned`, `total`, and a `continuation` — bounded like every hub answer, one-sided never.
-- **No silent caps (S18, S49).** Hub neighborhoods and big result sets return ranked pages
-  with explicit truncation markers and continuations — never a silent top-k posing as
-  everything, never a timeout.
+  `returned` and `total`. There is no contradiction continuation token; these
+  counts disclose any omitted co-members (D154).
+- **No silent caps (S18, S49; D154).** Filter-only browse lists take `limit`
+  and `cursor` and return `next_cursor`; ranked queries take `k`, refuse
+  cursors and disclose truncation. Graph neighborhoods use the deterministic
+  `(hops, relation_ids, node_ids)` keyset, with deployment, anchor, depth and
+  predicates bound into cursor scope and both clocks pinned. Deleting a
+  returned edge cannot shift an untouched path past that position. One-hop
+  reads keep their admission budgets; deeper reads page within the helper's
+  500-row ceiling and end with a null cursor and a truncation reason if the
+  ceiling prevents further traversal. A repeatable-read transaction protects
+  each request; no retained snapshot or unbounded expansion is required.
 - **The K freshness block is the reader-facing flag surface** (resolves `k_layers_design.md`
   §11 spike 9): any answer that consumed a K page carries its `compiled_at`, staleness, and
   open-flag count, so a reader can check status before planning against a page
@@ -742,8 +751,9 @@ implementation consequences are:
    focused functional contract checks, not a parity or scale benchmark before
    the direct replacement.
 2. **Hub pagination:** 500 neighbors fit below the battery's 64 KiB operational starting target
-   at the 100,000-edge S49 hub; 1,000 did not. A snapshot-bound offset cursor walked all 100,000
-   neighbors exactly once. The final machine-specific p95 was 310 ms, slightly above §10's
+   at the 100,000-edge S49 hub; 1,000 did not. That historical snapshot-based
+   traversal is replaced by D154's live keyset paging and disclosed work ceilings
+   (§5). The final machine-specific p95 was 310 ms, slightly above §10's
    300 ms starting target, so this is not a latency proof and WP-7.2 retains portable load
    testing. The
    10,000-row count probe limits only total-count metadata, never reachability; 64 KiB is neither
@@ -756,8 +766,8 @@ implementation consequences are:
 4. **Multi-hop as-of path filtering:** closed by the WP-4.1 deployed-engine battery; inline
    predicates bind and filter during traversal, with no persistent as-of graph justified.
 5. **Envelope overhead:** keep 25 contradiction co-members inline under the battery's 16 KiB
-   operational starting target; group id, counts, and continuation preserve completeness beyond
-   the cap. The target is neither a protocol limit nor an SLA.
+   operational starting target; group id and counts disclose omissions beyond
+   the cap (D154). The target is neither a protocol limit nor an SLA.
 6. **Skill + S58:** closed by WP-5.5's deployment-rendered skill and repeatable cold-agent
    acceptance harness.
 7. **Historical remote hydration batching:** the Lance-era chunk confirmation

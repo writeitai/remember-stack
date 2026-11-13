@@ -5,6 +5,8 @@ export const metadata = {
 
 # Ingest, readiness and documents
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 These routes cover the write side of memory. `POST /ingest` adds one file.
@@ -418,7 +420,7 @@ first.
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `limit` | query | integer | no | `50` | 1 to 200. |
-| `cursor` | query | string | no | | The `cursor` from the previous page. Opaque. |
+| `cursor` | query | string | no | | The `next_cursor` from the previous page. Opaque. |
 | `status` | query | `ingesting` \| `converting` \| `structuring` \| `ready` \| `failed` | no | | Filters on the newest version's status. |
 
 Documents are ordered by when each was first seen, then by id. Re-ingesting a
@@ -463,12 +465,12 @@ does not mean the document is searchable yet; use
       "tags": ["kind:decision", "project:billing-migration"]
     }
   ],
-  "cursor": null
+  "next_cursor": null
 }
 ```
 
 `tags` holds the names of the document's [tags](#get-tags), ordered by name
-ignoring letter case; it is empty for an untagged document. `cursor` is
+ignoring letter case; it is empty for an untagged document. `next_cursor` is
 `null` on the last page.
 
 ### Errors
@@ -492,7 +494,7 @@ memory = Client()
 page = memory.list_documents(status="failed", limit=20)
 for document in page.documents:
     print(document.doc_id, document.title, document.latest.error)
-# page.cursor is None on the last page; pass it back to read the next one.
+# page.next_cursor is None on the last page; pass it back to read the next one.
 ```
 
 `remember documents list` prints the same page as JSON.
@@ -514,8 +516,9 @@ A [`DocumentSearchRequest`](/docs/reference/result-types#documentsearchrequest):
 | `filters` | object | no | `{}` | See below. Every filter you give must hold. |
 | `versions` | `current` \| `all` | no | `current` | Which versions of each document may match. |
 | `time` | object | no | `{"mode": "current"}` | For documents with declared effective periods: which editions are candidates. `{"mode": "current"}`, `{"mode": "at", "at": …}`, `{"mode": "overlap", "from": …, "to": …}` or `{"mode": "history"}`; see [Editions in force](#editions-in-force). |
-| `k` | integer | no | `20` | 1 to 200 results. |
-| `cursor` | string | no | | The `cursor` from the previous page. Only without `query`. |
+| `k` | integer | no | `20` | Ranked results with `query`: 1 to 200. |
+| `limit` | integer | no | `50` | Browse page size without `query`: 1 to 200. |
+| `cursor` | string | no | | The `next_cursor` from the previous page. Only without `query`. |
 
 `filters`:
 
@@ -605,12 +608,12 @@ search without one examines every document it walked for the page.
 
 ### Order and paging
 
-With `query`, results are ranked, and there is no next page: `cursor` is
+With `query`, results are ranked, and there is no next page: `next_cursor` is
 `null`. Raise `k` for more.
 
 Without `query`, results are every document the filters match, newest first
-by when the judged version was ingested, then by `doc_id`; the `created_*`
-range is a filter, not the order. Pass `cursor` back for the next page. The
+by the newest version ingested at or before the pinned instant, then by `doc_id`; the `created_*`
+range is a filter, not the order. Pass `next_cursor` back as `cursor` for the next page. The
 first page fixes an instant, returned as `as_of`, and every later page judges
 each document by its newest version ingested by then. A document added, a
 version promoted to current, or a date filled in by processing while you
@@ -618,8 +621,8 @@ page therefore neither moves nor repeats a row. The same instant is used to
 read effective periods, so a period declared or corrected while you page
 does not move a row either. Start a new search to see what arrived since.
 
-A page stops after walking ten times `k` documents. It can then hold fewer
-than `k` results and still return a `cursor`: keep paging until `cursor` is
+A browse page stops after walking ten times `limit` documents. It can then hold fewer
+than `limit` results and still return a `next_cursor`: keep paging until `next_cursor` is
 `null`.
 
 ### Response
@@ -658,7 +661,7 @@ than `k` results and still return a `cursor`: keep paging until `cursor` is
       "score": 0.0328
     }
   ],
-  "cursor": null,
+  "next_cursor": null,
   "as_of": "2026-09-24T10:12:03.117Z",
   "people_matched": [],
   "scope_pending": null

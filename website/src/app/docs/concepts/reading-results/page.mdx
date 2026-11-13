@@ -5,6 +5,8 @@ export const metadata = {
 
 # Reading a result
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 A list of text snippets tells your agent nothing about itself. Is this
@@ -211,12 +213,12 @@ with remember.Client() as memory:
     "p1_believed_at_horizon": null,
     "k": null
   },
+  "next_cursor": null,
   "truncation": {
     "truncated": false,
     "returned": 2,
     "estimated_total": 2,
     "total_is_exact": true,
-    "continuation": null,
     "reason": null
   },
   "dropped_by_hydration": 0,
@@ -368,9 +370,9 @@ written with the data (`true`) and have no belief-time horizon (`null`).
 
 `truncated` says whether more results exist than were returned. `returned`
 is how many came back, `estimated_total` how many were found, and
-`total_is_exact` whether that total is exact. `continuation` is an opaque
-cursor for reads that can page (the graph neighbourhood). A capped answer
-always says so.
+`total_is_exact` whether that total is exact. Browse paging uses the
+envelope's top-level `next_cursor`, not a field on `truncation`. A capped
+answer always says so.
 
 ### `dropped_by_hydration`
 

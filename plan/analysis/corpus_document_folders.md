@@ -55,6 +55,28 @@ and D147 (`run_task`); D101 itself concerns ingest attribution.
 | Provider API | S3 operations, streamed across stores when necessary | Native GCS and mandatory server-side copy add provider-specific behavior with no required benefit |
 | Navigation | Deterministic radix pages for bounded type/topic member tables; physical document paths stay independent of page membership | Moving document folders for page splits/merges would recopy survivors during forget and couple unrelated publication markers |
 
+**Reader naming and family corrections (2026-11-13).** Slice 2 review found that
+replacing non-ASCII runs after NFKC normalization
+destroyed Latin words such as Czech `dílo`. Use standard-library NFKD
+decomposition, remove combining marks, and explicitly fold common Latin letters
+that do not decompose (`ß`, `æ`, `œ`, `ø`, `ł`, `đ`, `ð`, `þ`) before ASCII
+slugging. This preserves readable Latin titles and topics without a general
+transliteration dependency or a change to path validation and length limits.
+Scripts with no ASCII form retain the existing title fallback/topic rejection.
+
+Type rules must use the actual names in
+[`format_registry.FAMILIES`](../../src/rememberstack/core/format_registry.py).
+Audio and video share the `media` family, but their stored MIME types retain
+`audio/` or `video/`; the registry's canonical media MIME is `audio/mpeg`.
+[`core/conversion.py`](../../src/rememberstack/core/conversion.py) routes both to
+the same `card` converter, and E0 stores the converter name as the representation
+route. There is no shipped media route or source-kind subtype that provides a
+second discriminator. Use MIME for audio/video; a media row without either MIME
+prefix belongs to `other`. Defaulting that row to video would invent a subtype.
+An exhaustive registry-family test makes every new family require an explicit
+type expectation. These reader-policy corrections change only P3 paths/digests;
+they do not change converter generations or any paid-work reuse identity.
+
 The suffix is `sha256(doc_id.bytes).hexdigest()[:24]`: 24 lowercase hex characters,
 or 96 bits. For n distinct document UUIDs, the accidental collision probability
 is approximately n(n−1)/(2 × 2^96), below 6.4 × 10^-14 even at 100 million

@@ -151,7 +151,10 @@ listener, not on the API's address, and only when you configure it.
 
 Page through the deployment's cost receipts: one row per model call made by
 the pipeline workers or by a query route, with tokens, cost and latency. It
-never carries memory content.
+never carries memory content. This is a resumable feed with its own contract
+(outside the [browse-list pagination rules](/docs/reference/http-api#pagination-and-truncation)):
+every page echoes the request `cursor`, `next_cursor` stays set whenever the
+batch has receipts, and stored cursors remain valid across deploys.
 
 The listener starts only when `REMEMBERSTACK_COST_EXPORT_BIND` is set
 (`host:port`, `[ipv6]:port` or `unix:/path/to.sock`). It then requires

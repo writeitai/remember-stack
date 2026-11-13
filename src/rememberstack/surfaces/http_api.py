@@ -143,8 +143,8 @@ from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import ProcessingLayer
 from rememberstack.model.client import ProcessingLayerStates
-from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
-from rememberstack.model.client import SECTION_HISTORY_MAX_K
+from rememberstack.model.client import SECTION_HISTORY_DEFAULT_LIMIT
+from rememberstack.model.client import SECTION_HISTORY_MAX_LIMIT
 from rememberstack.model.client import SectionHistoryPage
 from rememberstack.model.client import SectionHistoryRequest
 from rememberstack.model.processing_layers import LayerAdmission
@@ -187,6 +187,8 @@ SavedQueryStatus = Literal[
 """The saved-query version states `GET /query/saved?status=` may filter on."""
 
 LOOKUP_K_MAX: Final = 400
+LOOKUP_BROWSE_LIMIT_DEFAULT: Final = 50
+LOOKUP_BROWSE_LIMIT_MAX: Final = 200
 """Largest `k` a fact lookup returns in one call; more is reported as truncated."""
 
 
@@ -430,8 +432,8 @@ class GraphQueryPort(Protocol):
         predicates: tuple[str, ...] = (),
         valid_at: datetime | None = None,
         believed_at: datetime | None = None,
-        limit: int = 500,
-        continuation: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
         include_paths: bool = False,
     ) -> Envelope: ...
 
@@ -472,8 +474,8 @@ class GraphNeighborhoodRequest(BaseModel):
     predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
     valid_at: UTCInstant | None = None
     believed_at: UTCInstant | None = None
-    limit: int = Field(default=500, ge=1, le=500)
-    continuation: str | None = Field(default=None, max_length=200)
+    limit: int = Field(default=100, ge=1, le=500)
+    cursor: str | None = Field(default=None, max_length=2048)
     include_paths: bool = False
 
     @model_validator(mode="after")
@@ -521,7 +523,7 @@ class SqlQueryRequest(BaseModel):
 
     sql: str
     parameters: list[Any] = Field(default_factory=list)
-    max_rows: int | None = Field(default=None, ge=0)
+    max_rows: int | None = Field(default=None, ge=0, le=1000)
 
 
 class SqlExplainRequest(BaseModel):
@@ -540,7 +542,7 @@ class RunSavedQueryRequest(BaseModel):
 
     version: int | None = Field(default=None, ge=1)
     parameters: list[Any] = Field(default_factory=list)
-    max_rows: int | None = Field(default=None, ge=0)
+    max_rows: int | None = Field(default=None, ge=0, le=1000)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -839,17 +841,24 @@ def build_api(
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: UTCInstant | None = None,
-        k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 50,
+        limit: Annotated[
+            int, Query(ge=1, le=LOOKUP_BROWSE_LIMIT_MAX)
+        ] = LOOKUP_BROWSE_LIMIT_DEFAULT,
+        cursor: Annotated[str | None, Query()] = None,
     ) -> Envelope:
-        """Relations matching an (s, p, o) pattern — current, or as-of (S9)."""
-        return deployment.engine.lookup_relations(
-            deployment_id=deployment.deployment_id,
-            subject_entity_id=subject_entity_id,
-            predicate=predicate,
-            object_entity_id=object_entity_id,
-            valid_at=valid_at,
-            k=k,
-        )
+        """Browse relations matching an (s, p, o) pattern — current, or as-of (S9)."""
+        try:
+            return deployment.engine.lookup_relations(
+                deployment_id=deployment.deployment_id,
+                subject_entity_id=subject_entity_id,
+                predicate=predicate,
+                object_entity_id=object_entity_id,
+                valid_at=valid_at,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/transcript/relation/{relation_id}", response_model=Envelope)
     def transcript_relation(deployment: _Deployment, relation_id: UUID) -> Envelope:
@@ -864,14 +873,23 @@ def build_api(
         entity_id: UUID,
         property_query: str | None = None,
         k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 10,
+        limit: Annotated[
+            int, Query(ge=1, le=LOOKUP_BROWSE_LIMIT_MAX)
+        ] = LOOKUP_BROWSE_LIMIT_DEFAULT,
+        cursor: Annotated[str | None, Query()] = None,
     ) -> Envelope:
-        """Live observations on one entity, semantic over statements (S2)."""
-        return deployment.engine.lookup_observations(
-            deployment_id=deployment.deployment_id,
-            entity_id=entity_id,
-            property_query=property_query,
-            k=k,
-        )
+        """Live observations on one entity (browse or ranked property match)."""
+        try:
+            return deployment.engine.lookup_observations(
+                deployment_id=deployment.deployment_id,
+                entity_id=entity_id,
+                property_query=property_query,
+                k=k,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/search/claims", response_model=Envelope)
     def search_claims(
@@ -1337,7 +1355,7 @@ def _mount_graph(*, app: FastAPI) -> None:
                 valid_at=body.valid_at,
                 believed_at=body.believed_at,
                 limit=body.limit,
-                continuation=body.continuation,
+                cursor=body.cursor,
                 include_paths=body.include_paths,
             )
         # D143 §7.3: an empty answer while facts backfill is a boundary.
@@ -1708,9 +1726,9 @@ def _mount_section_history(*, app: FastAPI) -> None:
         at: datetime | None = None,
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to: datetime | None = None,
-        k: Annotated[
-            int, Query(ge=1, le=SECTION_HISTORY_MAX_K)
-        ] = SECTION_HISTORY_DEFAULT_K,
+        limit: Annotated[
+            int, Query(ge=1, le=SECTION_HISTORY_MAX_LIMIT)
+        ] = SECTION_HISTORY_DEFAULT_LIMIT,
         cursor: Annotated[str | None, Query(min_length=1)] = None,
     ) -> SectionHistoryPage:
         """One section key across the document's versions.
@@ -1721,8 +1739,8 @@ def _mount_section_history(*, app: FastAPI) -> None:
         section it holds under the key with ``changed``/``own_changed``
         against the previous row that held it — or ``absent``,
         ``not_indexed`` or ``processing``. Ordered by effective start for a
-        periodised document, else by version number; ``cursor`` pages and
-        pins the evaluation and belief instants.
+        periodised document, else by version number; ``limit`` / ``cursor``
+        page and pin the evaluation and belief instants (``next_cursor`` out).
         """
         time: dict[str, object] = {"mode": mode}
         if mode == "at":
@@ -1736,7 +1754,7 @@ def _mount_section_history(*, app: FastAPI) -> None:
                     "doc_id": doc_id,
                     "section_key": section_key,
                     "time": time,
-                    "k": k,
+                    "limit": limit,
                     "cursor": cursor,
                 }
             )

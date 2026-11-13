@@ -41,6 +41,7 @@ export type OutputEnvelope = {
     freshness: OutputFreshness;
     grain: OutputGrain;
     negative: OutputNegative | null;
+    next_cursor: string | null;
     nodes: Array<OutputGraphNode>;
     pages: Array<OutputPageRef>;
     paths: Array<OutputGraphPath>;

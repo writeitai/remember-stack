@@ -346,7 +346,9 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     " When a people"
     " filter matches several different people, people_matched lists each with"
     " a document count: narrow the filter (for example by address) instead of"
-    " guessing. Without query, results are newest first and cursor pages them."
+    " guessing. Without query, results are newest first and limit/cursor page"
+    " them (next_cursor continues; null ends). With query, k ranks and"
+    " truncated discloses a cap."
 )
 
 _SECTION_HISTORY_DESCRIPTION: Final = (
@@ -365,7 +367,8 @@ _SECTION_HISTORY_DESCRIPTION: Final = (
     " start when the document declares effective periods (periodised=true),"
     " otherwise by version number. The first page also lists amendments:"
     " live references of kind amends that target this section, with"
-    " change_effective_from and change_date_known. Page with cursor."
+    " change_effective_from and change_date_known. Page with limit/cursor;"
+    " continue via next_cursor."
 )
 
 _DATE_TIME: Final[dict[str, object]] = {
@@ -448,11 +451,26 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "current (default) or all live versions.",
         },
         "time": _SEARCH_DOCUMENTS_TIME_SCHEMA,
-        "k": {"type": "integer", "minimum": 1, "maximum": 200},
+        "k": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20,
+            "description": "Ranked top-k when query is set.",
+        },
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50,
+            "description": "Browse page size when query is omitted.",
+        },
         "cursor": {
             "type": "string",
             "minLength": 1,
-            "description": "The previous page's cursor; only without query.",
+            "description": (
+                "Pass the previous page's next_cursor; only without query."
+            ),
         },
     },
 }
@@ -513,11 +531,11 @@ _SECTION_HISTORY_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "The section key, without the leading #.",
         },
         "time": _SECTION_HISTORY_TIME_SCHEMA,
-        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         "cursor": {
             "type": "string",
             "minLength": 1,
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
         },
     },
 }
@@ -542,7 +560,7 @@ _DOCUMENT_REFERENCES_DESCRIPTION: Final = (
     " deleted or forgotten), target_not_in_force, section_not_in_version,"
     " section_not_indexed, pinned_version_unavailable. too_broad means the"
     " section has too many subsections: ask about a narrower one. Page with"
-    " cursor; a short page with a cursor means keep paging."
+    " limit/cursor; a short page with next_cursor means keep paging."
 )
 
 _DOCUMENT_REFERENCES_TIME_SCHEMA: Final[dict[str, object]] = {
@@ -600,11 +618,11 @@ _DOCUMENT_REFERENCES_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "Only these reference kinds.",
         },
         "time": _DOCUMENT_REFERENCES_TIME_SCHEMA,
-        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         "cursor": {
             "type": "string",
             "minLength": 1,
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
         },
     },
 }
@@ -903,7 +921,12 @@ def _object_schema(
 
 _SQL_PARAMETERS: Final[dict[str, object]] = {"type": "array", "items": {}}
 _SAVED_QUERY_VERSION: Final[dict[str, object]] = {"type": "integer", "minimum": 1}
-_MAX_ROWS: Final[dict[str, object]] = {"type": "integer", "minimum": 0}
+_MAX_ROWS: Final[dict[str, object]] = {
+    "type": "integer",
+    "minimum": 0,
+    "maximum": 1000,
+    "description": "Safety row cap; values above 1000 are rejected (D154).",
+}
 
 _TOOLS: Final[tuple[ToolDefinition, ...]] = (
     ToolDefinition(

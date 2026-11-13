@@ -214,11 +214,15 @@ export class MemoryClient {
   /** Resolve a name with optional repeated focal-entity query parameters. */
   async resolve({name,contextEntityIds=[],signal}:{name:string;contextEntityIds?:string[];signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/resolve',params:[['name',name],...contextEntityIds.map(value=>['context_entity_ids',value] as const)],signal}),response:true});}
   /** Read matching current or valid-time relations. */
-  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,k=50,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;k?:number;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{k,subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:apiTimestamp({value:validAt,field:'validAt'})},signal}),response:true});}
+  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,limit=50,cursor,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;limit?:number;cursor?:string|null;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{limit,cursor,subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:apiTimestamp({value:validAt,field:'validAt'})},signal}),response:true});}
   /** Read the bounded decision transcript for a relation. */
   async transcriptRelation({relationId,signal}:{relationId:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:`/transcript/relation/${segment({value:relationId})}`,signal}),response:true});}
   /** Read live property observations for an entity. */
-  async lookupObservations({entityId,propertyQuery,k=10,signal}:{entityId:string;propertyQuery?:string|null;k?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/observations',params:{entity_id:entityId,k,property_query:propertyQuery},signal}),response:true});}
+  async lookupObservations({entityId,propertyQuery,k=10,limit=50,cursor,signal}:{entityId:string;propertyQuery?:string|null;k?:number;limit?:number;cursor?:string|null;signal?:AbortSignal}):Promise<Envelope> {
+    if(propertyQuery!=null&&cursor!=null)throw new InputValidationError({detail:'cursor pages filter-only observation lookups; drop propertyQuery or cursor'});
+    const params=propertyQuery==null?{entity_id:entityId,limit,cursor}:{entity_id:entityId,property_query:propertyQuery,k};
+    return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/observations',params,signal}),response:true});
+  }
   /** Search source claims; filters switch the wire request from GET to POST. */
   async searchClaims(options:SearchOptions):Promise<Envelope> {return this.search({...options,path:'/search/claims'});}
   /** Search live passages; filters switch the wire request from GET to POST. */
@@ -236,8 +240,8 @@ export class MemoryClient {
   /** Hydrate a relation through its supporting evidence and source records. */
   async hydrateRelation({relationId,signal}:{relationId:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:`/hydrate/relation/${segment({value:relationId})}`,signal}),response:true});}
   /** Read a bounded current or bitemporal graph neighborhood. */
-  async graphNeighborhood({entityId,hops=2,predicates=[],validAt,believedAt,limit=500,continuation=null,includePaths=false,signal}:{entityId:string;hops?:number;predicates?:string[];validAt?:string|Date|null;believedAt?:string|Date|null;limit?:number;continuation?:string|null;includePaths?:boolean;signal?:AbortSignal}):Promise<Envelope> {
-    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/neighborhood',body:{entity_id:entityId,hops,predicates,valid_at:validAt==null?null:apiTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:apiTimestamp({value:believedAt,field:'believedAt'}),limit,continuation,include_paths:includePaths},signal}),response:true});
+  async graphNeighborhood({entityId,hops=2,predicates=[],validAt,believedAt,limit=100,cursor=null,includePaths=false,signal}:{entityId:string;hops?:number;predicates?:string[];validAt?:string|Date|null;believedAt?:string|Date|null;limit?:number;cursor?:string|null;includePaths?:boolean;signal?:AbortSignal}):Promise<Envelope> {
+    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/neighborhood',body:{entity_id:entityId,hops,predicates,valid_at:validAt==null?null:apiTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:apiTimestamp({value:believedAt,field:'believedAt'}),limit,cursor,include_paths:includePaths},signal}),response:true});
   }
   /** Read bounded shortest paths between two entities. */
   async graphPath({fromEntityId,toEntityId,maxHops=4,predicates=[],validAt,believedAt,signal}:{fromEntityId:string;toEntityId:string;maxHops?:number;predicates?:string[];validAt?:string|Date|null;believedAt?:string|Date|null;signal?:AbortSignal}):Promise<Envelope> {
@@ -299,7 +303,7 @@ export class MemoryClient {
   /** Read a page of the deployment's documents. */
   async listDocuments({limit=50,cursor,status,signal}:{limit?:number;cursor?:string|null;status?:Models.DocumentStatusFilter|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentPage> {return validateModel({name:'DocumentPage',value:await this.json({method:'GET',path:'/documents',params:{limit,cursor,status},signal}),response:true});}
   /** Search documents by name, metadata and content with source-owned defaults. */
-  async searchDocuments({query=null,filters={},versions='current',k=20,cursor=null,time=null,signal}:{query?:string|null;filters?:Models.DocumentSearchFilters;versions?:'current'|'all';k?:number;cursor?:string|null;time?:Models.ReadTime|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentSearchPage> {return this.searchDocumentsRequest({request:{query,filters,versions,k,cursor,time},signal});}
+  async searchDocuments({query=null,filters={},versions='current',k=20,limit=50,cursor=null,time=null,signal}:{query?:string|null;filters?:Models.DocumentSearchFilters;versions?:'current'|'all';k?:number;limit?:number;cursor?:string|null;time?:Models.ReadTime|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentSearchPage> {return this.searchDocumentsRequest({request:{query,filters,versions,k,limit,cursor,time},signal});}
   /** Send a prepared document search, excluding recursively default-valued fields. */
   async searchDocumentsRequest({request,signal}:{request:Models.DocumentSearchRequest;signal?:AbortSignal}):Promise<Models.OutputDocumentSearchPage> {
     const body={...modelDump({name:'DocumentSearchRequest',value:request,excludeDefaults:true})};
@@ -307,13 +311,13 @@ export class MemoryClient {
     return validateModel({name:'DocumentSearchPage',value:await this.json({method:'POST',path:'/documents/search',body,signal}),response:true});
   }
   /** Follow a keyed section across versions, defaulting to its complete history. */
-  async sectionHistory({docId,sectionKey,time=null,k=50,cursor=null,signal}:{docId:string;sectionKey:string;time?:Models.ReadTime|null;k?:number;cursor?:string|null;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
-    return this.sectionHistoryRequest({request:{doc_id:uuid({value:docId,field:'docId'}),section_key:sectionKey,time:time??{mode:'history'},k,cursor},signal});
+  async sectionHistory({docId,sectionKey,time=null,limit=50,cursor=null,signal}:{docId:string;sectionKey:string;time?:Models.ReadTime|null;limit?:number;cursor?:string|null;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
+    return this.sectionHistoryRequest({request:{doc_id:uuid({value:docId,field:'docId'}),section_key:sectionKey,time:time??{mode:'history'},limit,cursor},signal});
   }
   /** Encode a prepared section-history request and preserve its time offsets. */
   async sectionHistoryRequest({request,signal}:{request:Models.SectionHistoryRequest;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
     const input=validateModel<Models.OutputSectionHistoryRequest>({name:'SectionHistoryRequest',value:request});
-    const params:Record<string,string|number|null>={mode:input.time.mode,k:input.k};
+    const params:Record<string,string|number|null>={mode:input.time.mode,limit:input.limit};
     if(input.time.mode==='at')params.at=queryTimestamp({value:input.time.at});
     else if(input.time.mode==='overlap'){params.from=queryTimestamp({value:input.time.from});params.to=queryTimestamp({value:input.time.to});}
     if(input.cursor!=null)params.cursor=input.cursor;
@@ -330,8 +334,8 @@ export class MemoryClient {
     return validateModel({name:'ReferenceGenerations',value:await this.json({method:'GET',path:`/documents/${uuid({value:docId,field:'docId'})}/versions/${uuid({value:versionId,field:'versionId'})}/references`,signal}),response:true});
   }
   /** Follow incoming/outgoing references from exactly one document or chunk. */
-  async documentReferences({chunkId=null,docId=null,sectionKey=null,direction='both',kinds=null,time=null,k=50,cursor=null,signal}:{chunkId?:string|null;docId?:string|null;sectionKey?:string|null;direction?:'outgoing'|'incoming'|'both';kinds?:Models.ReferenceKind[]|null;time?:Models.ReadTime|null;k?:number;cursor?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentReferencesPage> {
-    return this.documentReferencesRequest({request:{chunk_id:chunkId==null?null:uuid({value:chunkId,field:'chunkId'}),doc_id:docId==null?null:uuid({value:docId,field:'docId'}),section_key:sectionKey,direction,kinds,time,k,cursor},signal});
+  async documentReferences({chunkId=null,docId=null,sectionKey=null,direction='both',kinds=null,time=null,limit=50,cursor=null,signal}:{chunkId?:string|null;docId?:string|null;sectionKey?:string|null;direction?:'outgoing'|'incoming'|'both';kinds?:Models.ReferenceKind[]|null;time?:Models.ReadTime|null;limit?:number;cursor?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentReferencesPage> {
+    return this.documentReferencesRequest({request:{chunk_id:chunkId==null?null:uuid({value:chunkId,field:'chunkId'}),doc_id:docId==null?null:uuid({value:docId,field:'docId'}),section_key:sectionKey,direction,kinds,time,limit,cursor},signal});
   }
   /** Send a prepared references request with canonical aliases and omitted nulls. */
   async documentReferencesRequest({request,signal}:{request:Models.DocumentReferencesRequest;signal?:AbortSignal}):Promise<Models.OutputDocumentReferencesPage> {

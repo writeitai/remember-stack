@@ -190,6 +190,7 @@
           },
           "grain": "fact",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -226,6 +227,7 @@
         },
         "grain": "fact",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -293,6 +295,7 @@
           },
           "grain": "fact",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -329,6 +332,7 @@
         },
         "grain": "fact",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -398,8 +402,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -440,8 +442,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -516,8 +516,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -558,8 +556,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -648,8 +644,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -690,8 +684,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -760,8 +752,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -802,8 +792,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -875,8 +863,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -917,8 +903,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -989,8 +973,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -1031,8 +1013,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -1110,8 +1090,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -1152,8 +1130,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -1221,8 +1197,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -1263,8 +1237,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -1346,6 +1318,7 @@
           },
           "grain": "fact",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -1382,6 +1355,7 @@
         },
         "grain": "fact",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -1451,6 +1425,7 @@
           },
           "grain": "fact",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -1487,6 +1462,7 @@
         },
         "grain": "fact",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -1567,6 +1543,7 @@
             },
             "grain": "evidence",
             "negative": null,
+            "next_cursor": null,
             "nodes": [],
             "pages": [],
             "paths": [],
@@ -1603,6 +1580,7 @@
             },
             "grain": "fact",
             "negative": null,
+            "next_cursor": null,
             "nodes": [],
             "pages": [],
             "paths": [],
@@ -1641,6 +1619,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -1677,6 +1656,7 @@
           },
           "grain": "fact",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -1748,6 +1728,7 @@
             },
             "grain": "evidence",
             "negative": null,
+            "next_cursor": null,
             "nodes": [],
             "pages": [],
             "paths": [],
@@ -1784,6 +1765,7 @@
             },
             "grain": "fact",
             "negative": null,
+            "next_cursor": null,
             "nodes": [],
             "pages": [],
             "paths": [],
@@ -1822,6 +1804,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -1858,6 +1841,7 @@
           },
           "grain": "fact",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -1946,6 +1930,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -1982,6 +1967,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -2049,6 +2035,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -2085,6 +2072,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -2162,6 +2150,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -2198,6 +2187,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -2257,6 +2247,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -2293,6 +2284,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -2591,8 +2583,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -2633,8 +2623,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -2708,8 +2696,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -2750,8 +2736,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -2845,6 +2829,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -2881,6 +2866,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -2947,6 +2933,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -2983,6 +2970,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3055,6 +3043,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3091,6 +3080,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3117,7 +3107,7 @@
           "path": "/lookup/relations",
           "query": [
             [
-              "k",
+              "limit",
               "50"
             ]
           ]
@@ -3127,7 +3117,7 @@
     {
       "method": "lookup_relations",
       "options": {
-        "k": 3,
+        "limit": 3,
         "object_entity_id": "10000000-0000-0000-0000-000000000002",
         "predicate": "works_at",
         "subject_entity_id": "10000000-0000-0000-0000-000000000001",
@@ -3155,6 +3145,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3191,6 +3182,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3207,7 +3199,7 @@
       },
       "typescriptMethod": "lookupRelations",
       "typescriptOptions": {
-        "k": 3,
+        "limit": 3,
         "objectEntityId": "10000000-0000-0000-0000-000000000002",
         "predicate": "works_at",
         "subjectEntityId": "10000000-0000-0000-0000-000000000001",
@@ -3223,7 +3215,7 @@
           "path": "/lookup/relations",
           "query": [
             [
-              "k",
+              "limit",
               "3"
             ],
             [
@@ -3273,6 +3265,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3309,6 +3302,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3366,6 +3360,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3402,6 +3397,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3459,6 +3455,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3495,6 +3492,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3527,8 +3525,8 @@
               "10000000-0000-0000-0000-000000000001"
             ],
             [
-              "k",
-              "10"
+              "limit",
+              "50"
             ]
           ]
         }
@@ -3563,6 +3561,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3599,6 +3598,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3633,12 +3633,12 @@
               "10000000-0000-0000-0000-000000000001"
             ],
             [
-              "k",
-              "3"
-            ],
-            [
               "property_query",
               "salary"
+            ],
+            [
+              "k",
+              "3"
             ]
           ]
         }
@@ -3671,6 +3671,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3707,6 +3708,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3789,6 +3791,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3825,6 +3828,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -3911,6 +3915,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -3947,6 +3952,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4030,6 +4036,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4066,6 +4073,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4153,6 +4161,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4189,6 +4198,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4252,6 +4262,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4288,6 +4299,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4351,6 +4363,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4387,6 +4400,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4444,6 +4458,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4480,6 +4495,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4537,6 +4553,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4573,6 +4590,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4596,11 +4614,11 @@
         {
           "body": {
             "believed_at": null,
-            "continuation": null,
+            "cursor": null,
             "entity_id": "10000000-0000-0000-0000-000000000001",
             "hops": 2,
             "include_paths": false,
-            "limit": 500,
+            "limit": 100,
             "predicates": [],
             "valid_at": null
           },
@@ -4616,7 +4634,7 @@
       "method": "graph_neighborhood",
       "options": {
         "believed_at": "2026-10-02T12:00:00+02:00",
-        "continuation": "fixture-cursor",
+        "cursor": "fixture-cursor",
         "entity_id": "10000000-0000-0000-0000-000000000001",
         "hops": 3,
         "include_paths": true,
@@ -4648,6 +4666,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4684,6 +4703,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4701,7 +4721,7 @@
       "typescriptMethod": "graphNeighborhood",
       "typescriptOptions": {
         "believedAt": "2026-10-02T12:00:00+02:00",
-        "continuation": "fixture-cursor",
+        "cursor": "fixture-cursor",
         "entityId": "10000000-0000-0000-0000-000000000001",
         "hops": 3,
         "includePaths": true,
@@ -4716,7 +4736,7 @@
         {
           "body": {
             "believed_at": "2026-10-02T12:00:00+02:00",
-            "continuation": "fixture-cursor",
+            "cursor": "fixture-cursor",
             "entity_id": "10000000-0000-0000-0000-000000000001",
             "hops": 3,
             "include_paths": true,
@@ -4762,6 +4782,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4798,6 +4819,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4870,6 +4892,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -4906,6 +4929,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -4980,6 +5004,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -5016,6 +5041,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -5080,6 +5106,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -5116,6 +5143,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -5692,13 +5720,13 @@
       "options": {},
       "responses": [
         {
-          "cursor": null,
-          "documents": []
+          "documents": [],
+          "next_cursor": null
         }
       ],
       "result": {
-        "cursor": null,
-        "documents": []
+        "documents": [],
+        "next_cursor": null
       },
       "typescriptMethod": "listDocuments",
       "typescriptOptions": {},
@@ -5728,13 +5756,13 @@
       },
       "responses": [
         {
-          "cursor": null,
-          "documents": []
+          "documents": [],
+          "next_cursor": null
         }
       ],
       "result": {
-        "cursor": null,
-        "documents": []
+        "documents": [],
+        "next_cursor": null
       },
       "typescriptMethod": "listDocuments",
       "typescriptOptions": {
@@ -5773,18 +5801,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {},
@@ -5820,18 +5850,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {
@@ -5883,18 +5915,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -5923,25 +5957,27 @@
             ],
             "language": "en"
           },
-          "k": 3,
+          "limit": 3,
           "versions": "all"
         }
       },
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -5953,7 +5989,7 @@
             ],
             "language": "en"
           },
-          "k": 3,
+          "limit": 3,
           "versions": "all"
         }
       },
@@ -5968,7 +6004,7 @@
               ],
               "language": "en"
             },
-            "k": 3,
+            "limit": 3,
             "versions": "all"
           },
           "contentBase64": null,
@@ -5989,9 +6025,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -6015,9 +6051,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -6056,7 +6092,7 @@
               "history"
             ],
             [
-              "k",
+              "limit",
               "50"
             ]
           ]
@@ -6068,7 +6104,7 @@
       "options": {
         "cursor": "next",
         "doc_id": "10000000-0000-0000-0000-000000000001",
-        "k": 3,
+        "limit": 3,
         "section_key": "part/4:per-diem",
         "time": {
           "from": "2026-10-02T12:00:00+02:00",
@@ -6080,9 +6116,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -6106,9 +6142,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -6132,7 +6168,7 @@
       "typescriptOptions": {
         "cursor": "next",
         "docId": "10000000-0000-0000-0000-000000000001",
-        "k": 3,
+        "limit": 3,
         "sectionKey": "part/4:per-diem",
         "time": {
           "from": "2026-10-02T12:00:00+02:00",
@@ -6154,7 +6190,7 @@
               "overlap"
             ],
             [
-              "k",
+              "limit",
               "3"
             ],
             [
@@ -6185,9 +6221,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -6211,9 +6247,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -6254,7 +6290,7 @@
               "history"
             ],
             [
-              "k",
+              "limit",
               "50"
             ]
           ]
@@ -6267,7 +6303,7 @@
         "request": {
           "cursor": "next",
           "doc_id": "10000000-0000-0000-0000-000000000001",
-          "k": 3,
+          "limit": 3,
           "section_key": "part/4:per-diem",
           "time": {
             "at": "2026-10-02T12:00:00+00:00",
@@ -6279,9 +6315,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -6305,9 +6341,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -6332,7 +6368,7 @@
         "request": {
           "cursor": "next",
           "doc_id": "10000000-0000-0000-0000-000000000001",
-          "k": 3,
+          "limit": 3,
           "section_key": "part/4:per-diem",
           "time": {
             "at": "2026-10-02T12:00:00+00:00",
@@ -6354,7 +6390,7 @@
               "at"
             ],
             [
-              "k",
+              "limit",
               "3"
             ],
             [
@@ -6687,16 +6723,16 @@
       "responses": [
         {
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "rows": [],
           "too_broad": null
         }
       ],
       "result": {
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "rows": [],
         "too_broad": null
       },
@@ -6710,7 +6746,7 @@
           "body": {
             "direction": "both",
             "doc_id": "10000000-0000-0000-0000-000000000001",
-            "k": 50
+            "limit": 50
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -6726,11 +6762,11 @@
         "chunk_id": "10000000-0000-0000-0000-000000000002",
         "cursor": "next",
         "direction": "incoming",
-        "k": 3,
         "kinds": [
           "amends",
           "refers_to"
         ],
+        "limit": 3,
         "time": {
           "at": "2026-10-02T12:00:00+02:00",
           "mode": "at"
@@ -6739,16 +6775,16 @@
       "responses": [
         {
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "rows": [],
           "too_broad": null
         }
       ],
       "result": {
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "rows": [],
         "too_broad": null
       },
@@ -6757,11 +6793,11 @@
         "chunkId": "10000000-0000-0000-0000-000000000002",
         "cursor": "next",
         "direction": "incoming",
-        "k": 3,
         "kinds": [
           "amends",
           "refers_to"
         ],
+        "limit": 3,
         "time": {
           "at": "2026-10-02T12:00:00+02:00",
           "mode": "at"
@@ -6774,11 +6810,11 @@
             "chunk_id": "10000000-0000-0000-0000-000000000002",
             "cursor": "next",
             "direction": "incoming",
-            "k": 3,
             "kinds": [
               "amends",
               "refers_to"
             ],
+            "limit": 3,
             "time": {
               "at": "2026-10-02T12:00:00+02:00",
               "mode": "at"
@@ -6802,16 +6838,16 @@
       "responses": [
         {
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "rows": [],
           "too_broad": null
         }
       ],
       "result": {
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "rows": [],
         "too_broad": null
       },
@@ -6827,7 +6863,7 @@
           "body": {
             "direction": "both",
             "doc_id": "10000000-0000-0000-0000-000000000001",
-            "k": 50
+            "limit": 50
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -6844,10 +6880,10 @@
           "cursor": "next",
           "direction": "outgoing",
           "doc_id": "10000000-0000-0000-0000-000000000001",
-          "k": 3,
           "kinds": [
             "cites"
           ],
+          "limit": 3,
           "section_key": "part/4",
           "time": {
             "from": "2026-10-02T12:00:00+00:00",
@@ -6859,16 +6895,16 @@
       "responses": [
         {
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "rows": [],
           "too_broad": null
         }
       ],
       "result": {
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "rows": [],
         "too_broad": null
       },
@@ -6878,10 +6914,10 @@
           "cursor": "next",
           "direction": "outgoing",
           "doc_id": "10000000-0000-0000-0000-000000000001",
-          "k": 3,
           "kinds": [
             "cites"
           ],
+          "limit": 3,
           "section_key": "part/4",
           "time": {
             "from": "2026-10-02T12:00:00+00:00",
@@ -6897,10 +6933,10 @@
             "cursor": "next",
             "direction": "outgoing",
             "doc_id": "10000000-0000-0000-0000-000000000001",
-            "k": 3,
             "kinds": [
               "cites"
             ],
+            "limit": 3,
             "section_key": "part/4",
             "time": {
               "from": "2026-10-02T12:00:00Z",
@@ -8007,8 +8043,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -8049,8 +8083,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -8121,8 +8153,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -8163,8 +8193,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -8368,8 +8396,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -8410,8 +8436,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -8486,8 +8510,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -8528,8 +8550,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -8617,8 +8637,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -8659,8 +8677,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -8789,8 +8805,6 @@
           "error_code": null,
           "error_message": null,
           "evaluated_at": null,
-          "exact_total": null,
-          "exact_total_known": false,
           "execution_started_at": "2026-10-02T12:00:00Z",
           "grade": "exploratory_tabular",
           "graph_invocations": [],
@@ -8831,8 +8845,6 @@
         "error_code": null,
         "error_message": null,
         "evaluated_at": null,
-        "exact_total": null,
-        "exact_total_known": false,
         "execution_started_at": "2026-10-02T12:00:00Z",
         "grade": "exploratory_tabular",
         "graph_invocations": [],
@@ -8929,6 +8941,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -8965,6 +8978,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -9038,6 +9052,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -9074,6 +9089,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -9146,6 +9162,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -9182,6 +9199,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -9256,6 +9274,7 @@
           },
           "grain": "evidence",
           "negative": null,
+          "next_cursor": null,
           "nodes": [],
           "pages": [],
           "paths": [],
@@ -9292,6 +9311,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -9349,9 +9369,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -9375,9 +9395,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -9419,7 +9439,7 @@
               "current"
             ],
             [
-              "k",
+              "limit",
               "50"
             ]
           ]
@@ -9439,9 +9459,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -9465,9 +9485,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -9509,7 +9529,7 @@
               "history"
             ],
             [
-              "k",
+              "limit",
               "50"
             ]
           ]
@@ -9530,9 +9550,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -9556,9 +9576,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -9601,7 +9621,7 @@
               "at"
             ],
             [
-              "k",
+              "limit",
               "50"
             ],
             [
@@ -9627,9 +9647,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -9653,9 +9673,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -9699,7 +9719,7 @@
               "overlap"
             ],
             [
-              "k",
+              "limit",
               "50"
             ],
             [
@@ -10061,9 +10081,9 @@
         {
           "amendments": [],
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "periodised": true,
           "rows": [
             {
@@ -10087,9 +10107,9 @@
       "result": {
         "amendments": [],
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "periodised": true,
         "rows": [
           {
@@ -10130,7 +10150,7 @@
               "history"
             ],
             [
-              "k",
+              "limit",
               "50"
             ]
           ]
@@ -10147,16 +10167,16 @@
       "responses": [
         {
           "believed_at": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "evaluated_at": "2026-10-02T12:00:00Z",
+          "next_cursor": null,
           "rows": [],
           "too_broad": null
         }
       ],
       "result": {
         "believed_at": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "evaluated_at": "2026-10-02T12:00:00Z",
+        "next_cursor": null,
         "rows": [],
         "too_broad": null
       },
@@ -10172,7 +10192,7 @@
           "body": {
             "direction": "both",
             "doc_id": "10000000-0000-0000-0000-000000000001",
-            "k": 50
+            "limit": 50
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -10318,18 +10338,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {
@@ -10363,18 +10385,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {
@@ -10409,18 +10433,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {
@@ -10458,18 +10484,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {
@@ -10509,18 +10537,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -10558,18 +10588,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -10608,18 +10640,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -10661,18 +10695,20 @@
       "responses": [
         {
           "as_of": "2026-10-02T12:00:00Z",
-          "cursor": null,
           "documents": [],
+          "next_cursor": null,
           "people_matched": [],
-          "scope_pending": null
+          "scope_pending": null,
+          "truncated": false
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
-        "cursor": null,
         "documents": [],
+        "next_cursor": null,
         "people_matched": [],
-        "scope_pending": null
+        "scope_pending": null,
+        "truncated": false
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -12316,7 +12352,7 @@
       "typescriptMethod": "sectionHistory",
       "typescriptOptions": {
         "docId": "10000000-0000-0000-0000-000000000001",
-        "k": 0,
+        "limit": 0,
         "sectionKey": "key"
       }
     },
@@ -13717,6 +13753,7 @@
         },
         "grain": "evidence",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -13753,6 +13790,7 @@
         },
         "grain": "fact",
         "negative": null,
+        "next_cursor": null,
         "nodes": [],
         "pages": [],
         "paths": [],
@@ -13791,13 +13829,13 @@
       "tools": {}
     },
     "document_page": {
-      "cursor": null,
-      "documents": []
+      "documents": [],
+      "next_cursor": null
     },
     "document_references": {
       "believed_at": "2026-10-02T12:00:00Z",
-      "cursor": null,
       "evaluated_at": "2026-10-02T12:00:00Z",
+      "next_cursor": null,
       "rows": [],
       "too_broad": null
     },
@@ -13847,6 +13885,7 @@
       },
       "grain": "evidence",
       "negative": null,
+      "next_cursor": null,
       "nodes": [],
       "pages": [],
       "paths": [],
@@ -13882,6 +13921,7 @@
       },
       "grain": "fact",
       "negative": null,
+      "next_cursor": null,
       "nodes": [],
       "pages": [],
       "paths": [],
@@ -13921,8 +13961,6 @@
       "error_code": null,
       "error_message": null,
       "evaluated_at": null,
-      "exact_total": null,
-      "exact_total_known": false,
       "execution_started_at": "2026-10-02T12:00:00Z",
       "grade": "exploratory_tabular",
       "graph_invocations": [],
@@ -14004,17 +14042,18 @@
     },
     "search_page": {
       "as_of": "2026-10-02T12:00:00Z",
-      "cursor": null,
       "documents": [],
+      "next_cursor": null,
       "people_matched": [],
-      "scope_pending": null
+      "scope_pending": null,
+      "truncated": false
     },
     "section_history": {
       "amendments": [],
       "believed_at": "2026-10-02T12:00:00Z",
-      "cursor": null,
       "doc_id": "10000000-0000-0000-0000-000000000001",
       "evaluated_at": "2026-10-02T12:00:00Z",
+      "next_cursor": null,
       "periodised": true,
       "rows": [
         {
@@ -14219,6 +14258,7 @@
             "thread_ref": null
           },
           "k": 20,
+          "limit": 50,
           "query": null,
           "time": null,
           "versions": "current"
@@ -14299,7 +14339,7 @@
         "request": {
           "cursor": null,
           "doc_id": "10000000-0000-0000-0000-000000000001",
-          "k": 50,
+          "limit": 50,
           "section_key": "part/4",
           "time": {
             "mode": "history"
@@ -14350,8 +14390,8 @@
           "cursor": null,
           "direction": "both",
           "doc_id": "10000000-0000-0000-0000-000000000001",
-          "k": 50,
           "kinds": null,
+          "limit": 50,
           "section_key": null,
           "time": {
             "at": "2026-10-02T12:00:00Z",
@@ -15038,6 +15078,36 @@
     },
     {
       "arguments": {
+        "cursor": "opaque-position",
+        "limit": 1
+      },
+      "name": "search_documents",
+      "result": {
+        "request": {
+          "cursor": "opaque-position",
+          "filters": {
+            "authors": [],
+            "created_from": null,
+            "created_to": null,
+            "doc_ids": [],
+            "family": [],
+            "language": null,
+            "modified_from": null,
+            "modified_to": null,
+            "recipients": [],
+            "thread_ref": null
+          },
+          "k": 20,
+          "limit": 1,
+          "query": null,
+          "time": null,
+          "versions": "current"
+        }
+      },
+      "variant": "browse-limit-cursor"
+    },
+    {
+      "arguments": {
         "effective_from": "2026-10-02T12:00:00+00:00",
         "filename": "note.md",
         "source_kind": "policy",
@@ -15632,6 +15702,78 @@
         }
       },
       "variant": "set-clears"
+    },
+    {
+      "arguments": {
+        "max_rows": 1000,
+        "sql": "SELECT 1"
+      },
+      "name": "query_sql",
+      "result": {
+        "max_rows": 1000,
+        "parameters": [],
+        "sql": "SELECT 1"
+      },
+      "variant": "max-rows-1000"
+    },
+    {
+      "arguments": {
+        "max_rows": 1001,
+        "sql": "SELECT 1"
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "max_rows must be <= 1000",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "query_sql",
+      "variant": "max-rows-1001"
+    },
+    {
+      "arguments": {
+        "max_rows": 1000,
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "name": "run_saved_query",
+      "result": {
+        "max_rows": 1000,
+        "name": "safe",
+        "namespace": "examples",
+        "parameters": [],
+        "version": null
+      },
+      "variant": "max-rows-1000"
+    },
+    {
+      "arguments": {
+        "max_rows": 1001,
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "max_rows must be <= 1000",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "run_saved_query",
+      "variant": "max-rows-1001"
     }
   ]
 }
