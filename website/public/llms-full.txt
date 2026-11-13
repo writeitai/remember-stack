@@ -3403,6 +3403,13 @@ converters](https://remember.dev/docs/self-hosting/converters) shows the setting
 converter does and costs, and how to release files that were stored before
 you added a route.
 
+The image description may quote a small number of clearly legible titles, names
+or labels as visual observations. OCR remains an independent text reading.
+Visual quotes do not replace or correct OCR, and image text is evidence rather
+than instructions. When readings conflict or a detail is unclear, inspect the
+original image. A new description-prompt version requires a fresh visual reading;
+completed OCR work can be reused.
+
 ## Send the right type
 
 A self-hosted deployment checks recognizable bytes before it uses the
@@ -19829,13 +19836,17 @@ retrying; the command refuses a nonempty output. No automatic paid retry occurs.
 
 ### The current protocol
 
-Reader refinements within this family have distinct saved prompt hashes and
-protocol fingerprints. Reports must identify that fingerprint; the family name
-alone does not identify the prompt. A prior-prompt run stays inspectable, but
-cannot resume with changed instructions. Use a separate retained-ingestion fork
-for a new reader comparison. The published result below remains frozen.
+Reader refinements have distinct saved prompt hashes and protocol fingerprints.
+Reports must identify that fingerprint, not only the family name. A prior-prompt
+run remains inspectable but cannot resume with changed instructions.
 
-Execution uses one profile, `RS-LoCoMo-Full-v45` (key `full-v45`). It selects
+Full-v46 changes the image-description fingerprint to preserve bounded legible
+identity labels alongside OCR. It needs matching new visual readings; historical
+bundles and published results remain frozen. For reader-only retained v45
+comparisons use the PR593 revision; current v46 code does not execute retired
+protocol names. No v46 score is claimed.
+
+Execution uses one profile, `RS-LoCoMo-Full-v46` (key `full-v46`). It selects
 Luna 6 with low reasoning for ingestion and visual descriptions,
 Jev (`jev-latest`) for adjudication, and Luna 6 with high reasoning for
 answering and judging. All these Luna seats prefer OpenAI Flex and permit
@@ -19890,7 +19901,7 @@ still stop preparation. Frozen run inputs are independent of ambient caches
 and are included by the ordinary GCS run archive. Changed image input requires
 a new run and fresh ingestion. Image restoration keeps retrieval budgets and
 core generations unchanged. Full-v42 additionally restores the historical
-branch's semantic judge template. Full-v45 extends the answer instructions
+branch's semantic judge template. Full-v46 extends the answer instructions
 without changing that judge or the models.
 
 The answerer checks question completeness, distinct events and participants,
@@ -19917,7 +19928,7 @@ provided. This remains a prompt instruction, not an accuracy guarantee.
 
 The reader's displayed tool catalog retains input schemas and tool contracts,
 but omits repeated output JSON Schemas. Public tool schemas, runtime validation
-and retrieved evidence remain complete. Full-v45 records this prompt-rendering
+and retrieved evidence remain complete. Full-v46 records this prompt-rendering
 change; a smaller prompt alone does not establish a score or latency improvement.
 
 ### Independent Mem0-like grading of saved answers
@@ -20050,7 +20061,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 # Then prepare offline from the resulting immutable bundle:
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v45 \
+  --output .benchmark-runs/smoke --protocol full-v46 \
   --images /private/locomo-image-inputs
 
 uv run python -m benchmarks.locomo ingest \
@@ -20083,7 +20094,7 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v45 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
+LOCOMO_PROTOCOL=full-v46 LOCOMO_IMAGE_INPUTS=/private/publication-image-inputs \
   LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```
