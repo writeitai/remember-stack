@@ -1,9 +1,9 @@
 # Proposal: tag classification rules
 
 **Status:** not chosen (2026-11-13). Live proposal; see the adoption trigger.
-**Builds on:** D156, [document tags](../designs/document_tags_design.md), whose
-assignment `origin` column exists so that this proposal can add assignments
-without touching a caller's.
+**Builds on:** D156, [document tags](../designs/document_tags_design.md). D156
+assignments record no origin; this proposal would add one so that rules can
+manage their own assignments without touching a caller's.
 
 ## The idea
 
@@ -65,9 +65,9 @@ tags' **descriptions**:
 
 ### Assignments, corrections and disclosure
 
-- Rule assignments are stored with `origin = rule` and the rule's ID, beside
-  caller assignments. Re-evaluating a rule replaces only its own
-  assignments.
+- `document_tags` gains an `origin` column (`caller` | `rule`) and a
+  `rule_id`; rule assignments are stored beside caller assignments.
+  Re-evaluating a rule replaces only its own assignments.
 - A person who removes a rule-assigned tag records a **suppression** for
   that document and tag, which every rule respects; otherwise the next
   re-evaluation would put the tag back.
@@ -79,7 +79,7 @@ tags' **descriptions**:
 
 `tag_rules(rule_id, kind metadata | classifier, candidate tag_ids, condition
 or instruction, at_most_one, enabled, version)`; `document_tags.origin`
-extended with `rule` plus a `rule_id`; `document_tag_suppressions(doc_id,
+(`caller` | `rule`) plus a `rule_id`; `document_tag_suppressions(doc_id,
 tag_id, created_at)`.
 
 ## Why it is not chosen now

@@ -101,9 +101,11 @@ document follows it.
   are no aliases, so filters and saved queries that use the old name fail
   with `unknown_tag` until they are updated.
 - `delete_tag(tag)` removes the tag and all its assignments in one write.
-- `list_tags(query?)` returns every tag with its description and the number
-  of live documents carrying it, optionally narrowed by a substring of the
-  name or description.
+- `list_tags(query?)` returns every tag with its `tag_id`, name and
+  description, optionally narrowed by a substring of the name or
+  description. It returns no document counts: discovery needs the
+  vocabulary, and an unused tag is reported by the filtered read itself
+  (§4.5).
 
 Wherever an operation takes a `tag`, it accepts the name or the `tag_id`.
 
@@ -127,13 +129,10 @@ claim therefore has exactly one tag set: its document's. The occurrence
 subtleties of D134's version-level filters (a claim reused across versions
 whose metadata differ) cannot arise for tags.
 
-**Origin.** Every assignment records who made it. In this design the only
-origin is `caller`: a person, connector or agent calling ingest or
-`update_document_tags`. The column exists so that a different origin, such
-as the rule-based assignments in the
-[classification rules proposal](../proposals/tag_classification_rules.md),
-can manage its own assignments without ever touching a caller's. A document
-carries a tag when any origin assigns it.
+Every assignment comes from a caller (a person, connector or agent calling
+ingest or `update_document_tags`). Assignments record no origin; the
+[classification rules proposal](../proposals/tag_classification_rules.md)
+adds one if rule-based assignment is ever accepted.
 
 ### 3.3 Setting and changing tags
 
@@ -149,14 +148,18 @@ same lineage. If ingest replaced the tag set, the second upload would
 silently remove the first caller's `project:` tag. With adding, the document
 ends up tagged for both.
 
-Sending identical bytes with new tags creates no version and processes
-nothing (the D134 metadata-observation rule): the tags are added and the
-existing version is returned with `created=False`.
+Tags never cause a version. An ingest that would otherwise be a no-op
+resubmission of the lineage's latest live version (D134's
+metadata-observation rule) stays one when it carries tags: the tags are
+added, nothing is processed, and the existing version is returned with
+`created=False`. Whether an ingest creates a version is decided exactly as
+today (bytes, D140 `version_key`, reversion and D135 deletion rules); tags
+take no part in it.
 
 **By update.** `update_document_tags(doc_id, add?, remove?)` adds and
-removes the caller's tags on one live lineage in one atomic write, or
-`update_document_tags(doc_id, set)` replaces the caller's whole set (`set`
-excludes `add`/`remove`; an empty `set` clears the caller's tags). Removing
+removes tags on one live lineage in one atomic write, or
+`update_document_tags(doc_id, set)` replaces the lineage's whole set (`set`
+excludes `add`/`remove`; an empty `set` clears its tags). Removing
 a tag the lineage does not have is not an error. The result returns the
 lineage's tags after the write. A connector that knows the authoritative
 tag set of a source uses `set`; an agent that classifies a document uses
@@ -186,8 +189,8 @@ extracted from it, an entity it mentions, or a fact it supports.
 ### 3.5 Deletion and hard forget
 
 Normal deletion (D135) keeps a lineage's assignment rows for audit, like its
-D134 metadata rows; a deleted lineage never matches a filter, is not counted
-by `list_tags`, and its tags are never returned. D74 hard forget deletes the
+D134 metadata rows; a deleted lineage never matches a filter and its tags
+are never returned. D74 hard forget deletes the
 lineage's assignment rows. The registry itself is the deployment's
 vocabulary, not content from any source, and is unaffected by forgetting a
 document; a tag whose name or description must go is removed with
@@ -234,13 +237,14 @@ the analysis for why).
 
 The same `documents` filter, with `tags`, is accepted by:
 
-- `search_documents` (D134 §3), whose results also return each lineage's
-  tags;
+- `search_documents` (D134 §3), through its existing filter shape: the
+  SDK/HTTP `filters` object and the MCP tool's flat filter fields each gain
+  `tags`. Its results also return each lineage's tags;
 - `search` for chunks, claims, relations and observations (D134 §4);
 - the context operations `claims_and_sources_context`, `facts_context` and
   `combined_context` ([open query space §3.1](open_query_space_design.md#31-surface-entry-points-and-assured-core)),
-  which gain an optional `documents` argument. `combined_context` passes it
-  unchanged to both children.
+  which gain an optional `documents` argument (the same object `search`
+  takes). `combined_context` passes it unchanged to both children.
 
 `resolve_entity` does not take a document filter. The deployment has one
 entity space; a name that is known in the memory resolves the same way
@@ -260,6 +264,13 @@ associated with a supplied entity, **and** coming from a matching document.
 | Claim | it has a live occurrence in a matching document version |
 | Relation or observation (fact) | at least one live **supporting** claim comes from a matching document |
 
+When a D140 time scope is also given, both conditions hold on the **same**
+occurrence: a claim qualifies through an occurrence in a version that both
+matches the filter and is selected by the time scope, and a fact qualifies
+through a supporting claim that does. Independent tests (a matching
+document in one version, an in-force version elsewhere) are not enough. The
+time scope keeps applying to out-of-filter evidence (§4.4) as it does today.
+
 The filter decides which items are **included**. It never re-decides
 anything: a fact's value, validity window, support state and contradiction
 status are the deployment's single adjudicated answer, the same as in an
@@ -275,7 +286,8 @@ relations and observations:
 
 - **Supporting evidence** is drawn only from matching documents. That is
   what the scope asks for.
-- **Contradicting evidence** is drawn from **every** document. Matching
+- **Contradicting evidence** is drawn from **every** document the read's
+  time scope selects. Matching
   documents are allocated first within the existing evidence budget, then
   the rest. Each evidence association states whether its document matches
   the filter (`in_documents_filter: true | false`).
@@ -313,8 +325,11 @@ were deleted), and D134's other fields can match nothing too. The envelope of
 every filtered read echoes the validated filter and states whether at least
 one live document matched it (`documents_filter: {filter, matched_any_document}`).
 An empty result therefore distinguishes "no document matches this filter"
-from "the matching documents say nothing about this". Both return
-`known_empty` with an explanation naming which case occurred.
+from "the matching documents say nothing about this". Either may return
+`known_empty`, with an explanation naming which case occurred, only when
+the read completed. A read stopped by a D142/D153 work bound, a D143 layer
+exclusion or an unfinished page keeps its existing incomplete-result
+semantics (`boundary`, or a continuation), whatever the filter matched.
 
 ### 4.6 Eligibility before ranking
 
@@ -361,10 +376,9 @@ CREATE TABLE document_tags (
   deployment_id uuid NOT NULL,
   doc_id        uuid NOT NULL,
   tag_id        uuid NOT NULL,
-  origin        text NOT NULL CHECK (origin IN ('caller')),  -- who assigned it (§3.2)
   assigned_at   timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, doc_id, tag_id, origin),
-  FOREIGN KEY (doc_id) REFERENCES documents (doc_id) ON DELETE CASCADE,
+  PRIMARY KEY (deployment_id, doc_id, tag_id),
+  FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
   FOREIGN KEY (deployment_id, tag_id) REFERENCES tags (deployment_id, tag_id) ON DELETE CASCADE
 );
 CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag_id, doc_id);
@@ -379,9 +393,9 @@ write path.
 
 The SQL query facade exposes both as views
 ([open query space §3.2](open_query_space_design.md#32-memory_v1-view-catalog)):
-`memory_v1.tags_current` (one row per registered tag, with its live document
-count) and `memory_v1.document_tags_live` (one row per assignment on a live
-lineage, carrying `tag_id`, the current `name` and `origin`), so saved
+`memory_v1.tags_current` (one row per registered tag) and
+`memory_v1.document_tags_live` (one row per assignment on a live lineage,
+carrying `tag_id` and the current `name`), so saved
 queries and `query_sql` can join on tags like any other document
 coordinate.
 
@@ -390,9 +404,9 @@ coordinate.
 | Surface | Change |
 |---|---|
 | HTTP | `GET /tags` (list, optional `query`); `POST /tags` (create); `PATCH /tags/{tag}` (rename/describe); `DELETE /tags/{tag}`. `POST /ingest` accepts `tags`. `POST /documents/{doc_id}/tags` with `{add?, remove?}` or `{set}`; returns `{doc_id, tags}`. `GET /documents` page items and `search_documents` results return `tags`. Every `documents` filter accepts `tags`. |
-| Python SDK | `client.list_tags()`, `create_tag()`, `update_tag()`, `delete_tag()`; `client.ingest(..., tags=[...])`; `client.update_document_tags(doc_id, add=..., remove=...)` or `set=...`; `documents={"tags": {"all": [...]}}` on `search_documents`, `search` and the context methods. |
+| Python SDK | `client.list_tags()`, `create_tag()`, `update_tag()`, `delete_tag()`; `client.ingest(..., tags=[...])`; `client.update_document_tags(doc_id, add=..., remove=...)` or `set=...`; `filters=DocumentSearchFilters(tags=...)` on `search_documents`; `documents={"tags": {"all": [...]}}` on `search` and the context methods. |
 | CLI | `remember tags list`, `remember tags create NAME --description TEXT`, `remember tags update TAG [--name] [--description]`, `remember tags delete TAG`; `remember ingest FILE --tag T` (repeatable); `remember documents tag DOC_ID --add T --remove T` or `--set T`; `--tag T` (all), `--any-tag T` and `--not-tag T` on query commands. |
-| MCP | Read tool `list_tags`; write tools `create_tag`, `update_tag`, `delete_tag` and `update_document_tags`; `ingest` gains `tags`; `search_documents`, `claims_and_sources_context`, `facts_context` and `combined_context` gain the `documents` argument. Each changed tool raises its `tool_version`. The context tools' descriptions tell agents to call `list_tags` before filtering by tag. |
+| MCP | Read tool `list_tags`; write tools `create_tag`, `update_tag`, `delete_tag` and `update_document_tags`; `ingest` gains `tags`; `search_documents` gains a flat `tags` field beside its other filter fields; `claims_and_sources_context`, `facts_context` and `combined_context` gain the `documents` argument. Each changed tool raises its `tool_version`. The context tools' descriptions tell agents to call `list_tags` before filtering by tag. |
 | Operations | `claims_and_sources_context@5`, `facts_context@5`, `combined_context@6` (new optional input and the §4.4/§4.5 response fields); `surface_manifest_hash` rolls. |
 
 ## 7. What tags are not
@@ -416,13 +430,15 @@ coordinate.
   case-insensitively; declared spelling returned; invalid names (whitespace,
   control characters, empty, over-long) and limits refused; a rename keeps
   every assignment and makes the old name `unknown_tag`; delete removes all
-  assignments; `list_tags` counts only live lineages.
+  assignments.
 - Strictness: ingest, `update_document_tags` and every filter naming an
   unregistered tag fail with `unknown_tag` listing it, and ingest stores
   nothing.
-- Ingest adds and never removes; identical bytes with new tags create no
-  version and return `created=False`; two one-shot uploads of the same bytes
-  with different tags leave both tags on the lineage.
+- Ingest adds and never removes; a no-op resubmission with new tags creates
+  no version and returns `created=False`, while a new `version_key` or a
+  resubmission after deletion still versions exactly as without tags; two
+  one-shot uploads of the same bytes with different tags leave both tags on
+  the lineage.
 - `update_document_tags`: add/remove atomically; `set` replaces; empty `set`
   clears; removing an absent tag succeeds; deleted lineage is `not_found`.
 - **D56 reuse:** creating, renaming and deleting tags, and tagging,
@@ -446,6 +462,10 @@ coordinate.
   explanations.
 - D140: a time-scoped read selects old versions of a tagged lineage using
   the lineage's current tags.
-- Deletion keeps assignment rows but never matches, counts or returns them;
+- D140 with tags on the same occurrence: a fact whose tagged support is out
+  of force and whose in-force support is untagged is not returned.
+- A tag-filtered read stopped by a work bound reports `boundary`, not
+  `known_empty`.
+- Deletion keeps assignment rows but never matches or returns them;
   hard forget removes them and leaves the registry unchanged.
 - `resolve_entity` results are unaffected by any tag state.

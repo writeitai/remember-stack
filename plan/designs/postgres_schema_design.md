@@ -1427,10 +1427,9 @@ CREATE TABLE document_tags (
   deployment_id uuid NOT NULL,
   doc_id        uuid NOT NULL,
   tag_id        uuid NOT NULL,
-  origin        text NOT NULL CHECK (origin IN ('caller')),  -- who assigned it
   assigned_at   timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, doc_id, tag_id, origin),
-  FOREIGN KEY (doc_id) REFERENCES documents (doc_id) ON DELETE CASCADE,
+  PRIMARY KEY (deployment_id, doc_id, tag_id),
+  FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
   FOREIGN KEY (deployment_id, tag_id) REFERENCES tags (deployment_id, tag_id) ON DELETE CASCADE
 );
 CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag_id, doc_id);

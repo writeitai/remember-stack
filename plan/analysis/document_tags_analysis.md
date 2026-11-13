@@ -97,7 +97,7 @@ two:
 
 | | Free strings | Registry (chosen) |
 |---|---|---|
-| Can an agent find out which tags exist? | Only by sampling documents | `list_tags` returns names, descriptions and counts |
+| Can an agent find out which tags exist? | Only by sampling documents | `list_tags` returns names and descriptions |
 | A typo on write | Silently creates a new tag | Refused with `unknown_tag` |
 | A typo in a filter | Silently returns nothing | Refused with `unknown_tag` |
 | What a tag means | Only in the caller's head | The description, written for agents |
@@ -136,10 +136,15 @@ back silent typo tags, which is the main problem the registry solves.
   Aliases would make one tag answer to several names indefinitely; failing
   with `unknown_tag` tells the caller to update.
 
-**Assignment origin.** Every assignment records who made it. Only `caller`
-exists in D156; the column lets rule-based assignment (the proposal above)
-manage its own assignments, and a person's corrections, without ever
-overwriting a caller's tags.
+**No assignment origin yet.** Every D156 assignment comes from a caller, so
+assignments record no origin. Rule-based assignment (the proposal above)
+would need one to manage its own assignments without overwriting a
+caller's; it adds the column when, and if, it is accepted.
+
+**No document counts in `list_tags`.** Exact live counts would aggregate
+assignments across every live lineage on each vocabulary read. Agents need
+the names and descriptions to choose a filter; a tag that matches nothing is
+reported by the filtered read itself (`documents_filter.matched_any_document`).
 
 ## 6. Setting labels
 

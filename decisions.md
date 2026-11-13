@@ -8198,12 +8198,11 @@ context operations agents use most accept no document filter at all.
    agents. `list_tags` makes the vocabulary discoverable; renames and
    deletes happen in one place. There are no tag groups.
 2. **Assignments on the lineage only.** Registered tags are assigned to a
-   document lineage, stored once in `document_tags` with their origin (only
-   `caller` in this decision), and not versioned. Every version, including
+   document lineage, stored once in `document_tags`, and not versioned. Every version, including
    versions selected by a D140 time scope, carries the lineage's current
    tags. `ingest` adds tags and never removes them (one lineage can be
    reached by several callers); `update_document_tags` adds, removes or
-   replaces them atomically. Identical bytes with new tags create no
+   replaces them atomically. Tags never decide whether an ingest creates a
    version. Any unregistered tag in a write or filter fails with
    `unknown_tag`.
 3. **Tags never reach processing.** They enter no reuse key, header,
@@ -8213,7 +8212,8 @@ context operations agents use most accept no document filter at all.
    `tags: {all, any, none}` and is accepted by `search_documents`, `search`,
    `claims_and_sources_context`, `facts_context` and `combined_context`.
    Chunks inherit through their document, claims through their live
-   occurrences, facts through at least one live supporting claim. Eligibility
+   occurrences, facts through at least one live supporting claim; with a
+   D140 time scope, filter and scope hold on the same occurrence. Eligibility
    precedes ranking (D142/D153). `resolve_entity` stays unfiltered: the
    entity space is shared.
 5. **Filtered facts disclose disagreement.** Supporting evidence comes from
@@ -8224,7 +8224,8 @@ context operations agents use most accept no document filter at all.
    evidence limit for facts.
 6. **Honest empties.** Filtered envelopes say whether any live document
    matched the filter, so "nothing matches this filter" is distinguishable
-   from "the matching documents say nothing about this".
+   from "the matching documents say nothing about this". `known_empty` is
+   returned only for completed reads; work bounds keep their `boundary`.
 
 **Alternatives and consequences.** Free-text tags created by use, creation on
 first use, tag groups, copying tags onto claims, chunks or facts, tags on
