@@ -6,9 +6,13 @@ from botocore.exceptions import ClientError
 import pytest
 
 from rememberstack.adapters.selfhost import MinIOObjectStore
+from rememberstack.adapters.selfhost.minio import _CreatedUpload
 from rememberstack.adapters.selfhost.minio import _GetObjectOutput
 from rememberstack.adapters.selfhost.minio import _HeadObjectOutput
 from rememberstack.adapters.selfhost.minio import _ListObjectsOutput
+from rememberstack.adapters.selfhost.minio import _ListUploadsOutput
+from rememberstack.adapters.selfhost.minio import _MultipartUpload
+from rememberstack.adapters.selfhost.minio import _UploadedPart
 from rememberstack.core.object_transfer import current_object_transfer
 from rememberstack.core.object_transfer import object_transfer_scope
 from rememberstack.model import ObjectAlreadyExistsError
@@ -70,16 +74,38 @@ class _MemoryS3:
         Bucket: str,
         Key: str,
         Body: bytes,
-        IfNoneMatch: str,
         Metadata: dict[str, str],
+        IfNoneMatch: str = "",
     ) -> object:
         """Honor the S3 conditional-create header."""
-        assert IfNoneMatch == "*"
         identity = (Bucket, Key)
-        if identity in self.objects:
+        if IfNoneMatch == "*" and identity in self.objects:
             raise _client_error(code="PreconditionFailed", operation="PutObject")
         self.objects[identity] = (Body, Metadata)
         return {}
+
+    def list_multipart_uploads(
+        self, *, Bucket: str, Prefix: str, KeyMarker: str = "", UploadIdMarker: str = ""
+    ) -> _ListUploadsOutput:
+        return {"IsTruncated": False}
+
+    def create_multipart_upload(
+        self, *, Bucket: str, Key: str, Metadata: dict[str, str]
+    ) -> _CreatedUpload:
+        raise NotImplementedError("multipart is exercised against real MinIO")
+
+    def upload_part(
+        self, *, Bucket: str, Key: str, UploadId: str, PartNumber: int, Body: bytes
+    ) -> _UploadedPart:
+        raise NotImplementedError("multipart is exercised against real MinIO")
+
+    def complete_multipart_upload(
+        self, *, Bucket: str, Key: str, UploadId: str, MultipartUpload: _MultipartUpload
+    ) -> object:
+        raise NotImplementedError("multipart is exercised against real MinIO")
+
+    def abort_multipart_upload(self, *, Bucket: str, Key: str, UploadId: str) -> object:
+        raise NotImplementedError("multipart is exercised against real MinIO")
 
     def head_object(self, *, Bucket: str, Key: str) -> _HeadObjectOutput:
         """Return metadata or the provider's ordinary absence code."""
@@ -262,3 +288,118 @@ def test_an_object_streams_in_bounded_chunks() -> None:
     assert client.last_body is not None and client.last_body.closed
     with pytest.raises(FileNotFoundError):
         list(store.iter_bytes(key=ObjectKey("a/missing"), chunk_size=4))
+
+
+@pytest.mark.parametrize("tokens", [(None,), ("a", "a"), ("a", "b", "a")])
+def test_listing_refuses_missing_or_repeated_continuations(
+    tokens: tuple[str | None, ...],
+) -> None:
+    class BrokenPages(_MemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.tokens = iter(tokens)
+
+        def list_objects_v2(
+            self, *, Bucket: str, Prefix: str, ContinuationToken: str = ""
+        ) -> _ListObjectsOutput:
+            page: _ListObjectsOutput = {"IsTruncated": True}
+            token = next(self.tokens)
+            if token is not None:
+                page["NextContinuationToken"] = token
+            return page
+
+    store = MinIOObjectStore(bucket="corpus", client=BrokenPages())
+    with pytest.raises(RuntimeError, match="continuation token"):
+        list(store.iter_keys(prefix=""))
+
+
+def test_listing_follows_empty_truncated_pages() -> None:
+    class EmptyFirstPage(_MemoryS3):
+        def list_objects_v2(
+            self, *, Bucket: str, Prefix: str, ContinuationToken: str = ""
+        ) -> _ListObjectsOutput:
+            if not ContinuationToken:
+                return {"IsTruncated": True, "NextContinuationToken": "next"}
+            assert ContinuationToken == "next"
+            return {
+                "IsTruncated": False,
+                "Contents": [{"Key": "path/a"}, {"Key": "path-other/b"}],
+            }
+
+    store = MinIOObjectStore(bucket="corpus", client=EmptyFirstPage())
+    assert [k.root for k in store.iter_keys(prefix="path")] == ["path/a"]
+
+
+@pytest.mark.parametrize(
+    "markers",
+    [(None,), (("key", "id"), ("key", "id")), (("a", "1"), ("b", "2"), ("a", "1"))],
+)
+def test_purge_refuses_broken_multipart_pagination(
+    markers: tuple[tuple[str, str] | None, ...],
+) -> None:
+    class BrokenUploads(_MemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.markers = iter(markers)
+
+        def list_multipart_uploads(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            KeyMarker: str = "",
+            UploadIdMarker: str = "",
+        ) -> _ListUploadsOutput:
+            page: _ListUploadsOutput = {"IsTruncated": True}
+            marker = next(self.markers)
+            if marker is not None:
+                page["NextKeyMarker"], page["NextUploadIdMarker"] = marker
+            return page
+
+    store = MinIOObjectStore(bucket="corpus", client=BrokenUploads())
+    with pytest.raises(RuntimeError, match="multipart listing continuation token"):
+        store.purge_objects(keys=(ObjectKey("missing"),), prefixes=())
+
+
+def test_purge_follows_both_multipart_markers() -> None:
+    """MinIO's single-disk listing does not paginate uploads; exercise S3 markers."""
+
+    class PagedUploads(_MemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.aborted: list[tuple[str, str]] = []
+
+        def list_multipart_uploads(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            KeyMarker: str = "",
+            UploadIdMarker: str = "",
+        ) -> _ListUploadsOutput:
+            if not KeyMarker:
+                return {
+                    "IsTruncated": True,
+                    "NextKeyMarker": "path/a",
+                    "NextUploadIdMarker": "first",
+                    "Uploads": [{"Key": "path/a", "UploadId": "first"}],
+                }
+            assert (KeyMarker, UploadIdMarker) == ("path/a", "first")
+            return {
+                "IsTruncated": False,
+                "Uploads": [
+                    {"Key": "path/a", "UploadId": "second"},
+                    {"Key": "path-other/b", "UploadId": "keep"},
+                ],
+            }
+
+        def abort_multipart_upload(
+            self, *, Bucket: str, Key: str, UploadId: str
+        ) -> object:
+            self.aborted.append((Key, UploadId))
+            return {}
+
+    client = PagedUploads()
+    store = MinIOObjectStore(bucket="corpus", client=client)
+    store.purge_objects(keys=(), prefixes=(ObjectKey("path"),))
+    assert client.aborted == [("path/a", "first"), ("path/a", "second")]
