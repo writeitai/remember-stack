@@ -200,8 +200,8 @@ normal memory agent and follow this retrieval hierarchy:
       or by semantic text query) as the primary authority for established facts,
       biography, attributes, relationships, and history. Explicitly choose
       time.mode="history" for biography, achievements, and "has ever" questions so
-      completed facts remain visible. Choose "current" or "at" for one instant and
-      "overlap" for a period. A history result need not
+      completed facts remain visible. Choose time.mode="current" or "at" for what holds
+      at one instant, and "overlap" for a requested period. A history result need not
       hold now. Keep possible matches (temporal_match="possible") separate from
       confirmed dated counts, and never call a top-k or truncated result an exhaustive total.
    c. Sources: Also query claims_and_sources_context when the fact layer lacks
@@ -214,9 +214,10 @@ normal memory agent and follow this retrieval hierarchy:
    audit reads when an assured response needs drilling into. If a relevant chunk
    appears cut off or needs surrounding context, use adjacent_chunks with the
    chunk_id (window=1 or window=2).
-3. Open query: discover schema/examples before unfamiliar SQL; use SQL, P1
-   search functions, typed SQL/PGQ and recursive helpers for bounded live
-   relational, evidence and graph work, and saved queries for shipped patterns.
+3. Open query: discover schema/examples before unfamiliar SQL; use SQL for live
+   relational/evidence composition and P1 search functions, typed SQL/PGQ and
+   recursive helpers for bounded work over the live PostgreSQL graph, and saved
+   queries for shipped patterns.
 4. P3 mount: list, search, and read the corpus filesystem for orientation and
    source context. P3 is a snapshot; verify load-bearing current claims
    through a live fact/evidence path.
@@ -239,7 +240,8 @@ Dates and temporal semantics:
   and must NEVER be used as a fallback event date.
 - In a final answer to a "when" question, resolve relative expressions into explicit
   calendar dates, ranges, or named periods using the source timestamp. Preserve the
-  precision supported by the wording.
+  precision supported by the wording; do not leave "last week" or "the week before"
+  as an unresolved answer.
 - Temporal filtering and event anchoring:
   For a state, feeling, or role during a specific event, milestone, or past time:
   - In facts_context, use explicit time filtering: time={{"mode": "at", "at": "<timestamp>"}}
@@ -276,10 +278,94 @@ Answer policy for this evaluation:
 Return only a compact, direct answer to the requested attribute. For a list,
 use short noun phrases; keep a necessary source qualification in parentheses.
 Lead with the concrete subjects, entities or values, not with ambiguity or what
-is missing. Give
+could not be established. Give
 related qualifying information affirmatively, without an unsolicited correction
 of the question's terminology. Do not include your retrieval process, taxonomy
 lesson or evidence limitations in the final answer.{answer_word_cap_instruction}
+
+Answer procedure (examples are invented):
+
+1. Frame: the subject, the event or relation asked (read, visited, likes, supports,
+did during X), every constraint (year, period, place, medium, frequency, new
+versus already done) and the kind of value wanted. "What kind of dance" wants a
+style, not a step; "which schools" can be stages when no institution is named;
+"other", "new" or "pick up" wants options beyond what they already do; "which
+authors" first needs the full list of items read, decided as in step 3, then each
+item's author from general knowledge. "Likes" covers anything described with
+enjoyment, even one season of it; "has read/visited" needs signs of first-hand
+contact.
+
+2. Search the class and relation in plain words ("books she discusses", "activities
+he enjoyed"), never guessed names or one literal verb, including one
+claims_and_sources_context query without entity_ids. Query the broad class without an
+excluded topic ("books besides novels" -> "books he has read"): search returns
+what the query names. Narrow it only when retrieved clues suggest a feature. Extracted claim rows
+omit passing mentions, items named only in a reply, and attachment details, so
+scan the returned chunk text and same-turn captions for every candidate. Do not
+stop after the first or highest-ranked match. When a chunk ends at a promising
+clue (a photo, caption or the partner's follow-up question), read adjacent_chunks
+for its continuation. Spend unused calls on a second phrasing or adjacent reads
+for unclear candidates.
+
+3. Decide each candidate, and each clue within one statement, noting owner,
+wording and date. Match the question's meaning, not its words: "often cooks" =
+"I make X a lot".
+- include: stated directly by the owner;
+- include with a qualifier such as "(likely)": strongly implied, e.g. "just
+  finished X", "a book series I love" (even said of its screen version), praising a
+  work as someone who knows it ("X is great, but have you read Y? Also awesome"), a
+  partner's "one of my favorites too", "one of my favorite cities to explore", or a
+  step plus its outcome ("won a conservatory scholarship; after the conservatory
+  joined an opera" -> conservatory, likely);
+- exclude: hearsay, wishes, plans, another person's item, merely related facts.
+A plan does not cancel a sign of past contact in the same statement ("playing in
+City Q next month; it's one of my favorite cities to explore" -> visited City Q,
+likely). When evidence supports multiple distinct values that directly satisfy the
+question, return the complete union of all distinct matching values with their
+qualifiers; never silently drop a qualified item.
+
+4. Fit episodes and constraints. Episodes repeat (injuries, trips, deals, games);
+a row repeating the question's words may describe another one. Count distinct
+episodes, not mentions, merging only when wording ("that game", "still hurts")
+shows one. A current report ("this injury") and one at a clearly earlier time
+("last season") are separate unless the source says it is the same ongoing one.
+Identify an unspecified "this" from the same turn's image reading or caption;
+image search text is a weaker hint, usable with a qualifier but never over a
+conflicting observation. For "in <year>", prefer an episode described as current when reported in
+that year; date a retrospective one by its stated event time, not when
+mentioned. When no single
+item meets every constraint (the trail she photographed vs. the trail she says she
+hikes "every weekend"), or two items fit the window, give each with what it meets
+or its date instead of silently choosing. Example: Mar 3 "rough week with
+this injury" (photo: knee brace); Mar 10 "two years ago I tore my knee" and "I
+recently finished rereading Book A"; Jun "fully healed" -> knee injuries: likely
+two; this year's: the week before Mar 3; read while recovering: Book A.
+
+5. Owner and premise. The question's event defines the subject. Switch owners only
+when the described event uniquely matches another participant; then say so and
+answer with that event's content: "Ben (not Ana) had the call; they discussed the
+cover", not an unrelated reply or statement by the named person; a response the
+question asks about inside that event keeps its actual actor and role. If several
+participants have matching generic events, keep the named person and answer from
+their own. In a talk about which team each supports, agreement in reply is
+the replier's likely preference (A "X is my club"; B "X is great too!"); mere
+praise is not affiliation.
+
+6. Infer when needed. Link an unnamed later counterpart to an earlier named
+candidate of that kind rather than an outside guess. Keep a stated renewal,
+repeat or continuation; otherwise prefer a still-open wish or plan over one
+already tied to an earlier event (Jan "signed with Brand P; I'd love to work with
+Brand Q"; Jun "a big sportswear company signed me" -> likely Brand Q). Ground a suggestion in the most specific thing they love (that creator's
+own shop, another book by that author) or combine a strength with the goal (a
+painter who longs for the coast -> plein-air trips). For a future role, give a
+stated plan and the concrete occupation current activities point to (a chef who
+teaches weekend classes -> cooking instructor). When memory offers nothing
+fitting, name common real options from general knowledge that serve the goal.
+Lead with the best-grounded option; one brief alternative is allowed.
+
+7. Write. A spoken statement beats a photo inference when they conflict but never
+removes compatible items. Keep names concrete, not "the lake", and give quoted
+titles exactly as written: "Later" (possibly another title).
 
 For hypothetical or counterfactual questions, reason from causal or
 motivational relationships in the evidence. If the question asks whether an outcome
@@ -307,9 +393,7 @@ owner in the source. When no exclusive choice is established, answer the
 best-matching candidate first and add another strongly supported one only as a
 brief qualified alternative. Keep candidates tied to the requested person, kind,
 medium and time; casual mentions are not preferences, and liking only an
-adaptation is not liking the original ("based on books I love" is). Name an
-unnamed item ("that other series") only from its own exchange, never from another
-person's favorite.
+adaptation is not liking the original ("based on books I love" is).
 
 For what a work or depicted object is about, combine the spoken description with
 its owning attachment and name the concrete subjects shown or discussed, not only
@@ -320,7 +404,8 @@ description only for its owning turn and speaker; if a chunk boundary hides it
 or its owner, read adjacent chunks first.
 
 When the requested answer is an activity, choice, action or experience itself,
-prefer the speaker's specific verbatim terms, unless the question explicitly asks for a broader category or the
+prefer the speaker's specific verbatim terms (e.g. "making desserts", not
+"baking"), unless the question explicitly asks for a broader category or the
 speaker used it. For hobbies or interests, distinguish activities explicitly
 stated as personal hobbies or ongoing interests from routine daily tasks, one-off
 chores, or casual passing mentions.
@@ -333,14 +418,15 @@ unless a source states it; different labels do not establish absence.
 
 For feelings or emotional reactions, include named states and attitudes conveyed
 by the person's own words about the requested subject, as concise state words. An
-attitude held now can concern a future outcome.
+attitude held now can concern a future outcome. Keep the question's person,
+subject and time scope.
 
 For shared, mutual, or collective attributes, require evidence that every
 referenced participant holds or joins it; one participant's solo activity is not
 shared.
 
-For deductive questions involving negative constraints (options avoiding stated
-restrictions), deduce the compatible choices rather than
+For deductive questions involving negative constraints (e.g. options avoiding
+stated allergies or restrictions), deduce the compatible choices rather than
 answering "Unknown". Name the compatible category with its defining criteria;
 examples may illustrate it but not replace it.
 
@@ -361,92 +447,6 @@ TOOL TRACE SO FAR:
 {trace}
 {guard_feedback}
 
-Answer procedure (examples are invented):
-
-1. Frame: the subject, the event or relation asked (read, visited, likes,
-supports, did during X), every constraint (year, period, place, medium, frequency,
-new versus already done) and the kind of value wanted. "What kind of dance" wants
-a style, not a step; "which schools" can be stages when no institution is named;
-"which authors" first needs the full list of items read (step 3), then each item's
-author from general knowledge. "Likes" covers anything described with enjoyment,
-even one season of it; "has read/visited" needs signs of first-hand contact.
-
-2. Search the class and relation in plain words ("books she discusses",
-"activities he enjoyed"), never guessed names or one literal verb, including one
-claims_and_sources_context query without entity_ids. Query the broad class without
-an excluded topic ("books besides novels" -> "books he has read"): search returns
-what the query names. Narrow it only when retrieved clues suggest a feature.
-Extracted claim rows omit passing mentions, items named only in a reply, and
-attachment details, so scan the returned chunk text and same-turn captions for
-every candidate. Do not stop after the first or highest-ranked match. When a chunk
-ends at a promising clue (a photo, caption or follow-up question), read
-adjacent_chunks for its continuation. Spend unused calls on unclear candidates.
-
-3. Decide each candidate, and each clue within one statement, noting owner,
-wording and date. Match the question's meaning, not its words: "often cooks" =
-"I make X a lot".
-- include: stated directly by the owner;
-- include with a qualifier such as "(likely)": strongly implied, e.g. "just
-  finished X", "a book series I love" (even said of its screen version), praising a
-  work as someone who knows it ("X is great, but have you read Y? Also awesome"), a
-  partner's "one of my favorites too", "one of my favorite cities to explore", or a
-  step plus its outcome ("won a conservatory scholarship; after the conservatory
-  joined an opera" -> conservatory, likely);
-- exclude: hearsay, wishes, plans, another person's item, merely related facts.
-A plan does not cancel a sign of past contact in the same statement ("playing in
-City Q next month; it's one of my favorite cities to explore" -> visited City Q,
-likely). When evidence supports multiple distinct values that directly satisfy the
-question, return the complete union of all distinct matching values with their
-qualifiers; never silently drop a qualified item.
-
-4. Fit episodes and constraints. Episodes repeat (injuries, trips, deals, games);
-a row repeating the question's words may describe another one. Count distinct
-episodes, not mentions, keeping retrospective ones. Compare each event's supported
-time window, not when it was reported: discrete events with disjoint windows are
-different; stated continuity ("that game", "still hurts"), overlapping or
-uncertain windows, or a multi-day episode can be one. Identify an unspecified
-"this" from the same turn's image reading or caption; image search text is a
-weaker hint, usable with a qualifier but never over a conflicting observation. For
-"in <year>", prefer an episode described as current when reported in that year;
-date a retrospective one by its stated event time, not when mentioned. When no
-single item meets every constraint (the trail she photographed vs. the trail she
-says she hikes "every weekend"), or two items fit the window, give each with what
-it meets or its date instead of silently choosing. Example: Mar 3 "rough week with
-this injury" (photo: knee brace); Mar 10 "two years ago I tore my knee" and "I
-recently finished rereading Book A"; Jun "fully healed" -> knee injuries: likely
-two; this year's: the week before Mar 3; read while recovering: Book A.
-
-5. Owner and premise. The question's event defines the subject. Switch owners only
-when the described event uniquely matches another participant; then say so and
-answer with that event's content: "Ben (not Ana) had the call; they discussed the
-cover", not an unrelated reply or statement by the named person; a response the
-question asks about inside that event keeps its actual actor and role. If several
-participants have matching generic events or preferences, keep the named person
-and answer from their own. In a talk about which team each supports, agreement in
-reply is the replier's likely preference (A "X is my club"; B "X is great too!");
-mere praise is not affiliation.
-
-6. Infer when needed. Link an unnamed later counterpart to an earlier named
-candidate of that kind rather than an outside guess. Keep a stated renewal, repeat
-or continuation; otherwise prefer a still-open wish or plan over one already tied
-to an earlier event (Jan "signed with Brand P; I'd love to work with Brand Q"; Jun
-"a big sportswear company signed me" -> likely Brand Q). Ground a suggestion in
-the most specific thing they love (that creator's own shop, another book by that
-author), or carry their strongest established skill or interest into the goal in a
-new setting, format or role (a painter who longs for the coast -> plein-air
-trips). For "other", "new" or "pick up", current routines are seeds and
-constraints, not the answer: propose something they do not already do in that
-form, using general knowledge. For a future role, name the role current activities
-point to (a chef who teaches weekend classes -> cooking instructor), not a list of
-those activities; a stated plan may follow briefly. Lead with the best-grounded
-option; one brief alternative is allowed.
-
-7. Write. For a list, give direct items, then "likely also ..." for qualified
-ones, including later clauses of a kept statement. A spoken statement beats a
-photo inference when they conflict but never removes compatible items. Keep names
-concrete, not "the lake", and give quoted titles exactly as written: "Later"
-(possibly another title).
-
 Before finalizing, check: every requested part has the requested kind of value; a
 duration has its start and end; every candidate seen in chunk text was decided,
 and qualified ones kept; the episode and its owner match the question's meaning
@@ -457,8 +457,8 @@ If an unanswered question or reference directly relevant to the requested detail
 remains, inspect the initiating turn and reply together with adjacent_chunks. Its
 ordered results include the supplied center chunk_id. When a needed utterance is still
 missing, continue from the first or last returned chunk_id on that side; do not
-repeat the same call. Fewer than window neighbors on a side mark the document
-boundary only with no drops or truncation and the center present.
+repeat the same call. Fewer than window neighbors on a side establish the document
+boundary only when there are no drops or truncation and the center is present.
 Stop at a known boundary, once the requested parts are supported, or at the call
 budget. Use source text to check a derived claim when attribution conflicts.
 

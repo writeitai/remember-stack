@@ -1007,3 +1007,59 @@ done here).**
 - *A repeated-run study of one prompt (for example candidate 4) on the 29
   items.* It would measure run-to-run variation, which none of the trials
   above can separate from prompt effects.
+
+## Owner selection: candidate 4 for a full 178-question conv-43 run
+
+**Selection.** The owner explicitly selected candidate 4 as the canonical
+answer prompt for a fresh whole-conversation conv-43 run.
+`ANSWER_AGENT_PROMPT_TEMPLATE` is restored to the exact literal of historical
+commit `e2de23b47a919881308d1aafc03d854b13a8edf7`. That literal is 18,244
+characters, SHA256
+`e44d050b24528342465627f28085306f7a8cd94e5d451e73c98c2053ef106af1`. Only the
+literal changes. The current main protocol generation, name, key, schemas,
+answer and judge models, judge prompt, exports, retrieval pool, tool and agent
+budgets, and worker settings are unchanged. Candidates 5 and 6 are not used,
+and no candidate 7 was written.
+
+**Repetition result.** The owner had candidate 4 run again, unchanged, on the
+same 29 frozen misses. It scored **7/29**; the original run scored **11/29**.
+Both are official raw results. The identical prompt produced results 4 items
+apart, so per-item outcomes vary between runs even with the prompt held
+fixed. Two runs do not estimate that variation, and neither result shows a
+stable improvement over the published replay. The candidate 4 selection
+rests on the owner's judgment, not on a demonstrated gain.
+
+**Gate for this authorized run.** The owner replaced the earlier gate, which
+required at least 15/29 on the cohort and then at least 164/178 on the full
+conversation. The new gate:
+
+- Run all 178 conv-43 questions fresh with the selected prompt, using the
+  saved ingestion.
+- The gate passes if total correct improves by at least 9 over the saved
+  149/178 control, that is, at least **158/178**.
+- If it passes, run answering and judging for all LoCoMo conversations on
+  their saved ingestion. No new ingestion and no vision conversion.
+- **The selected prompt must be merged to main before either run starts.**
+
+Report the raw judged score as official. List any source-audit flags, such
+as an answer that conflicts with the source speaker or medium, separately in
+analysis. Do not manually regrade and do not splice answers from other runs.
+A single run that meets the gate is evidence for running the full benchmark,
+not proof of a stable improvement.
+
+**Scope.** This changes benchmark prompt selection only. No ingestion,
+conversion, chunking, extraction, embedding or reuse key changes. The answer
+prompt is not part of any D56 reuse identity, so no reuse boundary moves.
+
+**Same-PR public docs (D66).** The benchmarks page
+(`website/src/app/docs/project/benchmarks/page.mdx`) describes "the current
+answer prompt". A short note there now explains the selected prompt's general
+evidence reasoning:
+
+- it reads returned chunk text as well as extracted claims;
+- list answers keep strongly implied items with a qualifier;
+- repeated episodes are kept apart by when they happened;
+- a different participant is named only for an event that belongs uniquely
+  to them.
+
+The note makes no score claim.
