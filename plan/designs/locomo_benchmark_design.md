@@ -364,7 +364,7 @@ is introduced.
 ### Corpus publication and repair (D155)
 
 Ordinary per-document `publish_corpus` work publishes source folders; answering
-waits for selected sessions' pipeline/P1 and matching per-document P3 receipts.
+waits for selected sessions' pipeline/P1 and matching nullable P3 publication markers.
 An operator can run the existing one-shot projection service as full reconcile:
 
 ```bash
@@ -376,8 +376,8 @@ upload. The graph is already queryable from PostgreSQL after authority commits;
 no graph build or snapshot bucket exists.
 
 The answer adapter reads the ordinary read-only P3 directory/mount. Before model
-calls, verify selected folder `document.json`/ready-index identities and their
-bounded id-index membership against checkpointed public `p3` readiness. Freeze
+calls, verify selected folder `document.json`/ready-index identities against
+checkpointed public `p3` readiness and its publication markers. Freeze
 publication identities and a sorted file-inventory hash for the run; a mismatched
 or changing input refuses answering rather than mixing runs. No benchmark-only
 object-store reader, engine snapshot layout or HTTP endpoint is introduced.
@@ -811,9 +811,9 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All eleven workers are running.
 - Every prepared session has an ingest record.
-- Selected document P3 publication receipts are complete; live-graph
+- Selected document P3 publication markers match current export inputs; live-graph
   catalog/grant/helper readiness and a committed-edge visibility probe passed.
-- The ordinary corpus mount's folder/id-index publication identities and frozen
+- The ordinary corpus mount's ready-folder publication identities and frozen
   file inventory match checkpointed readiness; no global snapshot marker is used
   for D155 runs.
 - Public readiness is true; current serving-process model bindings are reviewed as

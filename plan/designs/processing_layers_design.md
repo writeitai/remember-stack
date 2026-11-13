@@ -573,10 +573,11 @@ P3 is the sources-only mutable document tree defined by [D155 in E0 §6](e0_file
 It has no `entities/`, fact metadata or K links under any layer configuration, so
 switching claims/facts does not require a new P3 shape, snapshot, matching served-set
 filter or mount swap. The transaction serving a completed version/representation
-under this document's enabled-layer rules enqueues its corpus revision through
-the ordinary work mechanism. P3 readiness checks that document's applied receipt;
-processing completion does not wait for P3. Deletion and hard forget remain
-unconditional, and their corpus removal/reset cannot be disabled with a layer.
+under this document's enabled-layer rules clears its nullable publication marker
+and enqueues ordinary `publish_corpus(doc_id)` work. P3 readiness compares that
+marker with the current computed export digest; processing completion does not
+wait for P3. Deletion and hard forget remain unconditional, and their per-document
+corpus erasure/index regeneration cannot be disabled with a layer.
 
 ## 8. Compatibility
 

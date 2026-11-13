@@ -48,37 +48,73 @@ and D147 (`run_task`); D101 itself concerns ingest attribution.
 | Which version? | The served completed version, including its original | Latest raw plus older derivatives makes an ordinary folder contain two different testimonies; publishing raw-only folders needs another state and trigger |
 | What about parked uploads? | Retain D117 storage/parking and raw API access; no folder until a version completes | Losing early mount visibility is explicit, smaller than a mixed-version tree, and never promotes unfinished testimony |
 | Type/topic | Engine-derived small type enum; stored nullable topic from root placement | Asking the model for types or reconciling topics corpus-wide adds unstable choices and extra paid work |
-| Stable handle | Existing `doc_id`; an immutable, uniqueness-checked short suffix; bounded radix id-to-path pages plus publication-checked document search | One root map is an unbounded rewrite; suffix scanning is linear; temporal search alone cannot always select the mounted served edition |
-| Maintenance | A per-document ledger stage and serialized P3 writes; repair uses the same renderer | Full snapshots recopy originals and media unrelated to each edit; multiple independent writers need conflict handling for shared indexes |
+| Stable handle | Existing `doc_id`; a deterministic 96-bit SHA-256 suffix; MCP `p3_path` or mounted suffix search | A suffix reservation and radix id index add state without improving the required lookup or erasure contract |
+| Maintenance | Idempotent `publish_corpus(doc_id)` recomputes paths/files and indexes from the DB; one deployment advisory lock serializes publication | Revision counters, path journals, publication receipts and membership tables duplicate authority and introduce recovery state |
 | Read consistency | Atomic objects, explicit folder-level in-progress marker, indexes written after files | S3 has no portable multi-object directory transaction; snapshot isolation would restore the recopy cost or add a pointer filesystem |
-| Hard forget | Reset all P3 contents and controlled serving caches under the existing barrier, then repair | Remembering only the last friendly path misses interrupted moves and independently restored old paths; storing all historic titles in immutable manifests is a privacy liability |
+| Hard forget | List by deterministic document suffix, erase that document's copies, then regenerate indexes from scrubbed DB authority under D74 | Resetting the store empties every customer's mount and recopies every survivor to forget one document; recording historic friendly paths in portable intent is unnecessary |
 | Provider API | S3 operations, streamed across stores when necessary | Native GCS and mandatory server-side copy add provider-specific behavior with no required benefit |
-| Fan-out | Deterministic radix shards for navigation children; bounded index tables | Unbounded topic directories and full member lists cease to be readable at millions of documents |
+| Navigation | Deterministic radix pages for bounded type/topic member tables; physical document paths stay independent of page membership | Moving document folders for page splits/merges would recopy survivors during forget and couple unrelated publication markers |
+
+The suffix is `sha256(doc_id.bytes).hexdigest()[:24]`: 24 lowercase hex characters,
+or 96 bits. For n distinct document UUIDs, the accidental collision probability
+is approximately n(n−1)/(2 × 2^96), below 6.4 × 10^-14 even at 100 million
+lineages. Twelve hex characters would provide only 48 bits and about a 16% chance
+of at least one collision at ten million lineages. The 96-bit choice needs neither
+reservation nor collision-extension machinery. An unkeyed hash also avoids a
+secret whose loss or rotation would break erasure after restore. The UUID remains
+the identity; the suffix is a deterministic way to find every moved or interrupted
+copy, even after the document's source metadata has been scrubbed.
 
 The existing work ledger is unique by target/stage/component version, not content
-hash. A small content-free publication target per document/revision/policy lets
-ordinary `enqueue_on` and claim fencing work unchanged. Reusing/resetting a
-completed document-target row would need special completion/rearm semantics and
-could reuse attempt numbers against stale workers; that alternative is rejected.
-The desired corpus revision survives on the lineage, so clearing progress during
-repair does not change rendered publication identities.
+hash: enqueueing an already succeeded document target would lose a subsequent
+update. Use a fresh event UUID as the `corpus_publication` target for each committed
+trigger, with only `doc_id` in the existing work payload; the event lives solely
+in `processing_state`, with no request table or lineage revision counter. Transport
+retries deliver that same processing row. A→B→A commits get separate ordinary work
+rows, but every handler reads current authority, so their delivery order cannot
+restore an obsolete reading. Existing attempts, leases and DLQ rules stay intact.
 
-The serialized publisher is a deliberate small correctness mechanism: the
-pipeline stays concurrent, but one deployment's P3 changes cannot overwrite each
-other's shared indexes. It does not scan or recopy unrelated documents on each
-event. Shared files are bounded child tables and counts, queried through indexed
-projection metadata. Bulk repair is explicitly an O(corpus bytes) operation.
-Throughput/lock wait and large-media transfer costs must be measured; there is no
-additional scheduler or directory-specific lock protocol in this contract.
+The sole new per-document state is nullable `corpus_published_revision`, a digest
+of the current DB-selected export inputs, desired path and builder policy. Clear
+it when those inputs change and before publication; set it only after files,
+cleanup and index regeneration succeed and authority still matches. MCP computes
+the current path only behind that match; readiness uses the same guard. No stored
+published path, reader-inventory receipt or pending-path list is needed. Type/
+topic/title changes invalidate the digest by comparison; navigation pagination
+changes indexes only, not physical document paths or other documents' markers.
 
-Hard-forget reset costs another copy of surviving originals. That cost is accepted
-for the rare privacy operation, in exchange for a purge that remains provable even
-when PostgreSQL, a bucket, or a serving cache is restored independently. Every
-engine-controlled mount must stop serving and discard cached bytes before purge
-acknowledgement; a database API barrier alone cannot stop an already mounted reader.
-External client downloads are not library-controlled active stores. Lost worker
-leases alone do not prove that an object request stopped: drain must include
-in-flight external writes before reset/verification can complete.
+One deployment advisory lock keeps concurrent publishers from overwriting shared
+indexes with competing snapshots and also serializes same-document copies. Each
+publish lists existing suffix-bearing folders, streams the desired files, deletes
+other copies, and renders affected ancestor indexes and root `llms.txt` afresh from
+the DB. Never patch old index contents or replay queued paths. If a crash deletes
+the last old-folder object before its parent index is repaired, a paged scan of
+navigation indexes can still discover the stale member link by `doc_id`/suffix;
+regenerate that entire index from the DB. Reconcile renders all current navigation
+indexes and prunes obsolete ones. These are recomputable operations, not a journal.
+The inventory's member links identify documents explicitly, so retry discovery
+does not depend on titles. Empty obsolete topic/page indexes are pruned against
+DB membership. Lost or reordered shared-index writes are corrected by the next
+affected publish or reconcile.
+
+Suffix discovery requires a paged key scan because the navigation prefix can move;
+it is O(corpus keys), not O(corpus bytes), and ordinary publication recopies only
+the selected document. Navigation page splits/merges rewrite metadata only.
+Measure listing cost, lock wait and large-media transfer cost. Full reconcile is
+repair, not a prerequisite for every edit. There is no new scheduler or persistent
+navigation-membership cache.
+
+Hard forget uses the same suffix scan after authority scrub. It also enumerates
+navigation-index keys and regenerates/prunes them against the scrubbed DB, covering
+index-only remnants after a prior interrupted delete without any historic path
+list. This can rewrite shared navigation metadata; surviving originals/media stay
+in place and are never recopied. The existing D74 barrier, external-write drain,
+verification and replay of every portable manifest remain essential: a late upload
+could otherwise recreate erased bytes, or an independently restored bucket could
+bring back a former path while PostgreSQL still says `complete`. Engine-controlled
+mount/cache copies must acknowledge purge before serving reopens; external client
+downloads are outside library-controlled active stores. An expired worker lease
+alone does not prove that an object request stopped.
 
 ## Provider facts checked on 2026-11-13
 
@@ -113,7 +149,7 @@ qualification belongs to the delivery tests, with MinIO mandatory in this repo.
 P3 reads committed bytes and never calls a model. Nullable placement changes only
 the placement output generation/root-call schema; it does not alter the skeleton,
 block grid, route, Markdown, chunker, embedding input or extraction input.
-Projection revision numbers, suffixes and generated metadata must stay outside
+Publication markers, suffixes and generated metadata must stay outside
 all D56/Rule-4 identities. Existing reusable summaries remain reusable; acceptance
 of `placement=null` must not be misclassified as degradation and retried forever.
 

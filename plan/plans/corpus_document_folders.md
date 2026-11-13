@@ -6,169 +6,136 @@ amendment. Authority: [E0 §§5–7](../designs/e0_files_design.md#5-mounting--t
 [Analysis](../analysis/corpus_document_folders.md) records the tradeoffs.
 
 Each numbered slice is a separate, independently mergeable PR with its stated
-tests. Supporting capabilities can merge before the profile switches publishers;
-the profile switch must include purge/readiness, so no active consumption surface
-is exposed without its privacy path. No old-tree migration, compatibility alias or
-dual publication is part of the work. Public docs describe a capability only in
-the PR that actually enables it.
+tests. Supporting capabilities merge before the serving profile switches;
+activation includes deletion, forget and readiness. No old-tree migration,
+compatibility alias or dual publication. Public docs change when behavior ships.
+The six slices need no reservation, revision/journal/receipt tables or id index.
 
 ## 1. Object operations and provider-independent contract
 
-Add streamed whole-object replacement and fully paged prefix listing to the
-mutable capability beside immutable `ObjectStorePort`; reuse exact idempotent
-deletion in purge implementations. Implement the same operations in the current
-S3 and local-FS adapters. Keep E0 create-only writes unchanged. Stream transfers
-across different endpoints/credentials, and abort/clean failed multipart uploads.
-Keep local class bookkeeping outside the exported tree. Do not add server-side
-copy, rename or a native GCS client.
+Add streamed replacement and fully paged listing beside immutable `ObjectStorePort`;
+reuse exact idempotent deletion. Implement in S3/local-FS adapters, leaving E0
+create-only writes intact. Stream across endpoints; abort/clean failed multipart
+uploads. Keep local class bookkeeping outside reader paths. No rename, server-side
+copy requirement or native GCS client.
 
-Tests: shared port contracts for replace/create/delete/missing-key, boundary-safe
-prefixes, empty prefix, all listing pages, missing/repeated continuation tokens,
-large streamed objects and multipart failure cleanup. Run these against a real
-**MinIO** fixture, not just mocked boto3/local FS, with more than one listing page
-and a multipart-sized original. Confirm immutable overwrite still raises and
-declared storage classes/transfer accounting are preserved. Wire the MinIO test
-job explicitly even if the ordinary Compose profile uses another S3 provider.
+Tests: real **MinIO** replace/create/delete/missing-key contracts, path boundaries,
+empty prefix, multiple listing pages and missing/repeated tokens. Include a
+multipart-sized streamed original, failure cleanup, bounded memory, unchanged E0
+overwrite rejection and storage-class/transfer accounting. Wire MinIO explicitly
+regardless of the ordinary Compose profile's provider.
 
-## 2. Selection, paths and pure reader export
+## 2. Selection, deterministic suffixes and pure reader export
 
-Add lineage suffix reservation/uniqueness, durable corpus revision and the projection tables in
-[schema §10](../designs/postgres_schema_design.md#10-corpus-publication-progress-and-live-graph-catalog-d155-d98).
-Implement the ordered type taxonomy, topic/slug validation, reader-kind registry,
-active-generation selector and deterministic member/id-map indexes/sharding as a renderer
-without changing the profile's serving composition. Read E0 URIs and inventories,
-including D147 registered-upload keys and the generation-addressed PageIndex.
+Implement `sha256(doc_id.bytes).hexdigest()[:24]`, ordered types, safe topic/slug
+rules, reader-kind allowlist, active-generation selection and bounded navigation
+indexes/sharding as a renderer. Add only nullable `documents.corpus_published_revision`;
+no suffix allocation, counter, request/progress/member tables or `_paths/` tree.
+Read recorded E0 URIs/inventories, including registered-upload keys and active
+PageIndex. Compute desired export digests from DB inputs and builder policy.
 
-Tests: all type branches/fallbacks; email attachments classified independently;
-same/empty/non-ASCII/hostile/long titles; a forced suffix collision retries before
-commit and existing suffixes never change. Explicit no-topic, invalid/deep topic,
-unknown reader kind, `provider_response` under `media/`, references/checkpoints
-excluded, every expected reader asset included. Original/Markdown/source-map and
-PageIndex bytes match authority; relative image links resolve. Seed v1 ready with
-v2 stored/parked and prove every folder file is v1; prove a raw-only lineage has
-no folder. Test shard split **and merge**, many distinct topics, bounded member/id-map indexes,
-id lookup without scanning folders, large asset-table continuation, and byte-identical output for identical intent.
+Tests: deterministic suffix before/after scrub with no stored suffix; all type
+branches, independently typed attachments, hostile/empty/non-ASCII/long titles,
+intentional null/invalid topics, reader assets included and internals excluded.
+Compare original/Markdown/source-map/PageIndex bytes to authority and resolve
+relative links. v1 served plus v2 stored/parked exports only v1; raw-only has no
+folder. Cover navigation split/merge, many topics, bounded member/asset tables
+and byte-identical output for identical DB state. Page splits/merges must change
+only navigation metadata, keeping physical document paths and bytes in place.
 
-## 3. Incremental publisher and repair
+## 3. Idempotent publication, ordinary work and reconcile
 
-Implement deployment mutation locking, per-document desired/applied revisions,
-pending paths/affected-index journal, streamed publication and index-after-files
-ordering. Include same-path updating/ready markers, stale-file removal, moves and
-branch split/merge moves. Replace the builder's repair implementation with the
-same selector/renderer, bounded document export/listing, orphan cleanup and
-metadata reconstruction. Keep the new handler unbound to ordinary profile
-serving until slice 5. Retire snapshot renderer code as the composition switches,
-without retaining an alternate output contract.
+Implement `publish_corpus(doc_id)` with the deployment advisory lock: re-read DB,
+clear the marker, page through suffix matches, stream desired files first, delete
+other document folders, regenerate ancestors/root from DB, then set the marker
+only if inputs still match. Scan stale navigation entries by doc id/suffix when
+retry has lost an old folder, and prune empty branches from DB membership.
+Reconcile uses the same code and enumerates all indexes/orphans. Bind the handler
+to tests, leaving profile activation to slice 4.
 
-Tests: fault injection after each publication step; duplicate/reordered delivery;
-an authority revision changing during a copy; A→B→A; losing a lease/lock with
-in-flight store IO; two writers sharing an ancestor; deletion during publication;
-empty directories and stale assets. **MinIO-backed** create/update/title-topic-type
-move/delete tests inspect actual object bytes and index links after every retry.
-Compare a sequence of incremental edits with repair into an empty store: identical
-key set and byte hashes, including no orphan folders. Count reads/writes to prove
-an ordinary edit never recopies unrelated document originals or media. A large
-stream test bounds memory, not only the number of returned files.
+In each relevant authoritative transaction enqueue a fresh event target in the
+existing unlaned `processing_state` stage, payload `doc_id` only. No request table,
+durable desired revision, reset attempts or per-event component policy. Reuse
+announcements, retries, leases, DLQ and lost-wake recovery; execute with both
+self-host class claims and D147 pushed `run_task`. Policy seeding uses the same path.
 
-## 4. Work scheduling at authoritative boundaries
+Tests: **MinIO-backed** create/update/title-topic-type move/delete and exact bytes/
+index links after retry. Inject failures between steps, especially deletion of the
+last old-folder key before index regeneration; replay duplicate/reordered events,
+A→B→A, changing authority mid-copy, two writers sharing ancestors, deletion during
+publish, and lease/lock loss with in-flight IO. Confirm stale shared indexes are
+regenerated from DB. Incremental edits and empty-store reconcile must converge to
+the same keys/hashes. Ordinary edits never recopy unrelated originals/media.
+Test transactional enqueue rollback, rejection of inactive-policy work, publish
+after an earlier succeeded event,
+parked uploads, every layer profile, current-policy seeding, announcements and
+lost delivery; no hosted models. Register/test the same pushed class map in the
+cloud repo as integration, without making engine tests depend on it.
 
-Register unlaned `publish_corpus` on the small `corpus_publication` request target,
-in the non-convert self-host class. Enqueue a fresh corpus revision in the same transaction as served
-version/representation changes, active structure/topic/title/type updates and
-version/lineage/source deletion. Insert a deterministic request target per document/revision/policy so the
-existing ledger uniqueness can distinguish another run; changing diagnostic
-content hash alone cannot do it. Do not rearm/reset existing attempts or register
-one component policy per revision. Include current-
-pointer rollback and no-folder/removal. Reuse `enqueue_on`, collector/announcements,
-attempts, lease, DLQ and lost-delivery janitor. No periodic projection scheduler.
+## 4. Activate with deletion, forget and restore together
 
-Tests: transactional request/enqueue rollback; updates racing success, retry and
-DLQ completion are never lost; A→B→A creates a fresh target after a previous
-success; duplicate revision enqueue is a no-op; completion emits one intent rather
-than work per chunk; parked/new raw upload does not publish prematurely; current
-pointer changes in sources-only/claims/standard profiles all enqueue. Execute via
-both a self-host class claim and D147 `run_task`; assert announcements, duplicate
-delivery and lost-wake recovery. Policy seeding republishes without repeating paid
-ingestion. Managed integration: register the same engine stage/route in the cloud
-repo's pushed class map and test one pushed task there. Engine tests must succeed
-without any commercial control plane.
+Switch both profiles to the new publisher/reconcile and marker-based readiness.
+Normal delete completes per-document removal before success or leaves durable
+retry work and reports failure. Adapt D74's existing purge capability: keep intent,
+barrier, drain/fence and verification; compute the suffix from manifest `doc_id`,
+erase that document's copies/uploads/caches, then regenerate/prune navigation
+indexes from scrubbed DB authority. Never reset the bucket or recopy survivors.
+Use E0 §6.7's object-version erasure rule. Remove snapshots/pointers and obsolete
+mount composition. Replay all manifests before readiness, including complete ones.
 
-## 5. Activate with deletion, forget and restore together
+Tests: extend hard-forget handler/self-host/S55 fixtures. The mandatory
+**PostgreSQL + real MinIO forget/restore test** plants a unique token in original,
+Markdown, media, title/topic, member/root indexes, a former moved folder and an
+interrupted unindexed copy. Keep an independent control document; assert its keys/
+bytes stay present and its originals/media have **zero** delete/replacement calls
+through forget and retry. Scan/read the corpus to prove the forgotten token,
+suffix objects and index mentions are absent. Inject delete, multipart, cache-ack,
+index-regeneration and verification failures; keep the barrier closed and prove
+retry plus delayed ordinary work cannot resurrect the source.
 
-Compose the new publisher/repair in both profiles. Normal delete finishes its
-incremental corpus removal or reports failure with durable retry work. Adapt the
-D74 coordinator and existing projection-purge capability: stop controlled mounts,
-drain/fence external writes, reset the entire dedicated corpus store including
-retained versions/parts when configured, clear publication metadata/caches, repair
-from scrubbed authority and verify before reopening. Remove snapshot registry,
-pointer serving and obsolete mounts from the composition. Readiness replay covers
-all manifests, even locally complete ones; one reset may cover their union.
+Keep pre-forget fixtures outside active storage. Independently restore bucket
+alone with PostgreSQL still `complete`, DB alone with a clean bucket, and both,
+retaining portable intent. Replay suffix erasure and index regeneration before any
+API/controlled mount reopens; verify old paths and source-bearing versions are gone
+and control bytes remain in place. Include delete-marked old-folder keys and old
+shared-index versions in the retained-version fixture. Include session-cache acknowledgement and
+retained-version purge where enabled; do not mock the storage purge. No model calls.
 
-Tests: extend `test_hard_forget_handler.py`, `test_selfhost_forget.py` and S55.
-The mandatory **PostgreSQL + MinIO forget test** plants a unique token in the
-original, Markdown, media, title/topic, root/member indexes, an old moved folder,
-and an interrupted unindexed copy. Keep an independently supported control
-document. Forget, then list/read every corpus key and assert no source copy or
-member/id-map index mention remains, while the control folder is rebuilt. Inject delete,
-multipart/cache-ack, repair and verification failures; the barrier stays closed,
-retry completes, and delayed ordinary work cannot recreate the source.
+## 5. Consumption paths, readiness and documentation
 
-Save a pre-forget database/bucket fixture outside the active store. Independently
-restore (a) the corpus bucket alone with PostgreSQL still `complete`, (b) the old
-database with the clean bucket, and (c) both, preserving portable intent. Readiness
-must reset/replay before any API or controlled mount reopens; verify no unique
-token, stale index line, old path or retained object version survives. Test session
-cache revocation acknowledgement; do not mock the storage purge itself. No hosted
-model calls. Owner-operated mounts' remount obligation must be documented.
+Use the nullable-marker guard for MCP/API/SDK `p3_path` and readiness, including
+periodised/history results. Teach MCP resolution and offline suffix `find`; no
+path map or id index. Update the consumption skill/navigation evaluation and all
+shipped mount/readiness docs, including `/docs/project/not-built-yet`.
 
-## 6. Consumption paths, readiness and user documentation
+Tests: null path before/during/after failed publish, matching path on success,
+v1 served with pending v2, raw-only, deleted, historical and no-edition-in-force
+selections. Suffix lookup survives folder moves, index-page changes and metadata scrub; asset
+path components cannot impersonate another document. Unrelated success cannot
+satisfy readiness. Exercise `llms.txt → indexes → originals/derivatives`, claims/
+facts switches, standalone K and exact-version `source_open`. Update default and
+layers-off catalogue fixtures. Benchmark attestation uses markers plus ready-folder
+identities/frozen inventories with a fresh protocol; old evidence stays source-pinned.
 
-Replace computed `documents/<doc_id>` paths with publication-receipt lookup in
-document search, SDK types/descriptions and the shared MCP catalogue. Use the same
-guard for current and periodised/history results. Make `p3` certify per-document
-revision/inventory/index/cleanup, with truthful lag, failure and version reasons.
-Update the consumption skill/navigation evaluation, all shipped mount/readiness
-docs and `/docs/project/not-built-yet` as the new behavior becomes available.
+## 6. Mount wrapper and provider qualification
 
-Tests: no path before publication; path during a completed v1 with pending v2;
-null for in-progress moves, failed/dirty publications, raw-only, deleted and
-historical selections; resolve `doc_id` through bounded `_paths/` pages after
-moves and shard changes, including periodised lineages whose search selection is
-not their served version or has no edition in force. A recent
-unrelated publication cannot satisfy readiness. Claims/facts switching changes
-neither P3 content nor topology, while K remains separately gated. Exercise the
-`llms.txt → indexes → actual original/derivatives` ladder with no raw/artifact
-mount. Update contract fixtures deliberately; test full default and layers-off
-catalogues. Preserve exact-version `source_open` parity. Update benchmark P3
-attestation to per-document receipts/frozen inventory under a fresh protocol
-identity; historical source-pinned results retain their original evidence.
+Implement the thin `remember mount DIR` / `remember unmount DIR` wrapper with the
+cloud ticket/session integration. Test stdin-only tickets, direct invocation,
+JSON/exit/missing-executable behavior and failed/expired tickets. Unmount gets no
+new ticket. Keep self-host instructions provider-neutral and read-only.
 
-## 7. Mount wrapper and provider qualification
-
-Add `remember mount DIR` / `remember unmount DIR` as the thin CLI contract in E0
-§5, paired with the cloud repo's ticket/session integration. Assert stdin-only
-ticket delivery, direct subprocess invocation, no secret in argv/env/logs/files,
-JSON/exit handling, missing executable and failed/expired ticket behavior.
-Unmount uses the installed mountable CLI's supported unmount invocation, does not
-fetch another ticket, and reports failure. The cloud route itself is outside this
-repo's design. Keep self-host S3 FUSE instructions provider-neutral and read-only.
-
-Run the same adapter conformance suite against credentialed AWS S3, GCS XML/HMAC
-and mountable.io sandboxes as release qualification, recording actual supported
-signing/addressing/checksum/multipart behavior. Test bucket=filesystem-id on
-mountable.io, raw/artifact/corpus endpoints that differ, provider access logs,
-and read-only session/cache purge acknowledgement. MinIO remains a required
-repeatable engine integration gate, not evidence that other endpoints were tested.
+Run adapter conformance against credentialed AWS S3, GCS XML/HMAC and mountable.io
+sandboxes; record signing/addressing/checksum/multipart results, differing store
+endpoints, access logs and read-only session/cache erasure acknowledgement. Check
+mountable bucket=filesystem-id. MinIO remains the repeatable engine gate, without
+claiming that it qualifies other providers.
 
 ## Cross-slice gates
 
-Preserve Rule 4: provider-call counts/identities for two dated lineage versions
-with untouched sections before/after an edited section remain unchanged by P3.
-Run the existing reuse lifecycle/text-origin proofs appropriate to implementation;
-do not add projection metadata or topic/suffix/revision to any paid-work key.
-Accept successful `placement=null` as cacheable by changing only placement
-schema/generation and root output handling, reusing stored section summaries.
-Explicitly test that a topic/title-only projection change calls no model. Existing
-known Rule-4 gaps remain marked, never silently weakened. Each implementation PR
-lists actual checks and any unqualified provider behavior; none merges a new
-serving path that can bypass D74.
+Preserve Rule 4: two dated versions with unchanged sections before/after an edit
+keep their provider-call counts and identities. Run the existing reuse lifecycle/
+text-origin proofs appropriate to implementation; never put suffixes, markers or
+export metadata in paid-work keys. Only nullable-placement output/schema generation
+changes, reusing stored summaries; topic/title-only publication makes no model
+calls. Keep known Rule-4 gaps explicit. Each PR records actual checks/provider
+limits, and no new serving path bypasses D74.

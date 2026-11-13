@@ -176,11 +176,13 @@ through ordinary engine work and retains full reconcile as repair (D155).
 - **P1**: written inline by plane E (see §4); batch rebuild path exercised for embedding
   migrations and drills.
 - **P3 — corpus filesystem** (D155): mutable S3-compatible tree, mounted read-only.
-  Deterministic type, optional stored topic, title slug and stable suffix locate
+  Deterministic type, optional stored topic, title slug and a 96-bit hash of `doc_id` locate
   one folder per served completed document. It contains copied originals and
   reader-useful derivatives, deterministic `_index.md` tables and root `llms.txt`.
-  Incremental work maintains it; full reconcile repairs it from E0/PostgreSQL.
-  No stub/facet/entity/K layout. Full design: `e0_files_design.md` §§5–7.
+  Idempotent work maintains it with one nullable success marker per document;
+  full reconcile repairs it from E0/PostgreSQL. Forget erases suffix-matched copies
+  and regenerates indexes while leaving surviving originals/media in place.
+  No stub/facet/entity/K layout or id-to-path index. Full design: `e0_files_design.md` §§5–7.
 
 ## 6. Retrieval architecture (D9, D48, D94)
 

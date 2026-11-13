@@ -63,7 +63,7 @@ see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conv
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
 
 For the customer corpus mount — type-first document folders containing copied originals
-and reader derivatives, incremental publication, stable handles and privacy reset —
+and reader derivatives, idempotent publication, stable handles and per-document erasure —
 start with [D155 in E0 §§5–7](designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem),
 its [analysis](analysis/corpus_document_folders.md) and
 [implementation order](plans/corpus_document_folders.md). This is an accepted

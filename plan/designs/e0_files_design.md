@@ -729,13 +729,11 @@ full repair reconciles this same live tree, not another snapshot layout.
 <corpus bucket root>/
   llms.txt
   _index.md
-  _paths/                       # bounded id-to-published-folder index pages
-    _index.md
   email/
     _index.md
     atlas/
       _index.md
-      kickoff--m4t7hx2k5bqp/
+      kickoff--8e74c2b9056df3a8c04e716b/
         _index.md
         document.json
         original.eml
@@ -748,17 +746,15 @@ full repair reconciles this same live tree, not another snapshot layout.
     _index.md
     finance/annual-reports/
       _index.md
-      acme-2023--q7hn3m4tc2vx/
+      acme-2023--9bf3e4c0c2d4861075a6ef82/
         ...
   audio/                         # empty types still have an index
   ...
 ```
 
-There is exactly one published folder per live completed lineage. `_paths/` is
-reserved index machinery, not another document type or duplicate document view.
-Optional topic
-and deterministic shard directories can intervene (§6.3). The export is an
-allowlist, never a recursive copy of the artifact prefix:
+There is exactly one published folder per live completed lineage. Optional topics
+determine its physical path; shard index pages bound navigation (§6.3). The export
+is an allowlist, never a recursive copy of the artifact prefix:
 
 | In the folder | Why it belongs |
 |---|---|
@@ -767,7 +763,7 @@ allowlist, never a recursive copy of the artifact prefix:
 | `pageindex.json` | Exact active structure-generation sidecar: sections, spans, roles and available summaries for reading at section grain |
 | `source_map.json`, when present | Exact representation source map so a reader can relate Markdown spans to original pages, times or regions |
 | `media/<asset-name>` | Every reader asset in the conversion inventory: extracted/page images, crops, thumbnails, keyframes, and timing-preserving transcript/annotation interchange that a reader/player uses, including assets not linked in Markdown |
-| `document.json` | Generated public inventory: `doc_id`, stable suffix, displayed version/representation/structure ids, original MIME/hash, file hashes, relative reader-asset names and locators, derivation labels, coverage gaps/warnings and publication revision. This is a documented reader record, not a copy of engine `meta.json`/`conversion.json` |
+| `document.json` | Generated public inventory: `doc_id`, stable suffix, displayed version/representation/structure ids, original MIME/hash, file hashes, relative reader-asset names and locators, derivation labels, coverage gaps/warnings and deterministic publication identity. This is a documented reader record, not a copy of engine `meta.json`/`conversion.json` |
 | `_index.md` | Generated orientation and a member table linking these files, with source date, stored root summary (or explicit absence), derivation disclosure and publication state |
 
 The projection's versioned asset-kind registry classifies each converter kind as
@@ -845,41 +841,47 @@ as a whole. A valid empty/no-topic result is explicit `null`, not an error.
 The model may intentionally choose no topic; it never chooses the type or slug.
 No LLM calls occur in the publisher or repair.
 
-The leaf name is `<title-slug>--<corpus_id>`. Use the selected version's D134 title,
+The leaf name is `<title-slug>--<suffix>`. Use the selected version's D134 title,
 then its filename, then the lineage title as fallback. The slug uses the same
-normalization, a 60-byte cap and `untitled` fallback. `corpus_id` is an opaque 12-character
-lowercase base32 token allocated once on the lineage, reserved with a deployment
-UNIQUE constraint and retried on collision **before commit**. This makes identical
-or hostile titles safe without a probabilistic uniqueness promise. Retain the
-reservation through tombstones/forget; it contains no source text. It is display
-metadata, not source identity or an extraction key. `doc_id` remains the durable
-handle; the suffix helps a person recognize the same folder after a move.
+normalization, a 60-byte cap and `untitled` fallback. Define
+`corpus_suffix(doc_id) = sha256(doc_id.bytes).hexdigest()[:24]`, using the UUID's
+16 canonical bytes. Its 24 lowercase hex characters carry 96 bits: the accidental
+collision probability n(n−1)/(2 × 2^96) is below 6.4 × 10^-14 even for 100 million
+lineages, comfortably beyond the required millions. No suffix allocation,
+reservation, uniqueness table or collision-extension protocol is needed. The
+unkeyed hash needs no retained secret for restore replay. It remains computable
+from `doc_id` after tombstone or source-metadata scrub, and never enters a paid-work
+identity. `doc_id` remains the durable handle; the suffix identifies every folder
+of that document across title/topic/type moves.
 
-Navigation directories split when their immediate child table exceeds B entries
-(starting point B=150, a measured/versioned projection setting). Use deterministic
-radix shards over each child's unique key (`d:<corpus_id>` for document folders,
+Navigation **index pages**, not document folders, split when a member table
+exceeds B entries (starting point B=150, a measured/versioned projection setting).
+Use deterministic radix pages over each child's key (`d:<suffix>` for documents,
 `t:<normalized-topic>` for topic branches), encoded into base32. Reserved `~`
-shard prefixes distinguish machinery from user topics. Each split exposes at most
-32 next-character branches; collapse shared single-child prefixes into one shard
-component. Recursively split overloaded branches. Merge when membership falls to
-B or below, so topology depends on current membership rather than event history.
-This bounds topic children as well as document children. A split/merge moves only
-the affected branch's folders through the same publication procedure; a million
-new siblings never require copying unrelated types. Converter-established asset
-paths inside a document are preserved, not reshuffled by corpus sharding; their
-member tables paginate deterministically when large.
+page-directory prefixes distinguish index machinery from topics. Each split has
+at most 32 next-character branches; collapse single-child prefixes, recursively
+split overloaded pages and merge when membership falls to B or below. All rows,
+counts and page boundaries are computed from DB membership.
+
+Physical folders remain at `<type>/<optional-topic>/<title-slug>--<suffix>/`.
+Index pages link to those folders or real topic indexes; splitting/merging pages
+rewrites only navigation metadata, never moves originals/media. Removing one
+document therefore cannot force surviving document copies to move during forget.
+Object-store prefixes can have many children; browsing uses bounded member pages,
+while listing and suffix search use pagination. Converter-established asset paths
+inside a document are preserved; large asset tables paginate similarly.
 
 ### 6.4 Deterministic indexes and stable addressing
 
 Every navigation directory, including root, has `_index.md`: directory identity,
-subtree counts, parent/child links and one member row per immediate child. A
-document row includes title, source/date, displayed version, stored PageIndex root
-summary or “no summary”, and its relative folder link. Topic/shard rows include
+subtree counts, parent/child links and bounded member pages for its logical
+children. A document row includes `doc_id`, title, source/date, displayed version,
+stored PageIndex root summary or “no summary”, and its relative folder link. Topic/page rows include
 counts and child-index links. Document `_index.md` lists reader files and media;
 large asset tables use bounded continuation pages referenced from that index.
 Tables are sorted by normalized title then stable id (branches by name), with
 Markdown cells and link components escaped. Root `llms.txt` lists the fixed types,
-counts, reading steps, version/move semantics and the `_paths/` resolver; it is
+counts, reading steps, version/move semantics and suffix lookup instructions; it is
 bounded by the type taxonomy. It is the only `llms.txt` in this tree.
 
 Index rendering uses SQL metadata and stored summaries, **zero LLM**. There are no
@@ -887,226 +889,216 @@ directory summaries, facets, `documents/<doc_id>/`, `by-source/`, `by-time/`,
 `entities/`, duplicate view stubs, K links or monolithic id-to-path file. The ladder is
 `llms.txt → type/topic/shard _index.md → folder _index.md → document.md/original`.
 
-Folder paths can change on type/topic/title changes or shard split/merge.
-Consumers store `doc_id` (and a version/representation handle for a citation).
-For offline browsing, `_paths/_index.md` is the stable entry to an id-to-path member
-table: rows carry doc id, stable suffix, applied relative folder, displayed
-version/representation and publication identity. Sort by full UUID hex and use
-bounded radix index pages (the same B/split/merge rule, with child ranges shown in
-parent indexes). An id lookup follows its range, reading at most a bounded page
-per level; it does not scan a million folders or rewrite a million-row root map.
-Only the affected map page/ancestors change on publication/removal. This is an
-index over the one document tree, never another copy, stub or authority. Map
-paths are not themselves permanent; resolve from their fixed root. Rows point
-only to completed folders and state that they open the displayed served reading,
-not a historical edition.
+Folder paths change only when their type, topic or title changes; index pagination
+does not move them. Consumers store `doc_id` (and a version/representation handle for a citation).
+Resolve through MCP `p3_path`; for offline browsing compute `corpus_suffix(doc_id)`
+and run `find <mount> -path '*-<suffix>/*'`, substituting its 24 hex characters.
+This searches the mounted tree and may cost a full listing; there is no `_paths/`
+id index, alias directory or persistent path map. Verify the folder's `doc_id`
+and displayed version in `document.json` before opening it as a particular edition.
+Suffix lookup can find the served folder even when temporal search selects another
+edition or no edition is in force; it does not change those temporal rules.
 
-Existing `search_documents` filtered by `doc_ids` also returns a path when its
-selected version has a matching completed publication. Periodised/historical
-search can select another edition (or none in force); the mounted id index still
-resolves the lineage's published folder without weakening those temporal rules.
-The engine
-joins the **publication receipt**, not a computed title path, for MCP/API/SDK
-`p3_path`: return a corpus-root-relative folder path only when that receipt has
-finished cleanup/indexing and matches the selected version, representation and
-current desired P3 revision. Otherwise return `null`, including unprocessed,
-unpublished, updating, deleted, historical or failed publications. This applies
-also to lineages without effective periods; their old unconditional Tier-1 path
-is removed. `served_version` still describes authority currency, not P3 progress.
-MCP descriptions and the consumption skill teach re-resolution after a move.
+For MCP/API/SDK `p3_path`, derive the desired relative folder from current DB
+inputs, and return it **only** when the selected version is served and the nullable
+`documents.corpus_published_revision` matches the current desired export digest
+(§6.5). Otherwise return `null`, including raw-only, unpublished, updating, deleted,
+historical and failed publications. The digest covers selected version,
+representation, active structure, reader inventory/hashes, title/type/topic,
+desired path and builder policy; it is computed from existing authority, not a
+new durable revision counter. `served_version` describes authority currency,
+independently of P3 progress. MCP descriptions and the consumption skill teach
+re-resolution after moves.
 
 ### 6.5 Incremental work, publication order and reader observations
 
-The engine owns an unlaned `publish_corpus` stage. Whenever a transaction
-changes served version/representation, active structure or placement, a canonical
-title/type input, or deletion selection, it increments a per-lineage **corpus
-revision** (`documents.corpus_revision`). In the **same transaction**, insert a
-content-free `corpus_publication_requests` target (document id, revision and
-builder policy) and `enqueue_on` its stage row. No event on every chunk or model
-call. Projection-policy changes seed affected live documents through this same
-mechanism. No-source/no-folder is a removal result, not an absent trigger.
+`publish_corpus(doc_id)` is idempotent: each invocation recomputes the desired
+folder and files from DB authority. Projection-relevant transactions clear the
+nullable publication marker and enqueue this unlaned engine stage in the same
+transaction as served version/representation, active structure/placement,
+canonical title/type or deletion changes. No event is needed per chunk or model
+call. Policy changes seed affected documents through the same mechanism. A
+no-folder selection means removal, not a missing trigger.
 
-The new `corpus_publication` work target is necessary because existing ledger
-uniqueness is `(target_kind, target_id, stage, component_version)`: changing
-`content_hash` alone would not re-run a succeeded document target. Derive the
-request UUID deterministically from deployment/doc/revision/policy and enforce
-its unique document/revision/policy key. Duplicate enqueue reuses that row;
-even A→B→A creates a fresh target. Keep attempts, leases and the registered builder
-component version unchanged in meaning; do not mint one component policy per
-document revision or reset a running work row. This is a target for ordinary
-processing, not a new scheduler or parallel work ledger. Its content-free lifetime
-follows its processing rows; it is not a history of title/topic paths.
+Use only the existing work ledger: each committed trigger has a fresh event UUID
+as its `corpus_publication` target id and `doc_id` in its handler payload. No
+request table is added. This accommodates the existing unique key
+`(deployment, target_kind, target_id, stage, component_version)`: reusing a succeeded
+`document` target would suppress another publish, even if its diagnostic
+`content_hash` changed. Delivery/retry reuses the event's processing row; a later
+commit, including A→B→A, has a fresh row. The event carries no desired path or
+revision and never overrides current authority. No attempt reset, lineage counter,
+or per-update component version is needed.
 
-Self-host D146's `llm` class serves this non-convert stage; it makes no model call.
-The managed host registers the same engine stage in its pushed-work class map
-and invokes D147 `run_task(context, processing_id)`. D62/D67 queue announcements,
-reannouncement janitor, leases, retries and DLQ are reused. Cloud delivery is a
-wake-up, not authority. Registering the stage and class mapping in the cloud repo
-is an integration requirement, not a second scheduler or engine correctness hook
-implemented there. Manual `run_projection(plane="p3")` is the repair entry point.
+Self-host D146's non-convert class and managed D147 `run_task(context,
+processing_id)` invoke the same handler. It makes no model calls. Reuse D62/D67
+announcements, janitor, leases, retries and DLQ; cloud delivery is only a wake-up.
+Registering the engine stage in the cloud pushed-work class map is an integration
+requirement, not a hosted scheduler or correctness authority. Inactive-policy work
+cannot write; seed current-policy work instead.
 
-Use one deployment-scoped PostgreSQL advisory lock for P3 mutation, shared by
-publish, normal deletion, repair and forget's authorized internal calls. An
-internal repair/removal reuses its caller's lock ownership rather than acquiring
-another connection's lock recursively. Hold it on a dedicated connection through
-object operations; the outer handler maintains
-its claim lease. Re-read authority/revision after taking the lock. Delayed work
-converges to current intent rather than overwriting it with its payload. Losing
-the claim or lock stops writes; no detached/background uploads survive a handler.
-Before retry/forget can take over, settle or fence in-flight external writes;
-lease expiry alone is not proof they stopped. If that cannot be established,
-remain unavailable to mutation/forget completion rather than certify erasure.
+One deployment-scoped PostgreSQL advisory lock serializes publication, including
+index regeneration, normal removal, reconcile and forget's authorized internal
+calls. Reuse caller lock ownership for internal calls. Re-read authority after
+taking the lock. Keep the claim alive while streaming; loss of claim/lock stops
+writes and requires settling or fencing in-flight external IO before another
+writer or forget can proceed. A lease expiry alone cannot prove IO stopped.
+No detached uploads survive a handler. This small lock avoids competing writes to
+the same folder and shared indexes without a durable coordination protocol.
 
-One compact per-document `corpus_publications` row records applied revision,
-applied identity, published path, and a **pending path/affected-index journal**;
-its desired revision is copied from `documents.corpus_revision`. Persist every
-destination and old path before writing there; keep the journal until cleanup
-succeeds. This is rebuildable projection progress, not E0
-truth. Indexed membership metadata and per-directory child/count rows let an
-update query its affected branch and ancestors, not rescan all documents. Repair
-reconstructs this metadata from authority. The short suffix reservation lives on
-the lineage along with its monotone corpus revision, so discarding projection
-progress cannot change either or change deterministic rendered publication ids.
+For each publish:
 
-For a publication (including same-path replacement):
+1. Clear the publication marker before any store mutation. Compute the desired
+   path and inventory from the DB, then page through existing corpus keys to find
+   every document-folder component ending `--<suffix>/`. Match the complete path
+   segment, not a substring; stop interpreting navigation components at the first
+   document folder, so reader-asset names cannot impersonate another document.
+   Topic normalization cannot produce the reserved double-hyphen leaf delimiter.
+   Collect existing old/new ancestors in memory; no historic paths are persisted.
+2. If a served reading exists, write its desired folder **files first**. Mark an
+   existing folder `_index.md` as `updating`, stream the selected original and
+   allowlisted derivatives, confirm hashes/complete-object writes, and remove
+   obsolete files at that path. A multipart ETag is not a SHA-256 checksum; use
+   upload checksums or streamed read-back as required. Write `document.json`, then
+   the ready folder `_index.md`, with the same deterministic export identity.
+3. Delete every other folder carrying this document's suffix, including partial
+   unindexed copies; if no reading survives, delete every matching folder. Missing
+   objects succeed. Include abandoned multipart uploads for those keys.
+4. Regenerate affected old/new ancestors' `_index.md` bottom-up and root `llms.txt`
+   **from the DB**, never by editing previous index contents. Membership, paths,
+   counts and summaries come from current live served selections, not events or
+   a projection membership table. Prune navigation directories absent from DB
+   membership. If a crash already removed the last old-folder key, a paged scan of
+   navigation indexes can discover stale member links by `doc_id`/suffix and add
+   their ancestors to this regeneration; their old contents are discovery only.
+   Thus retries need neither a pending-path journal nor a stored publication path.
+   Index-page splits/merges rewrite only navigation metadata, leaving document
+   paths and unrelated originals/media unchanged.
+5. After files, removal and indexes succeed, re-read the desired digest in a DB
+   transaction and set `corpus_published_revision` only if it still matches what
+   was published. Otherwise leave it null and retain/enqueue work for current
+   authority. Updating transactions and final marker writes serialize on the
+   document row; neither can erase the other's wake-up. Delayed/reordered work
+   always recomputes current state. No journal, publication-receipt table, path
+   reservation or directory-membership table is kept.
 
-1. Journal old/new paths and affected directories. Write an `updating` document
-   `_index.md` before changing existing folder contents. A new folder is initially
-   unindexed. Stream the selected original and allowlisted derivatives; confirm
-   input hashes and successful complete-object writes. Verify the final inventory
-   using upload checksums or streamed read-back when necessary; a multipart ETag
-   is not a SHA-256 checksum. Remove files not in the new inventory.
-2. Write `document.json`, then ready folder `_index.md` with the same publication
-   identity and complete member inventory. New parent indexes can now link it.
-3. Regenerate affected old/new member tables, id-to-path pages and their ancestors
-   bottom-up, then root `llms.txt`, using candidate membership plus other completed
-   publications.
-   Every document link added this way targets an already completed folder. Persist
-   membership changes and the journal so an interrupted index write is retryable.
-4. Delete obsolete folders only after links move; prune empty topic/shard indexes.
-   If authority changed while copying, leave the receipt unapplied and enqueue/
-   retain the newer revision. Otherwise, after cleanup, commit the applied receipt
-   and clear the journal. A crash after any step replays the same operations.
+Normal delete uses the same removal synchronously before D135 reports success;
+an object/index failure reports failure and leaves ordinary durable work for
+retry. Deletion and forget cannot be disabled with claims/facts switches. Removal
+success is absence verified by suffix listing and index regeneration, with the
+existing work row recording completion; it needs no separate empty receipt.
 
-For removal, first remove every member/id-map row and regenerate affected ancestors
-and `llms.txt`, then delete all journaled folders, verify absence, and apply the
-empty receipt. A delete API retains D135's finish-or-refuse behavior: synchronously
-run this authorized removal before reporting success; an object failure reports
-failure and leaves durable work for retry. Deletion and forget run regardless of
-claims/facts switches.
-
-**What readers can observe.** S3 replacement is atomic per object, not per folder
-or tree. An unindexed new folder can be partly visible to direct `ls`. A move may
-briefly expose two complete copies; an old remembered path may disappear after
-cleanup. A same-path version update can mix old/new complete files while its
-index says `updating`; parent counts/indexes can temporarily disagree. Readers
-needing a consistent folder check the ready publication identity before/after
-reading, or use immutable version-addressed API handles (also for cached/ranged
-media reads). Caches can delay observations; there is no cross-file snapshot or
-point-in-time media guarantee on a mount. This is acceptable for browsing a
-projection, while exact citations/readiness use authority and receipts. No
-half-written individual object, invented raw/processed version pairing in a
-completed folder, or success receipt for incomplete cleanup is acceptable.
+**What readers can observe.** Objects are replaced atomically, folders and trees
+are not. A new folder can be partly visible to direct `ls`; moves can briefly
+expose two copies, and same-path updates can mix complete old/new files while the
+folder index says `updating`. DB-derived shared indexes can temporarily lead or
+lag another document's files or counts. No cross-file or point-in-time media
+snapshot is promised. Check the ready folder identity before/after a read, or use
+immutable version-addressed source handles when exactness matters, including for
+cached/ranged media reads. The marker certifies a successful publication of this
+document's current inputs; it is not a whole-tree snapshot. Failed or interrupted
+publication leaves it null, and the next affected publish or reconcile regenerates
+shared indexes from authority.
 
 ### 6.6 Repair, readiness and processing layers
 
-`run_projection(plane="p3")` takes the same mutation lock and streams live served
-lineages and paged object listings. Apply the same selectors, renderer, sharding
-and publication/removal operations; delete unknown/orphan keys, regenerate all
-indexes and rebuild membership/progress. Re-read changed revisions or leave their
-newly queued work unapplied. With no concurrent authoritative changes, repair
-converges to the same paths and reader bytes as incremental maintenance, including
-removal of abandoned assets. No timestamps/random build ids in rendered content;
-publication identity derives from the authoritative revision and builder policy.
-Operational timestamps live in PostgreSQL receipts. Interrupted repair is safe to
-rerun and never opens a second layout. It is not necessary after every edit.
+`run_projection(plane="p3")` reconciles this same live tree using the lock,
+selectors, renderer and publisher above. Stream DB lineages and paged key listings;
+delete unknown/orphan objects, render all current navigation indexes from the DB,
+and prune obsolete index keys even if no document folder remains there. Share
+discovery/index work across the run rather than scanning the whole store anew
+for every document. Existing originals/derivatives whose paths and hashes match
+need not be recopied. A retry
+recomputes everything, with no progress reconstruction or snapshot registry.
+Without concurrent authority changes, incremental maintenance and reconcile
+converge to identical keys and bytes. Export identities are deterministic digests;
+no generated timestamps, event UUIDs or random build ids enter reader files.
 
-Readiness `p3` is per requested lineage/version: true only when its desired revision
-has a fully applied matching receipt, valid folder inventory, affected member/id
-indexes and root manifest, and no pending cleanup. Aggregate `p3` is true only if
-all requested selections meet this rule. A global recent build time proves nothing.
-A selected historical version is not mounted and reports `p3_version_not_served`;
-an unprocessed/parked selection is not ready; lag reports
-`corpus_publication_incomplete`, adapter/DLQ failure remains visible. For deletion,
-readiness requires the applied empty receipt and verified removal. Existing
-`built_at`/`published_at` describe that document publication; `version` identifies
-its revision/policy, not a global snapshot; aggregate timestamp/version fields
-are null when multiple publications are involved. A mount being absent on the querying
-machine does not make a completed remote publication incomplete.
+Readiness `p3` uses the same nullable-marker comparison as `p3_path`, per requested
+served lineage/version. A matching marker means its publish completed files,
+cleanup and affected-index regeneration for the current digest; a recent unrelated
+publish proves nothing. Reconcile can verify inventories and repair store damage;
+the marker does not certify an independently restored bucket, which must pass the
+restore gate (§6.7). A selected historical edition reports `p3_version_not_served`;
+a raw-only/parked selection is not ready; a missing/mismatching marker reports
+`corpus_publication_incomplete`, with adapter/DLQ failures still visible in the
+ordinary ledger. Aggregate `p3` requires all requested selections to match.
+Deleted documents have no browse path; their removal is verified by the delete/
+forget operation, not an applied empty-publication record. `version` may expose the
+selected document's digest; unsupported global snapshot time/version fields are
+null, including an aggregate over multiple publications. No new publication-time
+columns are required. A missing local mount does not invalidate a remote publish.
 
-P3 is a **sources-layer** projection: it contains no facts/entities/K and has the
-same shape with claims/facts on or off. Completion eligibility follows the served
-pointer under D143's enabled-layer rules, but a facts setting change alone requires
-no P3 snapshot rebuild or served-set filtering. K's own facts-layer gating remains.
-Corpus revision, suffix and export metadata enter no converter, chunk, Selection,
-Claimify or embedding identity. Only the placement output/schema generation changes
-to accept successful `null`; it reuses stored summaries and never changes sections
-or re-extracts/re-embeds unchanged text (Rule 4).
+P3 is a **sources-layer** projection with the same shape whether claims/facts are
+on or off. Completion follows the served pointer under D143's enabled-layer rules;
+a facts-setting change alone requires no P3 rebuild or filtering. K keeps its own
+facts-layer gate. Suffixes, publication markers and export metadata enter no
+converter, chunk, Selection, Claimify or embedding identity. Only the placement
+output/schema generation changes to accept successful `null`, reusing stored
+summaries and leaving unchanged text's paid-work identities intact (Rule 4).
 
-### 6.7 Hard forget and restore: erase before repair
+### 6.7 Hard forget and restore: erase the document, regenerate indexes
 
-D74's portable manifest, admission/drain barrier and verification remain the
-privacy authority; D147 provides the explicit context and separately durable
-manifest store. A friendly path list is insufficient: a crash can leave partial
-copies, moves create former paths, and a bucket can be restored independently.
-For this rare operation choose a **deployment-wide corpus reset**, rather than a
-history of title-bearing paths in an immutable manifest:
+D74's portable intent, admission/drain barrier, verification and restore replay
+remain the privacy authority. The existing `doc_id` in intent is sufficient for
+P3: its suffix is computable after source-metadata scrub, without historic titles,
+paths, suffix reservations or a corpus-wide purge scope.
 
-1. Include the deployment's entire corpus-store purge scope in portable intent,
-   using deployment identity only, not names/topics. Before acceptance, D74 stops
-   ordinary claims and drains **all** P3 writes/repair, including in-flight uploads.
-   Existing engine-controlled mount sessions must stop serving; API admission alone
-   does not stop a mounted reader.
-2. After lifecycle/authority scrub, the authorized forget coordinator takes the
-   P3 mutation lock. Purge every corpus object, incomplete multipart upload and
-   engine-controlled serving/cache copy. Reset publication/membership rows; scrub
-   pending paths and source-bearing export metadata. The corpus store is dedicated
-   to this deployment, so no unrelated truth is destroyed.
-3. Verify the reset, then run the same full repair from scrubbed authority. Verify
-   no forgotten lineage membership, original, derivative, title/summary row or
-   index line is present. Only after P3 and every other D74 store acknowledge purge
-   can serving reopen and the manifest be complete. Failure at any step retains
-   the barrier and retries the same path.
-4. Before any restore is served, re-honor **all** portable manifests, including
-   locally complete ones. Scrub restored authority, reset/reconcile a separately
-   restored corpus store and controlled mount caches, and verify again. One reset
-   after all manifests' scrubs can cover their union in a readiness pass; no
-   trusted “already clean” PostgreSQL flag can skip an independently restored store.
+1. D74 stops ordinary claims and drains all publication/reconcile writes, including
+   in-flight uploads. Engine-controlled mount sessions stop serving and acknowledge
+   cache purge; a blocked API or expired lease alone does not stop external IO or
+   mounted reads. D147 retains separately durable manifest storage.
+2. After lifecycle/authority scrub, the authorized coordinator takes the publication
+   lock, pages through corpus keys and deletes **only** folders with the forgotten
+   document's suffix, including former moved folders, interrupted unindexed copies
+   and their abandoned multipart uploads. Clear that document's publication marker
+   and purge its controlled serving/cache copies. Never empty the corpus store or
+   recopy surviving documents' originals/derivatives.
+3. Regenerate affected navigation `_index.md` and root `llms.txt` from scrubbed DB
+   authority. Enumerate navigation-index keys too: rebuild/prune them against DB
+   membership to cover index-only remnants whose old folder was already deleted
+   before a crash. This conservative metadata pass may revisit all shared indexes;
+   it does not reset document folders or require a historic path list. Verify no
+   matching folder/upload, forgotten title/summary/member entry or controlled
+   serving copy remains. Reopen only after every D74 store acknowledges erasure.
+   Any error leaves the barrier closed and retries the same idempotent procedure.
+4. Before a restore serves traffic or controlled mounts, re-honor **every** portable
+   manifest, even one locally marked complete. Scrub restored authority, repeat
+   suffix deletion in a separately restored bucket and regenerate indexes; verify
+   again. Batched manifests may share the paged scan and index regeneration. A local
+   clean marker never skips an independently restored store or cache.
 
-The mutable corpus bucket must not retain accessible noncurrent/soft-deleted
-objects or immutable retention locks: configure it without such retention, or
-qualify the existing purge capability to erase and verify **all** retained versions
-and multipart parts. A delete marker alone is insufficient. Backups stay outside
-the active store under D74/D75 and cannot be served without replay. Managed session
-revocation/cache discard is an adapter acknowledgement obligation; its control-plane
-implementation remains in the cloud repo. Operator-managed FUSE mounts must be
-stopped/remounted for forget; arbitrary downloaded client bytes are outside the
-library-controlled purge boundary. Do not claim stale caches are erased by PUT,
-DELETE or the API barrier alone.
+The corpus store must have object versioning off or enumerate, purge and verify
+all retained versions of matching document objects and rewritten/pruned indexes
+during erasure.
+
+Backups remain outside active stores under D74/D75 and cannot serve without replay.
+Managed session/cache acknowledgement is an adapter obligation, implemented by
+the cloud repo; operator-managed FUSE mounts must stop/remount for forget.
+Arbitrary downloaded client bytes remain outside the library-controlled boundary.
 
 ## 7. End-to-end (one document)
 
-1. Ingest `acme-2023.pdf` under its stable lineage; write the immutable raw
-   original, record its URI/hash and allocate the lineage's stable corpus suffix.
-2. Convert through the configured PDF OCR route: immutable `document.md`, source
-   map, derived images and engine manifests in the representation store. Structure
-   persists PageIndex/roles/summaries and the optional topic
-   `["finance", "annual-reports"]`; crossref persists its private reference state.
-3. Enabled E1/E2/E3 work completes. In the same transaction that serves this
-   version/representation, increment its corpus revision and enqueue
-   `publish_corpus`. Sources-only deployments use their own completion boundary.
-4. The self-host worker or managed pushed task runs the same engine publisher.
-   It copies the original and reader files to
-   `pdf/finance/annual-reports/acme-2023--q7hn3m4tc2vx/`, writes ready folder
-   metadata, updates affected member tables/root `llms.txt`, cleans obsolete paths
-   and commits the receipt. `p3` is now ready; `p3_path` resolves that folder.
-5. A customer mounts read-only and opens `document.md`, its images or
-   `original.pdf` in place. A newer upload leaves this complete folder intact
-   until its processed reading is served and published. A topic/title/type change
-   moves it; the consumer re-resolves `doc_id`.
-6. Normal deletion removes the folder and index membership through the same stage.
-   Hard forget instead resets and repairs P3 under D74's fail-closed barrier;
-   independent restores repeat that erasure before serving.
+1. Ingest `acme-2023.pdf` under its stable lineage; write immutable raw bytes and
+   record their URI/hash. Its corpus suffix is computed from `doc_id`, not allocated.
+2. Convert through the PDF OCR route: immutable Markdown, source map, images and
+   private engine manifests. Structure persists PageIndex/roles/summaries and the
+   optional topic `["finance", "annual-reports"]`; crossref persists private state.
+3. Enabled E1/E2/E3 work completes. The transaction serving this version clears
+   its publication marker and enqueues ordinary `publish_corpus` work. Sources-only
+   deployments use their own completion boundary.
+4. The self-host worker or managed pushed task recomputes DB inputs, lists suffix
+   matches and writes files to
+   `pdf/finance/annual-reports/acme-2023--9bf3e4c0c2d4861075a6ef82/`. It deletes other
+   folders of this document, regenerates ancestors/root from the DB and sets the
+   nullable marker after success. `p3` is ready; `p3_path` resolves that folder.
+5. A customer mounts read-only and opens Markdown, images or `original.pdf` in
+   place. A newer stored upload leaves the completed folder intact until served
+   and published. A type/topic/title change moves it; re-resolve `doc_id` via MCP
+   or suffix search.
+6. Normal deletion removes that document's folders and regenerates indexes. Hard
+   forget uses the same per-document erasure under D74's barrier, with scrubbed DB
+   authority and all-store verification; independent restores replay before serving.
 
 ## 8. Decisions and measurements
 
@@ -1118,7 +1110,7 @@ includes MinIO, forget/restore and Rule-4 proofs. No product code or deployment
 migration is specified by this design amendment.
 
 Measure conversion fidelity, structure-route quality, intentional no-topic rate,
-nav hops/tokens to find a document, B/shard churn, P3 lock wait/publication lag,
-streamed media memory/transfer cost, and reset/repair duration. These measurements
-tune policy/operational settings; they do not reopen the original-copy rule,
+nav hops/tokens to find a document, B/page churn, P3 lock wait/publication lag,
+streamed media memory/transfer cost, suffix-scan cost and erasure/reconcile duration.
+These measurements tune policy/operational settings; they do not reopen the original-copy rule,
 served-version choice or erasure guarantees.

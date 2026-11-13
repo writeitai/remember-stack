@@ -139,11 +139,11 @@ search_documents(query?, filters?, k) → documents
   the scope ([effective time design §3.5](effective_time_and_section_references_design.md#35-search_documents)).
   Results carry their in-force intervals, their version id, and a P3 path only
   when the judged version is the served one (`served_version`) **and** its
-  D155 publication receipt matches the version, representation and desired corpus
-  revision, with `source_open(version_id)` otherwise. This publication guard also
-  applies without declared periods; a P3 path is resolved and movable, never
-  predicted from `doc_id`. Thus an agent never opens a different
-  edition than it was shown. Filter-only paging uses the pinned `as_of` as the
+  D155 nullable publication marker matches the computed current export digest
+  (including version, representation and desired path), with `source_open(version_id)`
+  otherwise. This publication guard applies without declared periods too; derive
+  a movable P3 path from DB authority only behind that guard. Thus an agent never
+  opens a different edition than it was shown. Filter-only paging uses the pinned `as_of` as the
   belief instant for declarations, so a correction between pages moves no row.
   Lineages without periods ignore `time` and behave as above
   ([effective time design §3](effective_time_and_section_references_design.md#3-time-scoped-retrieval)).

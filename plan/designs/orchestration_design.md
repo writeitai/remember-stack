@@ -79,10 +79,10 @@ attempt count, backoff, and terminal dead-lettering belong only to `processing_s
 - **K and P3 keep their trigger models** (K debounce — D12; per-document corpus
   publication — D155) and do not use lanes. Their `processing_state` rows use
   `publish_corpus`, `compile_knowledge`, etc., with `lane IS NULL` and normalized
-  `not_before`. Corpus publication has a small content-free request target per
-  document/revision/policy, so another update is a distinct ordinary work row
-  under the existing ledger key; the desired lineage revision is durable, not
-  payload authority. Self-host's non-convert class and managed
+  `not_before`. Each corpus publication trigger has a fresh event UUID target
+  stored only in `processing_state`, with `doc_id` in its payload; no request table
+  or lineage revision counter. Retry/delivery reuses that row, and every execution
+  recomputes desired output from DB authority. Self-host's non-convert class and managed
   pushed `run_task` execute the same engine-owned stage. A domain trigger ledger
   may also carry a debounce timestamp—for example `knowledge_refresh_queue.not_before` coalesces
   evidence-change signals—but that row is not task delivery state. When it materializes a K/P job,
@@ -307,9 +307,9 @@ well above the longest pause a live worker can have between renewals.
 
 ## 7. Observable state and telemetry — no dashboard subsystem
 
-Everything below derives from tables that already exist (`processing_state`, `cost_ledger`,
-`corpus_publications`, `knowledge_compilations`) or from the worker's existing `worker.run`
-telemetry event. The library exposes it through typed admin/CLI
+Everything below derives from spine state (`processing_state`, `cost_ledger`,
+`documents.corpus_published_revision`, `knowledge_compilations`) or from the worker's
+existing `worker.run` telemetry event. The library exposes it through typed admin/CLI
 results and the D61 telemetry port; it does not ship a dashboard backend or a second bookkeeping
 system:
 

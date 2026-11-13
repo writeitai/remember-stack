@@ -2945,8 +2945,8 @@ D66.
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
 > **P3 stage amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Under the same portable intent and
-> fail-closed/drain barrier, reset the deployment's entire corpus store and
-> controlled mount/cache copies, then repair from scrubbed authority and verify.
+> fail-closed/drain barrier, erase only the document's deterministic-suffix folders
+> and controlled serving copies, then regenerate indexes from scrubbed DB authority.
 > Replay this after independent restores even for locally complete manifests.
 > This replaces clean-snapshot publication plus old-prefix purge; manifests need
 > no historic friendly paths. All non-P3 erasure/restore rules remain.
@@ -3145,7 +3145,7 @@ may proceed to its first tagged artifact proof after CLA activation.
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
 > **P3 attestation amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Runs using document-folder P3
-> verify selected publication receipts and mounted folder/id-index inventories,
+> verify selected publication markers and mounted folder inventories,
 > not a global build timestamp or snapshot marker. This is a benchmark protocol
 > change; existing source-pinned results keep their original evidence unchanged.
 
@@ -7551,7 +7551,7 @@ fact child).
 
 > **Extended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Corpus publication is engine-owned work
 > invoked through the same explicit context, `run_task` and delivery collector.
-> D74's corpus reset/replay uses the separately durable forget manifest store.
+> D74's per-document corpus erasure/replay uses the separately durable manifest store.
 > No hosted scheduler or correctness authority is added to this repository.
 
 **Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c). Merged
@@ -8065,8 +8065,8 @@ retains D54, D56, D67, D74, D140 and D152 correctness boundaries.
 
 ## D155. The corpus filesystem is a mutable tree of document folders
 
-**Status:** accepted design (owner direction 2026-11-13); implementation is separate.
-**Date:** 2026-11-13. D154 is reserved for pagination PR #589.
+**Status:** accepted design (owner direction and reviewer dispositions 2026-11-13);
+implementation is separate. **Date:** 2026-11-13. D154 is reserved for pagination PR #589.
 
 **Context.** The customer mount must be a browsable corpus, with one real folder
 per document holding its original and every reader-useful derivative. Snapshot
@@ -8085,79 +8085,84 @@ There are no users requiring migration, aliases or a transition layout.
 - **Type first, topic optional.** Fixed types: `email`, `chat`, `image`, `audio`,
   `video`, `pdf`, `spreadsheet`, `presentation`, `document`, `data`, `other`.
   Match stored source kind/byte-decided MIME/family/route in the design's order;
-  `other` is the fallback. PageIndex root placement may deliberately return
-  `null`; otherwise it proposes only a bounded topic path beneath the type.
-  No corpus-organizing model call. A safe title slug plus an immutable,
-  uniqueness-checked 12-character lineage suffix names the folder.
+  `other` is the fallback. Root placement may deliberately return `null`, otherwise
+  only a bounded topic beneath the type. No corpus-organizing model call.
+  `<title-slug>--<suffix>` uses `sha256(doc_id.bytes).hexdigest()[:24]`: 96 bits,
+  with collision probability below 6.4 × 10^-14 at 100 million lineages. No suffix
+  reservation or collision-extension protocol; erasure can recompute it from the
+  UUID alone, including after metadata scrub or independent restore.
 - **One completed reading.** Original and derivatives use the served completed
   version/representation and active structure. A newer upload stays accessible
   through raw APIs but leaves the previous folder intact until completion. No
   processed version means no folder. D117 storage/parking is retained; its
   latest-stored-original P3 view is replaced.
-- **Incremental, through existing work.** Projection-relevant transactions advance
-  a durable lineage corpus revision and enqueue `publish_corpus` on a small
-  content-free request target for that document/revision/policy. This respects
-  existing ledger uniqueness without resetting attempts or changing ingestion
-  work identity. Delayed work checks current intent/receipts. Self-host classes and managed pushed `run_task` execute the same
-  engine handler through existing leases/retries/announcements. One deployment
-  P3 mutation lock plus a pending-path journal prevents lost shared-index updates
-  and makes interrupted moves/removals retryable. Stream new folder contents
-  before indexing; update affected ancestors/root, then remove old folders.
-  Same-path updates explicitly expose an updating state and can temporarily mix
-  complete files. There is no multi-object snapshot guarantee.
-- **Repair the same tree.** Full rebuild is a reconcile operation using identical
-  selectors/rendering; it deletes orphans and converges to incremental output.
-  D7/D40 whole snapshots and pointer swap are replaced for this projection.
-  Deterministic `_index.md` member tables, one bounded root `llms.txt`, and radix
-  fan-out sharding remain. No Tier-1 `documents/`, facet duplication, `entities/`,
-  monolithic path-map file, or K links. A bounded radix `_paths/` member index
-  resolves stable ids without another document view. K repos remain standalone.
-- **Identity survives moves.** Store `doc_id` and version handles, not paths.
-  Resolve through the bounded mounted id index or existing document search;
-  MCP `p3_path` is an applied matching
-  publication path or `null`, never a predicted stable path. Readiness `p3`
-  certifies the selected document revision's files, indexes and cleanup, not a
-  recent global snapshot timestamp. P3 is sources-only across D143 layer settings.
+- **Idempotent publication through existing work.** `publish_corpus(doc_id)` reads
+  current DB authority for the desired folder/files, lists existing suffix-bearing
+  folders, writes desired files first, deletes other copies of this document, then
+  regenerates affected ancestor `_index.md` and root `llms.txt` **from the DB**.
+  Never patch old index contents. One deployment advisory lock serializes these
+  operations; lost/reordered work self-heals on the next affected publish or
+  reconcile. Stale index-only remnants can be found by member `doc_id`/suffix and
+  regenerated without a historic path journal. Each committed trigger has a fresh
+  event target in existing `processing_state`, carrying only `doc_id`; retries
+  reuse the same row. No request table, lineage revision counter, pending-path
+  journal, publication-receipt table or persistent directory-membership cache.
+  Self-host classes and managed pushed `run_task` use the same engine handler,
+  leases, retries and announcements.
+- **One nullable success marker.** `documents.corpus_published_revision` stores
+  the deterministic digest of DB-selected export inputs, desired path and builder
+  policy only after files, cleanup and index regeneration succeed and inputs still
+  match. Clear it on relevant changes and before writes. MCP `p3_path` computes
+  the current relative path only behind a matching marker for the served selected
+  version; otherwise null. Readiness `p3` uses that same per-document guard, never
+  a global recent-build timestamp. There is no whole-tree snapshot guarantee.
+- **Repair and navigation stay simple.** Full reconcile uses the same selectors/
+  renderer, removes orphans and regenerates indexes. Deterministic bounded member
+  tables, root `llms.txt` and navigation radix pages remain; page splits/merges
+  never move document folders or recopy survivors. No Tier-1 `documents/`,
+  facets, entities, K links or `_paths/` id index. Store `doc_id` and exact-version
+  handles; resolve via MCP `p3_path` or compute the suffix and use
+  `find <mount> -path '*-<suffix>/*'`. P3 is sources-only under D143; K stays standalone.
 - **S3 and one customer mount.** Reuse the S3 adapter for mountable.io (bucket =
   filesystem id), AWS S3, GCS XML API/HMAC and MinIO. Keep E0 writes immutable;
-  add only streamed replacement, paged prefix listing and idempotent deletion for
-  P3. All corpus copies are hot. Customers mount read-only. `remember mount DIR`
+  add only streamed replacement, paged listing and idempotent deletion for P3.
+  All corpus copies are hot and customers mount read-only. `remember mount DIR`
   obtains a one-time remember.dev ticket and invokes
-  `mountable mount --ticket-stdin --json DIR`, with the ticket only on stdin;
-  `remember unmount DIR` delegates unmount. Session provisioning is a cloud-repo
-  concern. Self-host can use any read-only S3 FUSE mount.
-- **Forget erases before rebuilding.** Keep D74's portable intent, barrier,
-  drain, verification and restore replay. Reset the whole dedicated corpus store,
-  incomplete uploads and controlled serving caches; then repair from scrubbed
-  authority. This removes interrupted copies and every index mention without
-  storing historic friendly paths in immutable intent. Re-honor even completed
-  manifests on independent restores. P3 purge acknowledgement includes retained
-  object versions and controlled sessions; a lease expiry or API barrier alone
-  does not prove that external writes/cached reads have stopped.
+  `mountable mount --ticket-stdin --json DIR`, ticket only on stdin; `remember
+  unmount DIR` delegates unmount. Session provisioning belongs to the cloud repo.
+  Self-host may use any read-only S3 FUSE mount.
+- **Forget erases one document.** Keep D74 portable intent, barrier, external-write
+  drain, verification and restore replay. Page through keys for the document's
+  suffix, erase every matching folder/upload and controlled serving/cache copy,
+  then regenerate/prune indexes from scrubbed DB authority, including index-only
+  remnants. Never wipe the corpus or recopy surviving originals/media. The existing
+  `doc_id` suffices in immutable intent; no historic friendly paths are needed.
+  Re-honor even completed manifests on independent restores; object-version purge
+  requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-hard-forget-and-restore-erase-the-document-regenerate-indexes).
 
-**Rationale and alternatives.** A second original makes folders self-contained;
-serving a single completed version avoids silently pairing v2 bytes with v1 text.
-Serialized incremental maintenance is smaller than snapshot recopying or a
-multi-writer directory transaction protocol. Resetting all derived P3 data during
-rare forget is deliberately more expensive than ordinary removal and simpler to
-prove after independent restores. S3 interoperability is documented for GCS, so
-there is no reason for a native GCS adapter. A monolithic id map would be an
-unbounded shared rewrite; bounded radix pages permit offline resolution, including
-when a temporal search selects an edition other than the mounted served version.
+**Rationale and alternatives.** A copied original makes each folder self-contained;
+a single completed reading avoids pairing v2 bytes with v1 text. Recomputing from
+authority plus suffix discovery replaces revision/journal/receipt coordination.
+The 96-bit suffix makes accidental collision negligible without reservation state;
+its unkeyed derivation survives restore without a secret. A paged key scan costs
+listing work, while per-document erasure leaves other documents' bytes in place.
+MCP and suffix search meet addressing needs without a second id index. Shared
+indexes always regenerate from DB authority, so neither event ordering nor old
+index contents determine truth. S3 interoperability uses the existing adapter.
 
-**Reuse boundary.** No new converter, blockizer, chunker, extraction, Claimify,
-embedding-policy/model or text-origin generation. Nullable topic changes only
-placement output/schema generation and reuses stored summaries. Corpus revisions,
-suffixes and reader metadata never enter paid-work identities (Rule 4/D56).
+**Reuse boundary.** No converter, blockizer, chunker, extraction, Claimify,
+embedding-policy/model or text-origin generation changes. Nullable topic changes
+only placement output/schema generation and reuses stored summaries. Publication
+markers, suffixes and reader metadata never enter paid-work identities (Rule 4/D56).
 
 **Amends/supersedes.** P3 lifecycle/layout and path guarantees in D7/D39/D40/D55;
 customer mounts/original-copy rules in D37/D51/D61/D65/D116; D117 browse version
 selection; D74 purge targets; D94 snapshot registry; D96 entity folders; D49 K
 status mirroring, D79 placement completion, D132 corpus classes and D143 P3
 served-set snapshots; D78/D85/D124 benchmark attestation follows publication
-receipts without reinterpreting old protocol evidence. Their other authority, reuse,
-retrieval, media and privacy contracts remain as identified inside those entries.
-D147's context/work/portable-store seams are reused, not replaced.
+markers and folder inventories without reinterpreting old protocol evidence.
+Their other authority, reuse, retrieval, media and privacy contracts remain as
+identified inside those entries. D147's context/work/portable-store seams are reused.
 
 **Authority:** [E0 §§5–7](plan/designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem).
 **Analysis:** [choices and provider evidence](plan/analysis/corpus_document_folders.md).

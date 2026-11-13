@@ -50,8 +50,8 @@ python -m benchmarks.locomo retrieval-ablation \
 ordinary local directory obtained through the existing OSS publication,
 restore or copy workflow. Its publication/inventory attestation must match the
 source protocol's checkpointed evidence. D155 runs compare selected per-document
-receipts, ready folder/id-map metadata and a frozen file-inventory hash. Historical
-source runs retain their original snapshot-marker evidence; input attestation is
+publication markers, ready-folder metadata and a frozen file-inventory hash.
+Historical source runs retain their original snapshot-marker evidence; input attestation is
 source-pinned and never silently translated into another protocol's identity.
 
 Every profile answers every prepared item belonging to `--sample`.

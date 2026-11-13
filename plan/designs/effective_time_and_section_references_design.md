@@ -346,7 +346,8 @@ and every handle it carries opens that version:
 - **Source handles** use `source_open(version_id, representation_id)` (D115 already takes a
   version). Under D155 a **P3 path** is the movable, applied corpus folder for
   that selected version/representation. Return it only if the selection is served
-  **and** its complete publication receipt matches current corpus intent; otherwise
+  **and** its nullable publication marker matches the computed current export
+  digest (including the desired path); otherwise
   `p3_path = null`. `served_version` describes authority currency independently of
   publication. This applies equally to periodised and undeclared lineages; no
   unconditional `documents/<doc_id>` path survives. Persist `doc_id` and exact

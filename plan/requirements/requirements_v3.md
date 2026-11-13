@@ -112,8 +112,9 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   filesystem. One real folder per served completed document contains a copy of
   its raw original and all reader-useful derivatives; private pipeline objects stay
   out. Deterministic type first, optional model-chosen topic below it, readable
-  title plus stable suffix; `doc_id` survives path moves. Incremental publication,
-  deterministic bounded member indexes/root `llms.txt`, full repair and D74 erasure
+  title plus a deterministic suffix derived from `doc_id`, which survives path
+  moves. Idempotent publication, DB-derived bounded member indexes/root `llms.txt`,
+  full repair and per-document D74 erasure without wiping surviving folders
   are required. Raw stays source of truth. K repos are standalone (D155).
 
 ## Knowledge lifecycle
