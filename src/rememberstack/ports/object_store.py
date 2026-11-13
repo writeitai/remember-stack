@@ -1,5 +1,6 @@
 """D61 immutable E0 creation and the separate D155 mutable object capability."""
 
+from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
 from typing import Protocol
@@ -34,14 +35,27 @@ class MutableObjectStorePort(Protocol):
     """D155 complete-object operations, separate from immutable E0 creation."""
 
     def replace_stream(
-        self, *, key: ObjectKey, chunks: Iterable[bytes], storage_class: str
+        self,
+        *,
+        key: ObjectKey,
+        chunks: Iterable[bytes],
+        storage_class: str,
+        sha256: str | None = None,
+        before_write: Callable[[], None] | None = None,
     ) -> None:
         """Create or atomically replace an object after exhausting bounded chunks.
 
         The producer validates its expected size/hash before returning normally;
         raising leaves the previous object intact. No whole-object buffering.
         A closeable source iterator is closed on success or failure.
+        Persist a supplied expected SHA-256 as metadata. Call ``before_write``
+        immediately before each provider mutation (each multipart request too).
+        Aborting one's failed unfinished upload is cleanup, not publication.
         """
+        ...
+
+    def sha256_of(self, *, key: ObjectKey) -> str | None:
+        """Read digest metadata; None means missing object or missing metadata."""
         ...
 
     def iter_keys(self, *, prefix: str) -> Iterator[ObjectKey]:

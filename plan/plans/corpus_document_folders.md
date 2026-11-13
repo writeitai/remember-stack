@@ -50,7 +50,13 @@ clear the marker, page through suffix matches, stream desired files first, delet
 other document folders, regenerate ancestors/root from DB, then set the marker
 only if inputs still match. Scan stale navigation entries by doc id/suffix when
 retry has lost an old folder, and prune empty branches from DB membership.
-Reconcile uses the same code and enumerates all indexes/orphans. Bind the handler
+Reconcile uses the same code and enumerates all indexes/orphans. Check the same
+lock session and live claim before each mutation, including multipart requests;
+bound S3 connect/read timeouts. Store expected SHA-256 metadata on every object.
+Verifying reconcile rewrites missing/mismatching digests even when the document's
+marker matches: a late in-flight request after DB-session loss can transiently
+leave stale bytes, and the marker means current inputs were published once.
+This accepted rare race adds no coordination machinery. Bind the handler
 to tests, leaving profile activation to slice 4.
 
 In each relevant authoritative transaction enqueue a fresh event target in the
@@ -75,6 +81,7 @@ cloud repo as integration, without making engine tests depend on it.
 ## 4. Activate with deletion, forget and restore together
 
 Switch both profiles to the new publisher/reconcile and marker-based readiness.
+Schedule periodic digest-verifying reconcile to repair rare late-request damage.
 Normal delete completes per-document removal before success or leaves durable
 retry work and reports failure. Adapt D74's existing purge capability: keep intent,
 barrier, drain/fence and verification; compute the suffix from manifest `doc_id`,

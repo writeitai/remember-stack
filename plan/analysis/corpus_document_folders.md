@@ -140,10 +140,11 @@ alone does not prove that an object request stopped.
 
 ## Slice 3 lock-loss counterexample (2026-11-13)
 
-**Implementation stopped under the owner's explicit instruction:** if a single
+**Historical stop, resolved by the reviewer disposition below.** Implementation
+originally stopped under the owner's explicit instruction: if a single
 idempotent recomputation is insufficient, report the concrete failure instead of
-adding coordination machinery. This finding does not amend D155 or its binding
-design. Slice 3's publisher, triggers and reconcile remain unimplemented.
+adding coordination machinery. The disposition below amends D155 and its binding
+design to accept and repair this specific ordinary-publication race.
 
 [The executable reproducer](../../src/tests/adapters/test_minio_corpus_lock_loss.py)
 uses the real PostgreSQL test database and real MinIO started with
@@ -184,13 +185,21 @@ also does not establish that a remote request cannot commit. The same ordering
 can affect a file replacement or removal; delete/forget/restore have deliberately
 not been wired or exercised by this change.
 
-The test demonstrates a gap between the advisory-lock primitive and the required
-external-IO ordering. No fence, journal, extra table, provider precondition,
-weakened guarantee or alternative protocol is introduced here. The owner must
-resolve that contract before slice 3 implementation resumes. The experiment calls
-the existing selector, renderer and mutable adapter directly; it does not claim
-coverage of ordinary work, policy seeding, pushed classes or the rest of slice 3.
-It changes no ingestion identities or paid-work reuse boundaries (Rule 4).
+**Accepted reviewer disposition (Claude, design owner, 2026-11-13).** Prevent
+where cheap, repair by digest, and do not add coordination machinery. Check the
+same lock session before every mutation, bound provider connect/read timeouts and
+multipart units, and stop issuing requests on lock/claim loss. One already-issued
+request can still land late; timeout alone cannot retract it. Accept that rare
+transient staleness and define the marker as “current inputs were published once”.
+Attach the expected SHA-256 to every corpus object and have verifying reconcile
+rewrite mismatches, absent objects and missing metadata, including behind a matching
+marker. This preserves the small protocol instead of introducing durable fences,
+receipts or journals. Periodic verification is wired with activation in slice 4;
+D74's erasure barrier/drain remains binding and separate. The reproducer becomes
+an implementation regression: the late write really lands, further requests from
+the dead publisher are refused, and verifying reconcile repairs the newer bytes.
+The accepted contract is reconciled in D155 and E0 §§5–7. No ingestion identity or
+paid-work reuse boundary changes (Rule 4).
 
 Reproduce with `REMEMBERSTACK_DATABASE_URL` pointing to a disposable PostgreSQL
 test database (the imported fixture resets its schema):

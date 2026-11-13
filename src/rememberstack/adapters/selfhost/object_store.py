@@ -1,5 +1,6 @@
 """Local object storage: immutable E0 creation and atomic corpus replacement."""
 
+from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
 import os
@@ -49,10 +50,23 @@ class LocalFSObjectStore:
         )
 
     def replace_stream(
-        self, *, key: ObjectKey, chunks: Iterable[bytes], storage_class: str
+        self,
+        *,
+        key: ObjectKey,
+        chunks: Iterable[bytes],
+        storage_class: str,
+        sha256: str | None = None,
+        before_write: Callable[[], None] | None = None,
     ) -> None:
         """Publish a complete temporary file only after normal input exhaustion."""
-        self._write(key=key, chunks=chunks, storage_class=storage_class, replace=True)
+        self._write(
+            key=key,
+            chunks=chunks,
+            storage_class=storage_class,
+            replace=True,
+            sha256=sha256,
+            before_write=before_write,
+        )
 
     def _write(
         self,
@@ -61,6 +75,8 @@ class LocalFSObjectStore:
         chunks: Iterable[bytes],
         storage_class: str,
         replace: bool,
+        sha256: str | None = None,
+        before_write: Callable[[], None] | None = None,
     ) -> None:
         if storage_class not in {HOT, COLD}:
             raise ValueError("invalid storage class")
@@ -77,6 +93,8 @@ class LocalFSObjectStore:
                     handle.write(chunk)
                 handle.flush()
                 os.fsync(handle.fileno())
+            if before_write:
+                before_write()
             if replace:
                 temporary.replace(path)
             else:
@@ -87,6 +105,12 @@ class LocalFSObjectStore:
                         f"object key {key.root!r} is already occupied; objects are immutable"
                     ) from error
             marker.write_text(storage_class, encoding="utf-8")
+            digest = self._digest_path(key=key)
+            if sha256 is not None:
+                digest.parent.mkdir(parents=True, exist_ok=True)
+                digest.write_text(sha256, encoding="ascii")
+            else:
+                digest.unlink(missing_ok=True)
         finally:
             try:
                 if temporary is not None:
@@ -100,6 +124,15 @@ class LocalFSObjectStore:
         """The declared class, kept outside the mounted reader paths."""
         marker = self._class_path(key=key)
         return marker.read_text(encoding="utf-8") if marker.exists() else None
+
+    def sha256_of(self, *, key: ObjectKey) -> str | None:
+        """Read private digest metadata without putting sidecars in reader paths."""
+        digest = self._digest_path(key=key)
+        return (
+            digest.read_text(encoding="ascii")
+            if self._path_for(key=key).is_file() and digest.is_file()
+            else None
+        )
 
     def iter_keys(self, *, prefix: str) -> Iterator[ObjectKey]:
         """Stream files at or beneath a safe prefix, including the empty prefix."""
@@ -122,6 +155,10 @@ class LocalFSObjectStore:
         marker = self._class_path(key=key)
         if not marker.is_dir():
             marker.unlink(missing_ok=True)
+        digest = self._digest_path(key=key)
+        if not digest.is_dir():
+            digest.unlink(missing_ok=True)
+        self._prune_parents(digest.parent, root=self._metadata_root)
         self._prune_parents(path.parent, root=self._root)
         self._prune_parents(self._class_path(key=key).parent, root=self._metadata_root)
 
@@ -176,6 +213,9 @@ class LocalFSObjectStore:
 
     def _class_path(self, *, key: ObjectKey) -> Path:
         return self._metadata_root / "classes" / validate_object_path(key.root)
+
+    def _digest_path(self, *, key: ObjectKey) -> Path:
+        return self._metadata_root / "digests" / validate_object_path(key.root)
 
     def _iter_class_keys(self) -> Iterator[ObjectKey]:
         root = self._metadata_root / "classes"

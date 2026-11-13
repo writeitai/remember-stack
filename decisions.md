@@ -8109,8 +8109,11 @@ There are no users requiring migration, aliases or a transition layout.
   folders, writes desired files first, deletes other copies of this document, then
   regenerates affected ancestor `_index.md` and root `llms.txt` **from the DB**.
   Never patch old index contents. One deployment advisory lock serializes these
-  operations; lost/reordered work self-heals on the next affected publish or
-  reconcile. Stale index-only remnants can be found by member `doc_id`/suffix and
+  operations. Before every write/delete (including multipart requests), verify
+  ownership on that same session and the live claim; use bounded connect/read
+  timeouts without automatic write retries. Session loss can still let one issued
+  request land after a newer publisher: transient stale bytes are accepted and
+  repaired by digest-verifying reconcile, without coordination machinery. Stale index-only remnants can be found by member `doc_id`/suffix and
   regenerated without a historic path journal. Each committed trigger has a fresh
   event target in existing `processing_state`, carrying only `doc_id`; retries
   reuse the same row. No request table, lineage revision counter, pending-path
@@ -8123,9 +8126,15 @@ There are no users requiring migration, aliases or a transition layout.
   match. Clear it on relevant changes and before writes. MCP `p3_path` computes
   the current relative path only behind a matching marker for the served selected
   version; otherwise null. Readiness `p3` uses that same per-document guard, never
-  a global recent-build timestamp. There is no whole-tree snapshot guarantee.
+  a global recent-build timestamp. It means the current inputs were published
+  once, not that a late request from a dead publisher cannot change the bytes.
+  There is no whole-tree snapshot guarantee.
 - **Repair and navigation stay simple.** Full reconcile uses the same selectors/
-  renderer, removes orphans and regenerates indexes. Deterministic bounded member
+  renderer, removes orphans and regenerates indexes. Every corpus object carries
+  its expected SHA-256 in metadata; verify mode compares it with the desired digest
+  and rewrites mismatches/missing metadata even behind a matching marker. Periodic
+  verification repairs the bounded, rare DB-session-loss/in-flight-request race.
+  Deterministic bounded member
   tables, root `llms.txt` and navigation radix pages remain; page splits/merges
   never move document folders or recopy survivors. No Tier-1 `documents/`,
   facets, entities, K links or `_paths/` id index. Store `doc_id` and exact-version

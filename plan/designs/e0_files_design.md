@@ -695,7 +695,8 @@ published-object absence without claiming unfinished parts were checked or erase
 immediately. Mountable's gateway expires abandoned uploads after seven days;
 provider qualification records the deployed expiry/sweep guarantee. Other listing
 errors and all abort failures remain failures. No whole-video buffering or durable
-worker-local state. A qualified adapter provides complete-object replacement and
+worker-local state. Every provider request has bounded connect/read timeouts; one multipart part
+is the largest upload unit. A qualified adapter provides complete-object replacement and
 read/write/delete/list consistency; mount caches have a separate lifetime. Existing raw create-only
 preconditions must also be qualified on each endpoint, not silently weakened.
 
@@ -958,11 +959,22 @@ cannot write; seed current-policy work instead.
 One deployment-scoped PostgreSQL advisory lock serializes publication, including
 index regeneration, normal removal, reconcile and forget's authorized internal
 calls. Reuse caller lock ownership for internal calls. Re-read authority after
-taking the lock. Keep the claim alive while streaming; loss of claim/lock stops
-writes and requires settling or fencing in-flight external IO before another
-writer or forget can proceed. A lease expiry alone cannot prove IO stopped.
-No detached uploads survive a handler. This small lock avoids competing writes to
-the same folder and shared indexes without a durable coordination protocol.
+taking the lock. Keep the claim alive while streaming. Before each object write
+or delete, confirm ownership of that advisory lock on the same PostgreSQL session
+and that the work claim is still live; abort further mutations on loss. Check
+before each multipart request too, so one bounded part is the largest upload
+unit. Configure bounded S3 connect/read timeouts and disable automatic write
+retries that could issue a new request after lock loss. No detached uploads
+survive a handler.
+
+A PostgreSQL session can die while its process still runs and an already-issued
+object request can complete after a successor acquired the lock. The remaining
+window is one in-flight request, not fenced external IO. This rare race can leave
+stale complete bytes (or a missing object after a late delete) even after a newer
+publication set its marker. This is accepted for ordinary publication: prevent
+further requests cheaply and repair by digest, without a fence, journal or extra
+coordination tables. It does not weaken D74's separate drain/barrier requirement
+for erasure (§6.7). A lease expiry alone cannot prove IO stopped.
 
 For each publish:
 
@@ -1015,8 +1027,11 @@ snapshot is promised. Check the ready folder identity before/after a read, or us
 immutable version-addressed source handles when exactness matters, including for
 cached/ranged media reads. The marker certifies a successful publication of this
 document's current inputs; it is not a whole-tree snapshot. Failed or interrupted
-publication leaves it null, and the next affected publish or reconcile regenerates
-shared indexes from authority.
+publication normally leaves it null, and the next affected publish or reconcile
+regenerates shared indexes from authority. The marker means “these current inputs
+were published once”, not that no late request from a dead publisher can change
+those bytes. Digest-verifying reconcile repairs that accepted transient staleness;
+a matching marker never skips verification.
 
 ### 6.6 Repair, readiness and processing layers
 
@@ -1025,8 +1040,12 @@ selectors, renderer and publisher above. Stream DB lineages and paged key listin
 delete unknown/orphan objects, render all current navigation indexes from the DB,
 and prune obsolete index keys even if no document folder remains there. Share
 discovery/index work across the run rather than scanning the whole store anew
-for every document. Existing originals/derivatives whose paths and hashes match
-need not be recopied. A retry
+for every document. Reconcile has a verify mode: compare each desired object's stored SHA-256
+metadata with its desired digest, rewriting mismatches and missing metadata (or
+missing objects), including files whose document has a matching marker. Delete
+orphans through the same publication code path. Existing originals/derivatives
+whose paths and digest metadata match need not be recopied. Periodic verifying
+reconcile bounds how long rare late-request damage persists. A retry
 recomputes everything, with no progress reconstruction or snapshot registry.
 Without concurrent authority changes, incremental maintenance and reconcile
 converge to identical keys and bytes. Export identities are deterministic digests;
@@ -1110,7 +1129,11 @@ Arbitrary downloaded client bytes remain outside the library-controlled boundary
    matches and writes files to
    `pdf/finance/annual-reports/acme-2023--9bf3e4c0c2d4861075a6ef82/`. It deletes other
    folders of this document, regenerates ancestors/root from the DB and sets the
-   nullable marker after success. `p3` is ready; `p3_path` resolves that folder.
+   nullable marker after success. Every object records its expected content digest;
+   requests are bounded and each mutation checks the same lock session. `p3` is
+   ready; `p3_path` resolves that folder. A late request after DB-session loss may
+   transiently replace newer bytes despite its matching marker; verifying
+   reconcile compares digest metadata and restores the newer reading.
 5. A customer mounts read-only and opens Markdown, images or `original.pdf` in
    place. A newer stored upload leaves the completed folder intact until served
    and published. A type/topic/title change moves it; re-resolve `doc_id` via MCP

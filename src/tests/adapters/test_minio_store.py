@@ -538,3 +538,24 @@ def test_exact_delete_accepts_only_absence_errors(code: str) -> None:
             store.delete(key=ObjectKey("missing"))
     else:
         store.delete(key=ObjectKey("missing"))
+
+
+def test_s3_requests_have_configured_bounds_and_no_automatic_retries() -> None:
+    from pydantic import SecretStr
+
+    from rememberstack.adapters.selfhost.minio import _client
+    from rememberstack.adapters.selfhost.minio import MinIOSettings
+
+    client = _client(
+        settings=MinIOSettings(
+            endpoint_url="https://s3.example.invalid",
+            access_key=SecretStr("key"),
+            secret_key=SecretStr("secret"),
+            connect_timeout_s=2,
+            read_timeout_s=7,
+        )
+    )
+    config = client.meta.config  # type: ignore[attr-defined]
+    assert (config.connect_timeout, config.read_timeout) == (2, 7)
+    assert config.retries["total_max_attempts"] == 1
+    client.close()  # type: ignore[attr-defined]
