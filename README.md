@@ -7,8 +7,8 @@
 
 **Memory engine for AI agents**
 
-Process anything relevant: email, chat, specs, meeting notes, tickets,
-agent transcripts. It reads them, keeps what matters, and answers your
+Process anything relevant: email, chat, specs, meeting notes, tickets, images,
+video, audio. It reads them, keeps what matters, and answers your
 agent's questions with facts it can trace back to the source. It knows what
 is true now, what was true a month ago, and who said so.
 
