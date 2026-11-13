@@ -2311,7 +2311,9 @@ path; failure has no complete placement generation.
 
 D74 uses manifest `doc_id` to erase only that document's suffix-bearing folders,
 clear its marker and regenerate/prune navigation indexes from scrubbed authority.
-It leaves surviving original/media objects in place. Retry and restore replay
+Clear `corpus_paths` after cleanup/navigation; a null set never skips full suffix
+discovery on forget or restore replay. It leaves surviving original/media objects
+in place. Retry and restore replay
 need no historic path list; complete local markers never skip independently
 restored stores. Work-row scrub/retention follows existing D74 rules and cannot
 reintroduce scrubbed authority.

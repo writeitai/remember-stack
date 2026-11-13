@@ -404,13 +404,15 @@ def test_attachment_type_uses_its_own_format(engine: Engine, corpus) -> None:
     assert _select(engine, doc_id=attachment.doc_id)[0] == selected
 
 
-def test_schema_change_is_only_one_nullable_marker(engine: Engine) -> None:
+def test_schema_change_is_only_nullable_marker_and_cleanup_paths(
+    engine: Engine,
+) -> None:
     def shape():
         with engine.connect() as connection:
             return set(
                 connection.execute(
                     text("""SELECT table_schema, table_name, column_name,
-                data_type, is_nullable, column_default FROM information_schema.columns
+                data_type, udt_name, is_nullable, column_default FROM information_schema.columns
                 WHERE table_schema IN ('public', 'memory_v1')""")
                 ).tuples()
             )
@@ -421,7 +423,16 @@ def test_schema_change_is_only_one_nullable_marker(engine: Engine) -> None:
     try:
         before = shape()
         assert after - before == {
-            ("public", "documents", "corpus_published_revision", "text", "YES", None)
+            (
+                "public",
+                "documents",
+                "corpus_published_revision",
+                "text",
+                "text",
+                "YES",
+                None,
+            ),
+            ("public", "documents", "corpus_paths", "ARRAY", "_text", "YES", None),
         }
         assert before - after == set()
     finally:

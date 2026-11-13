@@ -8124,8 +8124,8 @@ There are no users requiring migration, aliases or a transition layout.
   old paths recorded through ancestor-index repair, including after their last
   object is gone, then reduce the set to `[desired]` (or null after removal). A
   crash therefore leaves every possibly written path and affected ancestor known.
-  Each committed trigger has a fresh event target in existing `processing_state`, carrying only `doc_id`; retries
-  reuse the same row. No request table, lineage revision counter, pending-path
+  Each committed trigger has a fresh event target in existing `processing_state`,
+  carrying only `doc_id`; retries reuse the same row. No request table, lineage revision counter, pending-path
   journal, publication-receipt table or persistent directory-membership cache.
   Self-host classes and managed pushed `run_task` use the same engine handler,
   leases, retries and announcements.
@@ -8171,7 +8171,7 @@ There are no users requiring migration, aliases or a transition layout.
   drain, verification and restore replay. Page through keys for the document's
   suffix, erase every matching folder/upload and controlled serving/cache copy,
   then regenerate/prune indexes from scrubbed DB authority, including index-only
-  remnants. Never wipe the corpus or recopy surviving originals/media. The existing
+  remnants, and clear `corpus_paths`. An empty set never skips the full scan. Never wipe the corpus or recopy surviving originals/media. The existing
   `doc_id` suffices in immutable intent; no historic friendly paths are needed.
   Re-honor even completed manifests on independent restores; object-version purge
   requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-hard-forget-and-restore-erase-the-document-regenerate-indexes).

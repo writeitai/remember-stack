@@ -112,7 +112,8 @@ Normal delete completes per-document removal before success or leaves durable
 retry work and reports failure. Adapt D74's existing purge capability: keep intent,
 barrier, drain/fence and verification; compute the suffix from manifest `doc_id`,
 erase that document's copies/uploads/caches, then regenerate/prune navigation
-indexes from scrubbed DB authority. Never reset the bucket or recopy survivors.
+indexes from scrubbed DB authority and clear `corpus_paths`. An empty recorded
+set never skips the full suffix scan for forget/restore. Never reset the bucket or recopy survivors.
 Use E0 §6.7's object-version erasure rule. Remove snapshots/pointers and obsolete
 mount composition. Replay all manifests before readiness, including complete ones.
 

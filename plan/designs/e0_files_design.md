@@ -1122,6 +1122,9 @@ paths, suffix reservations or a corpus-wide purge scope.
    it does not reset document folders or require a historic path list. Verify no
    matching folder, forgotten title/summary/member entry or controlled serving
    copy remains; report unfinished-upload coverage under §5's provider rule.
+   Clear `corpus_paths` after object cleanup and navigation repair; its friendly
+   paths must not survive a completed forget. Always do the full suffix scan even
+   when the recorded set is empty, including on restore replay.
    Reopen only after every D74 store acknowledges erasure within that scope.
    Any error leaves the barrier closed and retries the same idempotent procedure.
 4. Before a restore serves traffic or controlled mounts, re-honor **every** portable
