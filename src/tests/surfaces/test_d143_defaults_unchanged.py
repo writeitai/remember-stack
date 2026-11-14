@@ -9,7 +9,8 @@ their component versions, and the query-surface manifest hash. Originally
 taken on the pre-D143 base (fbcd489bd); refreshed for the p9_42/p9_45/D153
 view optimization and again for D154's pagination rename (browse ``limit`` /
 ``next_cursor``, MCP tool schemas), and for D156 document tags (five tag
-tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views). The current branch, composed the way the
+tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views; then the
+``search_documents`` ``tags`` filter at ``tool_version`` 4). The current branch, composed the way the
 self-host profile composes it (layers port included, reporting no
 configuration), must reproduce every byte.
 """

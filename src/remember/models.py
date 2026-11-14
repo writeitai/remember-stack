@@ -478,7 +478,7 @@ class DocumentSearchFilters(BaseModel):
     their normalized address or appears as whole words in their normalized
     name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
     Date ranges are inclusive and exclude documents that do not declare the
-    date. ``tags`` (D156) tests the document's caller tags.
+    date.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -492,7 +492,7 @@ class DocumentSearchFilters(BaseModel):
     language: str | None = None
     thread_ref: str | None = None
     doc_ids: tuple[UUID, ...] = ()
-    tags: DocumentTagFilter | None = None
+    tags: DocumentTagFilter | None = None  # D156 caller tags, on the lineage
 
 
 class DocumentSearchRequest(BaseModel):

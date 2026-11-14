@@ -325,8 +325,12 @@ def test_scoped_context_statements_execute_with_canonical_coverage(pair: _Pair) 
         for statement in (
             _CONFIRM_CLAIMS_CURRENT_SCOPED,
             _CONFIRM_CHUNKS_SCOPED,
-            _confirm_claims_in_scope_statement(current_only=True, entity_scoped=True),
-            _confirm_claims_in_scope_statement(current_only=False, entity_scoped=True),
+            _confirm_claims_in_scope_statement(current_only=True, entity_scoped=True)[
+                0
+            ],
+            _confirm_claims_in_scope_statement(current_only=False, entity_scoped=True)[
+                0
+            ],
         ):
             rows = connection.execute(statement, parameters).mappings().all()
             assert rows

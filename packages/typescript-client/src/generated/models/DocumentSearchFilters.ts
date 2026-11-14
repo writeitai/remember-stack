@@ -11,7 +11,7 @@ import type { DocumentTagFilter } from './DocumentTagFilter';
  * their normalized address or appears as whole words in their normalized
  * name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
  * Date ranges are inclusive and exclude documents that do not declare the
- * date. ``tags`` (D156) tests the document's caller tags.
+ * date.
  */
 export type DocumentSearchFilters = {
     authors?: Array<string>;

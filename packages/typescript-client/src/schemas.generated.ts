@@ -1628,7 +1628,7 @@ export default {
     },
     "DocumentSearchFilters": {
       "additionalProperties": false,
-      "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate. ``tags`` (D156) tests the document's caller tags.",
+      "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
       "properties": {
         "authors": {
           "default": [],
