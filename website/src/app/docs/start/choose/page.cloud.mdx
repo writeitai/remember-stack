@@ -18,7 +18,7 @@ about who operates it, not about how well it remembers.
 |---|---|---|
 | **Memory engine** | RememberStack, Apache-2.0 | RememberStack, one isolated deployment per project |
 | **What you run** | PostgreSQL 19 with eight extensions, S3-compatible object storage, the API and thirteen pipeline workers | Nothing. You install the `remember` client. |
-| **File formats** | Markdown, plain text, HTML, Word, PowerPoint and Excel by default; PDFs and images once you configure an OCR converter | UTF-8 Markdown and plain text, up to 10,000,000 bytes per document |
+| **File formats** | Markdown, plain text, HTML, Word, PowerPoint and Excel by default; PDFs and images once you configure an OCR converter | The stock formats, PDFs and Office files included; images, media and archives are stored, not read |
 | **Model inference for the pipeline** | Your own OpenRouter account, plus a Mistral key for PDFs and images | Included in the processing charge |
 | **Endpoint** | Wherever you run it | `https://<deployment-id>.dp.remember.dev`, over TLS, straight to your deployment |
 | **Access for agents** | You configure bearer or signed-token authentication | One API key from the console or `remember login`, and hosted MCP at `https://remember.dev/mcp` with browser sign-in or the key |
@@ -46,8 +46,7 @@ piece.
 - your documents must stay on machines you control;
 - you already operate PostgreSQL and containers and want to own the model
   bill directly;
-- you need PDFs, images or Office files read directly; remember.dev accepts
-  Markdown and plain text only;
+- you need images, audio or video read, not only stored;
 - you want to read, change or extend the engine.
 
 ## Choose remember.dev if

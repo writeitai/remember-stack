@@ -64,7 +64,7 @@ describes, except where this page says otherwise.
 | The `adjacent_chunks` MCP tool | Added in v0.18.1. Hosted MCP does not list it; the routes under *Passages* above are served |
 | Effective periods, version keys, section history and references (`version_key`, `effective_from` and `effective_until` on `POST /ingest`; the `…/effective-periods` and `…/references` routes; `GET /documents/{doc_id}/sections/{section_key}/history`; `POST /documents/references`; `time` on search and on `claims_and_sources_context`) | Added in v0.18.1. Not available on remember.dev yet, and hosted MCP has no `section_history` or `document_references` tool. See [Read a document as of a date](/docs/guides/versions-in-force) |
 | Connectors (`/connectors…`) | The routes exist, but remember.dev does not run connectors for you and gives them no credentials. Push documents with ingest instead |
-| Files other than UTF-8 Markdown and plain text | Refused before storage; see [Ingest limits](/docs/cloud/limits#ingest). A self-hosted engine can convert PDFs and other formats |
+| File formats | The same formats a stock self-hosted engine reads: text, Markdown, code, HTML, EPUB, Word, PowerPoint, Excel, CSV, email, notebooks and PDF (every page read with OCR). Images, audio, video and archives are stored and described by a card, not read. See [Ingest limits](/docs/cloud/limits#ingest) |
 | Filesystem views of the corpus | Not offered on remember.dev |
 | Direct database access | Not offered. Use SQL queries over the query space |
 
@@ -87,10 +87,6 @@ refused by the deployment; see
 | Situation | Response |
 |---|---|
 | Body over 100,000,000 bytes | `413`, `body_too_large` |
-| Text over 10,000,000 bytes | `413`, `source_bytes_limit_exceeded` |
-| Binary file | `409`, `rate_class_unavailable` |
-| Other text types, invalid UTF-8, markup | `422`, `rate_class_ambiguous` |
-| Empty document | `422`, `empty_text` |
 | Balance at zero, a cap reached, billing suspended, or the project parked | `423`, `dispatch_parked:<reason>`, for ingest and every memory read; see [Spend caps](/docs/cloud/spend-controls#what-stops-when-money-or-a-cap-runs-out) |
 | Provider-cost safeguard reached | `423`, `dispatch_parked:<reason>`, or `403`, `dispatch_refused:<reason>` |
 | Safeguard service unreachable | `503`, `spend_lease_unavailable` |

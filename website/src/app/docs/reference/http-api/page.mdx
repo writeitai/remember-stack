@@ -433,10 +433,6 @@ remember.dev caps bodies at 100,000,000 bytes and always requires
 `spend_lease_unavailable`, because the spend hold is checked first; see
 [Ingest](/docs/reference/http-api/ingest#errors).
 
-A deployment that meters processed text (remember.dev) also refuses a text
-document over 10,000,000 bytes with `413` `source_bytes_limit_exceeded`; see
-[Ingest](/docs/reference/http-api/ingest#errors).
-
 </Cloud>
 
 Other bounds are per route: search and lookup `k` up to 400, search query up to 4,096

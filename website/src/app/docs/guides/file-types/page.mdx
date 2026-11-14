@@ -72,12 +72,9 @@ completed OCR work can be reused.
 
 ## remember.dev
 
-remember.dev accepts UTF-8 Markdown and plain text, up to 10,000,000 bytes
-of text per document. Send it with the type `text/markdown`,
-`text/x-markdown` or `text/plain`. A binary file, such as a PDF, an image or
-a Word document, is refused with `409`. Text that is not valid UTF-8, or
-that starts with HTML or XML markup, is refused with `422`. The full list of
-limits and error codes is on [Limits](/docs/cloud/limits).
+remember.dev reads what a stock deployment reads: text, Markdown, code, HTML, EPUB, Word, PowerPoint, Excel, CSV, email, notebooks and PDF (every page read with OCR). Images,
+audio, video and archives are stored and described by a card, not read.
+The full list of limits is on [Limits](/docs/cloud/limits).
 
 To store a PDF, a Word document or a web page on remember.dev, convert it
 to Markdown first and send the Markdown.
