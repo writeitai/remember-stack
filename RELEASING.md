@@ -22,8 +22,8 @@ The one-time owner setup is complete:
    Under D108, the canonical PyPI distribution is `remember` (providing the `remember` CLI launcher
    and the `remember` Python client package),
    published from this repository starting with `v0.17.0`. The container image package is `ghcr.io/writeitai/remember-stack`.
-3. The GitHub environment `pypi` requires an owner review, so a tag cannot publish to PyPI without
-   explicit approval.
+3. The GitHub environment `pypi` scopes the PyPI trusted publisher. It has no required
+   reviewer: merging the reviewed release pull request is the only approval.
 4. The PyPI account uses two-factor authentication and has an active
    [Trusted Publisher](https://docs.pypi.org/trusted-publishers/)
    with these exact values:

@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.20.0](https://github.com/writeitai/remember-stack/releases/tag/v0.20.0)
-([on PyPI](https://pypi.org/project/remember/0.20.0/)).
+[v0.21.0](https://github.com/writeitai/remember-stack/releases/tag/v0.21.0)
+([on PyPI](https://pypi.org/project/remember/0.21.0/)).
 
 ## 3. Point the client at your endpoint
 
@@ -7175,8 +7175,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.20.0` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:18-0.20.0` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.21.0` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.0` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -7367,7 +7367,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.20.0
+git checkout v0.21.0
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -7379,7 +7379,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.20.0`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.21.0`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -10145,7 +10145,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.20.0/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.0/openapi.json).
 
 ## Base URL
 
@@ -19120,7 +19120,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.20.0), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.21.0), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -21625,7 +21625,24 @@ published as `rememberstack`.
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
 
-## Unreleased — corpus consumption
+## 0.21.0 (November 2026)
+
+**Action needed (self-hosted): PostgreSQL 18.** PostgreSQL 18 is now the
+reference server (it replaces the PostgreSQL 19 release candidate). Compose
+uses `ghcr.io/writeitai/remember-stack-postgres:18-0.21.0`. A PostgreSQL 19
+data directory cannot be opened by 18: start from fresh PostgreSQL 18 storage
+and re-ingest. See [PostgreSQL server versions](https://remember.dev/docs/self-hosting/upgrades#postgresql-server-versions).
+
+**Document tags.** Register tags, assign them at ingest or later, rename and
+delete them, find them in document lists, search results and SQL, and filter
+`search` and `search_documents` by tag. See
+[Tag documents](https://remember.dev/docs/guides/tag-documents).
+
+**Corpus folders.** Served document versions are published as type/topic/title
+folders through ordinary processing work, with a verifying reconcile and
+durable deletion. Setup migrates to `p9_53_0074`.
+
+### Corpus consumption
 
 Document search's `p3_path` resolves a type/topic/title folder only when the
 selected version is served and its nullable publication marker matches current
@@ -21634,13 +21651,15 @@ raw-only, updating, failed and historical results have no browse path.
 Only the suffix remains stable across folder moves; the consumption skill and
 MCP descriptions teach re-resolution and offline `find`. Corpus originals and
 reader derivatives remain independent of claims/facts switches, and K stays a
-separate repository. The managed mount CLI wrapper is not included.
+separate repository.
 
 The benchmark harness's fresh Full-v47 protocol attests publication markers,
 ready-folder identities and frozen file inventories. This change establishes
 no new benchmark result and does not reinterpret stored evidence.
 
-## Unreleased — retrieval SQL and online schema upgrade
+## 0.20.0 (November 2026)
+
+### Retrieval SQL and online schema upgrade
 
 Native fact and entity-scoped claim/chunk retrieval share visibility work inside
 each database statement. Source, version, deletion, identity and time rules still
