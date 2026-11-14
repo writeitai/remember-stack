@@ -647,6 +647,61 @@ def responses() -> dict[str, Any]:
         freshness=models.Freshness(pg_live_ts=now),
     )
     fact = evidence.model_copy(update={"grain": models.Grain.FACT})
+    validity = models.Validity(
+        valid_from=now, valid_until=None, ingested_at=now, invalidated_at=None
+    )
+
+    def facts_read(*, marks: bool) -> models.Envelope:
+        """A fact read whose D156 filter disclosures are absent, or False/0."""
+        mark: dict[str, Any] = {"in_documents_filter": False} if marks else {}
+        return fact.model_copy(
+            update={
+                "facts": (
+                    models.FactResult(
+                        fact_id=UUID(ID),
+                        kind="relation",
+                        label="fixture holds",
+                        evidence_count=1,
+                        validity=validity,
+                        contradiction_group=UUID(OTHER_ID),
+                        contradiction=models.Contradiction(
+                            group_id=UUID(OTHER_ID),
+                            co_members=(
+                                models.CoMember(
+                                    fact_id=UUID(OTHER_ID),
+                                    label="fixture differs",
+                                    evidence_count=1,
+                                    validity=validity,
+                                    **mark,
+                                ),
+                            ),
+                            returned=1,
+                            total=1,
+                        ),
+                    ),
+                ),
+                "fact_evidence": (
+                    models.FactEvidence(
+                        fact_kind="relation",
+                        fact_id=UUID(ID),
+                        claim_id=UUID(OTHER_ID),
+                        stance="contradicts",
+                        **mark,
+                    ),
+                ),
+                "evidence_totals": (
+                    models.EvidenceTotal(
+                        fact_kind="relation",
+                        fact_id=UUID(ID),
+                        stance="contradicts",
+                        returned=1,
+                        total=1,
+                        **({"in_documents_filter_total": 0} if marks else {}),
+                    ),
+                ),
+            }
+        )
+
     generation = models.ReferenceGeneration(
         generation_id=UUID(ID),
         doc_id=UUID(ID),
@@ -710,7 +765,8 @@ def responses() -> dict[str, Any]:
             doc_id=UUID(ID), retracted=1, cleared_at=now
         ).model_dump(mode="json"),
         "envelope": evidence.model_dump(mode="json"),
-        "fact": fact.model_dump(mode="json"),
+        "fact": facts_read(marks=False).model_dump(mode="json"),
+        "filtered_fact": facts_read(marks=True).model_dump(mode="json"),
         "bundle": models.ContextBundleV2(
             claims_and_sources=evidence, facts=fact
         ).model_dump(mode="json"),
@@ -783,7 +839,8 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
     if path == "/operations/combined_context":
         return fixtures["bundle"]
     if path == "/operations/facts_context":
-        return fixtures["fact"]
+        filtered = "documents" in json.loads(request.content or b"{}")
+        return fixtures["filtered_fact" if filtered else "fact"]
     if path.startswith("/query/"):
         if path in {"/query/space/search", "/query/saved"}:
             return []

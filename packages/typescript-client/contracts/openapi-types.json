@@ -558,7 +558,8 @@
               }
             ],
             "default": null,
-            "title": "In Documents Filter"
+            "title": "In Documents Filter",
+            "x-exclude-if-none": true
           },
           "label": {
             "title": "Label",
@@ -3157,7 +3158,8 @@
               }
             ],
             "default": null,
-            "title": "In Documents Filter Total"
+            "title": "In Documents Filter Total",
+            "x-exclude-if-none": true
           },
           "returned": {
             "minimum": 0,
@@ -3220,7 +3222,8 @@
               }
             ],
             "default": null,
-            "title": "In Documents Filter"
+            "title": "In Documents Filter",
+            "x-exclude-if-none": true
           },
           "stance": {
             "enum": [
@@ -5106,7 +5109,8 @@
               }
             ],
             "default": null,
-            "title": "In Documents Filter"
+            "title": "In Documents Filter",
+            "x-exclude-if-none": true
           },
           "label": {
             "title": "Label",
@@ -7863,7 +7867,8 @@
               }
             ],
             "default": null,
-            "title": "In Documents Filter Total"
+            "title": "In Documents Filter Total",
+            "x-exclude-if-none": true
           },
           "returned": {
             "minimum": 0,
@@ -7927,7 +7932,8 @@
               }
             ],
             "default": null,
-            "title": "In Documents Filter"
+            "title": "In Documents Filter",
+            "x-exclude-if-none": true
           },
           "stance": {
             "enum": [

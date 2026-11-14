@@ -177,10 +177,61 @@
           "edges": [],
           "entities": [],
           "evidence": [],
-          "evidence_totals": [],
+          "evidence_totals": [
+            {
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "returned": 1,
+              "stance": "contradicts",
+              "total": 1
+            }
+          ],
           "excluded_unstamped": 0,
-          "fact_evidence": [],
-          "facts": [],
+          "fact_evidence": [
+            {
+              "claim_id": "10000000-0000-0000-0000-000000000002",
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "stance": "contradicts"
+            }
+          ],
+          "facts": [
+            {
+              "contradiction": {
+                "co_members": [
+                  {
+                    "evidence_count": 1,
+                    "fact_id": "10000000-0000-0000-0000-000000000002",
+                    "label": "fixture differs",
+                    "validity": {
+                      "ingested_at": "2026-10-02T12:00:00Z",
+                      "invalidated_at": null,
+                      "valid_from": "2026-10-02T12:00:00Z",
+                      "valid_precision": "unknown",
+                      "valid_until": null
+                    }
+                  }
+                ],
+                "group_id": "10000000-0000-0000-0000-000000000002",
+                "returned": 1,
+                "total": 1
+              },
+              "contradiction_group": "10000000-0000-0000-0000-000000000002",
+              "evidence_count": 1,
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "kind": "relation",
+              "label": "fixture holds",
+              "support": "current",
+              "temporal_match": "possible",
+              "validity": {
+                "ingested_at": "2026-10-02T12:00:00Z",
+                "invalidated_at": null,
+                "valid_from": "2026-10-02T12:00:00Z",
+                "valid_precision": "unknown",
+                "valid_until": null
+              }
+            }
+          ],
           "freshness": {
             "k": null,
             "p1_believed_at_horizon": null,
@@ -214,10 +265,61 @@
         "edges": [],
         "entities": [],
         "evidence": [],
-        "evidence_totals": [],
+        "evidence_totals": [
+          {
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "returned": 1,
+            "stance": "contradicts",
+            "total": 1
+          }
+        ],
         "excluded_unstamped": 0,
-        "fact_evidence": [],
-        "facts": [],
+        "fact_evidence": [
+          {
+            "claim_id": "10000000-0000-0000-0000-000000000002",
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "stance": "contradicts"
+          }
+        ],
+        "facts": [
+          {
+            "contradiction": {
+              "co_members": [
+                {
+                  "evidence_count": 1,
+                  "fact_id": "10000000-0000-0000-0000-000000000002",
+                  "label": "fixture differs",
+                  "validity": {
+                    "ingested_at": "2026-10-02T12:00:00Z",
+                    "invalidated_at": null,
+                    "valid_from": "2026-10-02T12:00:00Z",
+                    "valid_precision": "unknown",
+                    "valid_until": null
+                  }
+                }
+              ],
+              "group_id": "10000000-0000-0000-0000-000000000002",
+              "returned": 1,
+              "total": 1
+            },
+            "contradiction_group": "10000000-0000-0000-0000-000000000002",
+            "evidence_count": 1,
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "kind": "relation",
+            "label": "fixture holds",
+            "support": "current",
+            "temporal_match": "possible",
+            "validity": {
+              "ingested_at": "2026-10-02T12:00:00Z",
+              "invalidated_at": null,
+              "valid_from": "2026-10-02T12:00:00Z",
+              "valid_precision": "unknown",
+              "valid_until": null
+            }
+          }
+        ],
         "freshness": {
           "k": null,
           "p1_believed_at_horizon": null,
@@ -282,10 +384,61 @@
           "edges": [],
           "entities": [],
           "evidence": [],
-          "evidence_totals": [],
+          "evidence_totals": [
+            {
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "returned": 1,
+              "stance": "contradicts",
+              "total": 1
+            }
+          ],
           "excluded_unstamped": 0,
-          "fact_evidence": [],
-          "facts": [],
+          "fact_evidence": [
+            {
+              "claim_id": "10000000-0000-0000-0000-000000000002",
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "stance": "contradicts"
+            }
+          ],
+          "facts": [
+            {
+              "contradiction": {
+                "co_members": [
+                  {
+                    "evidence_count": 1,
+                    "fact_id": "10000000-0000-0000-0000-000000000002",
+                    "label": "fixture differs",
+                    "validity": {
+                      "ingested_at": "2026-10-02T12:00:00Z",
+                      "invalidated_at": null,
+                      "valid_from": "2026-10-02T12:00:00Z",
+                      "valid_precision": "unknown",
+                      "valid_until": null
+                    }
+                  }
+                ],
+                "group_id": "10000000-0000-0000-0000-000000000002",
+                "returned": 1,
+                "total": 1
+              },
+              "contradiction_group": "10000000-0000-0000-0000-000000000002",
+              "evidence_count": 1,
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "kind": "relation",
+              "label": "fixture holds",
+              "support": "current",
+              "temporal_match": "possible",
+              "validity": {
+                "ingested_at": "2026-10-02T12:00:00Z",
+                "invalidated_at": null,
+                "valid_from": "2026-10-02T12:00:00Z",
+                "valid_precision": "unknown",
+                "valid_until": null
+              }
+            }
+          ],
           "freshness": {
             "k": null,
             "p1_believed_at_horizon": null,
@@ -319,10 +472,61 @@
         "edges": [],
         "entities": [],
         "evidence": [],
-        "evidence_totals": [],
+        "evidence_totals": [
+          {
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "returned": 1,
+            "stance": "contradicts",
+            "total": 1
+          }
+        ],
         "excluded_unstamped": 0,
-        "fact_evidence": [],
-        "facts": [],
+        "fact_evidence": [
+          {
+            "claim_id": "10000000-0000-0000-0000-000000000002",
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "stance": "contradicts"
+          }
+        ],
+        "facts": [
+          {
+            "contradiction": {
+              "co_members": [
+                {
+                  "evidence_count": 1,
+                  "fact_id": "10000000-0000-0000-0000-000000000002",
+                  "label": "fixture differs",
+                  "validity": {
+                    "ingested_at": "2026-10-02T12:00:00Z",
+                    "invalidated_at": null,
+                    "valid_from": "2026-10-02T12:00:00Z",
+                    "valid_precision": "unknown",
+                    "valid_until": null
+                  }
+                }
+              ],
+              "group_id": "10000000-0000-0000-0000-000000000002",
+              "returned": 1,
+              "total": 1
+            },
+            "contradiction_group": "10000000-0000-0000-0000-000000000002",
+            "evidence_count": 1,
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "kind": "relation",
+            "label": "fixture holds",
+            "support": "current",
+            "temporal_match": "possible",
+            "validity": {
+              "ingested_at": "2026-10-02T12:00:00Z",
+              "invalidated_at": null,
+              "valid_from": "2026-10-02T12:00:00Z",
+              "valid_precision": "unknown",
+              "valid_until": null
+            }
+          }
+        ],
         "freshness": {
           "k": null,
           "p1_believed_at_horizon": null,
@@ -1305,10 +1509,61 @@
           "edges": [],
           "entities": [],
           "evidence": [],
-          "evidence_totals": [],
+          "evidence_totals": [
+            {
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "returned": 1,
+              "stance": "contradicts",
+              "total": 1
+            }
+          ],
           "excluded_unstamped": 0,
-          "fact_evidence": [],
-          "facts": [],
+          "fact_evidence": [
+            {
+              "claim_id": "10000000-0000-0000-0000-000000000002",
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "stance": "contradicts"
+            }
+          ],
+          "facts": [
+            {
+              "contradiction": {
+                "co_members": [
+                  {
+                    "evidence_count": 1,
+                    "fact_id": "10000000-0000-0000-0000-000000000002",
+                    "label": "fixture differs",
+                    "validity": {
+                      "ingested_at": "2026-10-02T12:00:00Z",
+                      "invalidated_at": null,
+                      "valid_from": "2026-10-02T12:00:00Z",
+                      "valid_precision": "unknown",
+                      "valid_until": null
+                    }
+                  }
+                ],
+                "group_id": "10000000-0000-0000-0000-000000000002",
+                "returned": 1,
+                "total": 1
+              },
+              "contradiction_group": "10000000-0000-0000-0000-000000000002",
+              "evidence_count": 1,
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "kind": "relation",
+              "label": "fixture holds",
+              "support": "current",
+              "temporal_match": "possible",
+              "validity": {
+                "ingested_at": "2026-10-02T12:00:00Z",
+                "invalidated_at": null,
+                "valid_from": "2026-10-02T12:00:00Z",
+                "valid_precision": "unknown",
+                "valid_until": null
+              }
+            }
+          ],
           "freshness": {
             "k": null,
             "p1_believed_at_horizon": null,
@@ -1342,10 +1597,61 @@
         "edges": [],
         "entities": [],
         "evidence": [],
-        "evidence_totals": [],
+        "evidence_totals": [
+          {
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "returned": 1,
+            "stance": "contradicts",
+            "total": 1
+          }
+        ],
         "excluded_unstamped": 0,
-        "fact_evidence": [],
-        "facts": [],
+        "fact_evidence": [
+          {
+            "claim_id": "10000000-0000-0000-0000-000000000002",
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "stance": "contradicts"
+          }
+        ],
+        "facts": [
+          {
+            "contradiction": {
+              "co_members": [
+                {
+                  "evidence_count": 1,
+                  "fact_id": "10000000-0000-0000-0000-000000000002",
+                  "label": "fixture differs",
+                  "validity": {
+                    "ingested_at": "2026-10-02T12:00:00Z",
+                    "invalidated_at": null,
+                    "valid_from": "2026-10-02T12:00:00Z",
+                    "valid_precision": "unknown",
+                    "valid_until": null
+                  }
+                }
+              ],
+              "group_id": "10000000-0000-0000-0000-000000000002",
+              "returned": 1,
+              "total": 1
+            },
+            "contradiction_group": "10000000-0000-0000-0000-000000000002",
+            "evidence_count": 1,
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "kind": "relation",
+            "label": "fixture holds",
+            "support": "current",
+            "temporal_match": "possible",
+            "validity": {
+              "ingested_at": "2026-10-02T12:00:00Z",
+              "invalidated_at": null,
+              "valid_from": "2026-10-02T12:00:00Z",
+              "valid_precision": "unknown",
+              "valid_until": null
+            }
+          }
+        ],
         "freshness": {
           "k": null,
           "p1_believed_at_horizon": null,
@@ -1419,10 +1725,64 @@
           "edges": [],
           "entities": [],
           "evidence": [],
-          "evidence_totals": [],
+          "evidence_totals": [
+            {
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "in_documents_filter_total": 0,
+              "returned": 1,
+              "stance": "contradicts",
+              "total": 1
+            }
+          ],
           "excluded_unstamped": 0,
-          "fact_evidence": [],
-          "facts": [],
+          "fact_evidence": [
+            {
+              "claim_id": "10000000-0000-0000-0000-000000000002",
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "fact_kind": "relation",
+              "in_documents_filter": false,
+              "stance": "contradicts"
+            }
+          ],
+          "facts": [
+            {
+              "contradiction": {
+                "co_members": [
+                  {
+                    "evidence_count": 1,
+                    "fact_id": "10000000-0000-0000-0000-000000000002",
+                    "in_documents_filter": false,
+                    "label": "fixture differs",
+                    "validity": {
+                      "ingested_at": "2026-10-02T12:00:00Z",
+                      "invalidated_at": null,
+                      "valid_from": "2026-10-02T12:00:00Z",
+                      "valid_precision": "unknown",
+                      "valid_until": null
+                    }
+                  }
+                ],
+                "group_id": "10000000-0000-0000-0000-000000000002",
+                "returned": 1,
+                "total": 1
+              },
+              "contradiction_group": "10000000-0000-0000-0000-000000000002",
+              "evidence_count": 1,
+              "fact_id": "10000000-0000-0000-0000-000000000001",
+              "kind": "relation",
+              "label": "fixture holds",
+              "support": "current",
+              "temporal_match": "possible",
+              "validity": {
+                "ingested_at": "2026-10-02T12:00:00Z",
+                "invalidated_at": null,
+                "valid_from": "2026-10-02T12:00:00Z",
+                "valid_precision": "unknown",
+                "valid_until": null
+              }
+            }
+          ],
           "freshness": {
             "k": null,
             "p1_believed_at_horizon": null,
@@ -1456,10 +1816,64 @@
         "edges": [],
         "entities": [],
         "evidence": [],
-        "evidence_totals": [],
+        "evidence_totals": [
+          {
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "in_documents_filter_total": 0,
+            "returned": 1,
+            "stance": "contradicts",
+            "total": 1
+          }
+        ],
         "excluded_unstamped": 0,
-        "fact_evidence": [],
-        "facts": [],
+        "fact_evidence": [
+          {
+            "claim_id": "10000000-0000-0000-0000-000000000002",
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "fact_kind": "relation",
+            "in_documents_filter": false,
+            "stance": "contradicts"
+          }
+        ],
+        "facts": [
+          {
+            "contradiction": {
+              "co_members": [
+                {
+                  "evidence_count": 1,
+                  "fact_id": "10000000-0000-0000-0000-000000000002",
+                  "in_documents_filter": false,
+                  "label": "fixture differs",
+                  "validity": {
+                    "ingested_at": "2026-10-02T12:00:00Z",
+                    "invalidated_at": null,
+                    "valid_from": "2026-10-02T12:00:00Z",
+                    "valid_precision": "unknown",
+                    "valid_until": null
+                  }
+                }
+              ],
+              "group_id": "10000000-0000-0000-0000-000000000002",
+              "returned": 1,
+              "total": 1
+            },
+            "contradiction_group": "10000000-0000-0000-0000-000000000002",
+            "evidence_count": 1,
+            "fact_id": "10000000-0000-0000-0000-000000000001",
+            "kind": "relation",
+            "label": "fixture holds",
+            "support": "current",
+            "temporal_match": "possible",
+            "validity": {
+              "ingested_at": "2026-10-02T12:00:00Z",
+              "invalidated_at": null,
+              "valid_from": "2026-10-02T12:00:00Z",
+              "valid_precision": "unknown",
+              "valid_until": null
+            }
+          }
+        ],
         "freshness": {
           "k": null,
           "p1_believed_at_horizon": null,
@@ -14180,10 +14594,151 @@
       "edges": [],
       "entities": [],
       "evidence": [],
-      "evidence_totals": [],
+      "evidence_totals": [
+        {
+          "fact_id": "10000000-0000-0000-0000-000000000001",
+          "fact_kind": "relation",
+          "returned": 1,
+          "stance": "contradicts",
+          "total": 1
+        }
+      ],
       "excluded_unstamped": 0,
-      "fact_evidence": [],
-      "facts": [],
+      "fact_evidence": [
+        {
+          "claim_id": "10000000-0000-0000-0000-000000000002",
+          "fact_id": "10000000-0000-0000-0000-000000000001",
+          "fact_kind": "relation",
+          "stance": "contradicts"
+        }
+      ],
+      "facts": [
+        {
+          "contradiction": {
+            "co_members": [
+              {
+                "evidence_count": 1,
+                "fact_id": "10000000-0000-0000-0000-000000000002",
+                "label": "fixture differs",
+                "validity": {
+                  "ingested_at": "2026-10-02T12:00:00Z",
+                  "invalidated_at": null,
+                  "valid_from": "2026-10-02T12:00:00Z",
+                  "valid_precision": "unknown",
+                  "valid_until": null
+                }
+              }
+            ],
+            "group_id": "10000000-0000-0000-0000-000000000002",
+            "returned": 1,
+            "total": 1
+          },
+          "contradiction_group": "10000000-0000-0000-0000-000000000002",
+          "evidence_count": 1,
+          "fact_id": "10000000-0000-0000-0000-000000000001",
+          "kind": "relation",
+          "label": "fixture holds",
+          "support": "current",
+          "temporal_match": "possible",
+          "validity": {
+            "ingested_at": "2026-10-02T12:00:00Z",
+            "invalidated_at": null,
+            "valid_from": "2026-10-02T12:00:00Z",
+            "valid_precision": "unknown",
+            "valid_until": null
+          }
+        }
+      ],
+      "freshness": {
+        "k": null,
+        "p1_believed_at_horizon": null,
+        "p1_written_inline": true,
+        "pg_live_ts": "2026-10-02T12:00:00Z",
+        "scope_pending": null
+      },
+      "grain": "fact",
+      "negative": null,
+      "next_cursor": null,
+      "nodes": [],
+      "pages": [],
+      "paths": [],
+      "ranking": [],
+      "sources": [],
+      "temporal_scope": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "identity_regime": "current",
+        "mode": "current"
+      },
+      "transcript": [],
+      "truncation": null
+    },
+    "filtered_fact": {
+      "aggregate": null,
+      "changes": [],
+      "chunks": [],
+      "dropped_by_hydration": 0,
+      "edges": [],
+      "entities": [],
+      "evidence": [],
+      "evidence_totals": [
+        {
+          "fact_id": "10000000-0000-0000-0000-000000000001",
+          "fact_kind": "relation",
+          "in_documents_filter_total": 0,
+          "returned": 1,
+          "stance": "contradicts",
+          "total": 1
+        }
+      ],
+      "excluded_unstamped": 0,
+      "fact_evidence": [
+        {
+          "claim_id": "10000000-0000-0000-0000-000000000002",
+          "fact_id": "10000000-0000-0000-0000-000000000001",
+          "fact_kind": "relation",
+          "in_documents_filter": false,
+          "stance": "contradicts"
+        }
+      ],
+      "facts": [
+        {
+          "contradiction": {
+            "co_members": [
+              {
+                "evidence_count": 1,
+                "fact_id": "10000000-0000-0000-0000-000000000002",
+                "in_documents_filter": false,
+                "label": "fixture differs",
+                "validity": {
+                  "ingested_at": "2026-10-02T12:00:00Z",
+                  "invalidated_at": null,
+                  "valid_from": "2026-10-02T12:00:00Z",
+                  "valid_precision": "unknown",
+                  "valid_until": null
+                }
+              }
+            ],
+            "group_id": "10000000-0000-0000-0000-000000000002",
+            "returned": 1,
+            "total": 1
+          },
+          "contradiction_group": "10000000-0000-0000-0000-000000000002",
+          "evidence_count": 1,
+          "fact_id": "10000000-0000-0000-0000-000000000001",
+          "kind": "relation",
+          "label": "fixture holds",
+          "support": "current",
+          "temporal_match": "possible",
+          "validity": {
+            "ingested_at": "2026-10-02T12:00:00Z",
+            "invalidated_at": null,
+            "valid_from": "2026-10-02T12:00:00Z",
+            "valid_precision": "unknown",
+            "valid_until": null
+          }
+        }
+      ],
       "freshness": {
         "k": null,
         "p1_believed_at_horizon": null,

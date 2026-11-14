@@ -12,6 +12,7 @@ from datetime import datetime
 from datetime import UTC
 import json
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 
+from remember import models as client_models
 from remember.cli import main as cli_main
 from remember.client import MemoryClient
 from remember.errors import UnknownTag
@@ -29,13 +31,10 @@ from rememberstack.model import AssuredOperation
 from rememberstack.model import ClaimValidPrecision
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
-from rememberstack.model import EvidenceTotal
-from rememberstack.model import FactEvidence
+from rememberstack.model import envelope as engine_models
 from rememberstack.model import Grain
 from rememberstack.model import UnknownTagError
 from rememberstack.model.client import ProcessingLayer
-from rememberstack.model.envelope import CoMember
-from rememberstack.model.envelope import Validity
 from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.http_api import build_api
@@ -333,21 +332,33 @@ def test_cli_query_tag_flags_build_the_documents_filter(
     assert len(executor.arguments) == sent
 
 
-def test_filter_disclosures_are_absent_from_unfiltered_payloads() -> None:
-    """Unfiltered reads serialize exactly as before; filtered ones carry the marks."""
+@pytest.mark.parametrize(
+    "models", [engine_models, client_models], ids=["engine", "sdk"]
+)
+def test_filter_disclosures_are_absent_from_unfiltered_payloads(
+    models: ModuleType,
+) -> None:
+    """Unfiltered reads serialize exactly as before; filtered ones keep False and 0.
+
+    The engine's envelope models and the SDK's must agree (the TypeScript
+    client follows the same rule through ``x-exclude-if-none``).
+    """
     fact_id = UUID("00000000-0000-0000-0000-000000000001")
-    plain = FactEvidence(
+    plain = models.FactEvidence(
         fact_kind="relation", fact_id=fact_id, claim_id=fact_id, stance="supports"
     )
     assert "in_documents_filter" not in plain.model_dump_json()
+    assert "in_documents_filter" not in plain.model_dump(mode="json")
     marked = plain.model_copy(update={"in_documents_filter": False})
     assert json.loads(marked.model_dump_json())["in_documents_filter"] is False
-    total = EvidenceTotal(
+    total = models.EvidenceTotal(
         fact_kind="relation", fact_id=fact_id, stance="supports", returned=1, total=3
     )
     assert "in_documents_filter_total" not in total.model_dump_json()
+    zero = total.model_copy(update={"in_documents_filter_total": 0})
+    assert json.loads(zero.model_dump_json())["in_documents_filter_total"] == 0
     with pytest.raises(ValidationError):
-        EvidenceTotal(
+        models.EvidenceTotal(
             fact_kind="relation",
             fact_id=fact_id,
             stance="supports",
@@ -355,11 +366,11 @@ def test_filter_disclosures_are_absent_from_unfiltered_payloads() -> None:
             total=3,
             in_documents_filter_total=4,
         )
-    member = CoMember(
+    member = models.CoMember(
         fact_id=fact_id,
         label="x",
         evidence_count=1,
-        validity=Validity(
+        validity=models.Validity(
             valid_from=None,
             valid_until=None,
             valid_precision=ClaimValidPrecision.OPEN,
@@ -368,3 +379,5 @@ def test_filter_disclosures_are_absent_from_unfiltered_payloads() -> None:
         ),
     )
     assert "in_documents_filter" not in member.model_dump_json()
+    outside = member.model_copy(update={"in_documents_filter": False})
+    assert json.loads(outside.model_dump_json())["in_documents_filter"] is False

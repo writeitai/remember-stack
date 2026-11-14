@@ -18,6 +18,7 @@ interface Schema {
   default?: unknown;
   'x-extra'?: string;
   'x-exclude'?: boolean;
+  'x-exclude-if-none'?: boolean;
   'x-field-order'?: string[];
   discriminator?: {propertyName:string};
   format?:string;
@@ -98,7 +99,8 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
       .map(([key, item]) => [key, normalize({ value: item, schema: fields[key]
         ?? (typeof schema.additionalProperties === 'object' ? schema.additionalProperties : {}) })]));
     for (const [key, field] of Object.entries(fields)) {
-      if (!(key in result) && 'default' in field) Object.defineProperty(result, key, {
+      // Python omits an exclude-if-None field rather than serializing its null default.
+      if (!(key in result) && 'default' in field && !(field['x-exclude-if-none'] && field.default === null)) Object.defineProperty(result, key, {
         value: normalize({ value: structuredClone(field.default), schema: field }),
         enumerable: true, writable: true, configurable: true,
       });
@@ -240,6 +242,7 @@ function dump({value,schema,excludeNone,excludeDefaults}:{value:unknown;schema:S
       const item=fields[key];
       const field=schema.properties?.[key]??{};
       if(field['x-exclude'])continue;
+      if(field['x-exclude-if-none']&&item===null)continue;
       if(excludeNone&&item===null)continue;
       if(excludeDefaults&&'default'in field&&equalJson({left:item,right:normalize({value:field.default,schema:field})}))continue;
       Object.defineProperty(result,key,{value:dump({value:item,schema:field,excludeNone,excludeDefaults}),enumerable:true});
