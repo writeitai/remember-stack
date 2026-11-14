@@ -71,7 +71,11 @@ K = 20
 def _reset(engine: Engine) -> None:
     with engine.begin() as connection:
         # isolated benchmark database only: empties every deployment
-        connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
+        # chunks, claims and occurrences are not reached by the deployments
+        # cascade; a reseed would otherwise duplicate them
+        connection.execute(
+            text("TRUNCATE TABLE deployments, chunks, chunk_claims, claims CASCADE")
+        )
 
 
 def _rewrite_text(engine: Engine, *, min_words: int, max_words: int) -> None:
@@ -197,8 +201,6 @@ def _seed_claims(engine: Engine) -> int:
     unchanged chunk's claim. The claim BM25 index is rebuilt after the load.
     """
     with engine.begin() as connection:
-        # claims and their occurrences outlive the deployment truncate
-        connection.execute(text("TRUNCATE TABLE chunk_claims, claims CASCADE"))
         connection.execute(text("DROP INDEX IF EXISTS ix_claims_current_bm25"))
         connection.execute(text("SET LOCAL session_replication_role = replica"))
         created = connection.execute(

@@ -31,6 +31,7 @@ from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VER
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.text_scope import claim_selected
 from rememberstack.core.text_scope import fact_in_scope
+from rememberstack.core.text_scope import lineage_periodised
 from rememberstack.core.text_scope import TextScope
 from rememberstack.core.text_scope import version_selected
 from rememberstack.core.text_scope import WINDOW_SQL
@@ -1362,13 +1363,36 @@ class PostgresP1Index:
                 in_scope="evidence",
             )
             parameters.update(document_parameters)
+            # The live supporting claim is read per candidate from the base
+            # evidence table: through ``fact_claim_evidence_live`` the planner
+            # rebuilt every live claim for each fact (3.7 s for 20 keyed facts
+            # at 2,000 facts). A claim is live as in that view: current
+            # testimony whose origin is visible, or, in a periodised lineage,
+            # carried by a live occurrence (which the occurrence test requires).
+            # ``OFFSET 0`` keeps each probe from being flattened into a join.
             supporting_sql = (
-                " AND EXISTS (SELECT 1 FROM memory_v1.fact_claim_evidence_live support"
-                " WHERE support.deployment_id = indexed.deployment_id"
-                " AND support.fact_kind = fact.fact_kind"
-                " AND support.fact_id = fact.fact_id"
-                " AND support.stance = 'supports'"
-                f" AND {occurrence_sql})"
+                " AND ("
+                + " OR ".join(
+                    f"(fact.fact_kind = '{kind}' AND EXISTS (SELECT 1 FROM {table} support"
+                    " JOIN claims supporting"
+                    "   ON supporting.deployment_id = support.deployment_id"
+                    "  AND supporting.claim_id = support.claim_id"
+                    "  AND supporting.doc_id = support.doc_id"
+                    " WHERE support.deployment_id = indexed.deployment_id"
+                    f" AND support.{column} = fact.fact_id"
+                    " AND support.stance = 'supports'"
+                    " AND supporting.is_current_testimony"
+                    " AND (EXISTS (SELECT 1 FROM memory_v1.claims_live live_claim"
+                    "  WHERE live_claim.deployment_id = supporting.deployment_id"
+                    "  AND live_claim.claim_id = supporting.claim_id)"
+                    f" OR {lineage_periodised(doc='supporting.doc_id')})"
+                    f" AND {occurrence_sql} OFFSET 0))"
+                    for kind, table, column in (
+                        ("relation", "relation_evidence", "relation_id"),
+                        ("observation", "observation_evidence", "observation_id"),
+                    )
+                )
+                + ")"
             )
         ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
         if not set(ranking_ids).issubset(entity_ids):
