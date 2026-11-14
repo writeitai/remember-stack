@@ -346,6 +346,7 @@ export default {
     "DocumentSearchRequest",
     "DocumentSearchResult",
     "DocumentSummary",
+    "DocumentTagFilter",
     "DocumentTags",
     "DocumentVersionSummary",
     "EffectiveInterval",

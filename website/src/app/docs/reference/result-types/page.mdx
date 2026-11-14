@@ -745,6 +745,19 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `language` | string, nullable | | |
 | `thread_ref` | string, nullable | | |
 | `doc_ids` | array of UUIDs | `[]` | |
+| `tags` | [`DocumentTagFilter`](#documenttagfilter), nullable | | The document's current tags. |
+
+### DocumentTagFilter
+
+Tags given by name (any letter case) or `tag_id`. Give at least one
+non-empty list; each holds up to 32 tags and none twice. Every list given
+must hold. A tag that is not registered refuses the read with `unknown_tag`.
+
+| Field | Type | Default | Contents |
+|---|---|---|---|
+| `all` | array of strings | `[]` | The document carries every listed tag. |
+| `any` | array of strings | `[]` | The document carries at least one listed tag. |
+| `none` | array of strings | `[]` | The document carries none of the listed tags. |
 
 ### DocumentSearchPage
 

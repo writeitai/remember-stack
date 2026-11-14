@@ -96,6 +96,7 @@ from rememberstack.model.client import MatchingEdition
 from rememberstack.spine.corpus_export import served_corpus_documents_on
 from rememberstack.spine.effective_time import belief_watermark
 from rememberstack.spine.tags import LINEAGE_TAG_NAMES_SQL
+from rememberstack.spine.tags import resolve_filter_tags_on
 
 TRIGRAM_MIN_SIMILARITY: Final = 0.3
 """Starting word-similarity floor for the trigram name channel; to be measured."""
@@ -139,6 +140,17 @@ class DocumentSearch:
             isolation_level="REPEATABLE READ"
         ) as connection:
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            # D156: tags resolve to ids (or refuse unknown ones) before any
+            # search; the cursor hash above keeps the caller's own spelling.
+            request = request.model_copy(
+                update={
+                    "filters": resolve_filter_tags_on(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        filters=request.filters,
+                    )
+                }
+            )
             if cursor is not None:
                 as_of = cursor.as_of
             elif ranked:
@@ -1231,7 +1243,13 @@ def _request_scope_hash(*, request: DocumentSearchRequest, deployment_id: UUID) 
     """Hash of filters, versions and time scope (everything but limit/cursor)."""
     return cursor_scope_hash(
         {
-            "filters": request.filters.model_dump(mode="json", by_alias=True),
+            # An absent D156 ``tags`` stays out of the hash, so a cursor issued
+            # before tags existed keeps paging across the upgrade.
+            "filters": request.filters.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude={"tags"} if request.filters.tags is None else None,
+            ),
             "versions": request.versions,
             "time": None
             if request.time is None

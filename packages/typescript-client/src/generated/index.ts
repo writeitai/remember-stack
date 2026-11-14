@@ -41,6 +41,7 @@ export type { DocumentSearchRequest } from './models/DocumentSearchRequest';
 export type { DocumentSearchResult } from './models/DocumentSearchResult';
 export type { DocumentStatusFilter } from './models/DocumentStatusFilter';
 export type { DocumentSummary } from './models/DocumentSummary';
+export type { DocumentTagFilter } from './models/DocumentTagFilter';
 export type { DocumentTags } from './models/DocumentTags';
 export type { DocumentTagsUpdate } from './models/DocumentTagsUpdate';
 export type { DocumentVersionSummary } from './models/DocumentVersionSummary';
@@ -118,6 +119,7 @@ export type { OutputDocumentSearchRequest } from './models/OutputDocumentSearchR
 export type { OutputDocumentSearchResult } from './models/OutputDocumentSearchResult';
 export type { OutputDocumentStatusFilter } from './models/OutputDocumentStatusFilter';
 export type { OutputDocumentSummary } from './models/OutputDocumentSummary';
+export type { OutputDocumentTagFilter } from './models/OutputDocumentTagFilter';
 export type { OutputDocumentTags } from './models/OutputDocumentTags';
 export type { OutputDocumentTagsUpdate } from './models/OutputDocumentTagsUpdate';
 export type { OutputDocumentVersionSummary } from './models/OutputDocumentVersionSummary';

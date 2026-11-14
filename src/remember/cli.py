@@ -20,6 +20,7 @@ import httpx
 from pydantic import AliasChoices
 from pydantic import Field
 from pydantic import JsonValue
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -35,6 +36,7 @@ from remember.issuer import fetch_issuer_metadata
 from remember.issuer import same_origin
 from remember.models import ConnectorCreate
 from remember.models import DocumentSearchFilters
+from remember.models import DocumentTagFilter
 
 
 class _InternalOpsSettings(BaseSettings):
@@ -677,6 +679,18 @@ def _run_documents(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    tag_filter = None
+    if args.documents_command == "search" and (
+        args.tag or args.any_tag or args.not_tag
+    ):
+        try:
+            tag_filter = DocumentTagFilter(
+                all=tuple(args.tag), any=tuple(args.any_tag), none=tuple(args.not_tag)
+            )
+        except ValidationError as error:
+            problems = "; ".join(item["msg"] for item in error.errors())
+            print(f"error: {problems}", file=sys.stderr)
+            return 2
     with _cli_memory_client(args) as client:
         if args.documents_command == "search":
             # Ranked searches take k; browse lists take limit + cursor (D154).
@@ -693,6 +707,7 @@ def _run_documents(args: argparse.Namespace) -> int:
                     language=args.language,
                     thread_ref=args.thread_ref,
                     doc_ids=tuple(args.doc_id),
+                    tags=tag_filter,
                 ),
                 versions=args.versions,
                 **(
@@ -1361,6 +1376,12 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     search_documents.add_argument(
         "--doc-id", action="append", default=[], type=UUID, help="only this document"
     )
+    for flag, help_text in (
+        ("--tag", "the document has this registered tag (repeatable; all must hold)"),
+        ("--any-tag", "the document has at least one of these tags (repeatable)"),
+        ("--not-tag", "the document has none of these tags (repeatable)"),
+    ):
+        search_documents.add_argument(flag, action="append", default=[], help=help_text)
     search_documents.add_argument(
         "--versions",
         choices=("current", "all"),

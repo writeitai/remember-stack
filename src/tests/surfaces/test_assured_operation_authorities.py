@@ -256,7 +256,7 @@ def test_claims_and_sources_context_confirms_claims_and_chunks_through_memory_v1
     # D140 §3.4: under a time scope an undeclared lineage's claim still needs
     # live current testimony; a periodised one an occurrence in scope.
     in_scope_sql = str(
-        _confirm_claims_in_scope_statement(current_only=True, entity_scoped=False)
+        _confirm_claims_in_scope_statement(current_only=True, entity_scoped=False)[0]
     )
     assert "FROM memory_v1.claims_live AS published" in in_scope_sql
     assert "JOIN memory_v1.documents_live" in in_scope_sql

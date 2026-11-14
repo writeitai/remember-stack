@@ -224,6 +224,7 @@ remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS
                           [--created-from T] [--created-to T]
                           [--modified-from T] [--modified-to T]
                           [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
                           [--versions {current,all}] [--limit N] [--cursor CURSOR]
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
@@ -246,7 +247,10 @@ remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.t
 `search` finds documents by name, metadata and text and prints a
 [`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage) as
 JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
-several; any listed value matches. Dates are ISO 8601 with a timezone, for
+several; any listed value matches. `--tag` keeps documents that carry every
+listed tag, `--any-tag` those that carry at least one, and `--not-tag` those
+that carry none; each is repeatable, and a tag that is not registered is an
+error. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
 there is no next page; without one they are newest ingested first and
 `--cursor` reads the next page. `--limit` is 1 to 200 (default 50), used as
@@ -257,6 +261,7 @@ with `--cursor` is refused before sending a request. See
 ```bash
 remember documents search "q3 sales" --family spreadsheet | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
 remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
+remember documents search --tag kind:decision --any-tag project:billing --any-tag project:support
 ```
 
 `delete` removes one document, every version of it, from the memory and

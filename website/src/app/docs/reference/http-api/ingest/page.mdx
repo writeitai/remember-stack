@@ -532,8 +532,29 @@ A [`DocumentSearchRequest`](/docs/reference/result-types#documentsearchrequest):
 | `language` | string | Exact match. |
 | `thread_ref` | string | The conversation or thread key, exact match. |
 | `doc_ids` | array of UUIDs | Only these documents. |
+| `tags` | object | The document's [tags](#get-tags): `{"all": [...], "any": [...], "none": [...]}`. See below. |
 
 Unknown fields are rejected (`422`).
+
+`filters.tags` selects documents by the tags they carry now. Each list holds
+tag names (any letter case) or `tag_id`s:
+
+| Field | Matches a document that carries |
+|---|---|
+| `all` | every listed tag |
+| `any` | at least one listed tag |
+| `none` | none of the listed tags |
+
+Give at least one non-empty list. A list may hold up to 32 tags and may not
+name a tag twice. The lists combine with AND, and `tags` combines with the
+other filters with AND:
+`{"family": ["email"], "tags": {"all": ["project:billing-migration"], "none": ["kind:draft"]}}`
+finds billing migration emails that are not tagged as drafts. A document with no tags
+matches a `none` list and fails `all` and `any`. Tags belong to the document,
+not to a version, so with `versions: all` or a past `time` every version is
+tested against the document's current tags. Any tag that is not registered
+refuses the whole search with `422` `unknown_tag`, naming every one, before
+anything is searched.
 
 ### What matches
 
@@ -672,14 +693,15 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
 ```
 
 Each result's `tags` holds the names of the document's [tags](#get-tags),
-as in `GET /documents`. Search does not filter by tags yet.
+as in `GET /documents`.
 
 ### Errors
 
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | `cursor is malformed` | The cursor does not parse. |
-| `422` | validation list | An unknown field, `k` out of range, a date without a timezone, or `cursor` together with `query`. |
+| `422` | validation list | An unknown field, `k` out of range, a date without a timezone, `cursor` together with `query`, or an empty, repeating or too long `filters.tags` list. |
+| `422` | `{"code": "unknown_tag", "message": …, "tags": [...]}` | `filters.tags` names tags that are not registered; `tags` lists every one. |
 
 ### Example
 
@@ -700,7 +722,8 @@ for result in page.documents:
 ```
 
 `remember documents search "q3 sales" --family spreadsheet` prints the same page
-as JSON.
+as JSON. `--tag T` (all), `--any-tag T` and `--not-tag T`, each repeatable,
+fill `filters.tags`.
 
 ## DELETE /documents/\{doc_id\}
 

@@ -44,6 +44,7 @@ from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentSearchResult
 from remember.models import DocumentSummary
+from remember.models import DocumentTagFilter
 from remember.models import DocumentTags
 from remember.models import DocumentVersionSummary
 from remember.models import EffectiveInterval
@@ -104,6 +105,7 @@ __all__ = (
     "DocumentDeletion",
     "DocumentPage",
     "DocumentSearchFilters",
+    "DocumentTagFilter",
     "DocumentSearchPage",
     "DocumentSearchRequest",
     "DocumentSearchResult",

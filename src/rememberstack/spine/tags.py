@@ -26,6 +26,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import IntegrityError
 
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentTagFilter
 from remember.models import DocumentTags
 from remember.models import DocumentTagsUpdate
 from remember.models import Tag
@@ -223,13 +225,7 @@ def resolve_tags_on(
     """
     if not tags:
         return {}
-    found = {
-        row["ref"]: row["tag_id"]
-        for row in connection.execute(
-            _RESOLVE_TAGS,
-            {"deployment_id": deployment_id, "refs": list(dict.fromkeys(tags))},
-        ).mappings()
-    }
+    found = _registered(connection=connection, deployment_id=deployment_id, tags=tags)
     # Hold the resolved rows until the caller commits, so a concurrent
     # delete_tag either commits first (the tag is then unknown here) or waits
     # for this write (and then cascades over the assignment it made).
@@ -250,6 +246,54 @@ def resolve_tags_on(
     if unknown:
         raise UnknownTagError(tags=unknown)
     return found
+
+
+def _registered(
+    *, connection: Connection, deployment_id: UUID, tags: Sequence[str]
+) -> dict[str, UUID]:
+    """The registered tags among ``tags`` (names or ids), mapped to their ids."""
+    return {
+        row["ref"]: row["tag_id"]
+        for row in connection.execute(
+            _RESOLVE_TAGS,
+            {"deployment_id": deployment_id, "refs": list(dict.fromkeys(tags))},
+        ).mappings()
+    }
+
+
+def resolve_filter_tags_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    filters: DocumentSearchFilters | None,
+) -> DocumentSearchFilters | None:
+    """The filter with every tag replaced by its ``tag_id``, or refuse them all.
+
+    A read naming an unregistered tag fails with ``UnknownTagError`` listing
+    every one, before anything is searched (D156 §4.1). The returned filter is
+    what ``core.document_filters`` compiles.
+    """
+    if filters is None or filters.tags is None:
+        return filters
+    tags = filters.tags
+    # A read locks nothing (it may run in a read-only snapshot): a tag deleted
+    # concurrently simply matches no document.
+    wanted = (*tags.all, *tags.any, *tags.none)
+    found = _registered(connection=connection, deployment_id=deployment_id, tags=wanted)
+    unknown = [tag for tag in dict.fromkeys(wanted) if tag not in found]
+    if unknown:
+        raise UnknownTagError(tags=unknown)
+
+    def ids(values: Sequence[str]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(str(found[value]) for value in values))
+
+    return filters.model_copy(
+        update={
+            "tags": DocumentTagFilter(
+                all=ids(tags.all), any=ids(tags.any), none=ids(tags.none)
+            )
+        }
+    )
 
 
 def add_document_tags_on(

@@ -12,7 +12,10 @@ What it measures, through the public ``QueryEngine.search_chunks`` (BM25,
 k = 20) with a fixed query set drawn from the generator's distribution:
 
 - strata: ``current``, ``history``, 0.1%/1%/10% document filters and 4,990 /
-  5,010 eligible rows (both sides of the exact tier);
+  5,010 eligible rows (both sides of the exact tier), and D156 tag filters
+  on 1% and 90% of lineages (``tags_1pct`` / ``tags_90pct``);
+- with ``--claims``, the same tag strata (and the unfiltered one) for BM25
+  claim search over one claim per served chunk, reused across versions;
 - per stratum: p50/p95 latency, the public outcome of every query (k
   returned, fewer than k, ``known_empty`` or a boundary with its reason), the
   eligible current-chunk count, and the adapter's account per query
@@ -51,6 +54,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from benchmarks.d140_scope import run as d140
+from remember.models import DocumentTagFilter
 from remember.models import HistoryReadTime
 from rememberstack.adapters import p1_ranked
 from rememberstack.adapters import PostgresP1Index
@@ -67,7 +71,11 @@ K = 20
 def _reset(engine: Engine) -> None:
     with engine.begin() as connection:
         # isolated benchmark database only: empties every deployment
-        connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
+        # chunks, claims and occurrences are not reached by the deployments
+        # cascade; a reseed would otherwise duplicate them
+        connection.execute(
+            text("TRUNCATE TABLE deployments, chunks, chunk_claims, claims CASCADE")
+        )
 
 
 def _rewrite_text(engine: Engine, *, min_words: int, max_words: int) -> None:
@@ -144,6 +152,103 @@ def _duplicate_versions(engine: Engine, *, share: float, versions: int) -> int:
         return int(result.rowcount or 0)
 
 
+TAG_SHARES: dict[str, float] = {"bench:1pct": 0.01, "bench:90pct": 0.9}
+"""D156 qualification tags and the share of lineages each is assigned to."""
+
+
+def _add_tags(engine: Engine, *, ordered: list[UUID]) -> None:
+    """Register the qualification tags and assign each to its share of lineages.
+
+    Lineages are taken in the same hashed order as the ``doc_ids`` strata, so
+    the 1% tag and the 1% ``doc_ids`` filter select the same lineages.
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM tags WHERE deployment_id = :d"), {"d": d140.DEPLOYMENT}
+        )
+        for name, share in TAG_SHARES.items():
+            tag_id = connection.execute(
+                text(
+                    "INSERT INTO tags (deployment_id, tag_id, name, description)"
+                    " VALUES (:d, gen_random_uuid(), :name, 'qualification')"
+                    " RETURNING tag_id"
+                ),
+                {"d": d140.DEPLOYMENT, "name": name},
+            ).scalar_one()
+            connection.execute(
+                text(
+                    "INSERT INTO document_tags (deployment_id, doc_id, tag_id)"
+                    " SELECT :d, doc_id, :tag FROM unnest(CAST(:docs AS uuid[]))"
+                    " AS doc_id"
+                ),
+                {
+                    "d": d140.DEPLOYMENT,
+                    "tag": tag_id,
+                    "docs": [
+                        str(doc_id)
+                        for doc_id in ordered[: max(1, round(len(ordered) * share))]
+                    ],
+                },
+            )
+        connection.execute(text("ANALYZE document_tags"))
+
+
+def _seed_claims(engine: Engine) -> int:
+    """One current claim per chunk of each served version, reused by every version.
+
+    The claim's text is its served chunk's text and it has one occurrence
+    (``chunk_claims``) per version at the same ordinal, as D56 reuse leaves an
+    unchanged chunk's claim. The claim BM25 index is rebuilt after the load.
+    """
+    with engine.begin() as connection:
+        connection.execute(text("DROP INDEX IF EXISTS ix_claims_current_bm25"))
+        connection.execute(text("SET LOCAL session_replication_role = replica"))
+        created = connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, extractor_version)"
+                " SELECT md5('claim' || chunk.chunk_id::text)::uuid, chunk.deployment_id,"
+                " chunk.doc_id, chunk.chunk_id, search.search_text, search.search_text,"
+                " 0, 10, true, true, 'bench'"
+                " FROM documents AS document"
+                " JOIN chunks AS chunk ON chunk.deployment_id = document.deployment_id"
+                "  AND chunk.version_id = document.current_version_id"
+                " JOIN chunk_search AS search ON search.chunk_id = chunk.chunk_id"
+                " WHERE document.deployment_id = :d"
+            ),
+            {"d": d140.DEPLOYMENT},
+        ).rowcount
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
+                " evidence_spans)"
+                " SELECT chunk.deployment_id, chunk.chunk_id, claim.claim_id,"
+                ' \'[{"char_start": 0, "char_end": 10}]\'::jsonb'
+                " FROM claims AS claim"
+                " JOIN chunks AS origin ON origin.chunk_id = claim.chunk_id"
+                " JOIN chunks AS chunk ON chunk.deployment_id = origin.deployment_id"
+                "  AND chunk.doc_id = origin.doc_id AND chunk.ordinal = origin.ordinal"
+                " WHERE claim.deployment_id = :d"
+            ),
+            {"d": d140.DEPLOYMENT},
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text("SELECT set_config('maintenance_work_mem', :m, true)"),
+            {"m": d140.MAINTENANCE_WORK_MEM[0]},
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX ix_claims_current_bm25 ON claims USING bm25"
+                " (claim_text) WITH (text_config='simple') WHERE is_current_testimony"
+            )
+        )
+        connection.execute(text("ANALYZE claims"))
+        connection.execute(text("ANALYZE chunk_claims"))
+    return int(created or 0)
+
+
 def _queries(count: int, *, seed: int = 142) -> list[str]:
     """Two-word queries from the corpus's own Zipf word distribution.
 
@@ -180,6 +285,11 @@ class _RecordingIndex:
         self.last = search_account(result)
         return result
 
+    def search_claims_lexical(self, **arguments: Any) -> Any:
+        result = self._inner.search_claims_lexical(**arguments)
+        self.last = search_account(result)
+        return result
+
 
 class _NoEmbedder:
     """Lexical-only sweep: any embedding request is a harness bug."""
@@ -188,7 +298,9 @@ class _NoEmbedder:
         raise AssertionError("the lexical sweep must not embed")
 
 
-def _eligible_current(engine: Engine, doc_ids: tuple[UUID, ...] | None) -> int:
+def _eligible_current(
+    engine: Engine, doc_ids: tuple[UUID, ...] | None, tag: str | None = None
+) -> int:
     """Current-scope eligible chunks of a stratum (the filter's real size)."""
     with engine.connect() as connection:
         return int(
@@ -198,12 +310,17 @@ def _eligible_current(engine: Engine, doc_ids: tuple[UUID, ...] | None) -> int:
                     " WHERE c.deployment_id = :d"
                     " AND (CAST(:docs AS uuid[]) IS NULL"
                     "      OR c.doc_id = ANY(CAST(:docs AS uuid[])))"
+                    " AND (CAST(:tag AS text) IS NULL OR EXISTS ("
+                    "      SELECT 1 FROM document_tags AS assigned"
+                    "      JOIN tags ON tags.tag_id = assigned.tag_id"
+                    "      WHERE assigned.doc_id = c.doc_id AND tags.name = :tag))"
                 ),
                 {
                     "d": d140.DEPLOYMENT,
                     "docs": None
                     if doc_ids is None
                     else [str(item) for item in doc_ids],
+                    "tag": tag,
                 },
             ).scalar_one()
         )
@@ -214,9 +331,11 @@ def _stratum(
     queries: list[str],
     *,
     doc_ids: tuple[UUID, ...] | None = None,
+    tag: str | None = None,
+    grain: str = "chunks",
     time_scope: Any = None,
 ) -> dict[str, Any]:
-    """Run the public ``search_chunks`` operation (BM25) for every query."""
+    """Run the public ``search_chunks`` (or ``search_claims``) BM25 operation."""
     pool = BoundedPostgresReadPool(
         engine=engine, max_concurrency=2, pool_wait_seconds=30.0
     )
@@ -236,7 +355,14 @@ def _stratum(
     # P2-4). Lexical search does not depend on the generation.
     surface._policy_generation = None  # type: ignore[assignment]  # noqa: SLF001
     surface._embedder_generation = None  # type: ignore[assignment]  # noqa: SLF001
-    documents = None if doc_ids is None else DocumentSearchFilters(doc_ids=doc_ids)
+    documents = (
+        DocumentSearchFilters(tags=DocumentTagFilter(all=(tag,)))
+        if tag is not None
+        else None
+        if doc_ids is None
+        else DocumentSearchFilters(doc_ids=doc_ids)
+    )
+    search = surface.search_claims if grain == "claims" else surface.search_chunks
     latencies: list[float] = []
     outcomes: dict[str, int] = {}
     terminations: dict[str, int] = {}
@@ -245,7 +371,7 @@ def _stratum(
     per_query: list[dict[str, Any]] = []
     for query in queries:
         started = time.perf_counter()
-        envelope = surface.search_chunks(
+        envelope = search(
             deployment_id=d140.DEPLOYMENT,
             query=query,
             k=K,
@@ -254,7 +380,8 @@ def _stratum(
             time=time_scope,
         )
         latencies.append(time.perf_counter() - started)
-        if len(envelope.chunks) >= K:
+        returned = len(envelope.evidence if grain == "claims" else envelope.chunks)
+        if returned >= K:
             outcome = "k_returned"
         elif envelope.negative is not None:
             outcome = envelope.negative.kind.value
@@ -272,7 +399,7 @@ def _stratum(
             {
                 "query": query,
                 "ms": round(1000 * latencies[-1], 1),
-                "returned": len(envelope.chunks),
+                "returned": returned,
                 "outcome": outcome,
                 "fetched": index.last.fetched if index.last else None,
                 "rounds": index.last.fetch_rounds if index.last else None,
@@ -287,7 +414,7 @@ def _stratum(
     return {
         **_percentiles(latencies),
         "queries": len(queries),
-        "eligible_current_chunks": _eligible_current(engine, doc_ids),
+        "eligible_current_chunks": _eligible_current(engine, doc_ids, tag),
         "public_outcomes": outcomes,
         "returned_k_rate": outcomes.get("k_returned", 0) / len(queries),
         "terminations": terminations,
@@ -359,14 +486,10 @@ def _corpus_hash(engine: Engine) -> str:
         )
 
 
-def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
-    """Every stratum through the public operation, plus corpus/query identity."""
-    PostgresP1Index(engine=engine, embedding_model=d140.MODEL).configure_channels(
-        deployment_id=d140.DEPLOYMENT
-    )
-    sample = _queries(queries)
+def _hashed_lineages(engine: Engine) -> list[UUID]:
+    """Every lineage in a fixed hashed order (the filter strata take prefixes)."""
     with engine.connect() as connection:
-        ordered = [
+        return [
             UUID(str(row[0]))
             for row in connection.execute(
                 text(
@@ -376,6 +499,17 @@ def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
                 {"d": d140.DEPLOYMENT},
             )
         ]
+
+
+def measure(
+    engine: Engine, *, queries: int, lineages: int, claims: bool = False
+) -> dict[str, Any]:
+    """Every stratum through the public operation, plus corpus/query identity."""
+    PostgresP1Index(engine=engine, embedding_model=d140.MODEL).configure_channels(
+        deployment_id=d140.DEPLOYMENT
+    )
+    sample = _queries(queries)
+    ordered = _hashed_lineages(engine)
     strata: dict[str, dict[str, Any]] = {
         "current": {},
         "history": {"time_scope": HistoryReadTime()},
@@ -385,7 +519,17 @@ def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
         # 10 current chunks per lineage: both sides of the 5,000-row tier
         "docs_4990_rows": {"doc_ids": tuple(ordered[:499])},
         "docs_5010_rows": {"doc_ids": tuple(ordered[:501])},
+        "tags_1pct": {"tag": "bench:1pct"},
+        "tags_90pct": {"tag": "bench:90pct"},
     }
+    if claims:
+        strata.update(
+            {
+                "claims_current": {"grain": "claims"},
+                "claims_tags_1pct": {"grain": "claims", "tag": "bench:1pct"},
+                "claims_tags_90pct": {"grain": "claims", "tag": "bench:90pct"},
+            }
+        )
     report: dict[str, Any] = {
         "query_sha256": hashlib.sha256("\n".join(sample).encode()).hexdigest(),
         "corpus_md5": _corpus_hash(engine),
@@ -396,7 +540,71 @@ def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
     report["nomination_plans"] = [
         _nomination_plan(engine, query) for query in sample[:5]
     ]
+    report["tag_eligibility_plans"] = {
+        tag: _tag_eligibility_plan(engine, tag=tag) for tag in TAG_SHARES
+    }
     return report
+
+
+def _tag_eligibility_plan(engine: Engine, *, tag: str) -> dict[str, Any]:
+    """``EXPLAIN (ANALYZE, BUFFERS)`` of the D156 tag filter's eligible-set probe.
+
+    The probe is the chunk path's enumeration (``_enumerate_eligible``): the
+    live versions whose lineage carries the tag, each one's chunks read
+    through the scope join, up to ``FILTER_PUSHDOWN_LIMIT + 1`` rows. Reported:
+    execution time, rows, shared buffers and whether the plan starts from the
+    tag index.
+    """
+    from rememberstack.spine.tags import resolve_filter_tags_on
+
+    index = PostgresP1Index(engine=engine, embedding_model=d140.MODEL)
+    with engine.connect() as connection:
+        documents = resolve_filter_tags_on(
+            connection=connection,
+            deployment_id=d140.DEPLOYMENT,
+            filters=DocumentSearchFilters(tags=DocumentTagFilter(all=(tag,))),
+        )
+        query = index._testimony_query(  # noqa: SLF001 -- the real statement
+            target="chunks",
+            channel="bm25",
+            deployment_id=str(d140.DEPLOYMENT),
+            current_only=True,
+            equality_filters=None,
+            entity_ids=(),
+            documents=documents,
+            time=None,
+            query_text="w1",
+        )
+        assert query.eligible_sql is not None
+        statement = (
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)"
+            f" {query.eligible_sql} LIMIT :tier_limit"
+        )
+        plan = connection.execute(
+            text(statement),
+            {**query.parameters, "tier_limit": p1_ranked.FILTER_PUSHDOWN_LIMIT + 1},
+        ).scalar_one()
+        connection.rollback()
+    document = (json.loads(plan) if isinstance(plan, str) else plan)[0]
+
+    def walk(node: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            node,
+            *(item for child in node.get("Plans", ()) for item in walk(child)),
+        ]
+
+    nodes = walk(document["Plan"])
+    return {
+        "execution_ms": document["Execution Time"],
+        "planning_ms": document["Planning Time"],
+        "rows": document["Plan"]["Actual Rows"],
+        "shared_hit_blocks": document["Plan"].get("Shared Hit Blocks"),
+        "shared_read_blocks": document["Plan"].get("Shared Read Blocks"),
+        "indexes": sorted(
+            {node["Index Name"] for node in nodes if node.get("Index Name")}
+        ),
+        "plan": document["Plan"],
+    }
 
 
 def main() -> None:
@@ -411,6 +619,11 @@ def main() -> None:
     parser.add_argument("--max-words", type=int, default=300)
     parser.add_argument("--maintenance-work-mem", default="1GB")
     parser.add_argument("--out", default="p1_ranked_sweep.json")
+    parser.add_argument(
+        "--claims",
+        action="store_true",
+        help="also seed one claim per served chunk and measure claim strata",
+    )
     parser.add_argument(
         "--measure-only",
         action="store_true",
@@ -432,7 +645,9 @@ def main() -> None:
             )
         report["sizes"]["existing"] = {
             "lineages": lineages,
-            "latency": measure(engine, queries=args.queries, lineages=lineages),
+            "latency": measure(
+                engine, queries=args.queries, lineages=lineages, claims=args.claims
+            ),
         }
         with open(args.out, "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=2, default=str)
@@ -457,10 +672,15 @@ def main() -> None:
         with engine.begin() as connection:
             connection.execute(text("REINDEX INDEX ix_chunk_search_bm25"))
             connection.execute(text("ANALYZE chunk_search"))
+        _add_tags(engine, ordered=_hashed_lineages(engine))
+        claims = _seed_claims(engine) if args.claims else 0
         report["sizes"][str(size)] = {
             "seed": timings,
             "duplicated_chunks": duplicated,
-            "latency": measure(engine, queries=args.queries, lineages=lineages),
+            "claims": claims,
+            "latency": measure(
+                engine, queries=args.queries, lineages=lineages, claims=args.claims
+            ),
         }
         print(json.dumps({size: report["sizes"][str(size)]}, indent=2), flush=True)
     with open(args.out, "w", encoding="utf-8") as handle:

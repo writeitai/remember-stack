@@ -41,8 +41,10 @@ A search that finds nothing returns `200` with `negative.kind` `known_empty`.
 The `POST` forms accept a `documents` filter with the same fields as
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch):
 `family`, `authors`, `recipients`, `created_from`/`created_to`,
-`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. The
-filter decides which results are included:
+`modified_from`/`modified_to`, `language`, `thread_ref`, `doc_ids` and
+`tags` (`{"all": [...], "any": [...], "none": [...]}`, the document's
+[tags](/docs/guides/tag-documents)). The filter decides which results are
+included:
 
 - **chunks** match when the chunk's document version matches;
 - **claims** match when at least one place the claim occurs is in a matching
@@ -57,6 +59,24 @@ Deleted documents and deleted versions never match. The filter is applied
 while ranking, before the `k` best are chosen, so asking for `k: 10` returns
 up to ten matching results even when better-scoring results from other
 documents exist.
+
+`tags` is tested on the document, not on a version: every version of a
+document carries its current tags, also when `time` reads an older edition.
+A tag that is not registered refuses the search with `422` `unknown_tag`,
+naming every unregistered tag (the Python client raises
+`remember.UnknownTag`); nothing is searched.
+
+With a `time` scope, the filter and the scope must hold for the same
+version. A claim that occurs in two versions of a document with declared
+effective periods is returned only through a version that both matches the
+filter and is in force for the scope, never by combining one version that
+matches with another that is in force.
+
+When a filtered search completes and finds nothing, `negative.explanation`
+says which case it was: no live document matches the filter, or matching
+documents exist but none of them says anything relevant to the query. A
+search stopped by its work bound reports `negative.kind` `boundary`
+instead, whatever the filter matched.
 
 For "everything about Project X from emails from Alice": find the right
 Alice with `POST /documents/search` and `filters.authors`; if several people
@@ -174,8 +194,11 @@ As for [`GET /search/claims`](#get-searchclaims).
 ### Errors
 
 As for `GET /search/claims`, plus `422` for an empty or over-long `query`,
-an unknown field, or a malformed `time` (an unknown mode, a missing instant,
-an instant without a time zone, or `to` before `from`).
+an unknown field, a malformed `time` (an unknown mode, a missing instant,
+an instant without a time zone, or `to` before `from`), an empty, repeating
+or too long `documents.tags` list, or `422`
+`{"code": "unknown_tag", "message": …, "tags": [...]}` when
+`documents.tags` names tags that are not registered.
 
 ### Example
 

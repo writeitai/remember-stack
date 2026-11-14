@@ -76,6 +76,7 @@ TAG_REF_MAX_LEN: Final = 512
 """Characters a tag name or reference may have as sent. The 128-character
 limit applies after NFC and is checked when the arguments are parsed."""
 TAG_LIST_MAX: Final = 64
+TAG_FILTER_LIST_MAX: Final = 32
 TAG_DESCRIPTION_MAX_LEN: Final = 2000
 
 Permission = Literal["memory:read", "memory:write"]
@@ -339,7 +340,9 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     " misspelled names work) and its text. Filters narrow by family (text,"
     " markdown, html, pdf, image, audio, video, office, other), authors,"
     ' recipients (a name or an address; "alice" matches "Alice Novak"),'
-    " created/modified date ranges, language, thread_ref and doc_ids. Each"
+    " created/modified date ranges, language, thread_ref, doc_ids and tags"
+    ' (registered caller tags: {"all": [...], "any": [...], "none": [...]};'
+    " call list_tags to see which exist). Each"
     ' result is a document judged by its current version (versions="all"'
     " searches every live version and returns the newest match); it carries"
     " doc_id, version_id, file_name, title, family, processing status, authors,"
@@ -456,6 +459,33 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "type": "array",
             "items": {"type": "string", "minLength": 1},
             "description": "Only these documents (UUIDs).",
+        },
+        "tags": {
+            "type": "object",
+            "additionalProperties": False,
+            "minProperties": 1,
+            "properties": {
+                key: {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": TAG_REF_MAX_LEN,
+                    },
+                    "maxItems": TAG_FILTER_LIST_MAX,
+                    "uniqueItems": True,
+                    "description": description,
+                }
+                for key, description in (
+                    ("all", "The document has every one of these tags."),
+                    ("any", "The document has at least one of these tags."),
+                    ("none", "The document has none of these tags."),
+                )
+            },
+            "description": (
+                "Registered tags (name or tag_id; call list_tags first)."
+                " Lists combine with AND; an unknown tag is unknown_tag."
+            ),
         },
         "versions": {
             "type": "string",
@@ -971,7 +1001,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_SEARCH_DOCUMENTS_DESCRIPTION,
         input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
         permission="memory:read",
-        tool_version=3,
+        tool_version=4,
         http_route="POST /documents/search",
     ),
     ToolDefinition(

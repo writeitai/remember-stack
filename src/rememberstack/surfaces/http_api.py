@@ -936,13 +936,16 @@ def build_api(
         declared effective periods through their occurrences in the versions
         in force for the scope, and returns those occurrences.
         """
-        return deployment.engine.search_claims(
-            deployment_id=deployment.deployment_id,
-            query=body.query,
-            k=body.k,
-            channel=body.channel,
-            **_documents_scope(body),
-        )
+        try:
+            return deployment.engine.search_claims(
+                deployment_id=deployment.deployment_id,
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
+            )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
 
     @app.post("/search/chunks", response_model=Envelope)
     def post_search_chunks(
@@ -953,13 +956,16 @@ def build_api(
         ``documents`` keeps chunks whose document version matches (D134);
         ``time`` keeps chunks of versions in force for the scope (D140).
         """
-        return deployment.engine.search_chunks(
-            deployment_id=deployment.deployment_id,
-            query=body.query,
-            k=body.k,
-            channel=body.channel,
-            **_documents_scope(body),
-        )
+        try:
+            return deployment.engine.search_chunks(
+                deployment_id=deployment.deployment_id,
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
+            )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
     def adjacent_chunks(
@@ -1702,10 +1708,13 @@ def _mount_document_search(*, app: FastAPI) -> None:
         filters only they are ordered by declared creation date and paged by
         ``cursor``, which pins the first call's as-of instant.
         """
+        # D156: ``filters.tags`` naming an unregistered tag is 422 unknown_tag.
         try:
             return _served(deployment.document_search).search_documents(
                 deployment_id=deployment.deployment_id, request=body
             )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 

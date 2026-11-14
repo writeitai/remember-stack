@@ -27,6 +27,9 @@ export default {
     "DocumentSearchRequest": [
       "cursor_pages_filters_only"
     ],
+    "DocumentTagFilter": [
+      "_one_list_without_duplicates"
+    ],
     "DocumentTagsUpdate": [
       "_set_excludes_add_and_remove"
     ],

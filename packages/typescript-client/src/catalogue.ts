@@ -2,7 +2,7 @@ import {queryArgumentError} from './query-arguments';
 import catalogue from './catalogue.generated';
 import { InputValidationError } from './errors';
 import { assertJson } from './json';
-import { validateModel, validateSchema, modelDump } from './validation';
+import { isTagRef, validateModel, validateSchema, modelDump } from './validation';
 import { inferUploadMime } from './mime';
 import { ToolError, ToolArgumentError, invalidArguments } from './tool-errors';
 export type Permission = 'memory:read' | 'memory:write';
@@ -140,11 +140,6 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
     const missing=(required??[]).filter(key=>!(key in args)).sort();if(missing.length)refuse({detail:`Missing required arguments: ${missing.join(', ')}.`});
     assertJson({value:args});return {...args};
   }catch(error) {if(error instanceof ToolArgumentError)throw error;if(error instanceof InputValidationError)refuse({detail:error.message});throw error;}
-}
-/** Python's tag-reference rule: at most 512 characters as sent and 1-128 after NFC. */
-function isTagRef(value:string):boolean {
-  const length=Array.from(value.normalize('NFC')).length;
-  return Array.from(value).length<=512&&length>=1&&length<=128;
 }
 /** An optional list of tag names or ids, each 1-128 characters after NFC, none repeated. */
 function tagList({args,key}:{args:Record<string,unknown>;key:string}):string[]|null {
