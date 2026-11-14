@@ -122,6 +122,13 @@ def native_roles(engine: Engine) -> Iterator[NativeRoles]:
                 sql.Identifier(str(engine.url.database)), sql.Identifier(collector)
             )
         )
+        # Repeated migration resets leave catalog churn for autovacuum. Finish
+        # it before arming cuts: the real NOWAIT guard must refuse overlapping
+        # maintenance, and a success-path fixture must not depend on its timing.
+        admin.execute(
+            "VACUUM (ANALYZE) pg_catalog.pg_class, pg_catalog.pg_namespace, "
+            "pg_catalog.pg_proc, pg_catalog.pg_extension"
+        )
     try:
         yield NativeRoles(engine, collector)
     finally:
