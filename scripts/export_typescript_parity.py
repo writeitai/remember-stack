@@ -398,7 +398,7 @@ def scenarios() -> list[dict[str, Any]]:
         (
             "delete_tag",
             {"tag": ID.replace("-", "").upper()},
-            {"tag": "PROJECT:FIXTURE"},
+            {"tag": "PROJECT:CAFE\u0301"},
         ),
         (
             "update_document_tags",
@@ -755,7 +755,15 @@ def responses() -> dict[str, Any]:
             connector_id=UUID(ID), kind="custom", name="fixture", status="active"
         ).model_dump(mode="json"),
         "tag": tag.model_dump(mode="json"),
-        "tag_list": models.TagList(tags=(tag,)).model_dump(mode="json"),
+        # A second tag whose NFC name a decomposed spelling must find.
+        "tag_list": models.TagList(
+            tags=(
+                tag,
+                tag.model_copy(
+                    update={"tag_id": UUID(OTHER_ID), "name": "project:caf\u00e9"}
+                ),
+            )
+        ).model_dump(mode="json"),
         "document_tags": models.DocumentTags(
             doc_id=UUID(ID), tags=("project:fixture",)
         ).model_dump(mode="json"),

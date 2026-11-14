@@ -7243,6 +7243,13 @@
               "name": "project:fixture",
               "tag_id": "10000000-0000-0000-0000-000000000001",
               "updated_at": "2026-10-02T12:00:00Z"
+            },
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:caf\u00e9",
+              "tag_id": "10000000-0000-0000-0000-000000000002",
+              "updated_at": "2026-10-02T12:00:00Z"
             }
           ]
         }
@@ -7254,6 +7261,13 @@
             "description": "Fixture tag.",
             "name": "project:fixture",
             "tag_id": "10000000-0000-0000-0000-000000000001",
+            "updated_at": "2026-10-02T12:00:00Z"
+          },
+          {
+            "created_at": "2026-10-02T12:00:00Z",
+            "description": "Fixture tag.",
+            "name": "project:caf\u00e9",
+            "tag_id": "10000000-0000-0000-0000-000000000002",
             "updated_at": "2026-10-02T12:00:00Z"
           }
         ]
@@ -7286,6 +7300,13 @@
               "name": "project:fixture",
               "tag_id": "10000000-0000-0000-0000-000000000001",
               "updated_at": "2026-10-02T12:00:00Z"
+            },
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:caf\u00e9",
+              "tag_id": "10000000-0000-0000-0000-000000000002",
+              "updated_at": "2026-10-02T12:00:00Z"
             }
           ]
         }
@@ -7297,6 +7318,13 @@
             "description": "Fixture tag.",
             "name": "project:fixture",
             "tag_id": "10000000-0000-0000-0000-000000000001",
+            "updated_at": "2026-10-02T12:00:00Z"
+          },
+          {
+            "created_at": "2026-10-02T12:00:00Z",
+            "description": "Fixture tag.",
+            "name": "project:caf\u00e9",
+            "tag_id": "10000000-0000-0000-0000-000000000002",
             "updated_at": "2026-10-02T12:00:00Z"
           }
         ]
@@ -7463,6 +7491,13 @@
               "name": "project:fixture",
               "tag_id": "10000000-0000-0000-0000-000000000001",
               "updated_at": "2026-10-02T12:00:00Z"
+            },
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:caf\u00e9",
+              "tag_id": "10000000-0000-0000-0000-000000000002",
+              "updated_at": "2026-10-02T12:00:00Z"
             }
           ]
         },
@@ -7555,7 +7590,7 @@
     {
       "method": "delete_tag",
       "options": {
-        "tag": "PROJECT:FIXTURE"
+        "tag": "PROJECT:CAFE\u0301"
       },
       "responses": [
         {
@@ -7565,6 +7600,13 @@
               "description": "Fixture tag.",
               "name": "project:fixture",
               "tag_id": "10000000-0000-0000-0000-000000000001",
+              "updated_at": "2026-10-02T12:00:00Z"
+            },
+            {
+              "created_at": "2026-10-02T12:00:00Z",
+              "description": "Fixture tag.",
+              "name": "project:caf\u00e9",
+              "tag_id": "10000000-0000-0000-0000-000000000002",
               "updated_at": "2026-10-02T12:00:00Z"
             }
           ]
@@ -7586,7 +7628,7 @@
       },
       "typescriptMethod": "deleteTag",
       "typescriptOptions": {
-        "tag": "PROJECT:FIXTURE"
+        "tag": "PROJECT:CAFE\u0301"
       },
       "variant": "supplied",
       "wire": [
@@ -7599,7 +7641,7 @@
           "query": [
             [
               "query",
-              "PROJECT:FIXTURE"
+              "PROJECT:CAF\u00c9"
             ]
           ]
         },
@@ -7608,7 +7650,7 @@
           "contentBase64": null,
           "contentType": null,
           "method": "DELETE",
-          "path": "/tags/10000000-0000-0000-0000-000000000001",
+          "path": "/tags/10000000-0000-0000-0000-000000000002",
           "query": []
         }
       ]
@@ -14178,6 +14220,13 @@
           "description": "Fixture tag.",
           "name": "project:fixture",
           "tag_id": "10000000-0000-0000-0000-000000000001",
+          "updated_at": "2026-10-02T12:00:00Z"
+        },
+        {
+          "created_at": "2026-10-02T12:00:00Z",
+          "description": "Fixture tag.",
+          "name": "project:caf\u00e9",
+          "tag_id": "10000000-0000-0000-0000-000000000002",
           "updated_at": "2026-10-02T12:00:00Z"
         }
       ]

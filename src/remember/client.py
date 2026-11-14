@@ -1436,8 +1436,10 @@ class MemoryClient:
             return UUID(tag)
         except ValueError:
             pass
-        wanted = unicodedata.normalize("NFC", tag).lower()
-        for registered in self.list_tags(query=tag).tags:
+        normalized = unicodedata.normalize("NFC", tag)
+        wanted = normalized.lower()
+        # The registry stores NFC names, so search with the NFC spelling too.
+        for registered in self.list_tags(query=normalized).tags:
             if registered.name.lower() == wanted:
                 return registered.tag_id
         raise UnknownTag(tags=(tag,), status_code=404)
