@@ -8,8 +8,8 @@ pinned here because the old document itself is a build product of history.
 D150 adds one more enum value, ``admission``, to a readiness stage's
 ``defer_reason``; it is stripped the same way. D156 adds the tag routes, the
 optional ``tags`` query parameter on ``POST /ingest``, the tag schemas and a
-``tags`` field on document inventory and search results; those are stripped
-too.
+``tags`` field on document inventory and search results, and the ``tags``
+selector of the document search filter; those are stripped too.
 """
 
 from __future__ import annotations
@@ -55,9 +55,15 @@ _ADDED_SCHEMAS: Final = frozenset(
         "TagCreate",
         "TagList",
         "TagUpdate",
+        # D156 step 2: the document filter's tag selector
+        "DocumentTagFilter",
     }
 )
-_D156_TAGGED_SCHEMAS: Final = ("DocumentSummary", "DocumentSearchResult")
+_D156_TAGGED_SCHEMAS: Final = (
+    "DocumentSummary",
+    "DocumentSearchResult",
+    "DocumentSearchFilters",
+)
 """Schemas that gained a ``tags`` property in D156."""
 
 

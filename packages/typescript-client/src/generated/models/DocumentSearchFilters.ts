@@ -3,6 +3,7 @@ import type { JsonValue } from './JsonValue';
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DocumentTagFilter } from './DocumentTagFilter';
 /**
  * General document metadata filters (D134 §3); every one given must hold.
  *
@@ -22,5 +23,6 @@ export type DocumentSearchFilters = {
     modified_from?: string | null;
     modified_to?: string | null;
     recipients?: Array<string>;
+    tags?: DocumentTagFilter | null;
     thread_ref?: string | null;
 };

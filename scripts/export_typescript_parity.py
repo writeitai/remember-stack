@@ -515,6 +515,15 @@ def scenarios() -> list[dict[str, Any]]:
     result.extend(
         [
             {
+                "method": "search_documents",
+                "variant": "tag-filter",
+                "options": {
+                    "filters": {
+                        "tags": {"all": ["project:fixture"], "none": ["kind:draft"]}
+                    }
+                },
+            },
+            {
                 "method": "update_document_tags",
                 "variant": "set-clears",
                 "options": {"doc_id": ID, "set": []},
@@ -1424,6 +1433,18 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
             ("update_document_tags", {"doc_id": "../operations", "add": ["a"]}),
             ("update_document_tags", {"doc_id": ID, "set": ["a"], "add": ["b"]}),
             ("update_document_tags", {"doc_id": ID, "add": "project:fixture"}),
+            ("search_documents", {"filters": {"tags": {}}}),
+            ("search_documents", {"filters": {"tags": {"any": ["a", "A"]}}}),
+            ("search_documents", {"filters": {"tags": {"all": "project:a"}}}),
+            ("search_documents", {"filters": {"tags": {"all": [123]}}}),
+            ("search_documents", {"filters": {"tags": {"none": None}}}),
+            ("search_documents", {"filters": {"tags": {"all": [""]}}}),
+            ("search_documents", {"filters": {"tags": {"any": ["t" * 129]}}}),
+            ("search_documents", {"filters": {"tags": {"none": ["t" * 513]}}}),
+            (
+                "search_claims",
+                {"query": "x", "documents": {"tags": {"all": ["t" * 129]}}},
+            ),
             (
                 "ingest",
                 {

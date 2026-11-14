@@ -43,6 +43,7 @@ const semanticValidators = {
   OverlapTemporalScope: ['_ordered'], EvidenceSpan: ['_end_after_start'],
   EvidenceTotal: ['_returned_does_not_exceed_total'], ContextBundleV2: ['_child_grains_are_exact'],
   TagUpdate: ['_changes_something'], DocumentTagsUpdate: ['_set_excludes_add_and_remove'],
+  DocumentTagFilter: ['_one_list_without_duplicates'],
 };
 for (const [name, validators] of Object.entries(constants.modelValidators)) {
   if (JSON.stringify(semanticValidators[name as keyof typeof semanticValidators]) !== JSON.stringify(validators)) {
@@ -116,10 +117,25 @@ function utcMicroseconds({value}:{value:unknown}):bigint|null {
   if(!Number.isFinite(base))return null;
   return BigInt(base)*1000n+BigInt((fraction?.[1]??'').slice(0,6).padEnd(6,'0'));
 }
+/** Python's tag-reference rule: at most 512 characters as sent and 1-128 after NFC. */
+export function isTagRef(value:string):boolean {
+  const length=Array.from(value.normalize('NFC')).length;
+  return Array.from(value).length<=512&&length>=1&&length<=128;
+}
 /** Reject the cross-field invariants which JSON Schema alone cannot express. */
 function semanticInvariant({ name, value }: { name?: string; value: Record<string, unknown> }): void {
   if (name === 'DocumentSearchRequest' && value.query != null && value.cursor != null) fail({ detail: 'query and cursor cannot be combined' });
   if(name==='TagUpdate'&&value.name==null&&value.description==null)fail({detail:'give name, description or both'});
+  if(name==='DocumentTagFilter'){
+    // Shapes are checked first, so a malformed list is the schema's refusal, not a TypeError.
+    const lists=(['all','any','none'] as const).map(key=>[key,value[key]??[]] as const);
+    if(lists.every(([,list])=>Array.isArray(list)&&list.every(tag=>typeof tag==='string'))){
+      const strings=lists as unknown as (readonly [string,string[]])[];
+      if(strings.some(([,list])=>!list.every(isTagRef)))fail({detail:'a tag reference is 1 to 128 characters after NFC'});
+      if(strings.every(([,list])=>list.length===0))fail({detail:'tags needs a non-empty all, any or none list'});
+      for(const [key,list] of strings){const keys=list.map(tag=>tag.normalize('NFC').toLowerCase());if(new Set(keys).size!==keys.length)fail({detail:`tags.${key} names a tag more than once`});}
+    }
+  }
   if(name==='DocumentTagsUpdate'&&value.set!=null&&(((value.add??[]) as unknown[]).length>0||((value.remove??[]) as unknown[]).length>0))fail({detail:'set replaces the tags; it excludes add and remove'});
   if(name==='OverlapTemporalScope'||name==='OverlapReadTime'){const end=utcMicroseconds({value:value.to}),start=utcMicroseconds({value:value.from});if(end!==null&&start!==null&&end<start)fail({detail:'temporal scope ends before it starts'});}
   if(name==='EffectivePeriodInput') {const start=utcMicroseconds({value:value.effective_from}),end=utcMicroseconds({value:value.effective_until});if(start!==null&&end!==null&&end<=start)fail({detail:'effective_until must be later than effective_from'});}

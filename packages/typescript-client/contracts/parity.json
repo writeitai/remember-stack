@@ -345,6 +345,7 @@
     "DocumentSearchRequest",
     "DocumentSearchResult",
     "DocumentSummary",
+    "DocumentTagFilter",
     "DocumentTags",
     "DocumentVersionSummary",
     "EffectiveInterval",
