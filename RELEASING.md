@@ -68,8 +68,8 @@ notice checksums. Build the Dockerfile for both architectures, record each
 embedded artifact manifest and immutable image digest, and run the extension
 and graph release matrix before tagging. The tag workflow then rebuilds and
 publishes `ghcr.io/writeitai/remember-stack-postgres:18-VERSION` for both
-architectures, each built on a native runner (the build's pg_textsearch
-regression suite fails under QEMU emulation), and attaches `postgres-image-digests.json` to the GitHub release;
+architectures, each built on a native runner (the pg_textsearch worker-count
+regression has failed under QEMU emulation), and attaches `postgres-image-digests.json` to the GitHub release;
 UMC consumes the recorded manifest digest, never that human-readable tag.
 Updating the foundation pins remains a manual, reviewable patch cadence;
 publishing and digest capture are mechanical and mutable database-image tags

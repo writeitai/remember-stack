@@ -146,8 +146,8 @@ def _validate_postgres_release(*, root: Path, version: str) -> None:
     if start not in workflow or end not in workflow:
         raise ValueError("release workflow must keep the build-postgres job")
     jobs = workflow.split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
-    # Each architecture builds natively: the image build runs the
-    # pg_textsearch regression suite, which fails under QEMU emulation.
+    # Each architecture builds natively: an earlier QEMU build failed the
+    # pg_textsearch worker-count regression when parallel workers did not start.
     for required in (
         "file: Dockerfile.postgres",
         "runner: ubuntu-latest",

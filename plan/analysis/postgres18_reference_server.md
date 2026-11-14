@@ -57,3 +57,24 @@ Current operating contracts live in the [graph design](../designs/p2_graph_desig
 and [P1 design](../designs/postgres_p1_search_projection_design.md).
 Build and suite evidence belongs in [docker/README.md](../../docker/README.md)
 and the PR, not in historical benchmark receipts.
+
+## Observed lock-timeout difference
+
+The complete PG18 run exposed a runtime dependency on server error prose in
+`spine/profile_refresher.py`. A real advisory-lock timeout reports SQLSTATE
+`57014`, message `canceling statement due to statement timeout`, and no error
+context on 18.6. The old check also required the phrase `advisory lock`, so
+both the shared identity-epoch and exclusive evidence-lock tests returned an
+ordinary database failure instead of typed profile contention.
+
+Use SQLSTATE plus the identity of the two fixed advisory-lock statements.
+Their only work is the engine-owned lock operation; a timeout there means
+that bounded acquisition did not finish. The existing negative proof sends
+an unrelated `pg_sleep` statement through the helper and must still receive
+an ordinary database failure. Parsing localized server prose is rejected.
+Switching to immediate try-locks or adding another timeout policy is also
+unnecessary: keep the existing bounded wait and its retry semantics.
+
+This restores the current profile-publication contract on 18. It changes no
+reuse input or generation. Evidence workers retain their committed fact work
+and handle disposable profile contention without replaying paid inference.

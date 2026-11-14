@@ -346,7 +346,7 @@ write/storage cost. Record index bytes, WAL/build duration and peak resources;
 no zero-cost or customer-margin claim is made. Build/index lock qualification
 is required on populated data. The PostgreSQL procedure is supported by
 [CREATE INDEX](https://www.postgresql.org/docs/18/sql-createindex.html), retrieved
-2026-11-12; online parent creation itself is not supported, hence leaf builds.
+2026-11-14; online parent creation itself is not supported, hence leaf builds.
 
 ### 4.3 Facts: one source-qualified projection, one endpoint rule
 

@@ -1,6 +1,6 @@
 # Packaging & Distribution — Artifacts, Task Execution, Code Architecture (Design)
 
-> **Binding D98 amendment (2026-08-27).** The shipped database is the pinned
+> **Binding D98/D157 amendment (2026-11-14).** The shipped database is the pinned
 > PostgreSQL 18 image (D157) with pgvector, pg_textsearch, and pg_partman (the
 > server has no SQL/PGQ since the D98 RC 1 amendment). Packaging contains no Ladybug wheel, graph snapshot volume, graph
 > builder/reader, or public Cypher API/CLI/MCP surface. Typed live graph

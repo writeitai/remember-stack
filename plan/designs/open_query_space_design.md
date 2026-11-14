@@ -1,6 +1,6 @@
 # Open query space — binding design
 
-> **Binding D98 amendment (2026-08-27).** Public Cypher and the immutable P2
+> **Binding D98/D157 amendment (2026-11-14).** Public Cypher and the immutable P2
 > graph surface are removed. `query_cypher` and `explain_cypher`, Cypher
 > grammar/limits/errors, `snapshot_graph`, `p2_snapshot`, generation discovery,
 > and P2 confirmation are not public or internal contracts. A server-owned,

@@ -323,8 +323,8 @@ jobs:
 
 
   # Each architecture builds on its own native runner. The build runs the
-  # pg_textsearch regression suite, whose parallel_build test fails under QEMU
-  # emulation (the parallel workers do not launch in time), so arm64 is never
+  # pg_textsearch regression suite. Its parallel_build test has failed under
+  # QEMU (parallel workers did not launch in time), so arm64 is never
   # emulated. Each leg pushes its image by digest; publish-postgres-ghcr then
   # joins both into the one immutable two-architecture tag.
   build-postgres:

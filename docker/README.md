@@ -78,6 +78,24 @@ digests, to the GitHub release. The release-contract checker enforces the
 publisher, platforms, tag scheme and evidence artifact. Between releases,
 build the checkout's image with `docker compose up --build`.
 
+## Local PostgreSQL 18 validation (2026-11-14)
+
+Both local builds passed all 82 upstream pg_textsearch SQL regression cases
+without a compiler workaround. arm64 ran natively; amd64 ran under emulation
+on the arm64 Docker host. Release builds still run natively on each platform.
+The following local image IDs were not published:
+
+| Evidence | linux/amd64 | linux/arm64 |
+|---|---|---|
+| Local image ID | `sha256:75b001929f97a8ae5aee37bda609aa7ebc81cc1df55486eca56959839d6c0e47` | `sha256:5225e7a6ec478e5ff9b3a3efb6e9f31815453e20ff60e57a73317932d1865ac9` |
+| `artifacts.sha256` file SHA-256 | `903ee32e998509c023687cb7d131d45739f91c0ab71e79c7936e59c1015ca95c` | `df7eb94fb50b7e8d08256a275a731b94470176f2b4904c3d95d232248caa70c6` |
+| `pg_textsearch.so` SHA-256 | `780433ddf91aeaf4cf7c7c57eea01dd25d540a5794dd1f7a44f08ac915dfd412` | `ef09d5d682e99c503d7d0e7686a63dda3a0f894cc5ca3752e0f21ec9c848bb28` |
+| Upstream regression tests | 82/82 | 82/82 |
+
+The [validation record and managed handoff](../docs/development/postgres18-reference-validation-2026-11-14.md)
+records engine-suite and Compose results separately. These local IDs are not
+registry release digests; no release was published by this change.
+
 ## Historical PostgreSQL 19 release evidence
 
 The following records describe the former server. They are retained as dated

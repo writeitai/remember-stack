@@ -1,6 +1,6 @@
 # Overall System Design
 
-> **Binding D98 amendment (2026-08-27).** The architecture has no LadybugDB or
+> **Binding D98/D157 amendment (2026-11-14).** The architecture has no LadybugDB or
 > physical P2 graph projection. PostgreSQL 18 serves a live graph over
 > authority views: a fixed relational join handles one-hop neighborhoods and
 > bounded recursive SQL handles depth-two, variable, and shortest traversal
