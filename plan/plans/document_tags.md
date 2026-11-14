@@ -48,12 +48,17 @@ Each step merges with its tests and, where it changes user-facing behaviour, its
    retagging and clearing make no model calls and no versions. Callers can start tagging
    their documents from this step on, before any read filters by tags.
 2. **Filter `search` and `search_documents` by tags.** Add `tags` to the existing D134
-   filter object and its eligibility path; switch filtered relation/observation evidence to
-   the D156 §4.4 rule (supporting from matching documents, contradictions from everywhere,
-   two-sided totals). Qualify a 1% and a 90% tag filter on a large retained store.
+   filter object in the shared compiler, so claims, chunks, `search_documents` and P1
+   fact eligibility share it; hold the filter and a D140 time scope on the same
+   occurrence; the §4.5 completed-empty explanation on the reads it touches. Qualify a 1%
+   and a 90% tag filter on a large retained store.
 3. **Filter the context operations.** The `documents` input on
-   `claims_and_sources_context@5`, `facts_context@5` and `combined_context@6`, the
-   §4.4 evidence marks and two-sided totals, and the empty-filter `known_empty` explanation; manifest roll and MCP
+   `claims_and_sources_context@5`, `facts_context@5` and `combined_context@6`; the D156
+   §4.4 fact-evidence rule in the `facts_context` evidence path (supporting evidence from
+   matching documents, contradictions and contradiction co-members from everywhere marked
+   `in_documents_filter`, two-sided `evidence_totals`), which no step 2 read needs because
+   no deployment surface searches relations or observations with a document filter; and
+   the empty-filter `known_empty` explanation; manifest roll and MCP
    `tool_version` bumps. This is the step agents feel, so it carries the end-to-end check:
    a memory holding two tagged products answers a product-filtered question with that
    product's support and the other product's contradiction marked out of filter.
