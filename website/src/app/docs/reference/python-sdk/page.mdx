@@ -742,8 +742,9 @@ MemoryClient.update_tag(
 
 Renames a tag, changes its description, or both; give at least one
 (`pydantic.ValidationError` otherwise). Documents keep the tag, and the old
-name stops resolving at once. A name is first looked up with `list_tags`;
-a tag that is not registered raises [`UnknownTag`](#unknowntag) with
+name stops resolving at once. A name is first looked up with
+`GET /tags?name=…`, which the engine matches the way it matches every tag
+name; a tag that is not registered raises [`UnknownTag`](#unknowntag) with
 `status_code` 404. A new name another tag has raises `MemoryApiError` 409
 with `code` `"conflict"`.
 

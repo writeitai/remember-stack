@@ -290,41 +290,31 @@ class UploadIngestor:
                 # kept only for audit go cold — routed at the write
                 storage_class=storage_class_for(mime=upload.mime),
             )
-            wrote = True
         except ObjectAlreadyExistsError:
-            wrote = False  # identical bytes already landed — retries are no-ops
-        try:
-            ingested = self._catalog.record_upload(
-                record=UploadRecord(
-                    deployment_id=deployment_id,
-                    doc_id=doc_id,
-                    source_kind=UPLOAD_SOURCE_KIND,
-                    source_ref=content_hash,
-                    source_uri=None,
-                    title=upload.title or PurePosixPath(upload.filename).stem,
-                    content_hash=content_hash,
-                    mime=upload.mime,
-                    byte_size=len(upload.content),
-                    raw_uri=raw_uri,
-                    ingested_by=ingested_by,
-                    file_name=upload.filename,
-                    declared_title=upload.title,
-                    source_path=upload.source_path,
-                    tags=upload.tags,
-                ),
-                convert_component_version=E0_CONVERT_VERSION,
-                lane=lane,
-                metered=self._meter_scope is not None,
-                routable_mimes=self._routable_for(upload=upload),
-            )
-        except Exception:
-            self._discard_rejected(
+            pass  # identical bytes already landed — ingest retries are no-ops
+        ingested = self._catalog.record_upload(
+            record=UploadRecord(
                 deployment_id=deployment_id,
+                doc_id=doc_id,
+                source_kind=UPLOAD_SOURCE_KIND,
+                source_ref=content_hash,
+                source_uri=None,
+                title=upload.title or PurePosixPath(upload.filename).stem,
                 content_hash=content_hash,
-                key=ObjectKey(raw_uri),
-                wrote=wrote,
-            )
-            raise
+                mime=upload.mime,
+                byte_size=len(upload.content),
+                raw_uri=raw_uri,
+                ingested_by=ingested_by,
+                file_name=upload.filename,
+                declared_title=upload.title,
+                source_path=upload.source_path,
+                tags=upload.tags,
+            ),
+            convert_component_version=E0_CONVERT_VERSION,
+            lane=lane,
+            metered=self._meter_scope is not None,
+            routable_mimes=self._routable_for(upload=upload),
+        )
         self._release_unretained(
             deployment_id=deployment_id,
             content_hash=content_hash,
@@ -573,57 +563,21 @@ class UploadIngestor:
                 # kept only for audit go cold — routed at the write
                 storage_class=storage_class_for(mime=upload.mime),
             )
-            wrote = True
         except ObjectAlreadyExistsError:
-            wrote = False
-        try:
-            ingested = self._catalog.record_upload(
-                record=record,
-                convert_component_version=E0_CONVERT_VERSION,
-                lane=lane,
-                metered=self._meter_scope is not None,
-                routable_mimes=self._routable_for(upload=upload),
-            )
-        except Exception:
-            self._discard_rejected(
-                deployment_id=deployment_id,
-                content_hash=content_hash,
-                key=ObjectKey(raw_uri),
-                wrote=wrote,
-            )
-            raise
+            pass
+        ingested = self._catalog.record_upload(
+            record=record,
+            convert_component_version=E0_CONVERT_VERSION,
+            lane=lane,
+            metered=self._meter_scope is not None,
+            routable_mimes=self._routable_for(upload=upload),
+        )
         self._release_unretained(
             deployment_id=deployment_id,
             content_hash=content_hash,
             key=ObjectKey(raw_uri),
         )
         return ingested
-
-    def _discard_rejected(
-        self, *, deployment_id: UUID, content_hash: str, key: ObjectKey, wrote: bool
-    ) -> None:
-        """Remove the raw object this ingest wrote when recording it failed.
-
-        A refusal after storage (a tag deleted or a tag limit reached since the
-        pre-check, a version-key or period conflict) records no row, so the
-        bytes would be unreferenced and escape hard forget. An object this
-        call did not write, or one a content already keeps, is left alone.
-        The failure being reported is never masked by a failed cleanup.
-        """
-        if not wrote or not isinstance(self._raw_store, ObjectPurgePort):
-            return
-        try:
-            kept = self._catalog.raw_object_key(
-                deployment_id=deployment_id, content_hash=content_hash
-            )
-            if kept != key.root:
-                self._raw_store.purge_objects(keys=(key,), prefixes=())
-        except Exception:
-            logger.warning(
-                "could not remove the raw object of a refused ingest key=%s",
-                key.root,
-                exc_info=True,
-            )
 
     def _release_unretained(
         self, *, deployment_id: UUID, content_hash: str, key: ObjectKey
@@ -649,7 +603,14 @@ class UploadIngestor:
     def _check_tags(
         self, *, deployment_id: UUID, doc_id: UUID, upload: DocumentUpload
     ) -> None:
-        """D156: refuse unknown tags or a tag limit before bytes or rows are stored."""
+        """D156: refuse unknown tags or a tag limit before bytes or rows are stored.
+
+        The write transaction checks both again. If a tag is deleted or the
+        limit is reached in between, that refusal records no row and leaves
+        the written original unreferenced, like any other attempt refused
+        after storage: storage capture counts it as an unregistered original,
+        and a later ingest of the same bytes registers the same object.
+        """
         if upload.tags:
             self._catalog.check_tags(
                 deployment_id=deployment_id, doc_id=doc_id, tags=upload.tags

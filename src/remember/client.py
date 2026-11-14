@@ -20,7 +20,6 @@ from typing import Final
 from typing import Literal
 from typing import Self
 from typing import TypeVar
-import unicodedata
 from urllib.parse import quote
 from uuid import UUID
 
@@ -1436,13 +1435,16 @@ class MemoryClient:
             return UUID(tag)
         except ValueError:
             pass
-        normalized = unicodedata.normalize("NFC", tag)
-        wanted = normalized.lower()
-        # The registry stores NFC names, so search with the NFC spelling too.
-        for registered in self.list_tags(query=normalized).tags:
-            if registered.name.lower() == wanted:
-                return registered.tag_id
-        raise UnknownTag(tags=(tag,), status_code=404)
+        # The engine matches the name exactly as the registry does (NFC,
+        # ignoring case); comparing case here could disagree with it.
+        matches = _validated(
+            TagList,
+            self._json("GET", "/tags", params={"name": tag}),
+            endpoint="GET /tags",
+        ).tags
+        if len(matches) != 1:
+            raise UnknownTag(tags=(tag,), status_code=404)
+        return matches[0].tag_id
 
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
         """List deployment-side connectors without executing any client-side."""

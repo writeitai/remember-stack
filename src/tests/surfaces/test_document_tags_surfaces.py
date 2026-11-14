@@ -14,6 +14,7 @@ from datetime import UTC
 import json
 from pathlib import Path
 from typing import cast
+import unicodedata
 from uuid import UUID
 from uuid import uuid4
 
@@ -91,17 +92,23 @@ class _Tags:
             raise UnknownTagError(tags=unknown, status_code=status_code)
         return found
 
-    def list_tags(self, *, deployment_id: UUID, query: str | None = None) -> TagList:
+    def list_tags(
+        self, *, deployment_id: UUID, query: str | None = None, name: str | None = None
+    ) -> TagList:
         assert deployment_id == _DEPLOYMENT_ID
+        exact = None if name is None else unicodedata.normalize("NFC", name).lower()
         return TagList(
             tags=tuple(
                 sorted(
                     (
                         tag
                         for tag in self.registry.values()
-                        if query is None
-                        or query.lower() in tag.name.lower()
-                        or query.lower() in tag.description.lower()
+                        if (
+                            query is None
+                            or query.lower() in tag.name.lower()
+                            or query.lower() in tag.description.lower()
+                        )
+                        and (exact is None or tag.name.lower() == exact)
                     ),
                     key=lambda tag: tag.name.lower(),
                 )

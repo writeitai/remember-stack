@@ -2312,8 +2312,6 @@ export default {
         "all": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 32,
@@ -2323,8 +2321,6 @@ export default {
         "any": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 32,
@@ -2334,8 +2330,6 @@ export default {
         "none": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 32,
@@ -2379,8 +2373,6 @@ export default {
         "add": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 64,
@@ -2390,8 +2382,6 @@ export default {
         "remove": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 64,
@@ -2402,8 +2392,6 @@ export default {
           "anyOf": [
             {
               "items": {
-                "maxLength": 128,
-                "minLength": 1,
                 "type": "string"
               },
               "maxItems": 64,

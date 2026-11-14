@@ -66,15 +66,25 @@ class TagCatalog:
         """Bind the catalog to the spine database."""
         self._engine = engine
 
-    def list_tags(self, *, deployment_id: UUID, query: str | None = None) -> TagList:
-        """Every registered tag by name, optionally narrowed by a substring.
+    def list_tags(
+        self, *, deployment_id: UUID, query: str | None = None, name: str | None = None
+    ) -> TagList:
+        """Every registered tag by name, optionally narrowed.
 
         ``query`` matches, case-insensitively, anywhere in the name or the
-        description. No document counts are returned.
+        description. ``name`` keeps the one tag with exactly this name, matched
+        the way the registry matches names (NFC, ignoring case), so a client
+        can resolve a name without comparing case itself. No document counts
+        are returned.
         """
         with self._engine.connect() as connection:
             rows = connection.execute(
-                _LIST_TAGS, {"deployment_id": deployment_id, "query": query or None}
+                _LIST_TAGS,
+                {
+                    "deployment_id": deployment_id,
+                    "query": query or None,
+                    "name": name or None,
+                },
             ).mappings()
             return TagList(tags=tuple(_tag(row=row) for row in rows))
 
@@ -355,18 +365,14 @@ def _resolve_one(*, connection: Connection, deployment_id: UUID, tag: str) -> UU
     write must never fall through to it once the id is gone.
     """
     try:
-        tag_id = UUID(tag)
+        tag_id: UUID | None = UUID(tag)
     except ValueError:
         tag_id = None
-    if tag_id is None:
-        try:
-            tag_id = resolve_tags_on(
-                connection=connection, deployment_id=deployment_id, tags=(tag,)
-            )[tag]
-        except UnknownTagError as error:
-            raise UnknownTagError(tags=error.tags, status_code=404) from error
+    # One locking statement, FOR UPDATE from the start: taking a share lock
+    # first and upgrading would let two concurrent mutations deadlock.
     locked = connection.execute(
-        _LOCK_TAG_FOR_UPDATE, {"deployment_id": deployment_id, "tag_id": tag_id}
+        _LOCK_TAG_BY_ID if tag_id is not None else _LOCK_TAG_BY_NAME,
+        {"deployment_id": deployment_id, "tag_id": tag_id, "name": tag},
     ).scalar_one_or_none()
     if locked is None:
         raise UnknownTagError(tags=(tag,), status_code=404)
@@ -399,6 +405,10 @@ _LIST_TAGS = text(
         CAST(:query AS text) IS NULL
         OR strpos(lower(name), lower(CAST(:query AS text))) > 0
         OR strpos(lower(description), lower(CAST(:query AS text))) > 0
+      )
+      AND (
+        CAST(:name AS text) IS NULL
+        OR lower(name) = lower(normalize(CAST(:name AS text), NFC))
       )
     ORDER BY lower(name), tag_id
     """  # noqa: S608 -- interpolated fragment is a module constant
@@ -460,10 +470,19 @@ _LOCK_TAGS = text(
     """
 )
 
-_LOCK_TAG_FOR_UPDATE = text(
+_LOCK_TAG_BY_ID = text(
     """
     SELECT tag_id FROM tags
     WHERE deployment_id = :deployment_id AND tag_id = :tag_id
+    FOR UPDATE
+    """
+)
+
+_LOCK_TAG_BY_NAME = text(
+    """
+    SELECT tag_id FROM tags
+    WHERE deployment_id = :deployment_id
+      AND lower(name) = lower(normalize(CAST(:name AS text), NFC))
     FOR UPDATE
     """
 )

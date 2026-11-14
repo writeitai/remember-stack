@@ -2311,8 +2311,6 @@
         "all": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 32,
@@ -2322,8 +2320,6 @@
         "any": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 32,
@@ -2333,8 +2329,6 @@
         "none": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 32,
@@ -2378,8 +2372,6 @@
         "add": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 64,
@@ -2389,8 +2381,6 @@
         "remove": {
           "default": [],
           "items": {
-            "maxLength": 128,
-            "minLength": 1,
             "type": "string"
           },
           "maxItems": 64,
@@ -2401,8 +2391,6 @@
           "anyOf": [
             {
               "items": {
-                "maxLength": 128,
-                "minLength": 1,
                 "type": "string"
               },
               "maxItems": 64,

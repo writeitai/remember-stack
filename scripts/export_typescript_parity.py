@@ -395,11 +395,7 @@ def scenarios() -> list[dict[str, Any]]:
             {"tag": ID, "description": "Renamed."},
             {"tag": "Project:Fixture", "name": "project:renamed", "description": ""},
         ),
-        (
-            "delete_tag",
-            {"tag": ID.replace("-", "").upper()},
-            {"tag": "PROJECT:CAFE\u0301"},
-        ),
+        ("delete_tag", {"tag": ID.replace("-", "").upper()}, {"tag": "\u03bf\u03c3"}),
         (
             "update_document_tags",
             {"doc_id": ID},
@@ -755,12 +751,15 @@ def responses() -> dict[str, Any]:
             connector_id=UUID(ID), kind="custom", name="fixture", status="active"
         ).model_dump(mode="json"),
         "tag": tag.model_dump(mode="json"),
-        # A second tag whose NFC name a decomposed spelling must find.
-        "tag_list": models.TagList(
+        "tag_list": models.TagList(tags=(tag,)).model_dump(mode="json"),
+        # The engine's exact-name match (GET /tags?name=) answers with the one
+        # matching tag. "\u039f\u03a3" is matched by "\u03bf\u03c3" in
+        # PostgreSQL but not by a client-side lower(), so the SDKs must not
+        # compare names themselves.
+        "tag_by_name": models.TagList(
             tags=(
-                tag,
                 tag.model_copy(
-                    update={"tag_id": UUID(OTHER_ID), "name": "project:caf\u00e9"}
+                    update={"tag_id": UUID(OTHER_ID), "name": "\u039f\u03a3"}
                 ),
             )
         ).model_dump(mode="json"),
@@ -794,6 +793,8 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
     if path == "/documents/references":
         return fixtures["document_references"]
     if path == "/tags" and request.method == "GET":
+        if "name" in request.url.params:
+            return fixtures["tag_by_name"]
         return fixtures["tag_list"]
     if path.startswith("/tags"):
         return fixtures["tag"]
