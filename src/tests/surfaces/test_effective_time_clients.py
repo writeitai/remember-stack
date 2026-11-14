@@ -351,16 +351,16 @@ def _payload(result: dict[str, object]) -> dict[str, object]:
     return decoded["error"] if result["isError"] else decoded
 
 
-def test_ingest_tool_publishes_the_d140_arguments_at_version_two() -> None:
-    """A changed input schema is a new tool version (D136)."""
+def test_ingest_tool_publishes_the_d140_arguments() -> None:
+    """A changed input schema is a new tool version (D136); D156 raised it to 3."""
     definition = tool(INGEST_TOOL_NAME)
     properties = cast("dict[str, object]", definition.input_schema["properties"])
 
-    assert definition.tool_version == 2
+    assert definition.tool_version == 3
     assert {"version_key", "effective_from", "effective_until"} <= set(properties)
     assert {item.name: item.tool_version for item in memory_tools()}[
         INGEST_TOOL_NAME
-    ] == 2
+    ] == 3
 
 
 def _remote(client: MemoryClient) -> EngineMcpServer:

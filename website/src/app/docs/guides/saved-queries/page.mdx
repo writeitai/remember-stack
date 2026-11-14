@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Saved queries",
-  description: "List, inspect and run the 18 SQL queries every deployment ships with, and understand when a saved query runs and when it refuses.",
+  description: "List, inspect and run the 19 SQL queries every deployment ships with, and understand when a saved query runs and when it refuses.",
 };
 
 # Saved queries
@@ -9,7 +9,7 @@ export const metadata = {
 
 A saved query is a SQL query stored in the deployment under a name, with
 its parameters described, so an agent or a script can run it without
-writing SQL. Every deployment ships with 18 of them, covering the questions
+writing SQL. Every deployment ships with 19 of them, covering the questions
 people ask most: claims about an entity, documents that mention it, what
 changed since a date, why a fact is held. They run over the same query
 space as any [SQL query](/docs/guides/sql): prepared, read-only views and functions,
@@ -51,7 +51,7 @@ remember query list-saved --namespace examples
 {"name": "list_saved_queries", "arguments": {"namespace": "examples"}}
 ```
 
-## The 18 shipped queries
+## The 19 shipped queries
 
 Parameters are positional, in this order. IDs are UUID strings; instants
 are ISO 8601 timestamps with a time zone.
@@ -76,6 +76,7 @@ are ISO 8601 timestamps with a time zone.
 | `graph_neighborhood` | Relations within two hops of an entity. | deployment ID, entity ID | graph budget |
 | `graph_path` | Routes of up to four hops between two entities. | deployment ID, from entity ID, to entity ID | graph budget |
 | `graph_citation_path` | Citation routes of up to six hops between two documents. | deployment ID, from document ID, to document ID | graph budget |
+| `facts_by_tag` | Current facts supported by documents that carry a [tag](/docs/guides/tag-documents), with how many of those documents support each. | tag name (any letter case) | 50 |
 
 The graph queries take your deployment ID first. It is in every ingest
 result (`deployment_id`) and every SQL result.

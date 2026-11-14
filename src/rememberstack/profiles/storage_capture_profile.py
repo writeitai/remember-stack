@@ -56,6 +56,7 @@ _PG_INCLUDED = (
     "document_sections",
     "document_skeleton_checks",
     "document_structure_generations",
+    "document_tags",
     "document_version_scope",
     "document_versions",
     "documents",
@@ -97,6 +98,7 @@ _PG_INCLUDED = (
     "scope_interests",
     "scopes",
     "selection_results",
+    "tags",
     "testimony_currency_events",
 )
 _PG_EXCLUDED: dict[StoragePurpose, tuple[str, ...]] = {

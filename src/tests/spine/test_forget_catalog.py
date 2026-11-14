@@ -46,6 +46,7 @@ _CONTROL_CONTENT_HASH = "b" * 64
 _DEPLOYMENT_ID = UUID("75000000-0000-0000-0000-000000000001")
 _TARGET_DOC_ID = UUID("75000000-0000-0000-0000-000000000002")
 _CONTROL_DOC_ID = UUID("75000000-0000-0000-0000-000000000003")
+_TAG_ID = UUID("75000000-0000-0000-0000-000000000156")
 _TARGET_VERSION_ID = UUID("75000000-0000-0000-0000-000000000004")
 _CONTROL_VERSION_ID = UUID("75000000-0000-0000-0000-000000000005")
 _TARGET_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000a1")
@@ -886,6 +887,23 @@ def _seed_evidence(*, connection: Connection) -> None:
             ),
             {"deployment": _DEPLOYMENT_ID, "doc": doc_id, "entity": entity_id},
         )
+    # D156: a registered tag assigned to both lineages.
+    connection.execute(
+        text(
+            "INSERT INTO tags (deployment_id, tag_id, name, description)"
+            " VALUES (:deployment, :tag, 'project:forget', 'Forget proof.')"
+            " ON CONFLICT DO NOTHING"
+        ),
+        {"deployment": _DEPLOYMENT_ID, "tag": _TAG_ID},
+    )
+    for doc_id in (_TARGET_DOC_ID, _CONTROL_DOC_ID):
+        connection.execute(
+            text(
+                "INSERT INTO document_tags (deployment_id, doc_id, tag_id)"
+                " VALUES (:deployment, :doc, :tag)"
+            ),
+            {"deployment": _DEPLOYMENT_ID, "doc": doc_id, "tag": _TAG_ID},
+        )
     _seed_facts(connection=connection)
     _seed_resolution_residuals(connection=connection)
 
@@ -1340,6 +1358,10 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             _count(connection, "document_entity_bindings", "doc_id", _CONTROL_DOC_ID)
             == 1
         )
+        # D156: the lineage's assignments go; the registry stays.
+        assert _count(connection, "document_tags", "doc_id", _TARGET_DOC_ID) == 0
+        assert _count(connection, "document_tags", "doc_id", _CONTROL_DOC_ID) == 1
+        assert _count(connection, "tags", "tag_id", _TAG_ID) == 1
         assert _count(connection, "chunk_claims", "claim_id", _TARGET_CLAIM_ID) == 0
         for table in ("document_metadata", "document_people", "document_names"):
             assert _count(connection, table, "version_id", _TARGET_VERSION_ID) == 0

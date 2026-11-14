@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import type * as Models from './generated';
 import { resolveConnection, EngineRoute, type Connection } from './connection';
 import { nodeHttp, discoveryTransport, bounded, checkedResponse, checkedAccountResponse, looksMoved, readRoute, transportError, type HttpClient, type HttpTransport, type ClientAgents } from './http';
-import { AbortError, InputValidationError, MemoryApiError, RequestTimeoutError, TimeoutError, PipelineDeadLettered, AccountApiUnavailable } from './errors';
+import { AbortError, InputValidationError, MemoryApiError, RequestTimeoutError, TimeoutError, PipelineDeadLettered, AccountApiUnavailable, UnknownTag } from './errors';
 import { assertJson } from './json';
 import { validateModel, modelDump } from './validation';
 import { inferUploadMime } from './mime';
@@ -12,7 +12,7 @@ import { fetchIssuerMetadata, sendSameOrigin, sameOrigin } from './issuer';
 
 export interface RequestOptions {signal?:AbortSignal;}
 export interface ClientOptions {apiKey?:string|null;baseUrl?:string|null;project?:string|null;timeoutMs?:number;client?:HttpClient;transport?:HttpTransport;agents?:ClientAgents;}
-export interface IngestOptions extends RequestOptions {source?:Uint8Array|string;content?:Uint8Array;filename?:string;mime?:string;title?:string|null;sourceKind?:string|null;sourceRef?:string|null;sourceModifiedAt?:string|Date|null;versioningMode?:'snapshot'|'living';sourceVersionRef?:string|null;sourcePath?:string|null;versionKey?:string|null;effectiveFrom?:string|Date|null;effectiveUntil?:string|Date|null;}
+export interface IngestOptions extends RequestOptions {source?:Uint8Array|string;content?:Uint8Array;filename?:string;mime?:string;title?:string|null;sourceKind?:string|null;sourceRef?:string|null;sourceModifiedAt?:string|Date|null;versioningMode?:'snapshot'|'living';sourceVersionRef?:string|null;sourcePath?:string|null;versionKey?:string|null;effectiveFrom?:string|Date|null;effectiveUntil?:string|Date|null;tags?:readonly string[]|null;}
 export type QueryResultDict = Models.OutputQueryResult;
 type Envelope = Models.OutputEnvelope;
 type ContextBundle = Models.OutputContextBundleV2;
@@ -23,6 +23,25 @@ function layerParams({layers}:{layers?:readonly string[]|null}):Params|undefined
   // Omitting layers reads every served layer; an empty selection is not that request, so it is refused rather than widened.
   if(typeof layers==='string'||layers.length===0)throw new InputValidationError({detail:'layers must name at least one of sources, claims, facts; omit it to read every layer the deployment serves'});
   return layers.map(layer=>['layers',String(layer)] as const);
+}
+/** Python's tag-name rule (D156): NFC, 1-128 characters, no whitespace or control characters. */
+function tagName({value}:{value:string}):string {
+  if(typeof value!=='string')throw new InputValidationError({detail:'a tag name must be a string'});
+  const normalized=value.normalize('NFC');const length=Array.from(normalized).length;
+  if(length<1||length>128)throw new InputValidationError({detail:'a tag name is 1 to 128 characters'});
+  if(/[\p{White_Space}\p{Cc}]/u.test(normalized))throw new InputValidationError({detail:'a tag name has no whitespace or control characters'});
+  return normalized;
+}
+/** Python's tag-reference rule (D156): at most 512 characters as sent and 1-128 after NFC. */
+function tagRef({value}:{value:string}):string {
+  if(Array.from(value).length>512||!(Array.from(value.normalize('NFC')).length>=1&&Array.from(value.normalize('NFC')).length<=128))throw new InputValidationError({detail:'a tag reference is 1 to 128 characters after NFC'});
+  return value;
+}
+/** A sequence of tag names or ids; one string is refused rather than split. */
+function tagList({value,field}:{value:readonly string[]|null|undefined;field:string}):string[] {
+  if(value==null)return [];
+  if(typeof value==='string'||!Array.isArray(value))throw new InputValidationError({detail:`${field} is a sequence of tag names or ids, not one string`});
+  return value.map(tag=>String(tag));
 }
 /** Encode one identifier as a URL segment, including characters encodeURIComponent leaves literal. */
 function segment({value}:{value:string}):string {return encodeURIComponent(value).replace(/[!'()*]/g,c=>`%${c.charCodeAt(0).toString(16).toUpperCase()}`);}
@@ -266,7 +285,8 @@ export class MemoryClient {
     return bounded({signal:options.signal,timeoutMs:this.timeoutMs,controllers:this.controllers,work:signal=>this.#ingest({...options,signal})});
   }
   /** Include local file loading in the ingest operation's cancellation and deadline. */
-  async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,versionKey,effectiveFrom,effectiveUntil,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
+  async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,versionKey,effectiveFrom,effectiveUntil,tags,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
+    const tagParams=tagList({value:tags,field:'tags'}).map(tag=>['tags',tag] as const);
     if((sourceKind==null)!==(sourceRef==null))throw new InputValidationError({detail:'sourceKind and sourceRef must be supplied together'});
     if(sourceKind==null&&(sourceModifiedAt!=null||sourceVersionRef!=null||versioningMode!=='snapshot'||versionKey!=null||effectiveFrom!=null||effectiveUntil!=null))throw new InputValidationError({detail:'source timestamps, revisions, and living mode require sourceKind/sourceRef'});
     if(effectiveUntil!=null&&effectiveFrom==null)throw new InputValidationError({detail:'effectiveUntil requires effectiveFrom'});
@@ -282,7 +302,8 @@ export class MemoryClient {
     else if(bytes===undefined&&source instanceof Uint8Array)bytes=source;
     if(!(bytes instanceof Uint8Array)||!filename)throw new InputValidationError({detail:'content and filename are required when ingesting bytes'});
     const params={filename,mime:mime||inferUploadMime({filename}),versioning_mode:versioningMode,title,source_kind:sourceKind,source_ref:sourceRef,source_modified_at:sourceModifiedAt==null?undefined:utcTimestamp({value:sourceModifiedAt,field:'sourceModifiedAt'}),source_version_ref:sourceVersionRef,source_path:sourcePath,version_key:versionKey,effective_from:start,effective_until:end};
-    return validateModel({name:'IngestedVersion',value:await this.json({method:'POST',path:'/ingest',params,content:bytes,headers:{'Content-Type':'application/octet-stream'},signal}),response:true});
+    const ordered=[...Object.entries(params).filter((entry):entry is [string,string]=>entry[1]!=null),...tagParams];
+    return validateModel({name:'IngestedVersion',value:await this.json({method:'POST',path:'/ingest',params:ordered,content:bytes,headers:{'Content-Type':'application/octet-stream'},signal}),response:true});
   }
   /** Read a page of the deployment's documents. */
   async listDocuments({limit=50,cursor,status,signal}:{limit?:number;cursor?:string|null;status?:Models.DocumentStatusFilter|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentPage> {return validateModel({name:'DocumentPage',value:await this.json({method:'GET',path:'/documents',params:{limit,cursor,status},signal}),response:true});}
@@ -335,6 +356,39 @@ export class MemoryClient {
   }
   /** Delete one live document after locally validating its identity. */
   async deleteDocument({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputDocumentDeletion> {return validateModel({name:'DocumentDeletion',value:await this.json({method:'DELETE',path:`/documents/${uuid({value:docId,field:'docId'})}`,signal}),response:true});}
+  /** List the deployment's registered tags (D156), optionally narrowed by a name or description substring. */
+  async listTags({query=null,signal}:{query?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputTagList> {return validateModel({name:'TagList',value:await this.json({method:'GET',path:'/tags',params:query==null?undefined:{query},signal}),response:true});}
+  /** Register a tag before documents carry it; a name taken in any letter case is a 409 conflict. */
+  async createTag({name,description,signal}:{name:string;description:string;signal?:AbortSignal}):Promise<Models.OutputTag> {
+    const body=modelDump({name:'TagCreate',value:{name:tagName({value:name}),description}});
+    return validateModel({name:'Tag',value:await this.json({method:'POST',path:'/tags',body,signal}),response:true});
+  }
+  /** Rename or re-describe a tag given by name or tag_id; documents keep it. */
+  async updateTag({tag,name=null,description=null,signal}:{tag:string;name?:string|null;description?:string|null;signal?:AbortSignal}):Promise<Models.OutputTag> {
+    const body=modelDump({name:'TagUpdate',value:{name:name==null?null:tagName({value:name}),description},excludeNone:true});
+    const tagId=await this.#tagId({tag,signal});
+    return validateModel({name:'Tag',value:await this.json({method:'PATCH',path:`/tags/${tagId}`,body,signal}),response:true});
+  }
+  /** Delete a tag given by name or tag_id, with every assignment of it. */
+  async deleteTag({tag,signal}:{tag:string;signal?:AbortSignal}):Promise<Models.OutputTag> {
+    const tagId=await this.#tagId({tag,signal});
+    return validateModel({name:'Tag',value:await this.json({method:'DELETE',path:`/tags/${tagId}`,signal}),response:true});
+  }
+  /** Add and remove, or replace with set, one document's tags atomically. */
+  async updateDocumentTags({docId,add=null,remove=null,set=null,signal}:{docId:string;add?:readonly string[]|null;remove?:readonly string[]|null;set?:readonly string[]|null;signal?:AbortSignal}):Promise<Models.OutputDocumentTags> {
+    const document=uuid({value:docId,field:'docId'});
+    const refs=({value,field}:{value:readonly string[]|null|undefined;field:string}):string[]=>tagList({value,field}).map(tag=>tagRef({value:tag}));
+    const body=modelDump({name:'DocumentTagsUpdate',value:{add:refs({value:add,field:'add'}),remove:refs({value:remove,field:'remove'}),set:set==null?null:refs({value:set,field:'set'})},excludeDefaults:true});
+    return validateModel({name:'DocumentTags',value:await this.json({method:'POST',path:`/documents/${document}/tags`,body,signal}),response:true});
+  }
+  /** Resolve a tag name to its id through the engine's exact-name match; an id is used as given. */
+  async #tagId({tag,signal}:{tag:string;signal?:AbortSignal}):Promise<string> {
+    try{return uuid({value:tag,field:'tag'});}catch(error){if(!(error instanceof InputValidationError))throw error;}
+    // The engine matches the name exactly as the registry does (NFC, ignoring case); comparing case here could disagree with it.
+    const matches=validateModel<Models.OutputTagList>({name:'TagList',value:await this.json({method:'GET',path:'/tags',params:{name:tag},signal}),response:true}).tags;
+    if(matches.length!==1)throw new UnknownTag({tags:[tag],statusCode:404});
+    return matches[0]!.tag_id;
+  }
   /** List deployment-side connectors; never execute their adapters in this client. */
   async connectors({signal}:RequestOptions={}):Promise<Models.OutputConnectorDescriptor[]> {return listResponse({name:'ConnectorDescriptor',value:await this.json({method:'GET',path:'/connectors',signal})});}
   /** Create deployment-side connector configuration using credential references. */

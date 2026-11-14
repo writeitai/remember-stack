@@ -5,6 +5,7 @@ bucket a key resolves in (raw vs artifacts) is deployment configuration, and
 the composing profile binds one `ObjectStorePort` per bucket.
 """
 
+from collections.abc import Sequence
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
@@ -17,6 +18,8 @@ from pydantic import Field
 from pydantic import model_validator
 
 from remember.models import IngestedVersion as IngestedVersion  # noqa: F401
+from remember.models import TagRef
+from remember.models import TAGS_PER_DOCUMENT_MAX
 from remember.models import VERSION_KEY_MAX_LEN
 from rememberstack.model.queue import UTCDateTime
 
@@ -78,6 +81,10 @@ class DocumentUpload(BaseModel):
     """D140: start of the period this version is in force for (inclusive)."""
     effective_until: UTCDateTime | None = None
     """D140: declared end of that period (exclusive); requires a start."""
+    tags: tuple[TagRef, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
+    """D156: registered tags (names or ids) added to the lineage's tags; an
+    ingest never removes a tag and tags never decide whether a version is
+    created."""
 
     @model_validator(mode="after")
     def _period_is_well_formed(self) -> Self:
@@ -121,6 +128,8 @@ class UploadRecord(BaseModel):
     """D140: start of the declared in-force period (inclusive)."""
     effective_until: UTCDateTime | None = None
     """D140: declared end of that period (exclusive); requires a start."""
+    tags: tuple[str, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
+    """D156: registered tags added to the lineage in the upload's transaction."""
 
     @model_validator(mode="after")
     def _period_is_well_formed(self) -> Self:
@@ -302,6 +311,49 @@ class DocumentNotFoundError(LookupError):
 
 class ChunkNotFoundError(LookupError):
     """No chunk of a live, non-deleted version has this id (D140 §6.2)."""
+
+
+class UnknownTagError(LookupError):
+    """A request named tags the deployment has not registered (D156 §3.3).
+
+    ``tags`` lists every unregistered tag exactly as the caller wrote it; the
+    whole request is refused before anything is stored. ``status_code`` 422 is
+    for tags given in a request body or query; a route that addresses one tag
+    by its id answers 404 with the same code.
+    """
+
+    code = "unknown_tag"
+
+    def __init__(self, *, tags: Sequence[str], status_code: int = 422) -> None:
+        """Record every unknown tag."""
+        super().__init__("unknown tags: " + ", ".join(tags))
+        self.tags = tuple(tags)
+        self.status_code = status_code
+        self.detail = str(self)
+
+
+class TagConflictError(Exception):
+    """A tag with this name, in any letter case, is already registered (D156)."""
+
+    status_code = 409
+    code = "conflict"
+
+    def __init__(self, *, name: str) -> None:
+        """Record the refused name."""
+        super().__init__(f"a tag named {name!r} is already registered")
+        self.detail = str(self)
+
+
+class TagLimitError(Exception):
+    """A tag write would exceed a D156 §3.1 limit; nothing was stored."""
+
+    status_code = 409
+    code = "tag_limit_exceeded"
+
+    def __init__(self, message: str) -> None:
+        """Record which limit."""
+        super().__init__(message)
+        self.detail = message
 
 
 class ReferenceBodyError(ValueError):

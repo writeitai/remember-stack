@@ -49,6 +49,7 @@ The client is synchronous. There is no async client yet
 | `StoredKeyRefused` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `LayerUnavailable` | exception | [Errors](#errors) |
+| `UnknownTag` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
 | `ClaimOccurrence` | model | [Models](#models) |
@@ -71,6 +72,7 @@ The client is synchronous. There is no async client yet
 | `DocumentSearchRequest` | model | [Models](#models) |
 | `DocumentSearchResult` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
+| `DocumentTags` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `EffectiveInterval` | model | [Models](#models) |
 | `EffectivePeriodInput` | model | [Models](#models) |
@@ -101,6 +103,8 @@ The client is synchronous. There is no async client yet
 | `SectionHistoryRequest` | model | [Models](#models) |
 | `SectionHistoryRow` | model | [Models](#models) |
 | `SectionHistorySection` | model | [Models](#models) |
+| `Tag` | model | [Models](#models) |
+| `TagList` | model | [Models](#models) |
 | `TemporalMatch` | enum | [Models](#models) |
 | `ToolDescriptor` | model | [Models](#models) |
 | `VersionPipelineReadiness` | model | [Models](#models) |
@@ -293,6 +297,7 @@ Client.ingest_file(
     version_key: str | None = None,
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
+    tags: Sequence[str] | None = None,
 ) -> IngestedVersion
 ```
 
@@ -337,6 +342,11 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
+| [`list_tags`](#list_tags) | `GET /tags` | `TagList` |
+| [`create_tag`](#create_tag) | `POST /tags` | `Tag` |
+| [`update_tag`](#update_tag) | `PATCH /tags/{tag_id}` | `Tag` |
+| [`delete_tag`](#delete_tag) | `DELETE /tags/{tag_id}` | `Tag` |
+| [`update_document_tags`](#update_document_tags) | `POST /documents/{doc_id}/tags` | `DocumentTags` |
 | [`set_effective_periods`](#set_effective_periods) | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` | `EffectivePeriodsSet` |
 | [`clear_effective_time`](#clear_effective_time) | `DELETE /documents/{doc_id}/effective-periods` | `EffectiveTimeCleared` |
 | [`set_references`](#set_references) | `PUT /documents/{doc_id}/versions/{version_id}/references` | `ReferencesSet` |
@@ -401,6 +411,7 @@ MemoryClient.ingest(
     version_key: str | None = None,
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
+    tags: Sequence[str] | None = None,
 ) -> IngestedVersion
 ```
 
@@ -424,6 +435,7 @@ results.
 | `version_key` | Your permanent name for this version, unique within the document (1 to 512 characters). A key new to the document always creates a version; the latest version's key is accepted again only with the same bytes. Requires `source_kind`/`source_ref`. See [Versions in force](/docs/reference/http-api/ingest#versions-in-force). |
 | `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
 | `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
+| `tags` | Registered tags, each a name (any letter case) or `tag_id`, added to the document's tags; at most 64. Ingest only adds tags and they never decide whether a version is created. See [Tags](/docs/reference/http-api/ingest#tags). |
 
 Raises `ValueError` when:
 
@@ -436,7 +448,8 @@ Raises `ValueError` when:
 - `effective_until` is given without `effective_from`, or is not later than
   it, or a period is given with `versioning_mode="living"`;
 - neither `source` nor `content` is given;
-- bytes are given without `filename`.
+- bytes are given without `filename`;
+- `tags` is a single string instead of a sequence.
 
 Reading a path can raise `OSError`: `FileNotFoundError` when it does not
 exist, whether given as `Path` or `str`.
@@ -445,7 +458,8 @@ Returns [`IngestedVersion`](#models). `created` is `False` when these exact
 bytes were already stored for this document; no new processing starts. A
 `version_key` that names another version, or a start that another version
 already declares, raises `MemoryApiError` with `status_code` 409; a period
-on a `living` document raises it with 422.
+on a `living` document raises it with 422. A tag that is not registered
+raises [`UnknownTag`](#unknowntag) and nothing is stored.
 
 ```python
 from datetime import UTC, datetime
@@ -666,6 +680,101 @@ try:
 except MemoryApiError as error:
     if error.status_code != 404:
         raise
+```
+
+### Tags
+
+Tags are names you register, such as `project:billing-migration`, each with
+a description, and assign to documents. A walkthrough is in
+[Tag documents](/docs/guides/tag-documents). Wherever a method takes a
+`tag`, it accepts the name in any letter case or the `tag_id`. Every method
+here except `list_tags` needs a `write` credential.
+
+#### `list_tags`
+
+```python
+MemoryClient.list_tags(*, query: str | None = None) -> TagList
+```
+
+Returns every registered tag, ordered by name ignoring letter case, as a
+`TagList` whose `tags` are [`Tag`](/docs/reference/result-types#tag) models
+(`tag_id`, `name`, `description`, `created_at`, `updated_at`). `query`
+(1 to 200 characters) keeps the tags whose name or description contains it,
+ignoring letter case.
+
+#### `create_tag`
+
+```python
+MemoryClient.create_tag(*, name: str, description: str) -> Tag
+```
+
+Registers a tag. The name is normalized to Unicode NFC and must be 1 to 128
+characters with no whitespace or control characters; the description is at
+most 2,000 characters. Raises `pydantic.ValidationError` for a name or
+description that breaks these rules, before any request, and
+`MemoryApiError` with `status_code` 409 and `code` `"conflict"` when the
+name is already registered in any letter case, or `code`
+`"tag_limit_exceeded"` when the deployment has 10,000 tags.
+
+#### `update_tag`
+
+```python
+MemoryClient.update_tag(
+    *,
+    tag: UUID | str,
+    name: str | None = None,
+    description: str | None = None,
+) -> Tag
+```
+
+Renames a tag, changes its description, or both; give at least one
+(`pydantic.ValidationError` otherwise). Documents keep the tag, and the old
+name stops resolving at once. A name is first looked up with
+`GET /tags?name=…`, which the engine matches the way it matches every tag
+name; a tag that is not registered raises [`UnknownTag`](#unknowntag) with
+`status_code` 404. A new name another tag has raises `MemoryApiError` 409
+with `code` `"conflict"`.
+
+#### `delete_tag`
+
+```python
+MemoryClient.delete_tag(*, tag: UUID | str) -> Tag
+```
+
+Deletes the tag and removes it from every document that carries it, and
+returns the deleted `Tag`. An unregistered tag raises `UnknownTag` with
+`status_code` 404.
+
+#### `update_document_tags`
+
+```python
+MemoryClient.update_document_tags(
+    *,
+    doc_id: UUID | str,
+    add: Sequence[str] | None = None,
+    remove: Sequence[str] | None = None,
+    set: Sequence[str] | None = None,
+) -> DocumentTags
+```
+
+Changes one document's tags in one step and returns a
+[`DocumentTags`](/docs/reference/result-types#documenttags) with the tags
+afterwards. Give `add` and `remove`, or `set` to replace the whole set
+(`set=[]` removes every tag); each list holds at most 64 tags. Removing a
+registered tag the document does not carry is not an error. Changing tags
+starts no processing.
+
+Raises `ValueError` before sending anything when `doc_id` is not a UUID or a
+list is a single string, `pydantic.ValidationError` when `set` is combined
+with `add` or `remove`, `UnknownTag` when a tag is not registered (nothing
+changes), and `MemoryApiError` with `status_code` 404 for an unknown or
+deleted document, or 409 with `code` `"tag_limit_exceeded"` past 64 tags.
+
+```python
+tags = memory.update_document_tags(
+    doc_id=version.doc_id, add=["project:billing-migration", "kind:decision"]
+)
+print(tags.tags)
 ```
 
 ### Versions in force, sections and references
@@ -1336,6 +1445,8 @@ with `status_code` 404. See [What is not built yet](/docs/project/not-built-yet)
 RuntimeError
 ├── MemoryApiError                 every memory call
 │   ├── RateLimited                429 from the deployment's admission limits
+│   ├── LayerUnavailable           409 layer_unavailable
+│   ├── UnknownTag                 unknown_tag
 │   └── StoredKeyRefused           the stored key may not go to that address
 └── PipelineDeadLettered           wait_for_readiness
 Exception
@@ -1361,7 +1472,7 @@ Raised by every memory-client method when a request fails.
 | `retryable`, `request_id` | Optional typed server diagnostics; they do not authorize automatic replay. |
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
-| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` (`rate_limited` or `concurrency_limited`); otherwise `None`. |
+| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`), for a `429` (`rate_limited` or `concurrency_limited`), and for the tag refusals `unknown_tag`, `conflict` and `tag_limit_exceeded`; otherwise `None`. |
 | `response` | Not set by the SDK (`None`). |
 
 `str(error)` reads `API <status_code>: <detail>`.
@@ -1406,6 +1517,23 @@ a read needs a [processing layer](/docs/concepts/pipeline#processing-layers)
 the deployment does not process. `layer` is `"claims"` or `"facts"`. Check
 [`processing_layers`](#processing_layers) and use a read the deployment
 serves.
+
+### UnknownTag
+
+A `MemoryApiError` (`code` `unknown_tag`) raised when a call names a tag the
+deployment has not registered. `tags` is a tuple of every unregistered tag
+as the call gave it. `status_code` is 422 for tags in `ingest` or
+`update_document_tags`, and 404 when `update_tag` or `delete_tag` cannot find
+the tag. Nothing was stored or changed. Register the tag with
+[`create_tag`](#create_tag), or check the spelling with
+[`list_tags`](#list_tags).
+
+```python
+try:
+    memory.ingest("notes/billing-sync.md", tags=["project:biling-migration"])
+except remember.UnknownTag as error:
+    print("not registered:", error.tags)
+```
 
 ### PipelineDeadLettered
 
@@ -1458,9 +1586,10 @@ models below are Pydantic models (frozen) unless noted.
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
 | `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`), `version_key` (str or `None`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
-| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
+| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`, `tags` (tuple of tag names). |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
 | `DocumentDeletion` | The result of `delete_document`: `doc_id`, `deleted_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
+| `Tag`, `TagList`, `DocumentTags` | One registered tag (`tag_id`, `name`, `description`, `created_at`, `updated_at`), the result of `list_tags` (`tags`), and the result of `update_document_tags` (`doc_id`, `tags`). |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |

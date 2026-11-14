@@ -107,6 +107,9 @@ from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility impor
 from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility import (
     FACTS_PUBLIC_DDL,
 )
+from rememberstack.spine.migrations.versions.p9_53_0074_document_tags import (
+    MEMORY_V1_TAG_VIEW_DDL,
+)
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -221,6 +224,7 @@ def _authored_parts() -> tuple[
         FACT_SOURCE_QUALIFIED_DDL,
         FACT_VISIBLE_DDL,
         FACTS_PUBLIC_DDL,
+        MEMORY_V1_TAG_VIEW_DDL,
     ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):

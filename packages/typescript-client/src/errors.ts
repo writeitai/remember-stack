@@ -51,6 +51,15 @@ export class LayerUnavailable extends MemoryApiError {
     this.layer = layer;
   }
 }
+/** The call named tags the deployment has not registered (D156); nothing was stored. */
+export class UnknownTag extends MemoryApiError {
+  readonly tags: readonly string[];
+  /** Bind every unregistered tag as the call gave it, with code unknown_tag. */
+  constructor({ tags, statusCode = 422 }: { tags: readonly string[]; statusCode?: number }) {
+    super({ detail: 'unknown tags: ' + tags.join(', '), statusCode, code: 'unknown_tag' });
+    this.tags = Object.freeze([...tags]);
+  }
+}
 /** Project resolution failed; a signed key never falls back to localhost. */
 export class ProjectResolutionError extends MemoryApiError {}
 /** The recorded origin does not permit sending a file-loaded key here. */

@@ -6,7 +6,7 @@ assured-operation registry generates the agent-facing fields of its four
 operations from these definitions too, so ``GET /operations`` and MCP can never
 describe the same operation differently.
 
-The eighteen ``examples.*`` saved queries are never top-level tools: they run
+The nineteen ``examples.*`` saved queries are never top-level tools: they run
 only through ``run_saved_query`` (D83/D87).
 """
 
@@ -29,6 +29,20 @@ SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
 ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 SECTION_HISTORY_TOOL_NAME: Final = "section_history"
 DOCUMENT_REFERENCES_TOOL_NAME: Final = "document_references"
+LIST_TAGS_TOOL_NAME: Final = "list_tags"
+CREATE_TAG_TOOL_NAME: Final = "create_tag"
+UPDATE_TAG_TOOL_NAME: Final = "update_tag"
+DELETE_TAG_TOOL_NAME: Final = "delete_tag"
+UPDATE_DOCUMENT_TAGS_TOOL_NAME: Final = "update_document_tags"
+#: The D156 tag tools: the registry read, and the registry and assignment writes.
+TAG_READ_TOOL_NAMES: Final[tuple[str, ...]] = (LIST_TAGS_TOOL_NAME,)
+TAG_WRITE_TOOL_NAMES: Final[tuple[str, ...]] = (
+    CREATE_TAG_TOOL_NAME,
+    UPDATE_TAG_TOOL_NAME,
+    DELETE_TAG_TOOL_NAME,
+    UPDATE_DOCUMENT_TAGS_TOOL_NAME,
+)
+TAG_TOOL_NAMES: Final[tuple[str, ...]] = (*TAG_READ_TOOL_NAMES, *TAG_WRITE_TOOL_NAMES)
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
@@ -58,6 +72,11 @@ SOURCE_REF_MAX_LEN: Final = 512
 SOURCE_VERSION_REF_MAX_LEN: Final = 512
 VERSION_KEY_MAX_LEN: Final = 512
 VERSION_IDS_MAX: Final = 1000
+TAG_REF_MAX_LEN: Final = 512
+"""Characters a tag name or reference may have as sent. The 128-character
+limit applies after NFC and is checked when the arguments are parsed."""
+TAG_LIST_MAX: Final = 64
+TAG_DESCRIPTION_MAX_LEN: Final = 2000
 
 Permission = Literal["memory:read", "memory:write"]
 
@@ -147,10 +166,129 @@ _INGEST_DESCRIPTION: Final = (
     " version's bytes). effective_from/effective_until declare when this"
     " version's text is in force (UTC; snapshot lineages only); without"
     " effective_until it lasts until the next declared start."
+    " tags adds registered tags (see list_tags) to the document; ingest never"
+    " removes a tag, and an unregistered tag refuses the ingest with"
+    " unknown_tag before anything is stored."
     ' If the result has parked="no_route", the original is stored but its'
     " conversion is parked waiting for a conversion route for its MIME type."
     " Tell the user now instead of polling readiness."
 )
+
+_TAG_REF: Final[dict[str, object]] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": TAG_REF_MAX_LEN,
+    "description": "The tag's name (any letter case) or its tag_id.",
+}
+_TAG_REFS: Final[dict[str, object]] = {
+    "type": "array",
+    "items": {"type": "string", "minLength": 1, "maxLength": TAG_REF_MAX_LEN},
+    "maxItems": TAG_LIST_MAX,
+    "uniqueItems": True,
+}
+_TAG_NAME: Final[dict[str, object]] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": TAG_REF_MAX_LEN,
+    "description": (
+        "The tag name: no spaces or control characters, such as"
+        " project:autoboard. Unique ignoring letter case."
+    ),
+}
+_TAG_DESCRIPTION: Final[dict[str, object]] = {
+    "type": "string",
+    "maxLength": TAG_DESCRIPTION_MAX_LEN,
+    "description": (
+        "What the tag means and when to apply it, written for agents who will"
+        " choose it later."
+    ),
+}
+
+_LIST_TAGS_DESCRIPTION: Final = (
+    "List this deployment's registered document tags with their tag_id, name"
+    " and description. Tags label documents by how the user organizes them"
+    " (for example project:autoboard or kind:decision); read the descriptions"
+    " to choose the right one. query keeps tags whose name or description"
+    " contains it. Use it before tagging a document, and before creating a tag"
+    " so you reuse an existing one instead of inventing a near-duplicate."
+)
+_CREATE_TAG_DESCRIPTION: Final = (
+    "Register a new document tag. Tags must exist before documents can carry"
+    " them. Check list_tags first and reuse an existing tag when one fits."
+    " Prefer a key:value name such as project:autoboard. A name already"
+    " registered in any letter case is refused with conflict."
+)
+_UPDATE_TAG_DESCRIPTION: Final = (
+    "Rename or re-describe one tag (by name or tag_id). Documents keep the tag."
+    " The old name stops working at once, so only rename when the user asks."
+)
+_DELETE_TAG_DESCRIPTION: Final = (
+    "Delete one tag (by name or tag_id) and remove it from every document that"
+    " carries it. Use only when the user asks; it cannot be undone."
+)
+_UPDATE_DOCUMENT_TAGS_DESCRIPTION: Final = (
+    "Change one document's tags: add and/or remove tags, or set to replace the"
+    " whole set (an empty set clears it). Tags must be registered (see"
+    " list_tags); any unknown tag refuses the whole call with unknown_tag."
+    " Removing a tag the document does not have is fine. Changing tags never"
+    " reprocesses the document. Returns the document's tags afterwards."
+)
+
+_LIST_TAGS_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keep tags whose name or description contains this.",
+        }
+    },
+}
+_CREATE_TAG_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name", "description"],
+    "properties": {"name": _TAG_NAME, "description": _TAG_DESCRIPTION},
+}
+_UPDATE_TAG_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["tag"],
+    "properties": {
+        "tag": _TAG_REF,
+        "name": {**_TAG_NAME, "description": "The new name."},
+        "description": {**_TAG_DESCRIPTION, "description": "The new description."},
+    },
+}
+_DELETE_TAG_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["tag"],
+    "properties": {"tag": _TAG_REF},
+}
+_UPDATE_DOCUMENT_TAGS_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["doc_id"],
+    "properties": {
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id).",
+        },
+        "add": {**_TAG_REFS, "description": "Tags to add (name or tag_id)."},
+        "remove": {**_TAG_REFS, "description": "Tags to remove (name or tag_id)."},
+        "set": {
+            **_TAG_REFS,
+            "description": (
+                "The document's complete tag set; excludes add and remove. An"
+                " empty list clears the tags."
+            ),
+        },
+    },
+}
 
 _PIPELINE_READINESS_DESCRIPTION: Final = (
     "Inspect whether one or more document version_ids have finished the"
@@ -671,6 +809,16 @@ _INGEST_PROPERTIES: Final[dict[str, object]] = {
             " effective_from. Omit it to last until the next declared start."
         ),
     },
+    "tags": {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1, "maxLength": TAG_REF_MAX_LEN},
+        "maxItems": TAG_LIST_MAX,
+        "uniqueItems": True,
+        "description": (
+            "Optional registered tags (name or tag_id) to add to the document."
+            " Call list_tags to see which exist."
+        ),
+    },
 }
 _INGEST_BODY_SOURCES: Final = ("path", "text", "content_base64")
 
@@ -798,7 +946,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_INGEST_DESCRIPTION,
         input_schema=_INGEST_INPUT_SCHEMA,
         permission="memory:write",
-        tool_version=2,
+        tool_version=3,
         http_route="POST /ingest",
     ),
     ToolDefinition(
@@ -841,6 +989,47 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         permission="memory:read",
         tool_version=1,
         http_route="POST /documents/references",
+    ),
+    ToolDefinition(
+        name=LIST_TAGS_TOOL_NAME,
+        description=_LIST_TAGS_DESCRIPTION,
+        input_schema=_LIST_TAGS_INPUT_SCHEMA,
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /tags",
+    ),
+    ToolDefinition(
+        name=CREATE_TAG_TOOL_NAME,
+        description=_CREATE_TAG_DESCRIPTION,
+        input_schema=_CREATE_TAG_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="POST /tags",
+    ),
+    ToolDefinition(
+        name=UPDATE_TAG_TOOL_NAME,
+        description=_UPDATE_TAG_DESCRIPTION,
+        input_schema=_UPDATE_TAG_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="PATCH /tags/{tag_id}",
+    ),
+    ToolDefinition(
+        name=DELETE_TAG_TOOL_NAME,
+        description=_DELETE_TAG_DESCRIPTION,
+        input_schema=_DELETE_TAG_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="DELETE /tags/{tag_id}",
+        destructive=True,
+    ),
+    ToolDefinition(
+        name=UPDATE_DOCUMENT_TAGS_TOOL_NAME,
+        description=_UPDATE_DOCUMENT_TAGS_DESCRIPTION,
+        input_schema=_UPDATE_DOCUMENT_TAGS_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="POST /documents/{doc_id}/tags",
     ),
     ToolDefinition(
         name="resolve_entity",

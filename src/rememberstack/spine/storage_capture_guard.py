@@ -1,6 +1,6 @@
 """Fixed native relation exclusion and in-guard allocation sampling for D152.
 
-This is a PG19 / p9_52_0073 primitive, not a complete capture, clock witness,
+This is a PG19 / p9_53_0074 primitive, not a complete capture, clock witness,
 classification or billable quantity. Installation uses trusted operator
 authority; the existing collector LOGIN receives only the fixed operation.
 The caller retains this original transaction and rolls it back after its
@@ -79,7 +79,7 @@ class NativeRelationGuardSample(_NativeRecord):
 
     contract: Literal["rememberstack.native_relation_guard.v1"]
     deployment_id: str
-    schema_head: Literal["p9_52_0073"]
+    schema_head: Literal["p9_53_0074"]
     session_login: str
     definer_role: str
     backend_pid: _POSITIVE
@@ -142,7 +142,7 @@ BEGIN
   LOCK TABLE pg_catalog.pg_class, pg_catalog.pg_namespace,
              pg_catalog.pg_proc, pg_catalog.pg_extension IN SHARE MODE NOWAIT;
   IF (SELECT count(*) FROM public.alembic_version) <> 1
-     OR (SELECT version_num FROM public.alembic_version) <> 'p9_52_0073' THEN
+     OR (SELECT version_num FROM public.alembic_version) <> 'p9_53_0074' THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_schema';
   END IF;
   SELECT array_agg(extname||'='||extversion ORDER BY extname COLLATE "C")
@@ -270,7 +270,7 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='57014', MESSAGE='native_guard_deadline';
   END IF;
   RETURN jsonb_build_object('contract','rememberstack.native_relation_guard.v1',
-    'deployment_id',native_scope::text,'schema_head','p9_52_0073',
+    'deployment_id',native_scope::text,'schema_head','p9_53_0074',
     'session_login',session_user,'definer_role',current_user,
     'backend_pid',pg_backend_pid(),'transaction_id',pg_current_xact_id()::text,
     'guard_started_unix_us',started_us::text,'sample_before_unix_us',before_us::text,

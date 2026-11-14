@@ -12,7 +12,10 @@ D143 ports are composed only when the code accepts them, and then report an
 unconfigured deployment (every layer ``enabled``). The checked-in fixture
 ``src/tests/surfaces/fixtures/d143_defaults.json`` is this function's output,
 originally from the pre-D143 base (fbcd489bd) and refreshed for later accepted
-baseline moves (p9_42/p9_45/D153 views, D154 pagination); ``test_d143_defaults_unchanged.py`` recomputes it.
+baseline moves (p9_42/p9_45/D153 views, D154 pagination, D156 document tags:
+the tag port and its five tools, ``ingest``'s ``tags`` argument at
+``tool_version`` 3 and the two tag views); ``test_d143_defaults_unchanged.py``
+recomputes it.
 Run as a script to print the JSON.
 """
 
@@ -88,6 +91,7 @@ def _ports() -> dict[str, Any]:
         "document_search": MagicMock(),
         "section_history": MagicMock(),
         "document_references": MagicMock(),
+        "tags": MagicMock(),
     }
 
 

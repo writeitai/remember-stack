@@ -35,6 +35,10 @@
           "purpose": "projection_origin"
         },
         {
+          "native_class_id": "04460935eecd43c597332f3ece89566e037a4df2b52179383c02a77e9826d71b",
+          "purpose": "truth_provenance"
+        },
+        {
           "native_class_id": "044ec9dcaf142fb30a298d1ab81870e928891e35995364943a1aed639128e615",
           "purpose": "paid_checkpoint"
         },
@@ -132,6 +136,10 @@
         },
         {
           "native_class_id": "30ae07477f98239736e89e86e498908d9ef3d177b3f7e1812a917cf33cd3c022",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "30da655802e9fbbf082920aa4835968ab626d376dec899415eb2b1c25875d1b1",
           "purpose": "truth_provenance"
         },
         {
@@ -515,18 +523,23 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "5b7085fb0faaaac007bf652e420c88ca6925e8783ff0fa4e1ef550133c254257",
-      "source_digest": "aa2769616cc7db8b30e4225b465deb380895c931086b62f640d9aee4fc015814"
+      "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
+      "source_digest": "a5bf0196bd28adf558a25c29ca423dce32cce35bc90872b680afea0d6e167255"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "939a299ca76c6df21a44c13b9c384fa09ba24b233b3b8367947673a0c20ac881",
+      "classification_digest": "1f35aa4ead6330b9c02792ace7db9cfbdc60c328a91289e6e9ef16081da8d310",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
           "component": "postgres_allocated",
           "native_class_id": "007d68f4820d727d19e154bfd5172468513c2222ca61b2476a1deb363a75c520",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "04460935eecd43c597332f3ece89566e037a4df2b52179383c02a77e9826d71b",
           "store_binding_id": "postgres"
         },
         {
@@ -652,6 +665,11 @@
         {
           "component": "postgres_allocated",
           "native_class_id": "30ae07477f98239736e89e86e498908d9ef3d177b3f7e1812a917cf33cd3c022",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "30da655802e9fbbf082920aa4835968ab626d376dec899415eb2b1c25875d1b1",
           "store_binding_id": "postgres"
         },
         {
@@ -1150,33 +1168,33 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "da6ca69bfc642b63b03c5de24a21fbd5d3f950641d296d3305a70025b01a8158",
+      "profile_digest": "41a3fcfca04d017cf8bb9cde7081da521e5145212ecda60e282a5588087517fb",
       "release_margin_us": 500000,
-      "schema_digest": "8459dcb2974fdcb586e76dc36c19c3ce429b39e26a6cc42af89cbc034be56b27",
-      "schema_profile_digest": "5b7085fb0faaaac007bf652e420c88ca6925e8783ff0fa4e1ef550133c254257",
-      "source_digest": "aa2769616cc7db8b30e4225b465deb380895c931086b62f640d9aee4fc015814",
+      "schema_digest": "ad67ca0c8a5d7c8b2468eb6790457ee4af7857fc3ce835bb3f865b44d4e38004",
+      "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
+      "source_digest": "a5bf0196bd28adf558a25c29ca423dce32cce35bc90872b680afea0d6e167255",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "939a299ca76c6df21a44c13b9c384fa09ba24b233b3b8367947673a0c20ac881",
+    "classification_digest": "1f35aa4ead6330b9c02792ace7db9cfbdc60c328a91289e6e9ef16081da8d310",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "da6ca69bfc642b63b03c5de24a21fbd5d3f950641d296d3305a70025b01a8158",
-    "operator_mapping_digest": "f13802c3269b379c3e887e7df4dd8b104784ea745b44ec24dc22587ab8f83b5e",
-    "schema_profile_digest": "5b7085fb0faaaac007bf652e420c88ca6925e8783ff0fa4e1ef550133c254257",
+    "native_capture_profile_digest": "41a3fcfca04d017cf8bb9cde7081da521e5145212ecda60e282a5588087517fb",
+    "operator_mapping_digest": "bd6de5b3c20ebb3e188c27fd5413b5186325c8312c6d048e1d053ec0dc03eadf",
+    "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
     "store_binding_digest": "e65a24fea35f132abbafaee8eb0f7421577234c011f86c911bcc1b0bf0c029ae"
   },
   "schema": {
     "catalog": {
       "EXPECTED_CONSTRAINT_COUNTS": {
-        "c": 119,
-        "f": 148,
-        "n": 643,
-        "p": 85,
+        "c": 121,
+        "f": 150,
+        "n": 653,
+        "p": 87,
         "t": 7,
         "u": 41
       },
@@ -1304,6 +1322,7 @@
         "ix_document_names_trgm",
         "ix_document_people_address",
         "ix_document_people_name",
+        "ix_document_tags_tag",
         "ix_documents_entity",
         "ix_documents_live",
         "ix_docversions_doc",
@@ -1381,7 +1400,8 @@
         "ux_kwatch",
         "ux_reference_generations_active",
         "ux_sections_key",
-        "ux_snapshot_latest"
+        "ux_snapshot_latest",
+        "ux_tags_name"
       ],
       "EXPECTED_RANGE_PARENTS": {
         "chunk_claims": "created_at",
@@ -1419,6 +1439,7 @@
         "document_skeleton_checks",
         "document_sections",
         "document_structure_generations",
+        "document_tags",
         "document_version_scope",
         "document_versions",
         "documents",
@@ -1477,6 +1498,7 @@
         "selection_results",
         "surface_cost_ledger",
         "surface_cost_meter_state",
+        "tags",
         "testimony_currency_events"
       ],
       "EXPECTED_VIEWS": [
@@ -1532,6 +1554,7 @@
       "document_sections",
       "document_skeleton_checks",
       "document_structure_generations",
+      "document_tags",
       "document_version_scope",
       "document_versions",
       "documents",
@@ -1594,6 +1617,7 @@
       "selection_results",
       "surface_cost_ledger",
       "surface_cost_meter_state",
+      "tags",
       "template_public_chunk_claims",
       "template_public_chunks",
       "template_public_claim_extraction_decisions",
@@ -1603,7 +1627,7 @@
       "template_public_testimony_currency_events",
       "testimony_currency_events"
     ],
-    "head": "p9_52_0073",
+    "head": "p9_53_0074",
     "migrations": {
       "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
       "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
@@ -1678,7 +1702,8 @@
       "p9_49_0070_corpus_publication_marker.py": "a3a976f504ba0f41f156989e4d347b7d42f8df6da07e54c1843ce8d3c411696e",
       "p9_50_0071_corpus_publication_work.py": "2e44caec296f2e2437a0b7176b9850398fb30467b819cf17c1cbc7d1b74ceaeb",
       "p9_51_0072_corpus_paths.py": "43840fe88f2a637bc48517174fadd273eb5eb88eeb51e60505824306a927d668",
-      "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255"
+      "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255",
+      "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a"
     },
     "records": {
       "NativeCatalogAcquisition": {
@@ -2416,7 +2441,7 @@
             "type": "string"
           },
           "schema_head": {
-            "const": "p9_52_0073",
+            "const": "p9_53_0074",
             "title": "Schema Head",
             "type": "string"
           },
@@ -2761,6 +2786,12 @@
       "postgres_allocated"
     ],
     [
+      "postgres.public.document_tags",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
       "postgres.public.document_version_scope",
       "postgres",
       "projection_origin",
@@ -3002,6 +3033,12 @@
     ],
     [
       "postgres.public.selection_results",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.tags",
       "postgres",
       "truth_provenance",
       "postgres_allocated"

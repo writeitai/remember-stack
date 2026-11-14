@@ -22,6 +22,7 @@ from remember.errors import PipelineDeadLettered
 from remember.errors import ProjectResolutionError
 from remember.errors import RateLimited
 from remember.errors import StoredKeyRefused
+from remember.errors import UnknownTag
 from remember.models import CapabilityReadiness
 from remember.models import ClaimOccurrence
 from remember.models import ClaimValidPrecision
@@ -43,6 +44,7 @@ from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentSearchResult
 from remember.models import DocumentSummary
+from remember.models import DocumentTags
 from remember.models import DocumentVersionSummary
 from remember.models import EffectiveInterval
 from remember.models import EffectivePeriodInput
@@ -73,6 +75,8 @@ from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
 from remember.models import SectionHistoryRow
 from remember.models import SectionHistorySection
+from remember.models import Tag
+from remember.models import TagList
 from remember.models import TemporalMatch
 from remember.models import ToolDescriptor
 from remember.models import VersionPipelineReadiness
@@ -128,6 +132,7 @@ __all__ = (
     "SectionAmendment",
     "EffectiveInterval",
     "DocumentSummary",
+    "DocumentTags",
     "DocumentVersionSummary",
     "EffectivePeriodInput",
     "EffectivePeriodsSet",
@@ -149,8 +154,11 @@ __all__ = (
     "ReadinessRequirements",
     "RememberClient",
     "StoredKeyRefused",
+    "Tag",
+    "TagList",
     "TemporalMatch",
     "ToolDescriptor",
+    "UnknownTag",
     "VersionPipelineReadiness",
     "__version__",
     "resolve_connection",

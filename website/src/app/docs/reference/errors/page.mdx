@@ -39,7 +39,9 @@ the message) and `code` (set on `/query/*` routes when the body carries a
 known code at its expected status). A `429` raises its subclass
 `remember.RateLimited`, whose `code` is `rate_limited` or
 `concurrency_limited` and whose `retry_after` holds the `Retry-After`
-seconds. `wait_for_readiness` raises
+seconds. An `unknown_tag` raises its subclass `remember.UnknownTag`, whose
+`tags` lists the unregistered tags; `conflict` and `tag_limit_exceeded` keep
+their code in `code`. `wait_for_readiness` raises
 `remember.PipelineDeadLettered` when a stage it waits on is `dead_letter`
 ([Python SDK](/docs/reference/python-sdk#pipelinedeadlettered)).
 
@@ -58,6 +60,7 @@ seconds. `wait_for_readiness` raises
 | `404` | `document_not_found` | `DELETE /documents/{doc_id}`, or a period, reference or section route, for a document that does not exist or is deleted. | Do not retry; check the id with `GET /documents`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
+| `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `PATCH` or `DELETE /tags/{tag_id}` for a tag id that is not registered, or was deleted. | Check the id with `GET /tags`. |
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
@@ -65,6 +68,8 @@ seconds. `wait_for_readiness` raises
 | `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
+| `409` | `{"code": "conflict", "message": …}` | `POST /tags` or `PATCH /tags/{tag_id}` with a name another tag already has, in any letter case. | Use the existing tag, or choose another name. |
+| `409` | `{"code": "tag_limit_exceeded", "message": …}` | A tag write would leave the deployment with more than 10,000 tags or a document with more than 64. Nothing changed. | Delete tags you no longer use, or remove some from the document. |
 | `409` | `{"code": "saved_query_…", …}` | A saved query cannot run. See [SQL query codes](#sql-query-codes). | See the code. |
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
 | `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | A `PUT …/references` body over 64 MiB. | Send a smaller set: the limit applies to one version's complete set. |
@@ -78,6 +83,7 @@ seconds. `wait_for_readiness` raises
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. The same message names `effective_from` or `effective_until`. | Send it with `Z`. |
 | `422` | `effective_until requires an earlier effective_from` | Ingest with an end but no start, or an end not after the start. | Send a start, and an end after it. |
 | `422` | `{"code": "effective_time_requires_snapshot", …}` | An effective period for a `living` document. | Periods apply to `snapshot` documents only. |
+| `422` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `POST /ingest` or `POST /documents/{doc_id}/tags` names a tag that is not registered; `tags` lists every one. Nothing was stored or changed. | Register the tag with `POST /tags`, or fix the spelling (check `GET /tags`). |
 | `422` | `{"code": "invalid_reference_set", "line": …, "message": …}` | A line of a `PUT …/references` body is not a valid reference. Nothing was recorded. | Fix the named line. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
@@ -219,7 +225,8 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_not_regular_file` | `null` | no | Point path at a regular file, or send text/content_base64. |
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
-| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
+| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id.) |
+| `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
 | `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |

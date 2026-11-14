@@ -628,7 +628,7 @@ def test_marker_and_recorded_folder_must_both_match(
 def test_capture_helpers_refuse_any_other_schema_head(live_tree: LiveTree) -> None:
     state = live_tree
     with state.roles.engine.begin() as connection:
-        connection.execute(text("UPDATE alembic_version SET version_num='p9_51_0072'"))
+        connection.execute(text("UPDATE alembic_version SET version_num='p9_52_0073'"))
     try:
         with state.roles.connect() as collector:
             collector.execute("BEGIN")
@@ -651,7 +651,7 @@ def test_capture_helpers_refuse_any_other_schema_head(live_tree: LiveTree) -> No
     finally:
         with state.roles.engine.begin() as connection:
             connection.execute(
-                text("UPDATE alembic_version SET version_num='p9_52_0073'")
+                text("UPDATE alembic_version SET version_num='p9_53_0074'")
             )
 
 

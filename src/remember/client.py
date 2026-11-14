@@ -37,6 +37,7 @@ from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
+from remember.errors import UnknownTag
 from remember.http_routes import is_read_route
 from remember.issuer import fetch_issuer_metadata
 from remember.issuer import IssuerError
@@ -62,6 +63,8 @@ from remember.models import DocumentSearchFilters
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
+from remember.models import DocumentTags
+from remember.models import DocumentTagsUpdate
 from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
@@ -82,10 +85,17 @@ from remember.models import SearchRequest
 from remember.models import SECTION_HISTORY_DEFAULT_LIMIT
 from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
+from remember.models import Tag
+from remember.models import TagCreate
+from remember.models import TagList
+from remember.models import TagUpdate
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+#: D156 refusals that keep their code: a duplicate name and a tag limit.
+_TAG_ERROR_CODES: Final = frozenset({"conflict", "tag_limit_exceeded"})
 
 _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "saved_query_not_found": 404,
@@ -925,6 +935,7 @@ class MemoryClient:
         version_key: str | None = None,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
+        tags: Sequence[str] | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
@@ -942,6 +953,11 @@ class MemoryClient:
         version's text is in force (UTC, half-open); without an end it lasts
         until the next declared start. Both need ``source_kind``/``source_ref``
         and periods need ``versioning_mode="snapshot"``.
+
+        ``tags`` adds registered tags (names or ids) to the document's tags
+        (D156); an ingest never removes a tag and tags never decide whether a
+        version is created. Any unregistered tag raises :class:`UnknownTag`
+        and nothing is stored.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -998,11 +1014,11 @@ class MemoryClient:
         if not filename:
             raise ValueError("filename is required when ingesting bytes")
         mime = mime or infer_upload_mime(filename) or "application/octet-stream"
-        params: dict[str, str] = {
-            "filename": filename,
-            "mime": mime,
-            "versioning_mode": versioning_mode,
-        }
+        params: list[tuple[str, str]] = [
+            ("filename", filename),
+            ("mime", mime),
+            ("versioning_mode", versioning_mode),
+        ]
         for key, value in (
             ("title", title),
             ("source_kind", source_kind),
@@ -1021,13 +1037,16 @@ class MemoryClient:
             ),
         ):
             if value is not None:
-                params[key] = value
+                params.append((key, value))
+        if isinstance(tags, str):
+            raise ValueError("tags is a sequence of tag names or ids, not one string")
+        params.extend(("tags", str(tag)) for tag in tags or ())
         return _validated(
             IngestedVersion,
             self._json(
                 "POST",
                 "/ingest",
-                params=params,
+                params=tuple(params),
                 content=payload_bytes,
                 headers={"Content-Type": "application/octet-stream"},
             ),
@@ -1314,6 +1333,119 @@ class MemoryClient:
             endpoint="DELETE /documents/{doc_id}/effective-periods",
         )
 
+    def list_tags(self, *, query: str | None = None) -> TagList:
+        """The deployment's registered tags with their id, name and description (D156).
+
+        ``query`` keeps the tags whose name or description contains it,
+        ignoring case.
+        """
+        return _validated(
+            TagList,
+            self._json(
+                "GET", "/tags", params=None if query is None else {"query": query}
+            ),
+            endpoint="GET /tags",
+        )
+
+    def create_tag(self, *, name: str, description: str) -> Tag:
+        """Register a tag before documents carry it (D156).
+
+        A name already registered, in any letter case, raises
+        ``MemoryApiError`` 409 with ``code`` ``conflict``.
+        """
+        body = TagCreate(name=name, description=description)
+        return _validated(
+            Tag,
+            self._json("POST", "/tags", json_body=body.model_dump(mode="json")),
+            endpoint="POST /tags",
+        )
+
+    def update_tag(
+        self,
+        *,
+        tag: UUID | str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Tag:
+        """Rename or re-describe a tag, given by name or ``tag_id`` (D156).
+
+        Documents keep the tag; the old name stops resolving at once. An
+        unregistered tag raises :class:`UnknownTag`.
+        """
+        body = TagUpdate(name=name, description=description)
+        tag_id = self._tag_id(tag=tag)
+        return _validated(
+            Tag,
+            self._json(
+                "PATCH",
+                f"/tags/{tag_id}",
+                json_body=body.model_dump(mode="json", exclude_none=True),
+            ),
+            endpoint="PATCH /tags/{tag_id}",
+        )
+
+    def delete_tag(self, *, tag: UUID | str) -> Tag:
+        """Delete a tag, given by name or ``tag_id``, and all its assignments (D156)."""
+        tag_id = self._tag_id(tag=tag)
+        return _validated(
+            Tag,
+            self._json("DELETE", f"/tags/{tag_id}"),
+            endpoint="DELETE /tags/{tag_id}",
+        )
+
+    def update_document_tags(
+        self,
+        *,
+        doc_id: UUID | str,
+        add: Sequence[str] | None = None,
+        remove: Sequence[str] | None = None,
+        set: Sequence[str] | None = None,  # noqa: A002 -- the documented argument name
+    ) -> DocumentTags:
+        """Change one document's tags atomically and return them (D156).
+
+        Give ``add`` and/or ``remove``, or ``set`` to replace the whole set (an
+        empty ``set`` clears it). Tags are names or ids. Any unregistered tag
+        raises :class:`UnknownTag` and nothing changes; an unknown or deleted
+        document raises ``MemoryApiError`` 404.
+        """
+        document = UUID(str(doc_id))
+        for argument in (add, remove, set):
+            if isinstance(argument, str):
+                raise ValueError("tags are a sequence of names or ids, not a string")
+        body = DocumentTagsUpdate(
+            add=tuple(add or ()),
+            remove=tuple(remove or ()),
+            set=None if set is None else tuple(set),
+        )
+        return _validated(
+            DocumentTags,
+            self._json(
+                "POST",
+                f"/documents/{document}/tags",
+                json_body=body.model_dump(mode="json", exclude_defaults=True),
+            ),
+            endpoint="POST /documents/{doc_id}/tags",
+        )
+
+    def _tag_id(self, *, tag: UUID | str) -> UUID:
+        """A tag's id: the id itself, or the registered tag with this name."""
+        if isinstance(tag, UUID):
+            return tag
+        try:
+            return UUID(tag)
+        except ValueError:
+            pass
+        # The engine matches the name exactly as the registry does (NFC,
+        # ignoring case); comparing case here could disagree with it.
+        matches = _validated(
+            TagList,
+            self._json("GET", "/tags", params={"name": tag}),
+            endpoint="GET /tags",
+        ).tags
+        if len(matches) != 1:
+            raise UnknownTag(tags=(tag,), status_code=404)
+        return matches[0].tag_id
+
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
         """List deployment-side connectors without executing any client-side."""
         payload = self._json("GET", "/connectors")
@@ -1463,6 +1595,18 @@ class MemoryClient:
                             detail=str(public_detail.get("message") or ""),
                             layer=str(public_detail.get("layer") or ""),
                         )
+                    elif public_detail.get("code") == "unknown_tag" and isinstance(
+                        public_detail.get("tags"), list
+                    ):
+                        raise UnknownTag(
+                            tags=tuple(str(tag) for tag in public_detail["tags"]),
+                            status_code=response.status_code,
+                        )
+                    elif public_detail.get("code") in _TAG_ERROR_CODES and (
+                        isinstance(public_detail.get("message"), str)
+                    ):
+                        code = str(public_detail["code"])
+                        detail = str(public_detail["message"])
                     elif public_detail.get("code") == "invalid_parameter" and (
                         isinstance(public_detail.get("message"), str)
                     ):
@@ -1642,6 +1786,7 @@ class Client(MemoryClient):
         version_key: str | None = None,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
+        tags: Sequence[str] | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1658,6 +1803,7 @@ class Client(MemoryClient):
             version_key=version_key,
             effective_from=effective_from,
             effective_until=effective_until,
+            tags=tags,
         )
 
     def __enter__(self) -> Self:

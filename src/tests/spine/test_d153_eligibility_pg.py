@@ -7,6 +7,7 @@ from datetime import UTC
 from pathlib import Path
 import random
 from typing import Any
+from typing import Final
 from uuid import UUID
 from uuid import uuid4
 
@@ -129,10 +130,18 @@ def bridge_pair() -> Iterator[_Pair]:
     yield from _independent_pair()
 
 
+#: Public relations added after this proof's old-head oracle. D156's tag views
+#: read only the tag tables, which no D153 eligibility helper touches, so the
+#: oracle has no counterpart to compare them with.
+_AFTER_ORACLE: Final = frozenset({"tags_current", "document_tags_live"})
+
+
 def _snapshot(*, connection: Connection) -> dict[str, list[str]]:
     """Read every public row/column, without limits or a truncated denominator."""
     result: dict[str, list[str]] = {}
     for contract in VIEW_CONTRACTS:
+        if contract.name in _AFTER_ORACLE:
+            continue
         # Current views emit their read's statement timestamp. Independently
         # assert that clock, then normalize only that invocation-specific field.
         rows = (

@@ -37,6 +37,7 @@ export type DocumentSearchResult = {
     served_version?: boolean;
     source_path?: string | null;
     status: 'ingesting' | 'converting' | 'structuring' | 'ready' | 'failed' | 'deleted';
+    tags?: Array<string>;
     thread_ref?: string | null;
     title?: string | null;
     version_id: string;

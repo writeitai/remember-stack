@@ -84,6 +84,17 @@ export default {
         "minLength": 1,
         "type": "string"
       },
+      "tags": {
+        "description": "Optional registered tags (name or tag_id) to add to the document. Call list_tags to see which exist.",
+        "items": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxItems": 64,
+        "type": "array",
+        "uniqueItems": true
+      },
       "text": {
         "description": "UTF-8 document body. Mutually exclusive with path and content_base64. Requires filename.",
         "minLength": 1,
@@ -124,7 +135,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
+      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
       "destructive": false,
       "http_route": "POST /ingest",
       "input_schema": {
@@ -245,6 +256,17 @@ export default {
             "minLength": 1,
             "type": "string"
           },
+          "tags": {
+            "description": "Optional registered tags (name or tag_id) to add to the document. Call list_tags to see which exist.",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          },
           "text": {
             "description": "UTF-8 document body. Mutually exclusive with path and content_base64. Requires filename.",
             "minLength": 1,
@@ -275,7 +297,7 @@ export default {
       },
       "name": "ingest",
       "permission": "memory:write",
-      "tool_version": 2
+      "tool_version": 3
     },
     {
       "annotations": {
@@ -791,6 +813,187 @@ export default {
       },
       "name": "document_references",
       "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List this deployment's registered document tags with their tag_id, name and description. Tags label documents by how the user organizes them (for example project:autoboard or kind:decision); read the descriptions to choose the right one. query keeps tags whose name or description contains it. Use it before tagging a document, and before creating a tag so you reuse an existing one instead of inventing a near-duplicate.",
+      "destructive": false,
+      "http_route": "GET /tags",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "description": "Keep tags whose name or description contains this.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_tags",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Register a new document tag. Tags must exist before documents can carry them. Check list_tags first and reuse an existing tag when one fits. Prefer a key:value name such as project:autoboard. A name already registered in any letter case is refused with conflict.",
+      "destructive": false,
+      "http_route": "POST /tags",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "What the tag means and when to apply it, written for agents who will choose it later.",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "description": "The tag name: no spaces or control characters, such as project:autoboard. Unique ignoring letter case.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "type": "object"
+      },
+      "name": "create_tag",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Rename or re-describe one tag (by name or tag_id). Documents keep the tag. The old name stops working at once, so only rename when the user asks.",
+      "destructive": false,
+      "http_route": "PATCH /tags/{tag_id}",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "The new description.",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "description": "The new name.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tag": {
+            "description": "The tag's name (any letter case) or its tag_id.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "name": "update_tag",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Delete one tag (by name or tag_id) and remove it from every document that carries it. Use only when the user asks; it cannot be undone.",
+      "destructive": true,
+      "http_route": "DELETE /tags/{tag_id}",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "tag": {
+            "description": "The tag's name (any letter case) or its tag_id.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "name": "delete_tag",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Change one document's tags: add and/or remove tags, or set to replace the whole set (an empty set clears it). Tags must be registered (see list_tags); any unknown tag refuses the whole call with unknown_tag. Removing a tag the document does not have is fine. Changing tags never reprocesses the document. Returns the document's tags afterwards.",
+      "destructive": false,
+      "http_route": "POST /documents/{doc_id}/tags",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "add": {
+            "description": "Tags to add (name or tag_id).",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "doc_id": {
+            "description": "The document's UUID (doc_id).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remove": {
+            "description": "Tags to remove (name or tag_id).",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "set": {
+            "description": "The document's complete tag set; excludes add and remove. An empty list clears the tags.",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "doc_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_document_tags",
+      "permission": "memory:write",
       "tool_version": 1
     },
     {

@@ -703,6 +703,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `first_seen_at` | date-time | Never changes. |
 | `latest` | [`DocumentVersionSummary`](#documentversionsummary) | The newest version that has not been deleted. |
 | `serving` | boolean | Some version of this document is `ready` and not deleted. |
+| `tags` | array of strings | The names of the document's [tags](#tag), ordered by name ignoring letter case. Empty when it has none. |
 
 ### DocumentVersionSummary
 
@@ -765,6 +766,7 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `version_no` | integer | |
 | `status` | string | That version's processing status, as in [`DocumentVersionSummary`](#documentversionsummary). |
 | `lineage_title` | string, nullable | The document's title, set by its first ingest. |
+| `tags` | array of strings | The names of the document's [tags](#tag), ordered by name ignoring letter case. |
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
@@ -815,6 +817,37 @@ changed. The counts describe this call only.
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |
+
+## Tags
+
+### Tag
+
+One registered tag, as [`GET /tags`](/docs/reference/http-api/ingest#get-tags)
+and the other tag routes return it.
+
+| Field | Type | Contents |
+|---|---|---|
+| `tag_id` | UUID | Stable identity; a rename keeps it. |
+| `name` | string | The current name, with the spelling it was declared with. Unique ignoring letter case. |
+| `description` | string | What the tag means and when to apply it. |
+| `created_at` | date-time | When the tag was registered. |
+| `updated_at` | date-time | When its name or description last changed. |
+
+### TagList
+
+| Field | Type | Contents |
+|---|---|---|
+| `tags` | array of [`Tag`](#tag) | Ordered by name, ignoring letter case. |
+
+### DocumentTags
+
+What [`POST /documents/{doc_id}/tags`](/docs/reference/http-api/ingest#post-documentsdoc_idtags)
+left on the document.
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `tags` | array of strings | The document's tag names after the change, ordered by name ignoring letter case. |
 
 ## Effective periods
 

@@ -107,6 +107,16 @@
           "ux_effective_periods_live_start"
         ]
       },
+      "document_tags_live": {
+        "fixtures": {
+          "negative": "document_tags_live.tombstoned_lineage_tag_absent",
+          "positive": "document_tags_live.live_lineage_tag_present"
+        },
+        "indexes_used": [
+          "document_tags_pkey",
+          "ix_document_tags_tag"
+        ]
+      },
       "document_versions_visible": {
         "fixtures": {
           "negative": "document_versions_visible.tombstoned_version_absent",
@@ -286,6 +296,16 @@
         "indexes_used": [
           "ix_sections_doc",
           "uq_sections_generation_path"
+        ]
+      },
+      "tags_current": {
+        "fixtures": {
+          "negative": "tags_current.deleted_tag_absent",
+          "positive": "tags_current.registered_tag_present"
+        },
+        "indexes_used": [
+          "tags_pkey",
+          "ux_tags_name"
         ]
       },
       "testimony_currency_events_visible": {
@@ -32689,6 +32709,437 @@
           ]
         },
         {
+          "clock_semantics": "registry_maintenance_instants",
+          "columns": [
+            {
+              "comment": "The deployment that owns the assignment.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage carrying the tag, joinable to documents_live.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The registered tag assigned to the lineage, joinable to tags_current.",
+              "enum_values": null,
+              "name": "tag_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The tag's current name, so a renamed tag shows its new name on every lineage that carries it.",
+              "enum_values": null,
+              "name": "name",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "When the tag was first assigned to the lineage, a registry instant rather than a world-time clock.",
+              "enum_values": null,
+              "name": "assigned_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per tag assignment on a live document lineage, keyed by (deployment_id, doc_id, tag_id) and joined to documents_live on (deployment_id, doc_id) and to tags_current on (deployment_id, tag_id). Tags belong to the lineage, not to a version, so every version of the document carries them, and they are never part of what the memory extracts or believes: a chunk inherits its document's tags through doc_id, a claim through its occurrences, and a fact through its supporting claims in fact_claim_evidence_live. A deleted or forgotten lineage has no rows, and neither does a deleted tag. The view carries no counts.",
+          "definition_ast": {
+            "@": "ViewStmt",
+            "aliases": [
+              {
+                "@": "String",
+                "sval": "deployment_id"
+              },
+              {
+                "@": "String",
+                "sval": "doc_id"
+              },
+              {
+                "@": "String",
+                "sval": "tag_id"
+              },
+              {
+                "@": "String",
+                "sval": "name"
+              },
+              {
+                "@": "String",
+                "sval": "assigned_at"
+              }
+            ],
+            "query": {
+              "@": "SelectStmt",
+              "all": false,
+              "fromClause": [
+                {
+                  "@": "JoinExpr",
+                  "isNatural": false,
+                  "jointype": {
+                    "#": "JoinType",
+                    "name": "JOIN_INNER"
+                  },
+                  "larg": {
+                    "@": "JoinExpr",
+                    "isNatural": false,
+                    "jointype": {
+                      "#": "JoinType",
+                      "name": "JOIN_INNER"
+                    },
+                    "larg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "a"
+                      },
+                      "inh": true,
+                      "relname": "document_tags",
+                      "relpersistence": "p"
+                    },
+                    "quals": {
+                      "@": "BoolExpr",
+                      "args": [
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "t"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "a"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "t"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "tag_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "a"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "tag_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        }
+                      ],
+                      "boolop": {
+                        "#": "BoolExprType",
+                        "name": "AND_EXPR"
+                      }
+                    },
+                    "rarg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "t"
+                      },
+                      "inh": true,
+                      "relname": "tags",
+                      "relpersistence": "p"
+                    },
+                    "rtindex": 0
+                  },
+                  "quals": {
+                    "@": "BoolExpr",
+                    "args": [
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "d"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "a"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "d"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "doc_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "a"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "doc_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      }
+                    ],
+                    "boolop": {
+                      "#": "BoolExprType",
+                      "name": "AND_EXPR"
+                    }
+                  },
+                  "rarg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "d"
+                    },
+                    "inh": true,
+                    "relname": "documents_live",
+                    "relpersistence": "p",
+                    "schemaname": "memory_v1"
+                  },
+                  "rtindex": 0
+                }
+              ],
+              "groupDistinct": false,
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_NONE"
+              },
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "a"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "deployment_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "a"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "doc_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "a"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "tag_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "t"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "name"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "a"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "assigned_at"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "replace": false,
+            "view": {
+              "@": "RangeVar",
+              "inh": true,
+              "relname": "document_tags_live",
+              "relpersistence": "p",
+              "schemaname": "memory_v1"
+            },
+            "withCheckOption": {
+              "#": "ViewCheckOption",
+              "name": "NO_CHECK_OPTION"
+            }
+          },
+          "grain": "one tag assignment on a live document lineage",
+          "grain_tag": "document_tag_live",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "tag_id"
+              ],
+              "target": "memory_v1.tags_current"
+            }
+          ],
+          "name": "document_tags_live",
+          "qualified_name": "memory_v1.document_tags_live",
+          "row_key": [
+            "deployment_id",
+            "doc_id",
+            "tag_id"
+          ]
+        },
+        {
           "clock_semantics": "ingest_and_supersession_instants",
           "columns": [
             {
@@ -47563,6 +48014,227 @@
           ]
         },
         {
+          "clock_semantics": "registry_maintenance_instants",
+          "columns": [
+            {
+              "comment": "The deployment that registered the tag.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of the tag; assignments point at it, so a rename changes no assignment.",
+              "enum_values": null,
+              "name": "tag_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The tag's current name with the spelling it was declared with, unique within the deployment ignoring letter case.",
+              "enum_values": null,
+              "name": "name",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "What the tag means and when to apply it, written by the caller for agents.",
+              "enum_values": null,
+              "name": "description",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "When the tag was registered, a registry instant rather than a world-time clock.",
+              "enum_values": null,
+              "name": "created_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "When the tag's name or description last changed, a registry instant rather than a world-time clock.",
+              "enum_values": null,
+              "name": "updated_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per registered document tag, keyed by (deployment_id, tag_id). A tag is a caller-declared label with a description, created before any document carries it; its name is unique within the deployment ignoring letter case and is matched that way, so compare names with lower() on both sides. A renamed tag shows only its current name, because there are no aliases, and a deleted tag is absent. Tags are the deployment's vocabulary rather than content from any source, so forgetting a document does not change this relation. The view carries no counts: join document_tags_live to count the live documents that carry a tag.",
+          "definition_ast": {
+            "@": "ViewStmt",
+            "aliases": [
+              {
+                "@": "String",
+                "sval": "deployment_id"
+              },
+              {
+                "@": "String",
+                "sval": "tag_id"
+              },
+              {
+                "@": "String",
+                "sval": "name"
+              },
+              {
+                "@": "String",
+                "sval": "description"
+              },
+              {
+                "@": "String",
+                "sval": "created_at"
+              },
+              {
+                "@": "String",
+                "sval": "updated_at"
+              }
+            ],
+            "query": {
+              "@": "SelectStmt",
+              "all": false,
+              "fromClause": [
+                {
+                  "@": "RangeVar",
+                  "alias": {
+                    "@": "Alias",
+                    "aliasname": "t"
+                  },
+                  "inh": true,
+                  "relname": "tags",
+                  "relpersistence": "p"
+                }
+              ],
+              "groupDistinct": false,
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_NONE"
+              },
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "t"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "deployment_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "t"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "tag_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "t"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "name"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "t"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "description"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "t"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "created_at"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "t"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "updated_at"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "replace": false,
+            "view": {
+              "@": "RangeVar",
+              "inh": true,
+              "relname": "tags_current",
+              "relpersistence": "p",
+              "schemaname": "memory_v1"
+            },
+            "withCheckOption": {
+              "#": "ViewCheckOption",
+              "name": "NO_CHECK_OPTION"
+            }
+          },
+          "grain": "one registered document tag",
+          "grain_tag": "tag_registered",
+          "join_keys": [],
+          "name": "tags_current",
+          "qualified_name": "memory_v1.tags_current",
+          "row_key": [
+            "deployment_id",
+            "tag_id"
+          ]
+        },
+        {
           "clock_semantics": "transaction_time_event",
           "columns": [
             {
@@ -48352,5 +49024,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "3572a77e5db05f53cad6f7bb6845ab65dddecebc266b473aa776509f80a9b9e1"
+  "surface_manifest_hash": "f238bb518de2aed12db7278d274878006382aa7186baae40c3cdb7ec6b7c48c6"
 }

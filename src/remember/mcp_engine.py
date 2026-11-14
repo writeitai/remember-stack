@@ -33,6 +33,7 @@ from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
+from remember.mcp_tools import handle_tag_tool
 from remember.mcp_tools import map_error
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
@@ -40,6 +41,7 @@ from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
+from remember.mcp_tools import TAG_TOOL_NAMES
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
@@ -49,11 +51,17 @@ from remember.models import DocumentReferencesPage
 from remember.models import DocumentReferencesRequest
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
+from remember.models import DocumentTags
+from remember.models import DocumentTagsUpdate
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
 from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
+from remember.models import Tag
+from remember.models import TagCreate
+from remember.models import TagList
+from remember.models import TagUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +69,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class _ClientBackend:
-    """The write, readiness, delete, document-search, section and references backend.
+    """The write, readiness, delete, document-search, section, references and tag backend.
 
     The deployment enforces its body-size limit; the tool maps the refusal.
     """
@@ -84,6 +92,7 @@ class _ClientBackend:
         version_key: str | None = None,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
+        tags: tuple[str, ...] = (),
     ) -> IngestedVersion:
         """Send one ingest through the HTTP SDK."""
         return self._client.ingest(
@@ -99,6 +108,7 @@ class _ClientBackend:
             version_key=version_key,
             effective_from=effective_from,
             effective_until=effective_until,
+            tags=tags,
         )
 
     def pipeline_readiness(
@@ -128,6 +138,34 @@ class _ClientBackend:
     ) -> DocumentReferencesPage:
         """Read one page of references through the HTTP SDK (D140)."""
         return self._client.document_references_request(request=request)
+
+    def list_tags(self, *, query: str | None) -> TagList:
+        """List registered tags through the HTTP SDK (D156)."""
+        return self._client.list_tags(query=query)
+
+    def create_tag(self, *, request: TagCreate) -> Tag:
+        """Register one tag through the HTTP SDK."""
+        return self._client.create_tag(
+            name=request.name, description=request.description
+        )
+
+    def update_tag(self, *, tag: str, request: TagUpdate) -> Tag:
+        """Rename or re-describe one tag; the SDK resolves a name to its id."""
+        return self._client.update_tag(
+            tag=tag, name=request.name, description=request.description
+        )
+
+    def delete_tag(self, *, tag: str) -> Tag:
+        """Delete one tag; the SDK resolves a name to its id."""
+        return self._client.delete_tag(tag=tag)
+
+    def update_document_tags(
+        self, *, doc_id: UUID, request: DocumentTagsUpdate
+    ) -> DocumentTags:
+        """Change one document's tags through the HTTP SDK."""
+        return self._client.update_document_tags(
+            doc_id=doc_id, add=request.add, remove=request.remove, set=request.set
+        )
 
 
 class EngineMcpServer:
@@ -218,6 +256,10 @@ class EngineMcpServer:
         if name == DOCUMENT_REFERENCES_TOOL_NAME:
             return handle_document_references_tool(
                 arguments=arguments, backend=self._backend
+            )
+        if name in TAG_TOOL_NAMES:
+            return handle_tag_tool(
+                name=name, arguments=arguments, backend=self._backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(

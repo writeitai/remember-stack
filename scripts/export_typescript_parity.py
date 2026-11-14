@@ -384,6 +384,23 @@ def scenarios() -> list[dict[str, Any]]:
         ),
         ("clear_effective_time", {"doc_id": ID}, {"doc_id": OTHER_ID}),
         ("delete_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
+        ("list_tags", {}, {"query": "Fixture"}),
+        (
+            "create_tag",
+            {"name": "project:fixture", "description": ""},
+            {"name": "cafe\u0301:menu", "description": "Fixture tag."},
+        ),
+        (
+            "update_tag",
+            {"tag": ID, "description": "Renamed."},
+            {"tag": "Project:Fixture", "name": "project:renamed", "description": ""},
+        ),
+        ("delete_tag", {"tag": ID.replace("-", "").upper()}, {"tag": "\u03bf\u03c3"}),
+        (
+            "update_document_tags",
+            {"doc_id": ID},
+            {"doc_id": OTHER_ID, "add": ["project:fixture", ID], "remove": ["old"]},
+        ),
         ("connectors", {}, {}),
         (
             "add_connector",
@@ -498,6 +515,34 @@ def scenarios() -> list[dict[str, Any]]:
     result.extend(
         [
             {
+                "method": "update_document_tags",
+                "variant": "set-clears",
+                "options": {"doc_id": ID, "set": []},
+            },
+            {
+                "method": "update_document_tags",
+                "variant": "set-replaces",
+                "options": {"doc_id": ID, "set": ["project:fixture"]},
+            },
+            {
+                "method": "ingest",
+                "variant": "tags",
+                "options": {
+                    "content": {"base64": "bm90ZQ=="},
+                    "filename": "fixture.md",
+                    "tags": ["project:fixture", ID],
+                },
+            },
+            {
+                "method": "ingest_file",
+                "variant": "tags",
+                "options": {"file_path": "$FILE", "tags": ["project:fixture"]},
+            },
+        ]
+    )
+    result.extend(
+        [
+            {
                 "method": "section_history_request",
                 "variant": "compact-uuid",
                 "options": {
@@ -597,6 +642,13 @@ def responses() -> dict[str, Any]:
         item_count=2,
         created_at=now,
     )
+    tag = models.Tag(
+        tag_id=UUID(ID),
+        name="project:fixture",
+        description="Fixture tag.",
+        created_at=now,
+        updated_at=now,
+    )
     return {
         "section_history": models.SectionHistoryPage(
             doc_id=UUID(ID),
@@ -689,6 +741,22 @@ def responses() -> dict[str, Any]:
         "connector": models.ConnectorDescriptor(
             connector_id=UUID(ID), kind="custom", name="fixture", status="active"
         ).model_dump(mode="json"),
+        "tag": tag.model_dump(mode="json"),
+        "tag_list": models.TagList(tags=(tag,)).model_dump(mode="json"),
+        # The engine's exact-name match (GET /tags?name=) answers with the one
+        # matching tag. "\u039f\u03a3" is matched by "\u03bf\u03c3" in
+        # PostgreSQL but not by a client-side lower(), so the SDKs must not
+        # compare names themselves.
+        "tag_by_name": models.TagList(
+            tags=(
+                tag.model_copy(
+                    update={"tag_id": UUID(OTHER_ID), "name": "\u039f\u03a3"}
+                ),
+            )
+        ).model_dump(mode="json"),
+        "document_tags": models.DocumentTags(
+            doc_id=UUID(ID), tags=("project:fixture",)
+        ).model_dump(mode="json"),
     }
 
 
@@ -715,6 +783,14 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
         ]
     if path == "/documents/references":
         return fixtures["document_references"]
+    if path == "/tags" and request.method == "GET":
+        if "name" in request.url.params:
+            return fixtures["tag_by_name"]
+        return fixtures["tag_list"]
+    if path.startswith("/tags"):
+        return fixtures["tag"]
+    if path.startswith("/documents/") and path.endswith("/tags"):
+        return fixtures["document_tags"]
     if path.endswith("/effective-periods"):
         return fixtures[
             "effective_periods" if request.method == "PUT" else "effective_cleared"
@@ -946,6 +1022,10 @@ def failure_fixtures() -> list[dict[str, Any]]:
         ("clear_effective_time", {"doc_id": ID}, {}),
         ("delete_document", {"doc_id": ID}, {}),
         ("connectors", {}, [{}]),
+        ("list_tags", {}, {}),
+        ("create_tag", {"name": "project:fixture", "description": ""}, {}),
+        ("delete_tag", {"tag": ID}, {}),
+        ("update_document_tags", {"doc_id": ID}, {}),
         ("describe_query_space", {}, []),
         ("processing_layers", {}, {"claims": "enabled", "facts": "paused"}),
     ]
@@ -1015,6 +1095,68 @@ def failure_fixtures() -> list[dict[str, Any]]:
                 "status": status,
                 "body": {"detail": detail},
                 "variant": "layer-unavailable",
+            }
+        )
+    # D156: unknown tags raise UnknownTag; duplicate names and limits keep their code.
+    for method, options, status, detail in [
+        (
+            "update_document_tags",
+            {"doc_id": ID, "add": ["typo", "oops"]},
+            422,
+            {
+                "code": "unknown_tag",
+                "message": "unknown tags: typo, oops",
+                "tags": ["typo", "oops"],
+            },
+        ),
+        (
+            "ingest",
+            {
+                "content": {"base64": "bm90ZQ=="},
+                "filename": "fixture.md",
+                "tags": ["typo"],
+            },
+            422,
+            {"code": "unknown_tag", "message": "unknown tags: typo", "tags": ["typo"]},
+        ),
+        (
+            "delete_tag",
+            {"tag": ID},
+            404,
+            {"code": "unknown_tag", "message": "unknown tags: x", "tags": [ID]},
+        ),
+        (
+            "create_tag",
+            {"name": "project:fixture", "description": ""},
+            409,
+            {
+                "code": "conflict",
+                "message": "a tag named 'project:fixture' is already registered",
+            },
+        ),
+        (
+            "update_document_tags",
+            {"doc_id": ID, "add": ["project:fixture"]},
+            409,
+            {
+                "code": "tag_limit_exceeded",
+                "message": "a document carries at most 64 tags",
+            },
+        ),
+        (
+            "update_document_tags",
+            {"doc_id": ID, "add": ["project:fixture"]},
+            422,
+            {"code": "unknown_tag", "message": "no tag list"},
+        ),
+    ]:
+        cases.append(
+            {
+                "method": method,
+                "options": options,
+                "status": status,
+                "body": {"detail": detail},
+                "variant": "tag-refusal",
             }
         )
     cases.append(
@@ -1270,6 +1412,28 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
             )
         ]
     )
+    pairs.extend(
+        [
+            ("create_tag", {"name": "two words", "description": ""}),
+            ("create_tag", {"name": "", "description": ""}),
+            ("create_tag", {"name": "bell\u0007", "description": ""}),
+            ("create_tag", {"name": "x" * 129, "description": ""}),
+            ("create_tag", {"name": "ok", "description": "d" * 2001}),
+            ("update_tag", {"tag": ID}),
+            ("update_tag", {"tag": ID, "name": "two words"}),
+            ("update_document_tags", {"doc_id": "../operations", "add": ["a"]}),
+            ("update_document_tags", {"doc_id": ID, "set": ["a"], "add": ["b"]}),
+            ("update_document_tags", {"doc_id": ID, "add": "project:fixture"}),
+            (
+                "ingest",
+                {
+                    "content": {"base64": "bm90ZQ=="},
+                    "filename": "note.md",
+                    "tags": "project:fixture",
+                },
+            ),
+        ]
+    )
     cases = []
     with tempfile.TemporaryDirectory(prefix="remember-ts-refusals-") as directory:
         for method, options in pairs:
@@ -1326,6 +1490,11 @@ def tool_fixtures() -> list[dict[str, Any]]:
             "time": {"mode": "history"},
         },
         "document_references": {"doc_id": ID, "time": {"mode": "at", "at": STAMP}},
+        "list_tags": {"query": "fixture"},
+        "create_tag": {"name": "cafe\u0301:menu", "description": "Fixture."},
+        "update_tag": {"tag": "project:fixture", "description": "Renamed."},
+        "delete_tag": {"tag": ID},
+        "update_document_tags": {"doc_id": ID.upper(), "add": ["a"], "remove": ["b"]},
         "resolve_entity": {"name": "fixture"},
         "claims_and_sources_context": {"query": "fixture"},
         "facts_context": {"query": "fixture"},
@@ -1413,11 +1582,61 @@ def tool_fixtures() -> list[dict[str, Any]]:
                 "variant": "two-sources",
                 "arguments": {"doc_id": ID, "chunk_id": ID},
             },
+            {
+                "name": "ingest",
+                "variant": "tags",
+                "arguments": {"text": "note", "filename": "note.md", "tags": ["a", ID]},
+            },
+            *(
+                {
+                    "name": "ingest",
+                    "variant": "invalid-tags",
+                    "arguments": {"text": "note", "filename": "note.md", "tags": tags},
+                }
+                for tags in ("a", ["a", "a"], [""], ["x" * 129], ["t"] * 65)
+            ),
+            {"name": "list_tags", "variant": "defaults", "arguments": {}},
+            {"name": "list_tags", "variant": "empty-query", "arguments": {"query": ""}},
+            *(
+                {"name": "create_tag", "variant": "invalid", "arguments": arguments}
+                for arguments in (
+                    {"name": "two words", "description": ""},
+                    {"name": "ok"},
+                    {"name": "ok", "description": "d" * 2001},
+                )
+            ),
+            {"name": "update_tag", "variant": "nothing", "arguments": {"tag": "a"}},
+            {
+                "name": "update_tag",
+                "variant": "rename",
+                "arguments": {"tag": "a", "name": "Project:B"},
+            },
+            {"name": "delete_tag", "variant": "missing", "arguments": {}},
+            *(
+                {
+                    "name": "update_document_tags",
+                    "variant": "invalid",
+                    "arguments": arguments,
+                }
+                for arguments in (
+                    {"doc_id": "nope"},
+                    {"doc_id": ID, "set": [], "add": ["a"]},
+                    {"doc_id": ID, "add": ["a", "a"]},
+                )
+            ),
+            {
+                "name": "update_document_tags",
+                "variant": "set-clears",
+                "arguments": {"doc_id": ID, "set": []},
+            },
         ]
     )
     cases.extend(
-        {"name": name, "variant": f"max-rows-{max_rows}",
-         "arguments": {**valid[name], "max_rows": max_rows}}
+        {
+            "name": name,
+            "variant": f"max-rows-{max_rows}",
+            "arguments": {**valid[name], "max_rows": max_rows},
+        }
         for name in ("query_sql", "run_saved_query")
         for max_rows in (1000, 1001)
     )

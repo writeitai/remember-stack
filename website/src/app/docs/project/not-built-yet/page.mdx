@@ -35,6 +35,11 @@ absent from the current release; nothing here has a date.
   others), fact lookups and the SQL query functions do not yet, and there is
   no `documents` filter over MCP because MCP has no claim or chunk search
   tool.
+- **Filtering by tag.** You can register tags, assign them to documents and
+  read them back, but no read filters by them yet: claim and chunk search,
+  `search_documents` and the assured operations return the same results
+  whatever tags documents carry. In SQL queries you can join on
+  `document_tags_live`.
 - **Metadata from other formats.** Word, PowerPoint, PDF and email files
   give their title, people and dates, and `.xlsx` workbooks their title,
   author and dates; HTML, EPUB and notebooks give only a title, and other

@@ -10,6 +10,7 @@ export type OutputDocumentSummary = {
     serving: boolean;
     source_kind: string;
     source_uri: string | null;
+    tags: Array<string>;
     title: string | null;
 };
 

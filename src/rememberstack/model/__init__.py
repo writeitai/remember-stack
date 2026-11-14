@@ -139,6 +139,9 @@ from rememberstack.model.documents import StoredObjectRefusedError
 from rememberstack.model.documents import StructureSource
 from rememberstack.model.documents import SyncCycleSummary
 from rememberstack.model.documents import SyntheticRootRecord
+from rememberstack.model.documents import TagConflictError
+from rememberstack.model.documents import TagLimitError
+from rememberstack.model.documents import UnknownTagError
 from rememberstack.model.documents import UploadRecord
 from rememberstack.model.documents import VersionKeyConflictError
 from rememberstack.model.envelope import AggregateBucket
@@ -769,6 +772,9 @@ __all__ = (
     "UploadRecord",
     "StoredObjectRefusedError",
     "VersionKeyConflictError",
+    "TagConflictError",
+    "TagLimitError",
+    "UnknownTagError",
     "Validity",
     "VersionPipelineReadiness",
     "WorkLedgerError",

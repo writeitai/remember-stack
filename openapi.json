@@ -1870,6 +1870,14 @@
             "title": "Status",
             "type": "string"
           },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
           "thread_ref": {
             "anyOf": [
               {
@@ -1947,6 +1955,14 @@
             ],
             "title": "Source Uri"
           },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
           "title": {
             "anyOf": [
               {
@@ -1967,6 +1983,71 @@
           "serving"
         ],
         "title": "DocumentSummary",
+        "type": "object"
+      },
+      "DocumentTags": {
+        "additionalProperties": false,
+        "description": "A document's tag names after a tag write.",
+        "properties": {
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "doc_id",
+          "tags"
+        ],
+        "title": "DocumentTags",
+        "type": "object"
+      },
+      "DocumentTagsUpdate": {
+        "additionalProperties": false,
+        "description": "Change one document's tags atomically: ``add``/``remove``, or ``set``.\n\n``set`` replaces the whole set and excludes ``add`` and ``remove``; an\nempty ``set`` clears the document's tags. Removing a tag the document\ndoes not have is not an error.",
+        "properties": {
+          "add": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Add",
+            "type": "array"
+          },
+          "remove": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Remove",
+            "type": "array"
+          },
+          "set": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set"
+          }
+        },
+        "title": "DocumentTagsUpdate",
         "type": "object"
       },
       "DocumentVersionSummary": {
@@ -5368,6 +5449,114 @@
         "title": "SqlQueryRequest",
         "type": "object"
       },
+      "Tag": {
+        "additionalProperties": false,
+        "description": "One registered tag: a name callers and agents use, and what it means.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tag_id": {
+            "format": "uuid",
+            "title": "Tag Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag_id",
+          "name",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Tag",
+        "type": "object"
+      },
+      "TagCreate": {
+        "additionalProperties": false,
+        "description": "Register one tag. A name already registered, in any case, is refused.",
+        "properties": {
+          "description": {
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "title": "TagCreate",
+        "type": "object"
+      },
+      "TagList": {
+        "additionalProperties": false,
+        "description": "The deployment's registered tags, by name (``list_tags``).",
+        "properties": {
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/Tag"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "title": "TagList",
+        "type": "object"
+      },
+      "TagUpdate": {
+        "additionalProperties": false,
+        "description": "Rename or re-describe one tag; its assignments are unaffected.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "TagUpdate",
+        "type": "object"
+      },
       "TemporalMatch": {
         "description": "How a chosen window matches this query, independently of fact confidence.",
         "enum": [
@@ -6345,6 +6534,61 @@
         "summary": "Section History"
       }
     },
+    "/documents/{doc_id}/tags": {
+      "post": {
+        "description": "Add and remove a document's tags, or replace them with ``set``.\n\nOne atomic write. ``set`` excludes ``add`` and ``remove``; an empty\n``set`` clears the tags. Removing a tag the document does not have is\nnot an error. Any unregistered tag refuses the whole request with 422\n``unknown_tag`` naming every one. Tags never cause processing.",
+        "operationId": "update_document_tags_documents__doc_id__tags_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentTagsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentTags"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "409": {
+            "description": "tag_limit_exceeded"
+          },
+          "422": {
+            "description": "unknown_tag"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Document Tags"
+      }
+    },
     "/documents/{doc_id}/versions/{version_id}/effective-periods": {
       "put": {
         "description": "Replace the periods during which one version's text is in force.\n\nThe body is the version's complete set: declarations not listed are\nretracted and new ones declared, atomically. A period without\n``effective_until`` lasts until the next declared start in the\ndocument. An empty set leaves the version with no in-force period and\nthe document keeps its declared effective time (use ``DELETE\n/documents/{doc_id}/effective-periods`` to leave it). A start already\ndeclared for another version of the document is refused with 409, and\na ``living`` document with 422. Periods never trigger reprocessing.",
@@ -6908,6 +7152,28 @@
               ],
               "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
               "title": "Effective Until"
+            }
+          },
+          {
+            "description": "Registered tags (name or tag_id; repeat the parameter) added to the document's tags. Ingest never removes a tag, and tags never decide whether a version is created. Any unregistered tag refuses the ingest with 422 unknown_tag before anything is stored.",
+            "in": "query",
+            "name": "tags",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Registered tags (name or tag_id; repeat the parameter) added to the document's tags. Ingest never removes a tag, and tags never decide whether a version is created. Any unregistered tag refuses the ingest with 422 unknown_tag before anything is stored.",
+              "title": "Tags"
             }
           },
           {
@@ -8192,6 +8458,234 @@
           }
         ],
         "summary": "Post Search Claims"
+      }
+    },
+    "/tags": {
+      "get": {
+        "description": "Every registered tag with its id, name and description, by name.\n\n``query`` keeps the tags whose name or description contains it,\nignoring case; ``name`` keeps the one tag with exactly that name, so a\nclient resolves a name to its ``tag_id`` the way the engine does. No\ndocument counts are returned.",
+        "operationId": "list_tags_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          },
+          {
+            "description": "Keep only the tag with exactly this name, matched as the registry matches names (NFC, ignoring letter case).",
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keep only the tag with exactly this name, matched as the registry matches names (NFC, ignoring letter case).",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Tags"
+      },
+      "post": {
+        "description": "Register a tag before it is used.\n\nThe name keeps the spelling it is declared with and is unique ignoring\ncase: declaring ``Project:A`` when ``project:a`` exists is 409\n``conflict``.",
+        "operationId": "create_tag_tags_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "conflict | tag_limit_exceeded"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Tag"
+      }
+    },
+    "/tags/{tag_id}": {
+      "delete": {
+        "description": "Remove a tag and every assignment of it, in one write.",
+        "operationId": "delete_tag_tags__tag_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tag Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "unknown_tag"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Tag"
+      },
+      "patch": {
+        "description": "Rename or re-describe a tag; the documents carrying it keep it.\n\nThe old name stops resolving at once: there are no aliases, so a\ncaller still using it gets ``unknown_tag``.",
+        "operationId": "update_tag_tags__tag_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tag Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tag"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "unknown_tag"
+          },
+          "409": {
+            "description": "conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Tag"
       }
     },
     "/transcript/relation/{relation_id}": {

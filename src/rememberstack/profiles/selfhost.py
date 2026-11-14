@@ -73,6 +73,7 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
+from rememberstack.spine.tags import TagCatalog
 from rememberstack.spine.work_ledger import WorkLedgerSettings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -1159,7 +1160,7 @@ class SelfHostProfile:
             registry=AssuredOperationRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
         )
-        # Install the eighteen examples.* saved-query identities (idempotent).
+        # Install the nineteen examples.* saved-query identities (idempotent).
         # Not an Alembic migration: deployment seed DML lives in setup/bootstrap.
         from rememberstack.spine.query_space.canonical import (  # noqa: PLC0415
             surface_manifest_hash,
@@ -1438,6 +1439,7 @@ class SelfHostProfile:
                 publisher=self.corpus_publisher(),
             ),
             effective_time=EffectiveTimeCatalog(engine=self._engine),
+            tags=TagCatalog(engine=self._engine),
             graph=graph_queries,
             task_queue=self._task_queue,
             build_info=_BuildInfo(

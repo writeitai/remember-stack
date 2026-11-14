@@ -417,8 +417,12 @@ def test_schema_change_is_only_nullable_marker_and_cleanup_paths(
                 ).tuples()
             )
 
-    after = shape()
     config = _config()
+    # D156 tags sit above the corpus revisions; compare those revisions alone.
+    with engine.begin() as connection:
+        connection.execute(text("TRUNCATE TABLE tags CASCADE"))
+    command.downgrade(config=config, revision="p9_52_0073")
+    after = shape()
     command.downgrade(config=config, revision="p9_48_0069")
     try:
         before = shape()
@@ -435,6 +439,7 @@ def test_schema_change_is_only_nullable_marker_and_cleanup_paths(
             ("public", "documents", "corpus_paths", "ARRAY", "_text", "YES", None),
         }
         assert before - after == set()
+        command.upgrade(config=config, revision="p9_52_0073")
+        assert shape() == after
     finally:
         command.upgrade(config=config, revision="head")
-    assert shape() == after

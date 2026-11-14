@@ -183,7 +183,7 @@ def test_facade_query_sql_and_discovery(migrated: str) -> None:
     assert space.core_operation_descriptors
     assert space.function_signatures
     assert space.sql_grammar
-    assert len(space.examples) == 18
+    assert len(space.examples) == 19
     assert len(space.worked_examples) == 8
     graph_example = next(
         item
@@ -221,7 +221,7 @@ def test_facade_rejects_mismatched_sql_deployment(migrated: str) -> None:
 def test_run_saved_query_stamps_and_uses_sql_executor(migrated: str) -> None:
     facade = _facade(migrated)
     listed = facade.list_saved_queries(namespace="examples")
-    assert len(listed) == 18
+    assert len(listed) == 19
     sample = next(row for row in listed if row.name == "relation_current")
     outcome = facade.run_saved_query(
         namespace="examples",
@@ -954,7 +954,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "3572a77e5db05f53cad6f7bb6845ab65dddecebc266b473aa776509f80a9b9e1"
+        == "f238bb518de2aed12db7278d274878006382aa7186baae40c3cdb7ec6b7c48c6"
     )
 
 

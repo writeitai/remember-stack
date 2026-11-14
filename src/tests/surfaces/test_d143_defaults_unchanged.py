@@ -8,7 +8,8 @@ tool lists (names and input schemas), the readiness expected stages with
 their component versions, and the query-surface manifest hash. Originally
 taken on the pre-D143 base (fbcd489bd); refreshed for the p9_42/p9_45/D153
 view optimization and again for D154's pagination rename (browse ``limit`` /
-``next_cursor``, MCP tool schemas). The current branch, composed the way the
+``next_cursor``, MCP tool schemas), and for D156 document tags (five tag
+tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views). The current branch, composed the way the
 self-host profile composes it (layers port included, reporting no
 configuration), must reproduce every byte.
 """
@@ -46,9 +47,9 @@ def test_fixture_pins_the_full_default_catalogue() -> None:
         "facts_context",
         "combined_context",
     ]
-    assert len(baseline["deployment"]["tools"]) == 18
-    assert len(baseline["mcp_in_process_tools"]) == 18
-    assert len(baseline["mcp_engine_tools"]["stdio"]) == 18
+    assert len(baseline["deployment"]["tools"]) == 23
+    assert len(baseline["mcp_in_process_tools"]) == 23
+    assert len(baseline["mcp_engine_tools"]["stdio"]) == 23
     assert len(baseline["readiness_expected_components"]) == 12
     assert len(baseline["query_surface_manifest"]["surface_manifest_hash"]) == 64
 

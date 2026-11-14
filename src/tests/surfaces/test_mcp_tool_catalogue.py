@@ -76,6 +76,11 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "search_documents",
         "section_history",
         "document_references",
+        "list_tags",
+        "create_tag",
+        "update_tag",
+        "delete_tag",
+        "update_document_tags",
         *OPERATION_TOOL_NAMES,
         ADJACENT_CHUNKS_TOOL_NAME,
         *OPEN_QUERY_TOOL_NAMES,
@@ -140,12 +145,12 @@ def test_rendering_never_shares_the_catalogue_schema() -> None:
 
 
 def test_annotations_follow_permission() -> None:
-    """Read tools are read-only; only delete_document is destructive."""
+    """Read tools are read-only; only delete_document and delete_tag are destructive."""
     for name, entry in _render().items():
         definition = tool(name)
         assert entry["annotations"] == {
             "readOnlyHint": definition.permission == "memory:read",
-            "destructiveHint": name == "delete_document",
+            "destructiveHint": name in {"delete_document", "delete_tag"},
         }
 
 
@@ -317,6 +322,7 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         document_search=MagicMock(),
         section_history=MagicMock(),
         document_references=MagicMock(),
+        tags=MagicMock(),
     )
     assert everything == {
         definition.name: definition.tool_version for definition in memory_tools()

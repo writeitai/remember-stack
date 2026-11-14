@@ -144,6 +144,12 @@ _SURFACE: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/readiness"),
         ("POST", "/search/chunks"),
         ("POST", "/search/claims"),
+        # D156: the tag registry and document tag writes.
+        ("GET", "/tags"),
+        ("POST", "/tags"),
+        ("PATCH", "/tags/{tag_id}"),
+        ("DELETE", "/tags/{tag_id}"),
+        ("POST", "/documents/{doc_id}/tags"),
     )
 )
 
@@ -174,6 +180,7 @@ _CAPABILITY_PORTS = frozenset(
         "document_references",
         "deletion",
         "effective_time",
+        "tags",
         "graph",
         "build_info",
         "processing_layers",

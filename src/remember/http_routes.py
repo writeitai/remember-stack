@@ -61,6 +61,8 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", r"^/deployment$"),
         # D143: which processing layers the deployment serves.
         ("GET", r"^/processing-layers$"),
+        # D156: the tag registry. Every tag write requires WRITE.
+        ("GET", r"^/tags$"),
     )
 )
 

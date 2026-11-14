@@ -10,19 +10,24 @@
         "adjacent_chunks": 1,
         "claims_and_sources_context": 4,
         "combined_context": 5,
+        "create_tag": 1,
         "delete_document": 1,
+        "delete_tag": 1,
         "describe_query_space": 1,
         "describe_saved_query": 1,
         "document_references": 1,
         "explain_sql": 1,
-        "ingest": 2,
+        "ingest": 3,
         "list_saved_queries": 1,
+        "list_tags": 1,
         "pipeline_readiness": 1,
         "query_sql": 1,
         "run_saved_query": 1,
         "search_documents": 3,
         "search_query_space": 1,
-        "section_history": 1
+        "section_history": 1,
+        "update_document_tags": 1,
+        "update_tag": 1
       }
     },
     "mcp_engine_tools": {
@@ -216,6 +221,21 @@
         },
         {
           "name": "document_references"
+        },
+        {
+          "name": "list_tags"
+        },
+        {
+          "name": "create_tag"
+        },
+        {
+          "name": "update_tag"
+        },
+        {
+          "name": "delete_tag"
+        },
+        {
+          "name": "update_document_tags"
         },
         {
           "name": "claims_and_sources_context"
@@ -432,6 +452,9 @@
         },
         {
           "name": "document_references"
+        },
+        {
+          "name": "list_tags"
         },
         {
           "name": "claims_and_sources_context"
@@ -656,6 +679,21 @@
           "name": "document_references"
         },
         {
+          "name": "list_tags"
+        },
+        {
+          "name": "create_tag"
+        },
+        {
+          "name": "update_tag"
+        },
+        {
+          "name": "delete_tag"
+        },
+        {
+          "name": "update_document_tags"
+        },
+        {
           "name": "claims_and_sources_context"
         },
         {
@@ -877,6 +915,21 @@
       },
       {
         "name": "document_references"
+      },
+      {
+        "name": "list_tags"
+      },
+      {
+        "name": "create_tag"
+      },
+      {
+        "name": "update_tag"
+      },
+      {
+        "name": "delete_tag"
+      },
+      {
+        "name": "update_document_tags"
       },
       {
         "name": "claims_and_sources_context"
@@ -925,19 +978,24 @@
         "adjacent_chunks": 1,
         "claims_and_sources_context": 4,
         "combined_context": 5,
+        "create_tag": 1,
         "delete_document": 1,
+        "delete_tag": 1,
         "describe_query_space": 1,
         "describe_saved_query": 1,
         "document_references": 1,
         "explain_sql": 1,
-        "ingest": 2,
+        "ingest": 3,
         "list_saved_queries": 1,
+        "list_tags": 1,
         "pipeline_readiness": 1,
         "query_sql": 1,
         "run_saved_query": 1,
         "search_documents": 3,
         "search_query_space": 1,
-        "section_history": 1
+        "section_history": 1,
+        "update_document_tags": 1,
+        "update_tag": 1
       }
     },
     "mcp_engine_tools": {
@@ -1131,6 +1189,21 @@
         },
         {
           "name": "document_references"
+        },
+        {
+          "name": "list_tags"
+        },
+        {
+          "name": "create_tag"
+        },
+        {
+          "name": "update_tag"
+        },
+        {
+          "name": "delete_tag"
+        },
+        {
+          "name": "update_document_tags"
         },
         {
           "name": "claims_and_sources_context"
@@ -1347,6 +1420,9 @@
         },
         {
           "name": "document_references"
+        },
+        {
+          "name": "list_tags"
         },
         {
           "name": "claims_and_sources_context"
@@ -1571,6 +1647,21 @@
           "name": "document_references"
         },
         {
+          "name": "list_tags"
+        },
+        {
+          "name": "create_tag"
+        },
+        {
+          "name": "update_tag"
+        },
+        {
+          "name": "delete_tag"
+        },
+        {
+          "name": "update_document_tags"
+        },
+        {
           "name": "claims_and_sources_context"
         },
         {
@@ -1792,6 +1883,21 @@
       },
       {
         "name": "document_references"
+      },
+      {
+        "name": "list_tags"
+      },
+      {
+        "name": "create_tag"
+      },
+      {
+        "name": "update_tag"
+      },
+      {
+        "name": "delete_tag"
+      },
+      {
+        "name": "update_document_tags"
       },
       {
         "name": "claims_and_sources_context"

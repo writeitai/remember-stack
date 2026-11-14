@@ -56,6 +56,9 @@ from rememberstack.spine.period_adjudication import request_window_review_on
 from rememberstack.spine.references import activate_extracted_on
 from rememberstack.spine.references import bind_pending_references_on
 from rememberstack.spine.references import enqueue_pending_supplied_on
+from rememberstack.spine.tags import add_document_tags_on
+from rememberstack.spine.tags import check_document_tags_on
+from rememberstack.spine.tags import resolve_tags_on
 from rememberstack.spine.work_ledger import enqueue_on
 
 
@@ -312,6 +315,21 @@ class DocumentCatalog:
                         doc_id=doc_id,
                         reason="ingest_period_declared",
                     )
+            if record.tags:
+                # D156: tags are added to the lineage and never decide whether
+                # a version is created; they enter no processing input.
+                add_document_tags_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    doc_id=doc_id,
+                    tag_ids=tuple(
+                        resolve_tags_on(
+                            connection=connection,
+                            deployment_id=record.deployment_id,
+                            tags=record.tags,
+                        ).values()
+                    ),
+                )
             convert = enqueue_on(
                 connection=connection,
                 work=EnqueueWork(
@@ -349,6 +367,28 @@ class DocumentCatalog:
                     record.version_key
                     if created or latest is None
                     else latest["version_key"]
+                ),
+            )
+
+    def check_tags(
+        self, *, deployment_id: UUID, doc_id: UUID, tags: Sequence[str]
+    ) -> None:
+        """Refuse an ingest's tags before it stores anything (D156).
+
+        Raises ``UnknownTagError`` naming every unregistered tag, and
+        ``TagLimitError`` when the lineage would carry more tags than the
+        limit. The upload's own transaction checks both again, so a change in
+        between is still refused there.
+        """
+        with self._engine.connect() as connection:
+            check_document_tags_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                tag_ids=tuple(
+                    resolve_tags_on(
+                        connection=connection, deployment_id=deployment_id, tags=tags
+                    ).values()
                 ),
             )
 
