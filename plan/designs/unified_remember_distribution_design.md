@@ -81,7 +81,7 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 │  GHCR: `ghcr.io/writeitai/remember-stack:<version>` (Docker Engine)           │
 │                                                                              │
 │  - The complete containerized engine: FastAPI daemon + E0–E3 workers         │
-│  - Orchestrated via official `docker-compose.yaml` (Postgres 19, SeaweedFS)   │
+│  - Orchestrated via official `compose.yaml` (PostgreSQL 18, SeaweedFS)         │
 │  - Consumed by: Self-hosters, CI test harnesses, and Cloud deployment fleet  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```

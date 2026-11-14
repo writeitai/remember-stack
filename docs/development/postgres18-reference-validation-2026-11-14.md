@@ -58,6 +58,24 @@ image at `localhost:55433`, with database/user `rememberstack` and the
 requested SQLAlchemy URL. Real MinIO was started by
 `.github/ci/start-minio.sh` at `127.0.0.1:59000`.
 
+The final complete run on runtime commit
+`236557742069a8cc222add5c62cc1a101d834af1` passed: **5177 passed, 20 skipped,
+2 xfailed, zero failures/errors**, in **2273.51 s (37 min 53 s)**. The entire
+5199-case collection completed in one sequential pytest process against the
+shared PG18 database; no other database suite ran concurrently. The command was:
+
+```sh
+REMEMBERSTACK_DATABASE_URL='postgresql+psycopg://rememberstack:testpass@localhost:55433/rememberstack' \
+REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL='http://127.0.0.1:59000' \
+uv run pytest src/tests -q --tb=short -ra --junitxml=/tmp/rs-pg18-full.xml
+```
+
+The seven warnings are one Starlette/httpx deprecation and six pytest
+`record_property`/xunit2-format warnings. Skip and expected-failure coverage
+is explained below. The final runtime commit's 18 CI checks also passed,
+including unit, all three integration lanes, Compose, arm64 image, contracts,
+quality, four SDK platforms and both website builds; deployment was skipped.
+
 Completed checks:
 
 - PostgreSQL image builds on native arm64 and emulated amd64: upstream
@@ -67,6 +85,8 @@ Completed checks:
 - Migration suite: **19 passed**, including fresh head, complete
   downgrade/re-upgrade, mutation/no-op and graph metadata lifecycle checks.
   The existing catalog constraint expectations passed unchanged.
+- Real MinIO object operations, publication, lock-loss and storage-capture
+  suites passed in the complete run, using the helper's real object store.
 - Ruff lint and formatting (`src/`, `benchmarks/`); Pyright with Python 3.13
   (**0 errors**); import contracts (**5 kept, 0 broken**); test inventory
   (**180 unit + 97 integration = 277 files**); release contract.
@@ -78,7 +98,8 @@ Completed checks:
   including the four tests skipped on this macOS host. Test files were
   copied into a disposable container; no converter implementation changed.
 - Local Compose: healthy startup on PG18, loopback API at `18018`, exact
-  stamped source revision, first SQL query, all three object buckets'
+  stamped final runtime revision `236557742069a8cc222add5c62cc1a101d834af1`,
+  first SQL query, all three object buckets'
   round trips and conditional creation, zero-cost whitespace ingestion
   (eight completed stages and no cost rows), projection/readiness, and an
   empty prior-schema upgrade from `p9_31_0052` to `p9_53_0074` proving setup
@@ -100,7 +121,8 @@ The next complete 5199-case pass finished in 2290.71 s: **5175 passed,
 profile-lock timeout cases described above. The fixed complete profile
 refresher module now passes **14/14**, including shared and exclusive lock
 contention and the unrelated timeout negative proof. The final complete run
-is repeated on that corrected runtime. The opt-in actual-LOGIN native capture
+reported above includes this corrected module and has no failures.
+The opt-in actual-LOGIN native capture
 suites passed in separate empty scratch databases on the same PG18 container:
 **9 guard tests** and **5 original-view tests** (5.52 s and 8.33 s). Both scratch
 databases were removed after their tests.
