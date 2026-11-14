@@ -29,6 +29,7 @@ from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.core.corpus_export import corpus_suffix
 from rememberstack.core.corpus_export import CorpusDocument
 from rememberstack.core.corpus_export import CorpusPolicy
+from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
 from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.core.corpus_export import json_bytes
 from rememberstack.core.storage_capture import capture_request_id
@@ -181,7 +182,10 @@ class LiveTree:
 
 @pytest.fixture
 def live_tree(
-    native_roles: NativeRoles, minio_settings: MinIOSettings, tmp_path: Path
+    native_roles: NativeRoles,
+    minio_settings: MinIOSettings,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> Iterator[LiveTree]:
     """Publish four real document folders sharing immutable originals/artifacts."""
     roles = native_roles
@@ -200,6 +204,20 @@ def live_tree(
             "/media/" + entry["name"] if "name" in entry else "/source_map.json"
         )
         artifacts.objects[entry["uri"]] = artifacts.objects.pop(old)
+    for number in range(getattr(request, "param", 0)):
+        name = f"pages/page-{number:04d}.png"
+        content = f"page {number}".encode()
+        uri = base + "/media/" + name
+        inventory["derived_assets"].append(
+            {
+                "name": name,
+                "kind": "page_image",
+                "media_type": "image/png",
+                "uri": uri,
+                "sha256": digest(content),
+            }
+        )
+        artifacts.objects[uri] = content
     artifacts.objects[source.conversion_uri] = json_bytes(inventory)
     source = replace(
         source, manifest_hash=digest(artifacts.objects[source.conversion_uri])
@@ -453,6 +471,63 @@ def test_live_tree_classes_and_separate_original_quantities(
             native_class=native_class,
             native_id=f"{published.doc_id}:{published.corpus_published_revision}:{name}",
         )
+
+
+@pytest.mark.parametrize(
+    "live_tree", [DEFAULT_CORPUS_POLICY.member_limit], indirect=True
+)
+def test_published_document_subindexes_are_navigation(live_tree: LiveTree) -> None:
+    state = live_tree
+    document = state.documents[0]
+    catalog, request, provider = state.capture()
+    result = catalog.capture_once(request=request)
+    members = [
+        TypeAdapter(StorageMember).validate_python(member)
+        for body in result.iter_page_bytes()
+        for member in json.loads(body)["members"]
+    ]
+    references = {
+        member.resource_identity: member
+        for member in members
+        if member.kind == "reference" and member.store_binding_id == "corpus"
+    }
+    observations = {
+        member.resource_evidence_digest: member.purpose
+        for member in members
+        if member.kind == "resource_observation"
+    }
+    paths = {
+        name: path
+        for (role, name), path in provider.keys.items()
+        if role == "corpus" and name.startswith(document.path + "/")
+    }
+    assert len(paths) > DEFAULT_CORPUS_POLICY.member_limit
+    indexes = {
+        name.removeprefix(document.path + "/"): path
+        for name, path in paths.items()
+        if name.endswith("/_index.md")
+    }
+    assert "_index.md" in indexes and len(indexes) > 1
+    assert any(name.startswith("~/") for name in indexes)
+    for name, path in indexes.items():
+        reference = references[path]
+        assert reference.opaque_id == catalog._native_opaque(
+            native_class="corpus.navigation",
+            native_id=f"{document.doc_id}:{document.corpus_published_revision}:{name}",
+        )
+        assert reference.purpose == "projection_origin"
+        assert reference.component == "p3_origin"
+    for page in provider.pages:
+        for item in page.items:
+            if item.path_id in paths.values():
+                assert (
+                    observations[
+                        _digest(
+                            domain="rememberstack.storage_provider_item.v1", record=item
+                        )
+                    ]
+                    == "projection_origin"
+                )
 
 
 @pytest.mark.parametrize(

@@ -42,6 +42,7 @@ from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.core.corpus_export import original_name
 from rememberstack.core.corpus_export import PIPELINE_ASSET_KINDS
 from rememberstack.core.corpus_export import READER_ASSET_KINDS
+from rememberstack.core.corpus_export import render_document_indexes
 from rememberstack.core.storage_capture import capture_request_id
 from rememberstack.core.storage_capture import check_capture_encoding
 from rememberstack.core.storage_capture import iter_capture_pages
@@ -569,7 +570,6 @@ class StorageCaptureCatalog:
             "document.md": "documents.corpus_derivative",
             "pageindex.json": "documents.corpus_derivative",
             "document.json": "documents.corpus_derivative",
-            "_index.md": "corpus.navigation",
         }
         if payload.get("source_map") is not None:
             files["source_map.json"] = "documents.corpus_derivative"
@@ -585,6 +585,10 @@ class StorageCaptureCatalog:
             if key in files:
                 raise ManagedStorageCaptureUnavailable("capture_corpus_asset_duplicate")
             files[key] = "documents.corpus_derivative"
+        indexes = render_document_indexes(
+            (name, "", "") for name in files if name != "document.json"
+        )
+        files.update({name: "corpus.navigation" for name in indexes})
         for name, native_class in files.items():
             self._reference(
                 spool=spool,
