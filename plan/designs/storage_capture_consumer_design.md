@@ -214,6 +214,21 @@ excluded operator resources or suppress their cost. A mixed physical root
 without an accepted exact mapping yields no chargeable component result.
 The captured allocation/purpose remains evidence; it is not zero.
 
+Under D155, corpus capture reads `documents.corpus_paths` and the served
+reading's publication inputs in the original native view. A recorded folder is
+only a cleanup target until its nullable marker matches the current export
+revision and its recorded set is exactly the desired folder. Expand known
+original/derivative files through the hash-bound immutable E0 inventory; never
+use mutable corpus metadata as publication authority. Separate native classes
+identify corpus original copies, derivatives and navigation (`projection_origin`,
+`p3_origin`), while canonical raw originals remain `canonical_raw` in
+`canonical_object`. Shared type/topic/radix `_index.md` and root `llms.txt` are
+navigation. Other objects beneath D155 document folders, including stale,
+updating, deleted/forgotten and unrecorded folders, are excluded `staging`.
+Unknown keys outside that writer grammar refuse completion. The marker retains
+D155's once-published meaning and accepted late-request repair race, rather
+than asserting a whole-tree snapshot. [Classification rationale](../analysis/live_corpus_storage_capture_20261114.md).
+
 Serving a durable P3 origin in place does not create another physical copy.
 An additional staging/served tree is a distinct operator replica. Distinct
 raw/artifact and P3 objects stay distinct resources even when their payloads

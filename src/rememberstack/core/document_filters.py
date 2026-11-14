@@ -188,6 +188,25 @@ def live_matching_versions(
     The set form of :func:`live_version_matches` (same parameters for the
     same ``prefix``), for statements that start from the matching versions.
     """
+    return _live_matching(filters=filters, prefix=prefix, column="dm.version_id")
+
+
+def live_matching_lineages(
+    *, filters: DocumentSearchFilters, prefix: str
+) -> tuple[str, dict[str, Any]]:
+    """The lineages with a live matching version, as a ``doc_id`` query.
+
+    The lineage form of :func:`live_matching_versions` (same parameters for
+    the same ``prefix``). Claims belong to one lineage (``claims.doc_id``),
+    so a selective filter's eligible claims and facts are enumerated from it
+    (D156 §4.6); each candidate is then confirmed by the full predicate.
+    """
+    return _live_matching(filters=filters, prefix=prefix, column="DISTINCT dm.doc_id")
+
+
+def _live_matching(
+    *, filters: DocumentSearchFilters, prefix: str, column: str
+) -> tuple[str, dict[str, Any]]:
     predicates, parameters = metadata_predicates(
         filters=filters,
         metadata="dm",
@@ -197,7 +216,7 @@ def live_matching_versions(
     )
     where = "".join(f" AND {predicate}" for predicate in predicates)
     return (
-        "SELECT dm.version_id FROM document_metadata dm"
+        f"SELECT {column} FROM document_metadata dm"
         " JOIN document_versions dv"
         "   ON dv.deployment_id = dm.deployment_id AND dv.version_id = dm.version_id"
         " JOIN documents dd"
@@ -303,23 +322,45 @@ def fact_supported_matching(
 
     At least one live supporting claim of fact ``(fact_kind, fact_id)`` has an
     occurrence that both lies in a matching version and passes the D140 time
-    scope's evidence gate (the scope's parameters must be bound). This is
-    the fact grain's eligibility under a ``documents`` filter, shared by
-    nomination, confirmation and the marking of contradiction co-members.
+    scope's evidence gate (the scope's parameters must be bound). This is the
+    fact grain's eligibility under a ``documents`` filter, shared by P1
+    nomination, ``facts_context`` confirmation and the marking of
+    contradiction co-members.
+
+    The live supporting claim is read per fact from the base evidence table:
+    through ``fact_claim_evidence_live`` the planner rebuilt every live claim
+    for each fact (3.7 s for 20 keyed facts at 2,000 facts). A claim is live as
+    in that view: current testimony whose origin is visible, or, in a
+    periodised lineage, carried by a live occurrence (which the occurrence
+    test requires). ``OFFSET 0`` keeps each probe from being flattened into a
+    join.
     """
     occurrence_sql, parameters = matching_occurrence_exists(
-        filters=filters,
-        claim="filter_support.claim_id",
-        prefix=prefix,
-        in_scope="evidence",
+        filters=filters, claim="support.claim_id", prefix=prefix, in_scope="evidence"
     )
     return (
-        "EXISTS (SELECT 1 FROM memory_v1.fact_claim_evidence_live filter_support"
-        " WHERE filter_support.deployment_id = :deployment_id"
-        f" AND filter_support.fact_kind = {fact_kind}"
-        f" AND filter_support.fact_id = {fact_id}"
-        " AND filter_support.stance = 'supports'"
-        f" AND {occurrence_sql})"
+        "("
+        + " OR ".join(
+            f"({fact_kind} = '{kind}' AND EXISTS (SELECT 1 FROM {table} support"
+            " JOIN claims supporting"
+            "   ON supporting.deployment_id = support.deployment_id"
+            "  AND supporting.claim_id = support.claim_id"
+            "  AND supporting.doc_id = support.doc_id"
+            " WHERE support.deployment_id = :deployment_id"
+            f" AND support.{column} = {fact_id}"
+            " AND support.stance = 'supports'"
+            " AND supporting.is_current_testimony"
+            " AND (EXISTS (SELECT 1 FROM memory_v1.claims_live live_claim"
+            "  WHERE live_claim.deployment_id = supporting.deployment_id"
+            "  AND live_claim.claim_id = supporting.claim_id)"
+            f" OR {lineage_periodised(doc='supporting.doc_id')})"
+            f" AND {occurrence_sql} OFFSET 0))"
+            for kind, table, column in (
+                ("relation", "relation_evidence", "relation_id"),
+                ("observation", "observation_evidence", "observation_id"),
+            )
+        )
+        + ")"
     ), parameters
 
 

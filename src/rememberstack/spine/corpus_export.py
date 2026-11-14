@@ -70,22 +70,22 @@ SELECT d.deployment_id, d.doc_id, d.source_kind, d.source_ref, d.source_uri,
        g.structure_generation_id, g.pageindex_uri,
        c.raw_uri, c.mime, m.family, m.title, m.file_name,
        s.summary AS root_summary, s.placement_path
-FROM documents d
-JOIN document_versions v
+FROM public.documents d
+JOIN public.document_versions v
   ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id
  AND v.version_id = d.current_version_id AND v.deleted_at IS NULL
-JOIN document_representations r
+JOIN public.document_representations r
   ON r.deployment_id = v.deployment_id AND r.version_id = v.version_id
  AND r.representation_id = v.current_representation_id
-JOIN document_structure_generations g
+JOIN public.document_structure_generations g
   ON g.deployment_id = r.deployment_id AND g.representation_id = r.representation_id
  AND g.structure_generation_id = r.current_structure_generation_id
-JOIN content_objects c
+JOIN public.content_objects c
   ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
  AND c.purged_at IS NULL
-JOIN document_metadata m
+JOIN public.document_metadata m
   ON m.deployment_id = v.deployment_id AND m.version_id = v.version_id
-JOIN document_sections s
+JOIN public.document_sections s
   ON s.deployment_id = g.deployment_id AND s.representation_id = g.representation_id
  AND s.structure_generation_id = g.structure_generation_id AND s.node_path = '0'
 WHERE d.deployment_id = :deployment_id AND d.deleted_at IS NULL

@@ -9,14 +9,18 @@ assignments is proved in ``test_forget_catalog.py``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
@@ -24,6 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from remember import MemoryClient
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentTagsUpdate
 from remember.models import TagCreate
@@ -44,7 +49,11 @@ from rememberstack.spine import ForgetCatalog
 from rememberstack.spine.document_inventory import DocumentInventory
 from rememberstack.spine.document_search import DocumentSearch
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.spine.tags import add_document_tags_on
+from rememberstack.spine.tags import resolve_tags_on
 from rememberstack.spine.tags import TagCatalog
+from rememberstack.surfaces.http_api import build_api
+from rememberstack.surfaces.mcp import OperationMcpServer
 from rememberstack.workers import DocumentDeleter
 from rememberstack.workers import UploadIngestor
 from tests.database_reset import reset_database
@@ -493,3 +502,312 @@ def test_search_documents_returns_each_documents_tags(rig: _Rig) -> None:
             item.doc_id for item in page.documents if item.doc_id != tagged.doc_id
         ): (),
     }
+
+
+# -- races (review round 1) ----------------------------------------------------
+
+
+class _RacingCatalog(DocumentCatalog):
+    """A catalog that lets another writer act right after the tag pre-check."""
+
+    def __init__(self, *, engine: Engine, race: Callable[[], None]) -> None:
+        super().__init__(engine=engine)
+        self._race = race
+
+    def check_tags(self, **kwargs: object) -> None:  # type: ignore[override]
+        super().check_tags(**kwargs)  # type: ignore[arg-type]
+        self._race()
+
+
+def _racing_ingestor(rig: _Rig, race: Callable[[], None]) -> UploadIngestor:
+    return UploadIngestor(
+        catalog=_RacingCatalog(engine=rig.engine, race=race),
+        raw_store=LocalFSObjectStore(root=rig.raw_root),
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=frozenset({"text/markdown"}),
+    )
+
+
+def _raw_objects(rig: _Rig) -> set[str]:
+    if not rig.raw_root.exists():
+        return set()
+    return {str(path) for path in rig.raw_root.rglob("original*")}
+
+
+@pytest.mark.parametrize("path", ["upload", "observe"])
+def test_a_tag_deleted_after_the_precheck_records_nothing_and_retries_cleanly(
+    rig: _Rig, path: str
+) -> None:
+    """The writing transaction refuses the deleted tag; a retry registers the bytes."""
+    rig.create("project:a")
+    before = _raw_objects(rig)
+
+    def delete_tag() -> None:
+        rig.tags.delete_tag(deployment_id=_DEPLOYMENT_ID, tag="project:a")
+
+    ingestor = _racing_ingestor(rig, delete_tag)
+    upload = DocumentUpload(
+        filename="race.md", mime="text/markdown", content=b"Raced.", tags=("project:a",)
+    )
+    with pytest.raises(UnknownTagError):
+        if path == "upload":
+            ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+        else:
+            ingestor.ingest_observed(
+                deployment_id=_DEPLOYMENT_ID,
+                source_kind="drive",
+                source_ref="docs/race.md",
+                upload=upload,
+                versioning_mode="snapshot",
+                source_modified_at=None,
+                source_version_ref=None,
+                sync_cycle_id=None,
+            )
+    # The refusal records nothing. The written original is left unreferenced,
+    # like any attempt refused after storage, and the same bytes ingested
+    # again register that same object.
+    assert rig.count("SELECT count(*) FROM documents") == 0
+    assert rig.count("SELECT count(*) FROM content_objects") == 0
+    retry = upload.model_copy(update={"tags": ()})
+    if path == "upload":
+        again = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=retry)
+    else:
+        again = rig.ingestor.ingest_observed(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="drive",
+            source_ref="docs/race.md",
+            upload=retry,
+            versioning_mode="snapshot",
+            source_modified_at=None,
+            source_version_ref=None,
+            sync_cycle_id=None,
+        )
+    assert again.created
+    stored = _raw_objects(rig) - before
+    assert len(stored) == 1
+    with rig.engine.connect() as connection:
+        kept = connection.execute(text("SELECT raw_uri FROM content_objects")).one()[0]
+    assert next(iter(stored)).endswith(kept)
+
+
+def test_a_tag_limit_reached_after_the_precheck_records_no_version(rig: _Rig) -> None:
+    """A concurrent assignment fills the lineage; the version is not recorded."""
+    names = [f"t:{index:02d}" for index in range(TAGS_PER_DOCUMENT_MAX + 1)]
+    for name in names:
+        rig.create(name)
+    first = rig.observe(body="Edition one.", tags=tuple(names[:-2]))
+    before = _raw_objects(rig)
+    assert len(before) == 1
+
+    def fill() -> None:
+        rig.update(first.doc_id, add=[names[-2]])
+
+    with pytest.raises(TagLimitError):
+        _racing_ingestor(rig, fill).ingest_observed(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="drive",
+            source_ref="docs/plan.md",
+            upload=DocumentUpload(
+                filename="plan.md",
+                mime="text/markdown",
+                content=b"Edition two.",
+                tags=(names[-1],),
+            ),
+            versioning_mode="snapshot",
+            source_modified_at=None,
+            source_version_ref=None,
+            sync_cycle_id=None,
+        )
+    assert rig.count("SELECT count(*) FROM document_versions") == 1
+    assert rig.count("SELECT count(*) FROM content_objects") == 1
+    assert len(rig.document_tags(first.doc_id)) == TAGS_PER_DOCUMENT_MAX
+    again = rig.observe(body="Edition two.")
+    assert again.created
+    assert rig.count("SELECT count(*) FROM document_versions") == 2
+
+
+def test_a_tag_named_like_a_deleted_tags_id_is_never_addressed_by_that_id(
+    rig: _Rig,
+) -> None:
+    """An id-shaped reference addresses an id only; it never falls back to a name."""
+    first = rig.create("project:a")
+    impostor = rig.create(str(first))
+    doc = rig.observe(body="Kept.", tags=(str(impostor),))
+
+    rig.tags.delete_tag(deployment_id=_DEPLOYMENT_ID, tag=str(first))
+    for attempt in (
+        lambda: rig.tags.delete_tag(deployment_id=_DEPLOYMENT_ID, tag=str(first)),
+        lambda: rig.tags.update_tag(
+            deployment_id=_DEPLOYMENT_ID,
+            tag=str(first),
+            request=TagUpdate(description="hijacked"),
+        ),
+    ):
+        with pytest.raises(UnknownTagError) as missing:
+            attempt()
+        assert missing.value.status_code == 404
+    survivor = rig.tags.list_tags(deployment_id=_DEPLOYMENT_ID).tags
+    assert [(tag.tag_id, tag.description) for tag in survivor] == [
+        (impostor, str(first))
+    ]
+    assert rig.document_tags(doc.doc_id) == (str(first),)
+
+
+def test_a_tag_resolved_for_an_assignment_cannot_be_deleted_underneath_it(
+    rig: _Rig,
+) -> None:
+    """A delete waits for the assigning write and then cascades over it."""
+    tag_id = rig.create("project:a")
+    doc = rig.observe(body="Assigned.")
+    with rig.engine.connect() as assigning:
+        transaction = assigning.begin()
+        resolved = resolve_tags_on(
+            connection=assigning, deployment_id=_DEPLOYMENT_ID, tags=("project:a",)
+        )
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            deleting = pool.submit(
+                rig.tags.delete_tag, deployment_id=_DEPLOYMENT_ID, tag=str(tag_id)
+            )
+            with pytest.raises(TimeoutError):
+                deleting.result(timeout=1)  # held by the share lock
+            add_document_tags_on(
+                connection=assigning,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=doc.doc_id,
+                tag_ids=tuple(resolved.values()),
+            )
+            transaction.commit()
+            assert deleting.result(timeout=30).tag_id == tag_id
+    assert rig.count("SELECT count(*) FROM document_tags") == 0
+    assert rig.count("SELECT count(*) FROM tags") == 0
+
+
+def test_an_assignment_racing_a_committed_delete_is_unknown_tag_not_an_error(
+    rig: _Rig,
+) -> None:
+    """A delete in flight makes the assignment wait, then refuse with unknown_tag."""
+    tag_id = rig.create("project:a")
+    doc = rig.observe(body="Assigned.")
+    with rig.engine.connect() as deleting:
+        transaction = deleting.begin()
+        deleting.execute(text("DELETE FROM tags WHERE tag_id = :t"), {"t": tag_id})
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assigning = pool.submit(rig.update, doc.doc_id, add=["project:a"])
+            with pytest.raises(TimeoutError):
+                assigning.result(timeout=1)  # waits on the deleted row
+            transaction.commit()
+            with pytest.raises(UnknownTagError) as refused:
+                assigning.result(timeout=30)
+    assert refused.value.tags == ("project:a",)
+    assert rig.count("SELECT count(*) FROM document_tags") == 0
+
+
+def test_concurrent_name_addressed_mutations_do_not_deadlock(rig: _Rig) -> None:
+    """Two writers addressing one tag by name queue on one lock, never upgrade it."""
+    tag_id = rig.create("project:a")
+    with rig.engine.connect() as holder:
+        transaction = holder.begin()
+        holder.execute(
+            text("SELECT 1 FROM tags WHERE tag_id = :t FOR UPDATE"), {"t": tag_id}
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writers = [
+                pool.submit(
+                    rig.tags.update_tag,
+                    deployment_id=_DEPLOYMENT_ID,
+                    tag="PROJECT:A",
+                    request=TagUpdate(description=f"writer {index}"),
+                )
+                for index in range(2)
+            ]
+            with pytest.raises(TimeoutError):
+                writers[0].result(timeout=1)  # both wait on the held row
+            transaction.commit()
+            results = [writer.result(timeout=30) for writer in writers]
+    assert {result.tag_id for result in results} == {tag_id}
+    assert {result.description for result in results} == {"writer 0", "writer 1"}
+
+
+class _Open:
+    """Open readiness and admission for the HTTP proofs."""
+
+    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        return ()
+
+    def assert_available(self, *, deployment_id: UUID) -> None:
+        return None
+
+
+def _http(rig: _Rig) -> TestClient:
+    """The real HTTP routes over this deployment's tag registry."""
+    return TestClient(
+        build_api(
+            engine=MagicMock(),
+            deployment_id=_DEPLOYMENT_ID,
+            admission=_Open(),
+            readiness=_Open(),
+            tags=rig.tags,
+        )
+    )
+
+
+def test_sdk_resolves_names_with_the_registry_case_rule(
+    rig: _Rig, database_engine: Engine
+) -> None:
+    """A name differing only in a case mapping PostgreSQL folds resolves via HTTP."""
+    client = MemoryClient(client=_http(rig))
+    tag_id = rig.create("\u039f\u03a3")  # "ΟΣ"
+    with database_engine.connect() as connection:
+        folded = connection.execute(
+            text("SELECT lower('\u039f\u03a3') = lower('\u03bf\u03c3')")
+        ).scalar_one()
+    assert folded, "this check needs PostgreSQL to fold the final sigma"
+    renamed = client.update_tag(tag="\u03bf\u03c3", description="Sigma.")
+    assert (renamed.tag_id, renamed.description) == (tag_id, "Sigma.")
+    assert client.delete_tag(tag="\u03bf\u03c3").tag_id == tag_id
+
+
+def test_a_name_long_only_before_nfc_is_accepted_wherever_a_tag_is_named(
+    rig: _Rig,
+) -> None:
+    """The 128-character limit applies after NFC for references as for names.
+
+    65 decomposed "e\u0301" are 130 characters as sent and 65 after NFC: a
+    valid name, so the same spelling must also work as a reference over
+    HTTP, through the SDK's name lookup and through the MCP tools.
+    """
+    spelling = "e\u0301" * 65
+    assert len(spelling) == 130
+    http = _http(rig)
+    created = http.post("/tags", json={"name": spelling, "description": ""})
+    assert created.status_code == 200, created.text
+    tag_id = UUID(created.json()["tag_id"])
+    doc = rig.observe(body="Accented.")
+
+    tagged = http.post(f"/documents/{doc.doc_id}/tags", json={"add": [spelling]})
+    assert tagged.status_code == 200, tagged.text
+    assert tagged.json()["tags"] == ["\u00e9" * 65]
+
+    client = MemoryClient(client=http)
+    assert client.update_tag(tag=spelling, description="Accents.").tag_id == tag_id
+    assert client.update_document_tags(doc_id=doc.doc_id, remove=[spelling]).tags == ()
+
+    server = OperationMcpServer(
+        surface=SimpleNamespace(deployment_id=_DEPLOYMENT_ID),  # type: ignore[arg-type]
+        tags=rig.tags,
+    )
+    added = server.call_tool(
+        name="update_document_tags",
+        arguments={"doc_id": str(doc.doc_id), "add": [spelling]},
+    )
+    assert added["isError"] is False, added
+    renamed = server.call_tool(
+        name="update_tag", arguments={"tag": spelling, "description": "MCP."}
+    )
+    assert renamed["isError"] is False, renamed
+    assert client.delete_tag(tag=spelling).tag_id == tag_id
+    assert rig.count("SELECT count(*) FROM tags") == 0
+
+    too_long = "e\u0301" * 129
+    refused = http.post(f"/documents/{doc.doc_id}/tags", json={"add": [too_long]})
+    assert refused.status_code == 422

@@ -2013,8 +2013,6 @@
           "all": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 32,
@@ -2024,8 +2022,6 @@
           "any": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 32,
@@ -2035,8 +2031,6 @@
           "none": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 32,
@@ -2078,8 +2072,6 @@
           "add": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
@@ -2089,8 +2081,6 @@
           "remove": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
@@ -2101,8 +2091,6 @@
             "anyOf": [
               {
                 "items": {
-                  "maxLength": 128,
-                  "minLength": 1,
                   "type": "string"
                 },
                 "maxItems": 64,
@@ -8553,7 +8541,7 @@
     },
     "/tags": {
       "get": {
-        "description": "Every registered tag with its id, name and description, by name.\n\n``query`` keeps the tags whose name or description contains it,\nignoring case. No document counts are returned.",
+        "description": "Every registered tag with its id, name and description, by name.\n\n``query`` keeps the tags whose name or description contains it,\nignoring case; ``name`` keeps the one tag with exactly that name, so a\nclient resolves a name to its ``tag_id`` the way the engine does. No\ndocument counts are returned.",
         "operationId": "list_tags_tags_get",
         "parameters": [
           {
@@ -8572,6 +8560,26 @@
                 }
               ],
               "title": "Query"
+            }
+          },
+          {
+            "description": "Keep only the tag with exactly this name, matched as the registry matches names (NFC, ignoring letter case).",
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keep only the tag with exactly this name, matched as the registry matches names (NFC, ignoring letter case).",
+              "title": "Name"
             }
           }
         ],

@@ -54,7 +54,6 @@ from remember.mcp_tools._definitions import SOURCE_KIND_MAX_LEN
 from remember.mcp_tools._definitions import SOURCE_REF_MAX_LEN
 from remember.mcp_tools._definitions import SOURCE_VERSION_REF_MAX_LEN
 from remember.mcp_tools._definitions import TAG_LIST_MAX
-from remember.mcp_tools._definitions import TAG_REF_MAX_LEN
 from remember.mcp_tools._definitions import TITLE_MAX_LEN
 from remember.mcp_tools._definitions import VERSION_IDS_MAX
 from remember.mcp_tools._definitions import VERSION_KEY_MAX_LEN
@@ -64,10 +63,12 @@ from remember.mcp_tools._errors import map_error
 from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
 from remember.mime import infer_upload_mime
+from remember.models import check_tag_ref
 from remember.models import DocumentDeletion
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
+from remember.models import TAG_NAME_MAX_LEN
 
 logger = logging.getLogger(__name__)
 
@@ -642,25 +643,31 @@ def parse_ingest_arguments(
     )
 
 
+def _is_tag_ref(item: str) -> bool:
+    try:
+        check_tag_ref(item)
+    except ValueError:
+        return False
+    return True
+
+
 def parse_tag_list(
     arguments: Mapping[str, object], *, key: str
 ) -> tuple[str, ...] | None:
-    """An optional list of tag references (names or ids), each at most 128 chars."""
+    """An optional list of tag references (names or ids), each 1-128 chars after NFC."""
     raw = arguments.get(key)
     if raw is None:
         return None
     if (
         not isinstance(raw, list)
         or len(raw) > TAG_LIST_MAX
-        or not all(
-            isinstance(item, str) and 1 <= len(item) <= TAG_REF_MAX_LEN for item in raw
-        )
+        or not all(isinstance(item, str) and _is_tag_ref(item) for item in raw)
     ):
         raise ToolArgumentError(
             error=invalid_arguments(
                 detail=(
                     f"{key} must be a list of at most {TAG_LIST_MAX} tag names or"
-                    f" tag_ids, each 1 to {TAG_REF_MAX_LEN} characters."
+                    f" tag_ids, each 1 to {TAG_NAME_MAX_LEN} characters after NFC."
                 )
             )
         )

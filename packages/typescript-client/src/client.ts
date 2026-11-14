@@ -32,6 +32,11 @@ function tagName({value}:{value:string}):string {
   if(/[\p{White_Space}\p{Cc}]/u.test(normalized))throw new InputValidationError({detail:'a tag name has no whitespace or control characters'});
   return normalized;
 }
+/** Python's tag-reference rule (D156): at most 512 characters as sent and 1-128 after NFC. */
+function tagRef({value}:{value:string}):string {
+  if(Array.from(value).length>512||!(Array.from(value.normalize('NFC')).length>=1&&Array.from(value.normalize('NFC')).length<=128))throw new InputValidationError({detail:'a tag reference is 1 to 128 characters after NFC'});
+  return value;
+}
 /** A sequence of tag names or ids; one string is refused rather than split. */
 function tagList({value,field}:{value:readonly string[]|null|undefined;field:string}):string[] {
   if(value==null)return [];
@@ -372,15 +377,17 @@ export class MemoryClient {
   /** Add and remove, or replace with set, one document's tags atomically. */
   async updateDocumentTags({docId,add=null,remove=null,set=null,signal}:{docId:string;add?:readonly string[]|null;remove?:readonly string[]|null;set?:readonly string[]|null;signal?:AbortSignal}):Promise<Models.OutputDocumentTags> {
     const document=uuid({value:docId,field:'docId'});
-    const body=modelDump({name:'DocumentTagsUpdate',value:{add:tagList({value:add,field:'add'}),remove:tagList({value:remove,field:'remove'}),set:set==null?null:tagList({value:set,field:'set'})},excludeDefaults:true});
+    const refs=({value,field}:{value:readonly string[]|null|undefined;field:string}):string[]=>tagList({value,field}).map(tag=>tagRef({value:tag}));
+    const body=modelDump({name:'DocumentTagsUpdate',value:{add:refs({value:add,field:'add'}),remove:refs({value:remove,field:'remove'}),set:set==null?null:refs({value:set,field:'set'})},excludeDefaults:true});
     return validateModel({name:'DocumentTags',value:await this.json({method:'POST',path:`/documents/${document}/tags`,body,signal}),response:true});
   }
-  /** Resolve a tag name (NFC, ignoring case) to its id; an id is used as given. */
+  /** Resolve a tag name to its id through the engine's exact-name match; an id is used as given. */
   async #tagId({tag,signal}:{tag:string;signal?:AbortSignal}):Promise<string> {
     try{return uuid({value:tag,field:'tag'});}catch(error){if(!(error instanceof InputValidationError))throw error;}
-    const wanted=tag.normalize('NFC').toLowerCase();
-    for(const registered of (await this.listTags({query:tag,signal})).tags)if(registered.name.toLowerCase()===wanted)return registered.tag_id;
-    throw new UnknownTag({tags:[tag],statusCode:404});
+    // The engine matches the name exactly as the registry does (NFC, ignoring case); comparing case here could disagree with it.
+    const matches=validateModel<Models.OutputTagList>({name:'TagList',value:await this.json({method:'GET',path:'/tags',params:{name:tag},signal}),response:true}).tags;
+    if(matches.length!==1)throw new UnknownTag({tags:[tag],statusCode:404});
+    return matches[0]!.tag_id;
   }
   /** List deployment-side connectors; never execute their adapters in this client. */
   async connectors({signal}:RequestOptions={}):Promise<Models.OutputConnectorDescriptor[]> {return listResponse({name:'ConnectorDescriptor',value:await this.json({method:'GET',path:'/connectors',signal})});}

@@ -368,8 +368,13 @@ def test_combined_context_passes_the_filter_unchanged_to_both_children(
 
 def test_each_context_grain_returns_a_matching_item_ranked_below_the_unfiltered_cut(
     rig: _Rig,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§4.6: eligibility before ranking on claims, chunks and facts (k=1)."""
+    """§4.6: eligibility before ranking on claims, chunks and facts (k=1).
+
+    Facts are checked on both physical paths: the exact tier of a selective
+    filter and the nominate-confirm loop of a broad one.
+    """
     loud = _lineage(
         rig, label="loud", bodies=("zebra zebra zebra crossing",), tags=("project:b",)
     )
@@ -396,6 +401,10 @@ def test_each_context_grain_returns_a_matching_item_ranked_below_the_unfiltered_
     assert [fact.fact_id for fact in plain.facts] == [loud_fact]
     scoped = _run(rig, "facts_context", query="zebra", k=1, documents=only_a)
     assert [fact.fact_id for fact in scoped.facts] == [quiet_fact]
+    with monkeypatch.context() as broad:
+        broad.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)
+        looped = _run(rig, "facts_context", query="zebra", k=1, documents=only_a)
+    assert [fact.fact_id for fact in looped.facts] == [quiet_fact]
     testimony = _run(
         rig, "claims_and_sources_context", query="zebra", k=1, documents=only_a
     )
@@ -559,6 +568,9 @@ def test_a_filtered_fact_read_stopped_by_its_work_bound_reports_boundary(
         supports=((_claim(rig, lineage=quiet, body="zebra too"), quiet),),
         vector=_FAR,
     )
+    # a broad filter (no exact tier) and one candidate of work: the first
+    # ranked fact, which is not project:a
+    monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)
     monkeypatch.setattr(p1_ranked, "MIN_WORK_BUDGET", 1)
     monkeypatch.setattr(p1_ranked, "WORK_BUDGET_PER_K", 0)
     envelope = _run(

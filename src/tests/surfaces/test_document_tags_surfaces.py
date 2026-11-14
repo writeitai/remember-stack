@@ -14,6 +14,7 @@ from datetime import UTC
 import json
 from pathlib import Path
 from typing import cast
+import unicodedata
 from uuid import UUID
 from uuid import uuid4
 
@@ -91,17 +92,23 @@ class _Tags:
             raise UnknownTagError(tags=unknown, status_code=status_code)
         return found
 
-    def list_tags(self, *, deployment_id: UUID, query: str | None = None) -> TagList:
+    def list_tags(
+        self, *, deployment_id: UUID, query: str | None = None, name: str | None = None
+    ) -> TagList:
         assert deployment_id == _DEPLOYMENT_ID
+        exact = None if name is None else unicodedata.normalize("NFC", name).lower()
         return TagList(
             tags=tuple(
                 sorted(
                     (
                         tag
                         for tag in self.registry.values()
-                        if query is None
-                        or query.lower() in tag.name.lower()
-                        or query.lower() in tag.description.lower()
+                        if (
+                            query is None
+                            or query.lower() in tag.name.lower()
+                            or query.lower() in tag.description.lower()
+                        )
+                        and (exact is None or tag.name.lower() == exact)
                     ),
                     key=lambda tag: tag.name.lower(),
                 )
@@ -364,6 +371,18 @@ def test_sdk_resolves_names_for_routes_that_take_an_id(
         404,
     )
     assert client.delete_tag(tag=created.tag_id).tag_id == created.tag_id
+    assert tags.registry == {}
+
+
+def test_sdk_finds_a_tag_by_any_unicode_spelling_of_its_name(
+    client: MemoryClient, tags: _Tags
+) -> None:
+    """The registry holds NFC names; a decomposed spelling still resolves."""
+    created = client.create_tag(name="caf\u00e9:menu", description="")
+    assert created.name == "caf\u00e9:menu"
+    renamed = client.update_tag(tag="CAFE\u0301:MENU", description="Menu.")
+    assert renamed.tag_id == created.tag_id
+    assert client.delete_tag(tag="cafe\u0301:menu").tag_id == created.tag_id
     assert tags.registry == {}
 
 

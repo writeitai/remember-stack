@@ -3892,11 +3892,14 @@ class QueryEngine:
         """Rank candidates, deferring final fact authority to the confirm gate.
 
         A resolved ``documents`` filter is an eligibility input of every
-        nomination (D156 §4.6), never a filter on its ranked output.
+        nomination (D156 §4.6), never a filter on its ranked output; like a
+        predicate it takes the authority-checked ``search_facts_scored`` path,
+        which applies it before each cut and scores a selective filter's few
+        eligible facts exactly.
         """
         method = (
             None
-            if predicate is not None
+            if predicate is not None or documents is not None
             else getattr(self._search_index, "nominate_facts_scored", None)
         )
         if not callable(method):

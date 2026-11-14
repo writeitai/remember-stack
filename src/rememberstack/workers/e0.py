@@ -603,7 +603,14 @@ class UploadIngestor:
     def _check_tags(
         self, *, deployment_id: UUID, doc_id: UUID, upload: DocumentUpload
     ) -> None:
-        """D156: refuse unknown tags or a tag limit before bytes or rows are stored."""
+        """D156: refuse unknown tags or a tag limit before bytes or rows are stored.
+
+        The write transaction checks both again. If a tag is deleted or the
+        limit is reached in between, that refusal records no row and leaves
+        the written original unreferenced, like any other attempt refused
+        after storage: storage capture counts it as an unregistered original,
+        and a later ingest of the same bytes registers the same object.
+        """
         if upload.tags:
             self._catalog.check_tags(
                 deployment_id=deployment_id, doc_id=doc_id, tags=upload.tags

@@ -417,7 +417,7 @@
                       "all": {
                         "description": "The document has every one of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -428,7 +428,7 @@
                       "any": {
                         "description": "The document has at least one of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -439,7 +439,7 @@
                       "none": {
                         "description": "The document has none of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -2709,7 +2709,7 @@
                       "all": {
                         "description": "The document has every one of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -2720,7 +2720,7 @@
                       "any": {
                         "description": "The document has at least one of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -2731,7 +2731,7 @@
                       "none": {
                         "description": "The document has none of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -5050,7 +5050,7 @@
                       "all": {
                         "description": "The document has every one of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -5061,7 +5061,7 @@
                       "any": {
                         "description": "The document has at least one of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -5072,7 +5072,7 @@
                       "none": {
                         "description": "The document has none of these tags.",
                         "items": {
-                          "maxLength": 128,
+                          "maxLength": 512,
                           "minLength": 1,
                           "type": "string"
                         },
@@ -49496,5 +49496,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "77ae436f28108035f5ccfe50ecaf7f6049c5c94523e209e9777377de2bcc7f99"
+  "surface_manifest_hash": "8f41ba78d66bdd0cfa517eeaad9de2f01825f6b58634ce012424203d27f4ea97"
 }

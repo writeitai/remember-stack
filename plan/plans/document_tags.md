@@ -30,10 +30,12 @@ searched relations or observations with a `documents` filter.
 passes it unchanged to both children); `surface_manifest_hash` rolls, and the MCP
 tools rise to `tool_version` 5, 5 and 6 with descriptions telling agents to call
 `list_tags` first. The filter is an eligibility input of every existing nomination
-channel (global and entity-scoped claim and chunk nomination,
-`nominate_facts_scored` and `search_facts_scored`, the entity-profile fact channel)
-and is re-checked at confirmation, through the step 2 compiler plus one shared fact
-predicate (`document_filters.fact_supported_matching`). The `facts_context` evidence
+channel (global and entity-scoped claim and chunk nomination; facts, including the
+entity-profile channel, through `search_facts_scored`, the path a `predicate`
+already takes, with step 2's exact tier for a selective filter) and is re-checked at
+confirmation, through the step 2 compiler and its fact predicate
+(`document_filters.fact_supported_matching`, now shared by P1, confirmation and the
+co-member marks). The `facts_context` evidence
 statement marks each lineage `in_documents_filter`, ranks matching lineages first
 within each stance, keeps supporting rows only from matching lineages and returns the
 matching count beside the deployment-wide D54 count; contradiction co-members are

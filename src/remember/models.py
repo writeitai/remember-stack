@@ -202,10 +202,30 @@ def normalize_tag_name(name: str) -> str:
     return normalized
 
 
+TAG_REF_MAX_RAW_LEN: Final = 4 * TAG_NAME_MAX_LEN
+"""A safety cap on a tag reference as sent, before NFC. The real limit,
+:data:`TAG_NAME_MAX_LEN`, applies after NFC, as it does when a tag is created."""
+
+
+def check_tag_ref(ref: str) -> str:
+    """Refuse a tag reference that cannot name a tag; return it as given.
+
+    The length limit applies after NFC, exactly as for a declared name, so
+    any spelling that registered a tag can also refer to it.
+    """
+    if len(ref) > TAG_REF_MAX_RAW_LEN or not (
+        1 <= len(unicodedata.normalize("NFC", ref)) <= TAG_NAME_MAX_LEN
+    ):
+        raise ValueError(
+            f"a tag reference is 1 to {TAG_NAME_MAX_LEN} characters after NFC"
+        )
+    return ref
+
+
 TagName: TypeAlias = Annotated[str, AfterValidator(normalize_tag_name)]
 """A tag name as declared: NFC, 1-128 characters, no whitespace or controls."""
 
-TagRef: TypeAlias = Annotated[str, Field(min_length=1, max_length=TAG_NAME_MAX_LEN)]
+TagRef: TypeAlias = Annotated[str, AfterValidator(check_tag_ref)]
 """A registered tag, by name (matched case-insensitively) or ``tag_id``."""
 
 

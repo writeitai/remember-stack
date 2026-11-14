@@ -401,11 +401,7 @@ def scenarios() -> list[dict[str, Any]]:
             {"tag": ID, "description": "Renamed."},
             {"tag": "Project:Fixture", "name": "project:renamed", "description": ""},
         ),
-        (
-            "delete_tag",
-            {"tag": ID.replace("-", "").upper()},
-            {"tag": "PROJECT:FIXTURE"},
-        ),
+        ("delete_tag", {"tag": ID.replace("-", "").upper()}, {"tag": "\u03bf\u03c3"}),
         (
             "update_document_tags",
             {"doc_id": ID},
@@ -762,6 +758,17 @@ def responses() -> dict[str, Any]:
         ).model_dump(mode="json"),
         "tag": tag.model_dump(mode="json"),
         "tag_list": models.TagList(tags=(tag,)).model_dump(mode="json"),
+        # The engine's exact-name match (GET /tags?name=) answers with the one
+        # matching tag. "\u039f\u03a3" is matched by "\u03bf\u03c3" in
+        # PostgreSQL but not by a client-side lower(), so the SDKs must not
+        # compare names themselves.
+        "tag_by_name": models.TagList(
+            tags=(
+                tag.model_copy(
+                    update={"tag_id": UUID(OTHER_ID), "name": "\u039f\u03a3"}
+                ),
+            )
+        ).model_dump(mode="json"),
         "document_tags": models.DocumentTags(
             doc_id=UUID(ID), tags=("project:fixture",)
         ).model_dump(mode="json"),
@@ -792,6 +799,8 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
     if path == "/documents/references":
         return fixtures["document_references"]
     if path == "/tags" and request.method == "GET":
+        if "name" in request.url.params:
+            return fixtures["tag_by_name"]
         return fixtures["tag_list"]
     if path.startswith("/tags"):
         return fixtures["tag"]
@@ -1432,6 +1441,16 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
             ("update_document_tags", {"doc_id": ID, "add": "project:fixture"}),
             ("search_documents", {"filters": {"tags": {}}}),
             ("search_documents", {"filters": {"tags": {"any": ["a", "A"]}}}),
+            ("search_documents", {"filters": {"tags": {"all": "project:a"}}}),
+            ("search_documents", {"filters": {"tags": {"all": [123]}}}),
+            ("search_documents", {"filters": {"tags": {"none": None}}}),
+            ("search_documents", {"filters": {"tags": {"all": [""]}}}),
+            ("search_documents", {"filters": {"tags": {"any": ["t" * 129]}}}),
+            ("search_documents", {"filters": {"tags": {"none": ["t" * 513]}}}),
+            (
+                "search_claims",
+                {"query": "x", "documents": {"tags": {"all": ["t" * 129]}}},
+            ),
             (
                 "ingest",
                 {

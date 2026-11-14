@@ -421,25 +421,6 @@ def render_document(
         "files": inventory,
         **disclosure,
     }
-    entries = [
-        _Member(
-            key="a:" + hashlib.sha256(file.path.encode()).hexdigest(),
-            title=file.path,
-            target=file.path,
-            count=1,
-            details=(file.kind, file.sha256),
-        )
-        for file in copies
-    ]
-    entries.append(
-        _Member(
-            key="a:metadata",
-            title="document.json",
-            target="document.json",
-            count=1,
-            details=("reader inventory", ""),
-        )
-    )
     intro = [
         f"# {_cell(document.display_title)}",
         "",
@@ -459,14 +440,47 @@ def render_document(
         "[Parent](../_index.md)",
         "",
     ]
-    indexes = _render_pages(
-        "", entries, ("File", "Kind", "SHA-256"), policy.member_limit, intro=intro
+    indexes = render_document_indexes(
+        ((file.path, file.kind, file.sha256) for file in copies),
+        intro=intro,
+        policy=policy,
     )
     generated = (
         GeneratedFile("document.json", json_bytes(metadata)),
         *(GeneratedFile(path, content) for path, content in sorted(indexes.items())),
     )
     return DocumentExport(document, revision, (*copies, *generated))
+
+
+def render_document_indexes(
+    files: Iterable[tuple[str, str, str]],
+    *,
+    intro: Iterable[str] = (),
+    policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
+) -> dict[str, bytes]:
+    """Page (path, kind, SHA-256) rows; paths alone determine page membership."""
+    entries = [
+        _Member(
+            key="a:" + hashlib.sha256(path.encode()).hexdigest(),
+            title=path,
+            target=path,
+            count=1,
+            details=(kind, sha256),
+        )
+        for path, kind, sha256 in files
+    ]
+    entries.append(
+        _Member(
+            key="a:metadata",
+            title="document.json",
+            target="document.json",
+            count=1,
+            details=("reader inventory", ""),
+        )
+    )
+    return _render_pages(
+        "", entries, ("File", "Kind", "SHA-256"), policy.member_limit, intro=list(intro)
+    )
 
 
 @dataclass(frozen=True)

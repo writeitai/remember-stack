@@ -71,7 +71,11 @@ K = 20
 def _reset(engine: Engine) -> None:
     with engine.begin() as connection:
         # isolated benchmark database only: empties every deployment
-        connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
+        # chunks, claims and occurrences are not reached by the deployments
+        # cascade; a reseed would otherwise duplicate them
+        connection.execute(
+            text("TRUNCATE TABLE deployments, chunks, chunk_claims, claims CASCADE")
+        )
 
 
 def _rewrite_text(engine: Engine, *, min_words: int, max_words: int) -> None:
@@ -571,15 +575,10 @@ def _tag_eligibility_plan(engine: Engine, *, tag: str) -> dict[str, Any]:
             time=None,
             query_text="w1",
         )
-        assert query.versions_sql is not None
+        assert query.eligible_sql is not None
         statement = (
-            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT eligible.item_id"
-            f" FROM ({query.versions_sql}) AS matching_version"
-            " CROSS JOIN LATERAL ("
-            f"SELECT indexed.{query.id_column}::text AS item_id"
-            f" {query.relation} {query.where}"
-            " AND published.version_id = matching_version.version_id"
-            " OFFSET 0) AS eligible LIMIT :tier_limit"
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)"
+            f" {query.eligible_sql} LIMIT :tier_limit"
         )
         plan = connection.execute(
             text(statement),

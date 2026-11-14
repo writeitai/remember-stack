@@ -31,6 +31,7 @@ from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
 from remember.mcp_tools._memory import parse_tag_list
 from remember.mcp_tools._memory import reject_unknown_keys
+from remember.models import check_tag_ref
 from remember.models import DocumentTags
 from remember.models import DocumentTagsUpdate
 from remember.models import Tag
@@ -186,9 +187,12 @@ def _run(
 
 def _tag_ref(*, name: str, arguments: Mapping[str, object]) -> str:
     tag = arguments.get("tag")
-    if not isinstance(tag, str) or not 1 <= len(tag) <= 128:
+    if not isinstance(tag, str):
         raise _invalid(name=name, detail="tag must be a tag name or tag_id.")
-    return tag
+    try:
+        return check_tag_ref(tag)
+    except ValueError as error:
+        raise _invalid(name=name, detail=str(error)) from error
 
 
 def _model[M: BaseModel](

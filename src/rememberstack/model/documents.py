@@ -18,6 +18,7 @@ from pydantic import Field
 from pydantic import model_validator
 
 from remember.models import IngestedVersion as IngestedVersion  # noqa: F401
+from remember.models import TagRef
 from remember.models import TAGS_PER_DOCUMENT_MAX
 from remember.models import VERSION_KEY_MAX_LEN
 from rememberstack.model.queue import UTCDateTime
@@ -80,7 +81,7 @@ class DocumentUpload(BaseModel):
     """D140: start of the period this version is in force for (inclusive)."""
     effective_until: UTCDateTime | None = None
     """D140: declared end of that period (exclusive); requires a start."""
-    tags: tuple[str, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
+    tags: tuple[TagRef, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
     """D156: registered tags (names or ids) added to the lineage's tags; an
     ingest never removes a tag and tags never decide whether a version is
     created."""

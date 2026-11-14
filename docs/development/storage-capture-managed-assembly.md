@@ -108,10 +108,62 @@ The typed current profile/source mapping is in
 source-rule technical approval is recorded in
 [the implementation analysis](../../plan/analysis/managed_storage_profile_20261111.md).
 It is not production scope/clock/cost qualification. The assembler matches
-native references, hash-bound conversion artifacts, immutable P3 manifests and
+native references, hash-bound conversion artifacts, D155 live corpus folders and
 all provider items in both directions, preserving actual zero, failed raw
 originals, excluded exposure and committed terminal members. Unknown ownership,
 unsupported K/link/legacy projection state or missing evidence refuses.
+
+Corpus classification requires the served reading's publication marker to equal
+its current DB-input/default-policy digest and `corpus_paths` to contain exactly
+that desired folder. Known original copies and reader derivatives count in
+`p3_origin`, separately from canonical raw originals. Shared navigation counts
+there too; incomplete/orphan folders are excluded staging. Unknown corpus keys
+refuse completion. Corpus originals, derivatives and navigation have separate
+native classes using the existing `projection_origin` purpose. Capture reads no
+snapshot registry or mutable corpus manifest. The native guard and reader require
+exact schema head `p9_52_0073`. The historical snapshot relation remains because
+`/operations.latest_projections` still reads it; no migration or public API change
+is part of this classification update.
+
+Regenerate the synthetic regression documents with
+`PYTHONPATH=src:. python scripts/generate_storage_capture_fixture.py` and check
+them with the same command plus `--check`. The fixture contains the current
+catalog/record schemas, source/schema/native profile digests, class rules,
+classification digest and operator mapping. It makes no deployment qualification
+claim and does not replace the dated receipts below. The real PostgreSQL/MinIO
+classification suite is `src/tests/adapters/test_minio_storage_capture.py`.
+
+When `writeitai/ultimate-memory-cloud` pins this engine:
+
+- Rebuild the pinned engine/runtime artifacts and update `runtime/engine.lock`.
+  Regenerate the native source, expected schema definition/profile and native
+  qualification/profile preimages for `p9_52_0073`, including the new corpus
+  page and `spine/corpus_export.py`'s served selector, plus
+  `core/corpus_export.py`'s builder policy, reader-kind registry, original naming
+  and revision function and `model/conversion.py`'s asset-name contract. The
+  source artifact pin must cover their dependency closure. Regenerate the managed
+  runtime source digest and producer identity at that actual engine/image pin.
+- Feed the resulting `NativeCaptureProfile` and existing provider/clock/run
+  bounds into `runtime/src/umc_runtime/storage_capture_profile.py`'s
+  `managed_capture_profile`. Let the engine builder regenerate each deployment's
+  classification, operator mapping and request identities; register/accept those
+  exact new profiles in the receiver. Existing completed captures retain their
+  original bytes and identities. This engine fixture's synthetic hashes are
+  test inputs and must never be installed as deployment pins.
+- Reinstall **both** `install_native_relation_guard` and
+  `install_native_capture_catalog` on each migrated Project DB under the existing
+  restricted roles. The fixed catalog now pins `documents`, versions, metadata
+  and sections in addition to its previous E0 relations, reads the same served
+  selection as publication, and ignores historical projection rows. Requalify
+  installed function bytes/owners/search paths/ACLs, original-view timing and
+  nonempty live-tree quantities before accepting new chargeable evidence.
+- Keep the existing `raw`, `artifacts`, `corpus`, `forget` store bindings and
+  `capture_storage_batch` call. No new store role, runtime callback, corpus
+  manifest reader, scheduler or wire purpose/component is required. The three
+  new included native classes use `projection_origin`/`p3_origin`; the incomplete
+  class maps to excluded `staging`. Provider, clock and resource bounds require
+  renewed acceptance only according to their actual qualification evidence,
+  never merely because source hashes were regenerated.
 
 Completed results expose `manifest`, `native_witness`, `provider_manifest` and
 `iter_page_bytes()` from the required durable store. Lost delivery replays those
@@ -119,7 +171,7 @@ exact completed bytes without reopening a native/provider cut. The final
 manifest is written only after all pages and original evidence are durable.
 ACK checking and financial settlement remain independent existing contracts.
 
-The checked implementation source is `52d6c2767`. Its actual composed native
+The historical 2026-11-11 validation used source `52d6c2767`. Its composed native
 run and exact quantities are recorded in the [dated validation receipt](storage-capture-managed-assembly-validation-20261111.json).
 The run recorded two scopes at one cut, one provider invocation and the same
 actual S3 provider. Canonical-object quantities were 0 and 18 bytes. It recorded
