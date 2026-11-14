@@ -87,7 +87,7 @@ export default {
       "tags": {
         "description": "Optional registered tags (name or tag_id) to add to the document. Call list_tags to see which exist.",
         "items": {
-          "maxLength": 128,
+          "maxLength": 512,
           "minLength": 1,
           "type": "string"
         },
@@ -259,7 +259,7 @@ export default {
           "tags": {
             "description": "Optional registered tags (name or tag_id) to add to the document. Call list_tags to see which exist.",
             "items": {
-              "maxLength": 128,
+              "maxLength": 512,
               "minLength": 1,
               "type": "string"
             },
@@ -857,7 +857,7 @@ export default {
           },
           "name": {
             "description": "The tag name: no spaces or control characters, such as project:autoboard. Unique ignoring letter case.",
-            "maxLength": 128,
+            "maxLength": 512,
             "minLength": 1,
             "type": "string"
           }
@@ -890,13 +890,13 @@ export default {
           },
           "name": {
             "description": "The new name.",
-            "maxLength": 128,
+            "maxLength": 512,
             "minLength": 1,
             "type": "string"
           },
           "tag": {
             "description": "The tag's name (any letter case) or its tag_id.",
-            "maxLength": 128,
+            "maxLength": 512,
             "minLength": 1,
             "type": "string"
           }
@@ -923,7 +923,7 @@ export default {
         "properties": {
           "tag": {
             "description": "The tag's name (any letter case) or its tag_id.",
-            "maxLength": 128,
+            "maxLength": 512,
             "minLength": 1,
             "type": "string"
           }
@@ -951,7 +951,7 @@ export default {
           "add": {
             "description": "Tags to add (name or tag_id).",
             "items": {
-              "maxLength": 128,
+              "maxLength": 512,
               "minLength": 1,
               "type": "string"
             },
@@ -967,7 +967,7 @@ export default {
           "remove": {
             "description": "Tags to remove (name or tag_id).",
             "items": {
-              "maxLength": 128,
+              "maxLength": 512,
               "minLength": 1,
               "type": "string"
             },
@@ -978,7 +978,7 @@ export default {
           "set": {
             "description": "The document's complete tag set; excludes add and remove. An empty list clears the tags.",
             "items": {
-              "maxLength": 128,
+              "maxLength": 512,
               "minLength": 1,
               "type": "string"
             },

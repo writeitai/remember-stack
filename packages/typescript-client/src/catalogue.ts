@@ -141,10 +141,15 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
     assertJson({value:args});return {...args};
   }catch(error) {if(error instanceof ToolArgumentError)throw error;if(error instanceof InputValidationError)refuse({detail:error.message});throw error;}
 }
-/** An optional list of tag names or ids, each 1-128 characters, none repeated. */
+/** Python's tag-reference rule: at most 512 characters as sent and 1-128 after NFC. */
+function isTagRef(value:string):boolean {
+  const length=Array.from(value.normalize('NFC')).length;
+  return Array.from(value).length<=512&&length>=1&&length<=128;
+}
+/** An optional list of tag names or ids, each 1-128 characters after NFC, none repeated. */
 function tagList({args,key}:{args:Record<string,unknown>;key:string}):string[]|null {
   const raw=args[key];if(raw==null)return null;
-  if(!Array.isArray(raw)||raw.length>64||!raw.every(item=>typeof item==='string'&&Array.from(item).length>=1&&Array.from(item).length<=128))refuse({detail:`${key} must be a list of at most 64 tag names or tag_ids, each 1 to 128 characters.`});
+  if(!Array.isArray(raw)||raw.length>64||!raw.every(item=>typeof item==='string'&&isTagRef(item)))refuse({detail:`${key} must be a list of at most 64 tag names or tag_ids, each 1 to 128 characters after NFC.`});
   if(new Set(raw).size!==raw.length)refuse({detail:`${key} lists a tag twice.`});
   return [...raw as string[]];
 }
@@ -157,7 +162,7 @@ function tagNameArgument({value}:{value:unknown}):unknown {
 }
 /** Parse the D156 tag tools into the tag, document and request each backend takes. */
 function parseTagTool({name,args}:{name:string;args:Record<string,unknown>}):Record<string,unknown> {
-  const tag=():string=>{const value=args.tag;if(typeof value!=='string'||Array.from(value).length<1||Array.from(value).length>128)refuse({detail:'tag must be a tag name or tag_id.'});return value;};
+  const tag=():string=>{const value=args.tag;if(typeof value!=='string')refuse({detail:'tag must be a tag name or tag_id.'});if(!isTagRef(value))refuse({detail:'a tag reference is 1 to 128 characters after NFC'});return value;};
   if(name===LIST_TAGS_TOOL_NAME) {
     const query=args.query;if(query!=null&&(typeof query!=='string'||Array.from(query).length<1||Array.from(query).length>200))refuse({detail:'query must be 1 to 200 characters.'});
     return {query:query??null};

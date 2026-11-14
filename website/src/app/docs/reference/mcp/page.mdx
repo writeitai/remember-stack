@@ -185,7 +185,7 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `version_key` | string | no | 1–512 characters. A permanent name for this version, unique within the document. A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Needs `source_kind`/`source_ref`. |
 | `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
 | `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
-| `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
+| `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters after Unicode NFC. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
 
 `ingest` is at tool version 3; the `tags` argument raised it from 2.
 Unknown keys are refused. What a key and a period do:
@@ -431,7 +431,7 @@ already registered in any letter case is `conflict`. See
 
 | Parameter | Type | Required | Limits |
 |---|---|---|---|
-| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters. |
+| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters after Unicode NFC. |
 | `name` | string | no | The new name, with the rules of `create_tag`. |
 | `description` | string | no | The new description. |
 
@@ -442,7 +442,7 @@ stops working at once. The result is the changed `Tag`.
 
 | Parameter | Type | Required | Limits |
 |---|---|---|---|
-| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters. |
+| `tag` | string | yes | The tag's name or `tag_id`, 1–128 characters after Unicode NFC. |
 
 Deletes the tag and removes it from every document that carries it. The
 result is the deleted `Tag`. The tool description tells the agent to use it

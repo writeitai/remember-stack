@@ -1267,7 +1267,7 @@ export default {
         "schema": {
           "anyOf": [
             {
-              "maxLength": 128,
+              "maxLength": 512,
               "minLength": 1,
               "type": "string"
             },

@@ -72,7 +72,9 @@ SOURCE_REF_MAX_LEN: Final = 512
 SOURCE_VERSION_REF_MAX_LEN: Final = 512
 VERSION_KEY_MAX_LEN: Final = 512
 VERSION_IDS_MAX: Final = 1000
-TAG_REF_MAX_LEN: Final = 128
+TAG_REF_MAX_LEN: Final = 512
+"""Characters a tag name or reference may have as sent. The 128-character
+limit applies after NFC and is checked when the arguments are parsed."""
 TAG_LIST_MAX: Final = 64
 TAG_DESCRIPTION_MAX_LEN: Final = 2000
 

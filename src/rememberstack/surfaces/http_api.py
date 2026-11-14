@@ -92,9 +92,10 @@ from remember.models import ReferenceGenerations
 from remember.models import REFERENCES_BODY_MAX_BYTES
 from remember.models import ReferencesSet
 from remember.models import Tag
-from remember.models import TAG_NAME_MAX_LEN
+from remember.models import TAG_REF_MAX_RAW_LEN
 from remember.models import TagCreate
 from remember.models import TagList
+from remember.models import TagRef
 from remember.models import TAGS_PER_DOCUMENT_MAX
 from remember.models import TagUpdate
 from remember.models import VERSION_KEY_MAX_LEN
@@ -2111,7 +2112,7 @@ def _mount_tags(*, app: FastAPI) -> None:
             str | None,
             Query(
                 min_length=1,
-                max_length=TAG_NAME_MAX_LEN,
+                max_length=TAG_REF_MAX_RAW_LEN,
                 description=(
                     "Keep only the tag with exactly this name, matched as the"
                     " registry matches names (NFC, ignoring letter case)."
@@ -2446,7 +2447,7 @@ def _mount_ingest(
             ),
         ] = None,
         tags: Annotated[
-            list[str] | None,
+            list[TagRef] | None,
             Query(
                 max_length=TAGS_PER_DOCUMENT_MAX,
                 description=(

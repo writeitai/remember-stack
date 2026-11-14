@@ -2325,8 +2325,6 @@
           "add": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
@@ -2336,8 +2334,6 @@
           "remove": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
@@ -2348,8 +2344,6 @@
             "anyOf": [
               {
                 "items": {
-                  "maxLength": 128,
-                  "minLength": 1,
                   "type": "string"
                 },
                 "maxItems": 64,
@@ -6901,8 +6895,6 @@
           "add": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
@@ -6912,8 +6904,6 @@
           "remove": {
             "default": [],
             "items": {
-              "maxLength": 128,
-              "minLength": 1,
               "type": "string"
             },
             "maxItems": 64,
@@ -6924,8 +6914,6 @@
             "anyOf": [
               {
                 "items": {
-                  "maxLength": 128,
-                  "minLength": 1,
                   "type": "string"
                 },
                 "maxItems": 64,
@@ -17223,7 +17211,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 128,
+                  "maxLength": 512,
                   "minLength": 1,
                   "type": "string"
                 },

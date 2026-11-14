@@ -13,12 +13,14 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
@@ -26,6 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from remember import MemoryClient
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentTagsUpdate
 from remember.models import TagCreate
@@ -49,6 +52,8 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.tags import add_document_tags_on
 from rememberstack.spine.tags import resolve_tags_on
 from rememberstack.spine.tags import TagCatalog
+from rememberstack.surfaces.http_api import build_api
+from rememberstack.surfaces.mcp import OperationMcpServer
 from rememberstack.workers import DocumentDeleter
 from rememberstack.workers import UploadIngestor
 from tests.database_reset import reset_database
@@ -723,33 +728,34 @@ def test_concurrent_name_addressed_mutations_do_not_deadlock(rig: _Rig) -> None:
     assert {result.description for result in results} == {"writer 0", "writer 1"}
 
 
+class _Open:
+    """Open readiness and admission for the HTTP proofs."""
+
+    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        return ()
+
+    def assert_available(self, *, deployment_id: UUID) -> None:
+        return None
+
+
+def _http(rig: _Rig) -> TestClient:
+    """The real HTTP routes over this deployment's tag registry."""
+    return TestClient(
+        build_api(
+            engine=MagicMock(),
+            deployment_id=_DEPLOYMENT_ID,
+            admission=_Open(),
+            readiness=_Open(),
+            tags=rig.tags,
+        )
+    )
+
+
 def test_sdk_resolves_names_with_the_registry_case_rule(
     rig: _Rig, database_engine: Engine
 ) -> None:
     """A name differing only in a case mapping PostgreSQL folds resolves via HTTP."""
-    from fastapi.testclient import TestClient
-
-    from remember import MemoryClient
-    from rememberstack.surfaces.http_api import build_api
-
-    class _Open:
-        def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-            return ()
-
-        def assert_available(self, *, deployment_id: UUID) -> None:
-            return None
-
-    client = MemoryClient(
-        client=TestClient(
-            build_api(
-                engine=MagicMock(),
-                deployment_id=_DEPLOYMENT_ID,
-                admission=_Open(),
-                readiness=_Open(),
-                tags=rig.tags,
-            )
-        )
-    )
+    client = MemoryClient(client=_http(rig))
     tag_id = rig.create("\u039f\u03a3")  # "ΟΣ"
     with database_engine.connect() as connection:
         folded = connection.execute(
@@ -759,3 +765,49 @@ def test_sdk_resolves_names_with_the_registry_case_rule(
     renamed = client.update_tag(tag="\u03bf\u03c3", description="Sigma.")
     assert (renamed.tag_id, renamed.description) == (tag_id, "Sigma.")
     assert client.delete_tag(tag="\u03bf\u03c3").tag_id == tag_id
+
+
+def test_a_name_long_only_before_nfc_is_accepted_wherever_a_tag_is_named(
+    rig: _Rig,
+) -> None:
+    """The 128-character limit applies after NFC for references as for names.
+
+    65 decomposed "e\u0301" are 130 characters as sent and 65 after NFC: a
+    valid name, so the same spelling must also work as a reference over
+    HTTP, through the SDK's name lookup and through the MCP tools.
+    """
+    spelling = "e\u0301" * 65
+    assert len(spelling) == 130
+    http = _http(rig)
+    created = http.post("/tags", json={"name": spelling, "description": ""})
+    assert created.status_code == 200, created.text
+    tag_id = UUID(created.json()["tag_id"])
+    doc = rig.observe(body="Accented.")
+
+    tagged = http.post(f"/documents/{doc.doc_id}/tags", json={"add": [spelling]})
+    assert tagged.status_code == 200, tagged.text
+    assert tagged.json()["tags"] == ["\u00e9" * 65]
+
+    client = MemoryClient(client=http)
+    assert client.update_tag(tag=spelling, description="Accents.").tag_id == tag_id
+    assert client.update_document_tags(doc_id=doc.doc_id, remove=[spelling]).tags == ()
+
+    server = OperationMcpServer(
+        surface=SimpleNamespace(deployment_id=_DEPLOYMENT_ID),  # type: ignore[arg-type]
+        tags=rig.tags,
+    )
+    added = server.call_tool(
+        name="update_document_tags",
+        arguments={"doc_id": str(doc.doc_id), "add": [spelling]},
+    )
+    assert added["isError"] is False, added
+    renamed = server.call_tool(
+        name="update_tag", arguments={"tag": spelling, "description": "MCP."}
+    )
+    assert renamed["isError"] is False, renamed
+    assert client.delete_tag(tag=spelling).tag_id == tag_id
+    assert rig.count("SELECT count(*) FROM tags") == 0
+
+    too_long = "e\u0301" * 129
+    refused = http.post(f"/documents/{doc.doc_id}/tags", json={"add": [too_long]})
+    assert refused.status_code == 422
