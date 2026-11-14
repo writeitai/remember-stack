@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_6410dbe7480eef71_p9_22_0043_document_entity_bindings_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-13 14:23 +0000
+            created at 2026-11-14 13:28 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -176,7 +176,7 @@
     <p class="pln"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t"><span class="com"># measured, with a concurrent UPDATE timing out. NOT VALID is scan-free</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t"><span class="com"># (seq_scan=0), which removes that table-size dependence.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t"><span class="com">#</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t"><span class="com"># It is NOT lock-free: PostgreSQL 19 still takes ShareRowExclusiveLock for</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t"><span class="com"># It is NOT lock-free: PostgreSQL 18 takes ShareRowExclusiveLock for</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t"><span class="com"># ADD FOREIGN KEY ... NOT VALID, held until this atomic transaction commits,</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t"><span class="com"># and a concurrent writer will wait on it. The difference that matters is</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t"><span class="com"># bounded-and-brief versus proportional-to-row-count.</span>&nbsp;</span><span class="r"></span></p>
@@ -230,7 +230,7 @@
             <a class="nav" href="z_6410dbe7480eef71_p9_22_0043_document_entity_bindings_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-13 14:23 +0000
+            created at 2026-11-14 13:28 +0000
         </p>
     </div>
 </footer>
