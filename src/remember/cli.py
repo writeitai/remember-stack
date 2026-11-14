@@ -512,24 +512,46 @@ def _run_operations(args: argparse.Namespace) -> int:
         return 0
 
 
+def _tag_documents(args: argparse.Namespace) -> DocumentSearchFilters | None:
+    """The D156 ``documents`` filter of ``--tag``/``--any-tag``/``--not-tag``, if any."""
+    if not (args.tag or args.any_tag or args.not_tag):
+        return None
+    return DocumentSearchFilters(
+        tags=DocumentTagFilter(
+            all=tuple(args.tag), any=tuple(args.any_tag), none=tuple(args.not_tag)
+        )
+    )
+
+
 def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
     """Additive open-query CLI commands over the same SDK."""
     command = args.query_command
     try:
         if command == "text":
             query_text = args.query_text
+            try:
+                documents = _tag_documents(args)
+            except ValidationError as error:
+                problems = "; ".join(item["msg"] for item in error.errors())
+                print(f"error: {problems}", file=sys.stderr)
+                return 2
             if getattr(args, "combined", False):
-                ans = client.combined_context(query=query_text, layers=args.layers)
+                ans = client.combined_context(
+                    query=query_text, layers=args.layers, documents=documents
+                )
                 print(ans.model_dump_json(indent=2))
             elif args.layers is not None:
+                arguments: dict[str, object] = {"query": query_text}
+                if documents is not None:
+                    arguments["documents"] = documents.model_dump(
+                        mode="json", exclude_defaults=True
+                    )
                 narrowed = client.run_operation(
-                    name="facts_context",
-                    arguments={"query": query_text},
-                    layers=args.layers,
+                    name="facts_context", arguments=arguments, layers=args.layers
                 )
                 print(narrowed.model_dump_json(indent=2))
             else:
-                fact = client.facts_context(query=query_text)
+                fact = client.facts_context(query=query_text, documents=documents)
                 print(fact.model_dump_json(indent=2))
             return 0
         if command == "sql":
@@ -1087,6 +1109,16 @@ def _split_operation_arg(pair: str) -> tuple[str, object]:
         return key, raw
 
 
+def _add_tag_flags(parser: argparse.ArgumentParser) -> None:
+    """The D156 tag selector flags of every query command with a document filter."""
+    for flag, help_text in (
+        ("--tag", "the document has this registered tag (repeatable; all must hold)"),
+        ("--any-tag", "the document has at least one of these tags (repeatable)"),
+        ("--not-tag", "the document has none of these tags (repeatable)"),
+    ):
+        parser.add_argument(flag, action="append", default=[], help=help_text)
+
+
 def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentParser:
     """Build the client-first command grammar."""
     parser = argparse.ArgumentParser(
@@ -1204,6 +1236,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         default=None,
         help="comma-separated processing layers to read (sources,claims,facts; D143)",
     )
+    _add_tag_flags(text_p)
     sql = query_commands.add_parser(
         "sql", parents=[client_flags], help="run one sandboxed SQL statement"
     )
@@ -1376,12 +1409,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     search_documents.add_argument(
         "--doc-id", action="append", default=[], type=UUID, help="only this document"
     )
-    for flag, help_text in (
-        ("--tag", "the document has this registered tag (repeatable; all must hold)"),
-        ("--any-tag", "the document has at least one of these tags (repeatable)"),
-        ("--not-tag", "the document has none of these tags (repeatable)"),
-    ):
-        search_documents.add_argument(flag, action="append", default=[], help=help_text)
+    _add_tag_flags(search_documents)
     search_documents.add_argument(
         "--versions",
         choices=("current", "all"),

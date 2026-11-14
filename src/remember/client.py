@@ -299,8 +299,16 @@ class MemoryClient:
         hops: int | None = None,
         predicate: str | None = None,
         entity_ids: Sequence[str | UUID] | None = None,
+        documents: DocumentSearchFilters | Mapping[str, object] | None = None,
     ) -> Envelope:
-        """Run the assured facts_context operation."""
+        """Run the assured facts_context operation.
+
+        ``documents`` (D134/D156), e.g. ``{"tags": {"all": ["project:x"]}}``,
+        keeps facts supported by matching documents; contradicting evidence
+        and competing facts from other documents stay in the answer, marked
+        ``in_documents_filter=False``. An unregistered tag raises
+        ``UnknownTag``.
+        """
         args: dict[str, object] = {"query": query}
         if k is not None:
             args["k"] = k
@@ -314,6 +322,8 @@ class MemoryClient:
             args["predicate"] = predicate
         if entity_ids is not None:
             args["entity_ids"] = [str(e) for e in entity_ids]
+        if documents is not None:
+            args["documents"] = _documents_argument(documents)
         res = self.run_operation(name="facts_context", arguments=args)
         assert isinstance(res, Envelope)
         return res
@@ -326,11 +336,13 @@ class MemoryClient:
         candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
         layers: Sequence[str] | None = None,
+        documents: DocumentSearchFilters | Mapping[str, object] | None = None,
     ) -> ContextBundleV2:
         """Run the assured combined_context operation.
 
         ``layers`` (D143) narrows the layers it reads; a side with none of its
         layers admitted comes back empty with a ``boundary`` negative.
+        ``documents`` (D134/D156) reaches both sides unchanged.
         """
         args: dict[str, object] = {"query": query}
         if k is not None:
@@ -339,6 +351,8 @@ class MemoryClient:
             args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
+        if documents is not None:
+            args["documents"] = _documents_argument(documents)
         res = self.run_operation(name="combined_context", arguments=args, layers=layers)
         assert isinstance(res, ContextBundleV2)
         return res
@@ -351,13 +365,15 @@ class MemoryClient:
         candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
         layers: Sequence[str] | None = None,
+        documents: DocumentSearchFilters | Mapping[str, object] | None = None,
     ) -> Envelope:
         """Run the assured claims_and_sources_context operation.
 
         ``time`` (D140) reads the text in force for the scope (default
         current), e.g. ``{"mode": "at", "at": "2026-02-01T00:00:00Z"}``.
         ``layers`` (D143) narrows the channels: ``["sources"]`` answers from
-        source passages only.
+        source passages only. ``documents`` (D134/D156) returns only what
+        matching documents say.
         """
         args: dict[str, object] = {"query": query}
         if k is not None:
@@ -366,6 +382,8 @@ class MemoryClient:
             args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
+        if documents is not None:
+            args["documents"] = _documents_argument(documents)
         res = self.run_operation(
             name="claims_and_sources_context", arguments=args, layers=layers
         )
@@ -1630,6 +1648,18 @@ class MemoryClient:
                 status_code=response.status_code,
                 detail=f"{method} {path} returned invalid JSON",
             ) from error
+
+
+def _documents_argument(
+    documents: DocumentSearchFilters | Mapping[str, object],
+) -> dict[str, object]:
+    """The JSON ``documents`` operation argument, validated locally first (D156)."""
+    filters = (
+        documents
+        if isinstance(documents, DocumentSearchFilters)
+        else DocumentSearchFilters.model_validate(documents)
+    )
+    return filters.model_dump(mode="json", exclude_defaults=True)
 
 
 def _layer_params(layers: Sequence[str] | None) -> tuple[tuple[str, str], ...] | None:

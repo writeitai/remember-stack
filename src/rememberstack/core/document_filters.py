@@ -296,6 +296,33 @@ def claim_selected_matching(
     ), parameters
 
 
+def fact_supported_matching(
+    *, filters: DocumentSearchFilters, fact_kind: str, fact_id: str, prefix: str
+) -> tuple[str, dict[str, Any]]:
+    """One predicate: the fact has live support from a matching document (D156 §4.3).
+
+    At least one live supporting claim of fact ``(fact_kind, fact_id)`` has an
+    occurrence that both lies in a matching version and passes the D140 time
+    scope's evidence gate (the scope's parameters must be bound). This is
+    the fact grain's eligibility under a ``documents`` filter, shared by
+    nomination, confirmation and the marking of contradiction co-members.
+    """
+    occurrence_sql, parameters = matching_occurrence_exists(
+        filters=filters,
+        claim="filter_support.claim_id",
+        prefix=prefix,
+        in_scope="evidence",
+    )
+    return (
+        "EXISTS (SELECT 1 FROM memory_v1.fact_claim_evidence_live filter_support"
+        " WHERE filter_support.deployment_id = :deployment_id"
+        f" AND filter_support.fact_kind = {fact_kind}"
+        f" AND filter_support.fact_id = {fact_id}"
+        " AND filter_support.stance = 'supports'"
+        f" AND {occurrence_sql})"
+    ), parameters
+
+
 def any_live_document_matches(
     *, filters: DocumentSearchFilters, prefix: str
 ) -> tuple[str, dict[str, Any]]:

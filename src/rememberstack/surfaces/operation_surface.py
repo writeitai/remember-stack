@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 from pydantic import ValidationError
 
 from remember.mcp_tools import tool
+from remember.models import DocumentSearchFilters
 from rememberstack.model import AssuredOperation
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
@@ -39,6 +40,7 @@ class InvalidArgumentError(Exception):
 OperationResult = Envelope | ContextBundleV2
 
 _FACT_TIME: TypeAdapter[FactTime] = TypeAdapter(FactTime)
+_DOCUMENTS: TypeAdapter[DocumentSearchFilters] = TypeAdapter(DocumentSearchFilters)
 
 
 class OperationSurface:
@@ -232,6 +234,12 @@ def _coerce_value(*, name: str, value: object, declared: str) -> object:
             raise TypeError("expected an object")
         _validate_time_strings(value=value)
         return _FACT_TIME.validate_python(value)
+    if declared == "object" and name == "documents":
+        if not isinstance(value, dict):
+            raise TypeError("expected an object")
+        # D134/D156 rules, before retrieval: closed fields, aware instants,
+        # UUID doc_ids and a non-empty, repeat-free tags selector.
+        return _DOCUMENTS.validate_python(value)
     if declared == "timestamp":
         if not isinstance(value, datetime):
             raise TypeError("expected a timestamp")

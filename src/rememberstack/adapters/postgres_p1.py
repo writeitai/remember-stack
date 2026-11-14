@@ -22,10 +22,10 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from remember.models import DocumentSearchFilters
 from rememberstack.adapters import p1_ranked
 from rememberstack.core.document_filters import claim_selected_matching
+from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_matching_versions
 from rememberstack.core.document_filters import live_version_matches
-from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.text_scope import claim_selected
@@ -1081,11 +1081,15 @@ class PostgresP1Index:
         embedder_generation: str | None = None,
         time: TextScope | None = None,
         pending_doc_ids: tuple[str, ...] | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> P1SearchResult:
         """Rank cheap entity-scoped testimony candidates for later confirmation.
 
         The D140 time scope (default current) is part of the candidate
-        predicate, so text not in force never takes a nomination slot.
+        predicate, so text not in force never takes a nomination slot. So is
+        a ``documents`` filter (D134/D156): a claim needs an occurrence that
+        is both selected by the scope and in a matching version, a chunk a
+        matching version.
 
         ``pending_doc_ids`` (the §3.7 probe) widens the candidate set to the
         readable editions of those lineages as well, with ordering and limit
@@ -1094,14 +1098,35 @@ class PostgresP1Index:
         """
         if not entity_ids:
             raise ValueError("scoped testimony nomination requires entity_ids")
+        if documents is not None and is_empty(documents):
+            documents = None
+        document_parameters: dict[str, Any] = {}
         if grain == "claim":
             table = "claims"
             target = "claims"
             policy = CLAIM_INPUT_POLICY
             model = self._embedding_model
-            selected = claim_selected(
-                claim="indexed.claim_id", doc="indexed.doc_id", current_testimony="TRUE"
-            )
+            pending_match = ""
+            if documents is None:
+                selected = claim_selected(
+                    claim="indexed.claim_id",
+                    doc="indexed.doc_id",
+                    current_testimony="TRUE",
+                )
+            else:
+                selected, document_parameters = claim_selected_matching(
+                    filters=documents,
+                    claim="indexed.claim_id",
+                    doc="indexed.doc_id",
+                    current_testimony="TRUE",
+                    prefix="documents_",
+                )
+                pending_version_sql, _ = live_version_matches(
+                    filters=documents,
+                    version="pending_chunk.version_id",
+                    prefix="documents_",
+                )
+                pending_match = f" AND {pending_version_sql}"
             if pending_doc_ids is not None:
                 selected = (
                     f"({selected} OR EXISTS (SELECT 1 FROM chunk_claims AS pending_occ"
@@ -1115,7 +1140,8 @@ class PostgresP1Index:
                     "      = pending_chunk.representation_id"
                     " WHERE pending_occ.deployment_id = indexed.deployment_id"
                     " AND pending_occ.claim_id = indexed.claim_id"
-                    f" AND {_PENDING_READABLE.format(version='pending_chunk.version_id')}))"
+                    f" AND {_PENDING_READABLE.format(version='pending_chunk.version_id')}"
+                    f"{pending_match}))"
                 )
             current_predicate = "AND indexed.is_current_testimony AND " + selected
         elif grain == "chunk":
@@ -1123,6 +1149,14 @@ class PostgresP1Index:
             target = "chunks"
             policy = policy_generation or self._chunk_input_policy
             model = embedder_generation or self._embedding_model
+            chunk_match = ""
+            if documents is not None:
+                chunk_version_sql, document_parameters = live_version_matches(
+                    filters=documents,
+                    version="candidate.version_id",
+                    prefix="documents_",
+                )
+                chunk_match = f" AND {chunk_version_sql}"
             current_predicate = (
                 "AND EXISTS (SELECT 1 FROM chunks AS candidate"
                 " JOIN document_versions AS candidate_version"
@@ -1139,7 +1173,7 @@ class PostgresP1Index:
                     else " OR "
                     + _PENDING_READABLE.format(version="candidate.version_id")
                 )
-                + "))"
+                + f"){chunk_match})"
             )
         else:
             raise ValueError(f"unknown testimony grain {grain!r}")
@@ -1152,6 +1186,7 @@ class PostgresP1Index:
             **(
                 time or TextScope.of(time=None, evaluated_at=self._instant())
             ).parameters(),
+            **document_parameters,
         }
         if channel == "semantic":
             if vector is None:
@@ -1322,26 +1357,9 @@ class PostgresP1Index:
         parameters.update(filter_parameters)
         gate = TextScope.of(time=selected_time, evaluated_at=evaluation)
         parameters.update(gate.parameters())
-        supporting_sql = ""
-        if documents is not None and not is_empty(documents):
-            # D156 §4.3: the supporting occurrence that matches the filter
-            # must itself pass the D140 evidence gate; tagged support out of
-            # force plus untagged support in force admits nothing.
-            occurrence_sql, document_parameters = matching_occurrence_exists(
-                filters=documents,
-                claim="support.claim_id",
-                prefix="documents_",
-                in_scope="evidence",
-            )
-            parameters.update(document_parameters)
-            supporting_sql = (
-                " AND EXISTS (SELECT 1 FROM memory_v1.fact_claim_evidence_live support"
-                " WHERE support.deployment_id = indexed.deployment_id"
-                " AND support.fact_kind = fact.fact_kind"
-                " AND support.fact_id = fact.fact_id"
-                " AND support.stance = 'supports'"
-                f" AND {occurrence_sql})"
-            )
+        supporting_sql = _supported_by_documents(
+            documents=documents, parameters=parameters
+        )
         ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
         if not set(ranking_ids).issubset(entity_ids):
             raise ValueError(
@@ -1604,10 +1622,13 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> P1SearchResult:
         """Rank cheap base-table candidates for a caller that confirms every row.
 
-        The D140 §8.1 evidence gate is applied before each branch's ``LIMIT``.
+        The D140 §8.1 evidence gate is applied before each branch's ``LIMIT``,
+        and so is a ``documents`` filter: a fact is a candidate only with a
+        live supporting claim from a matching document (D156 §4.3).
         """
         # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
         deadline = self._deadline(deadline)
@@ -1636,6 +1657,9 @@ class PostgresP1Index:
         )
         gate = TextScope.of(time=selected_time, evaluated_at=evaluation)
         parameters.update(gate.parameters())
+        supporting_sql = _supported_by_documents(
+            documents=documents, parameters=parameters
+        )
         ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
         if not set(ranking_ids).issubset(entity_ids):
             raise ValueError(
@@ -1671,7 +1695,7 @@ class PostgresP1Index:
             return self._fact_loop(
                 required=required,
                 parameters=parameters,
-                predicates=time_sql,
+                predicates=f"{time_sql} {supporting_sql}",
                 k=k,
                 deadline=deadline,
             )
@@ -1745,7 +1769,7 @@ class PostgresP1Index:
                    AND vector_norm(indexed.embedding) > 0
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
-                   {time_sql} {scope_filter}
+                   {time_sql} {scope_filter} {supporting_sql}
                    AND {fact_in_scope(fact_kind=fact_kind, fact_id=f"indexed.{id_column}")}
                  ORDER BY {branch_order},
                           indexed.{id_column}
@@ -2018,6 +2042,28 @@ def _configure_p1_connection(
     connection.exec_driver_sql(
         f"SET LOCAL transaction_timeout = '{timeout_ms}ms'"  # noqa: S608
     )
+
+
+def _supported_by_documents(
+    *, documents: DocumentSearchFilters | None, parameters: dict[str, Any]
+) -> str:
+    """The ``AND`` clause keeping a fact with live support from matching documents.
+
+    Empty without a filter. The supporting occurrence that matches must itself
+    pass the D140 evidence gate (D156 §4.3); tagged support out of force plus
+    untagged support in force admits nothing. Reads ``fact`` (the eligible
+    fact row) and the scope's bound parameters.
+    """
+    if documents is None or is_empty(documents):
+        return ""
+    supported_sql, document_parameters = fact_supported_matching(
+        filters=documents,
+        fact_kind="fact.fact_kind",
+        fact_id="fact.fact_id",
+        prefix="documents_",
+    )
+    parameters.update(document_parameters)
+    return f" AND {supported_sql}"
 
 
 def _add_claim_scope(
