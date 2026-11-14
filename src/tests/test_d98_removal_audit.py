@@ -22,7 +22,6 @@ _REMOVED_PUBLIC_GRAPH_TERMS = (
     "P2 graph",
     "graph built_at",
     "graph generation",
-    "PostgreSQL 18",
     "topic/community pages",
     "community pages",
     "full-v13",
@@ -93,9 +92,9 @@ def test_current_locomo_code_has_no_retired_protocol_identity() -> None:
 
 
 def test_postgres_image_verifies_extension_source_and_license() -> None:
-    """The prerelease image binds pg_textsearch inputs and redistributes notices.
+    """The reference image binds pg_textsearch inputs and redistributes notices.
 
-    D142: v1.5.1 supports PostgreSQL 19 upstream, so no local patch is applied.
+    D142: v1.5.1 supports PostgreSQL 18 upstream, so no local patch is applied.
     """
     dockerfile = (_ROOT / "Dockerfile.postgres").read_text(encoding="utf-8")
     assert f"PG_TEXTSEARCH_REVISION={_PG_TEXTSEARCH_REVISION}" in dockerfile
@@ -120,13 +119,13 @@ def test_postgres_image_verifies_extension_source_and_license() -> None:
         == 2
     )
     assert dockerfile.count("update-ca-certificates") == 2
-    runtime_stage = dockerfile.split("FROM postgres:19rc1-trixie@", maxsplit=2)[2]
+    runtime_stage = dockerfile.rsplit("\nFROM ", maxsplit=1)[1]
     assert "apt-archive.postgresql.org/pub/repos/apt" in runtime_stage
     assert runtime_stage.index("update-ca-certificates") < runtime_stage.rindex(
         "apt-get update"
     )
     assert runtime_stage.index("trixie-pgdg-archive") < runtime_stage.index(
-        "postgresql-19-partman="
+        "postgresql-18-partman="
     )
 
     assert not (_ROOT / "docker" / "pg_textsearch-pg19.patch").exists()

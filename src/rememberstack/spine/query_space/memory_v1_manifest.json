@@ -20154,7 +20154,7 @@
         }
       ],
       "definition_ast_serializer": "memory_v1.pglast_ast/1",
-      "postgresql_major": 19,
+      "postgresql_major": 18,
       "schema": "memory_v1",
       "schema_major": 1,
       "views": [
@@ -49496,5 +49496,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "8f41ba78d66bdd0cfa517eeaad9de2f01825f6b58634ce012424203d27f4ea97"
+  "surface_manifest_hash": "1b5f518cf0cdaf69afc09c683d3c01bf9afd76631dcb21b45d7d53328ff1dd48"
 }

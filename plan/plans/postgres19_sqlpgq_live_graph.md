@@ -1,9 +1,12 @@
 # PostgreSQL 19 SQL/PGQ Live Graph — Implementation Plan
 
-**Status:** implementation complete; release execution gates remain open.
-The SQL/PGQ parts were later replaced: PostgreSQL 19 Beta 4 removed SQL/PGQ,
-so the one-hop read is a relational join and the property graphs are dropped
-(D98 RC 1 amendment, 2026-11-06; migration `p9_44_0065`).  
+**Status:** historical delivery record of the 2026-08-27 cutover. D98's
+2026-11-06 amendment replaced SQL/PGQ with joins; D157 (2026-11-14) replaces
+the PostgreSQL 19 server policy with PostgreSQL 18. The former cleanup
+revision `p9_44_0065` is now a no-op. Do not use the image or prerelease gates
+below as current operating instructions; use the
+[current graph design](../designs/p2_graph_design.md) and
+[PG18 validation record](../../docs/development/postgres18-reference-validation-2026-11-14.md).
 **Date:** 2026-08-27  
 **Binding design:** [`../designs/p2_graph_design.md`](../designs/p2_graph_design.md)  
 **Analysis:**

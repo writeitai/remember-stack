@@ -1,6 +1,6 @@
 """Fixed native relation exclusion and in-guard allocation sampling for D152.
 
-This is a PG19 / p9_53_0074 primitive, not a complete capture, clock witness,
+This is a PG18 / p9_53_0074 primitive, not a complete capture, clock witness,
 classification or billable quantity. Installation uses trusted operator
 authority; the existing collector LOGIN receives only the fixed operation.
 The caller retains this original transaction and rolls it back after its
@@ -40,7 +40,7 @@ _ROOTS = tuple(
     )
 )
 _EXTENSIONS = (
-    "btree_gist=1.9",
+    "btree_gist=1.8",
     "fuzzystrmatch=1.2",
     "pg_partman=5.5.0",
     "pg_textsearch=1.5.1",
@@ -132,7 +132,7 @@ BEGIN
      OR current_setting('lock_timeout')::interval > interval '250 milliseconds' THEN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_guard_native_bounds';
   END IF;
-  IF current_setting('server_version_num')::integer/10000 <> 19 THEN
+  IF current_setting('server_version_num')::integer/10000 <> 18 THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_server';
   END IF;
   IF NOT pg_try_advisory_xact_lock(152, (SELECT oid::integer FROM pg_database

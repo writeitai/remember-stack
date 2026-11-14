@@ -1,4 +1,4 @@
-"""Semantic PostgreSQL 19 live-graph catalog verification and repair (D98)."""
+"""Semantic PostgreSQL 18 live-graph catalog verification and repair (D98)."""
 
 from __future__ import annotations
 
@@ -91,9 +91,9 @@ def graph_catalog_problems(*, connection: Connection) -> tuple[str, ...]:
     server_version = int(
         connection.execute(text("SHOW server_version_num")).scalar_one()
     )
-    if not 190000 <= server_version < 200000:
+    if not 180000 <= server_version < 190000:
         problems.append(
-            f"server_version_num expected PostgreSQL 19, observed {server_version}"
+            f"server_version_num expected PostgreSQL 18, observed {server_version}"
         )
         return tuple(problems)
 

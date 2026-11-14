@@ -1,6 +1,6 @@
 # Live PostgreSQL Graph — Binding Design
 
-**Status:** binding under D98
+**Status:** binding under D98 and D157
 
 **Date:** 2026-08-27
 
@@ -9,6 +9,9 @@
 **Amended:** 2026-11-06 (D98 PostgreSQL 19 RC 1 amendment): PostgreSQL 19
 Beta 4 removed SQL/PGQ, so the one-hop read is a plain relational join and
 the property graphs are gone. The graph itself is unchanged.
+
+**Reference-server amendment:** 2026-11-14 (D157): PostgreSQL 18 is the
+only supported major; the relational graph contract is unchanged.
 
 **Analysis:**
 [`postgres19_sqlpgq_live_graph_analysis.md`](../analysis/postgres19_sqlpgq_live_graph_analysis.md)
@@ -22,7 +25,7 @@ depend on. The former LadybugDB P2 copied that state into immutable graph
 generations and added an export/build/publish/download/open lifecycle.
 
 There are no compatibility consumers. The graph is therefore served directly
-from PostgreSQL 19:
+from PostgreSQL 18 (D157):
 
 - Private live PostgreSQL views over the authority tables are the graph's
   nodes and edges. Graph rows are not copied into another store.
@@ -44,13 +47,11 @@ PostgreSQL authority tables
         +-- private live/history node and edge views -- bounded frontier traversal
 ```
 
-The cutover originally used PostgreSQL 19's SQL/PGQ (`CREATE PROPERTY GRAPH`
-and `GRAPH_TABLE`, the SQL standard's graph-pattern syntax) for the one-hop
-read. PostgreSQL 19 Beta 4 reverted SQL/PGQ, so release candidate 1 and the
-final release cannot parse it. PG19's SQL/PGQ was only a query rewrite: a
-`GRAPH_TABLE` pattern was turned into ordinary joins over the views a property
-graph named. The engine now writes those joins itself, over the same views, so
-results are the same and nothing about the graph's data or semantics changed.
+The earlier SQL/PGQ one-hop implementation was replaced by ordinary joins
+when upstream removed that feature (D98 RC 1 amendment). PostgreSQL 18
+provides those joins and all bounded traversal helpers, so retaining a
+prerelease server has no capability benefit. D157 removes that dependency.
+The historical experiment remains in the linked analysis.
 
 The supported capability is the **live graph**. The legacy filename is retained
 only to keep established corpus links stable; it is not a current plane name.
@@ -507,16 +508,13 @@ its artifacts do not become graph authority.
 - Typed graph endpoints call only fixed SQL or the bounded functions. They do
   not interpolate identifiers, labels, properties, predicates, or depth.
 - Public Cypher is removed.
-- The reference server (PostgreSQL 19 RC 1 and later) has no SQL/PGQ, so
+- The reference server (PostgreSQL 18) has no SQL/PGQ, so
   public SQL/PGQ is not part of the surface. The exhaustive `pglast` gate also
   rejects that syntax; bypassing the parser or maintaining a second lexical
   allowlist is forbidden.
-- The PostgreSQL-18 grammar gate in front of a PostgreSQL-19 server is itself
-  an explicit compatibility boundary. Release tests diff reserved/unreserved
-  keywords, admitted statement/node shapes, and callable built-ins between
-  majors and prove that new PG19 syntax/functions are rejected by default.
-  An AST accepted under the PG18 grammar may execute only through the existing
-  function/view allowlists; no name-resolution semantic drift is assumed safe.
+- The `pglast` PostgreSQL 18 grammar matches the reference server major.
+  Accepted syntax still executes only through the existing function/view
+  allowlists; graph-pattern syntax and unlisted built-ins remain rejected.
 
 ### Surface and transport contract
 
@@ -582,32 +580,25 @@ because it is not one of the recursive entity-expansion helpers.
 Measurements record hardware, cardinality, skew, and p50/p95/p99 rather than
 weakening correctness to a small-fixture promise.
 
-## 9. PostgreSQL 19 and extension posture
+## 9. PostgreSQL 18 and extension posture
 
-The reference image tracks the latest PostgreSQL 19 prerelease by exact image
-digest: first the Beta 3 image proven in the analysis, release candidate 1
-since 2026-11-06, and the final release when it ships. There are no user
-databases to preserve. Until GA:
+The reference and self-host image runs only PostgreSQL 18 (D157). It pins
+an official `18.x-trixie` multi-platform digest, choosing the newest minor
+and image at least two weeks old. The initial 18.6 image is recorded in
+`docker/README.md`, including dated source evidence and child digests.
 
-- no prerelease database contains irreplaceable production data;
-- migrations and representative fixtures must replay from empty storage;
-- every beta/RC bump rebuilds the image and runs the full migration,
-  pgvector/HNSW, pg_textsearch/BM25, pg_partman, one-hop, traversal, backup,
-  and restore gates;
-- the complete extension/one-hop/traversal matrix passes on both `linux/amd64` and
-  `linux/arm64`, with per-architecture image/artifact digests recorded;
-- prerelease-to-prerelease data-directory compatibility is not assumed;
-- GA is another tested image replacement, after which ordinary supported
-  major/minor upgrade policy resumes.
+Every image change rebuilds both `linux/amd64` and `linux/arm64`, records
+per-architecture image/artifact digests, and runs migrations from empty,
+pgvector/HNSW, pg_textsearch/BM25, pg_partman, one-hop, traversal, backup,
+restore and the complete engine suite. There is one server target; no
+PG19 compatibility or Beta 3 cleanup mechanism is maintained.
 
 The reference image pins pgvector and pg_partman packages. `pg_textsearch` is
-pinned to an upstream release of 1.5.1 or later (D142), which supports
-PostgreSQL 19 upstream, so the earlier 1.3.1 compatibility patch is retired and no
-local patch is carried (the P1 search design §8.3 bounds the extension's
+pinned to upstream 1.5.1 (D142/D157), which supports PostgreSQL 18. No
+local patch or forced-header compiler workaround is carried (the P1 search design §8.3 bounds the extension's
 memtable-versus-segment scoring difference instead of patching it).
-Upstream treats PostgreSQL 19 as best-effort with non-blocking CI, so the image
-build runs the extension's upstream SQL tests on the pinned PostgreSQL 19 image
-as a local gate. Its PostgreSQL License permits use, modification, and
+The image build runs the extension's upstream SQL tests on the exact pinned
+PostgreSQL 18 server as a local gate. Its PostgreSQL License permits use, modification, and
 distribution when the required notices accompany copies. OSS release
 engineering records source, notice, compiler/toolchain, and per-architecture
 binary checksums. No floating `main` branches enter the image.
@@ -645,15 +636,12 @@ snapshot only until the bounded transaction ends.
 Migrations replace the graph views and their grants transactionally around
 incompatible view changes. Rollback means deploying the preceding application and replaying
 its schema on a compatible PostgreSQL image; it never means reviving Ladybug.
-During PostgreSQL 19 prereleases, rollback is rebuild-and-restore from a
-logical/known-compatible source, not reusing an unverified data directory.
-
-A store created on PostgreSQL 19 Beta 3 still holds the two former SQL/PGQ
-property graphs. `pg_upgrade` and `pg_restore` replay their DDL, which RC 1
-cannot parse, so the store first runs migration `p9_44_0065` on Beta 3, which
-drops them, and then moves to RC 1. The catalog version also changed between
-Beta 3 and RC 1, so the data directory moves by `pg_upgrade` or
-`pg_dump`/`pg_restore`, never by opening it directly.
+A server-major change requires fresh storage and a separately verified
+transfer or replay. A PG19 directory cannot be opened by PostgreSQL 18, and
+`pg_upgrade` cannot downgrade it. With no user databases, this cutover
+recreates development stores and replays migrations and inputs. An operator
+who must preserve managed data must qualify logical export/import or source
+replay separately; the engine provides no PG19 conversion path.
 
 ## 11. Observability and readiness
 
@@ -708,7 +696,7 @@ graph path, or rebuild-ready signal.
 
 Implementation is accepted only when all of these pass:
 
-1. fresh PostgreSQL 19 migration creates the graph views and each view's key
+1. fresh PostgreSQL 18 migration creates the graph views and each view's key
    query proves unique;
 2. one-hop tests prove tenant isolation, direction,
    current/as-of visibility, anchor exclusion, deduplication, deterministic
@@ -727,7 +715,7 @@ Implementation is accepted only when all of these pass:
    graph build and that graph provenance/truncation are preserved;
 6. forget and restore tests find no graph artifact inventory and prove view
    disappearance after commit;
-7. HNSW, BM25, pg_partman, migration, PG18-parser/PG19-executor negative tests,
+7. HNSW, BM25, pg_partman, migration, PG18 parser/executor negative tests,
    and query-space tests pass on both linux/amd64 and linux/arm64 images;
 8. repository searches and dependency locks contain no active Ladybug runtime,
    P2 generation worker, public Cypher route, or P2 readiness contract;
@@ -756,7 +744,7 @@ Rejected by this design:
   and its shortest-path helper does not carry the arbitrary two-clock edge
   predicate;
 - pgGraph, because its CSR artifacts reintroduce generations and its inspected
-  release lacks PostgreSQL 19 and the required per-edge temporal predicate;
+  release lacks the required per-edge temporal predicate;
 - SQL/PGQ as the traversal engine, because PostgreSQL 19 Beta 3 lacked
   quantified and shortest paths. SQL/PGQ served the one-hop read from the
   cutover until PostgreSQL 19 Beta 4 removed it; the relational join over the

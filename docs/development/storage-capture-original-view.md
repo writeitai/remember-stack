@@ -143,9 +143,9 @@ The fixture owns that fresh database for this file. Use a fresh target for a
 separate guard-suite run; this command does not collect or execute its optional
 permissions case. Remove only the owned scratch container afterward.
 
-PostgreSQL's [repeatable-read semantics](https://www.postgresql.org/docs/19/transaction-iso.html#XACT-REPEATABLE-READ)
+PostgreSQL's [repeatable-read semantics](https://www.postgresql.org/docs/18/transaction-iso.html#XACT-REPEATABLE-READ)
 define the first non-transaction-control statement as the view boundary;
-its [locking contract](https://www.postgresql.org/docs/19/explicit-locking.html#LOCKING-TABLES)
+its [locking contract](https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-TABLES)
 distinguishes the extraction pin from writer exclusion. Both sources retrieved
 2026-11-11. These semantics motivate the original-session implementation;
 they do not substitute for native qualification.

@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Requirements",
-  description: "What you need to run RememberStack yourself \u2014 PostgreSQL 19, S3-compatible storage, Docker, a model key \u2014 and how to size disk and database connections.",
+  description: "What you need to run RememberStack yourself \u2014 PostgreSQL 18, S3-compatible storage, Docker, a model key \u2014 and how to size disk and database connections.",
 };
 
 # Requirements
@@ -42,31 +42,29 @@ Graviton, Ampere) runs them natively, without emulation:
 | Image | Used by |
 |---|---|
 | `ghcr.io/writeitai/remember-stack:0.20.0` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.20.0` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.20.0` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
-when you pass `--build`. Version 0.18.1 is the first release on the `19rc1`
-image; releases up to 0.17.2 ran Beta 3 (`19beta3`), and moving an existing
-Beta 3 deployment needs the steps in
-[Upgrades](/docs/self-hosting/upgrades#postgresql-prerelease-versions).
-Building PostgreSQL compiles one extension and takes a few minutes. The third image, SeaweedFS, is also published for both
-architectures.
+when you pass `--build`. Between releases, use `--build` with a main checkout
+so both engine and database come from the same source revision. Building
+PostgreSQL compiles one extension and takes a few minutes. SeaweedFS is also
+published for both architectures.
 
-## PostgreSQL 19 (release candidate)
+## PostgreSQL 18
 
-RememberStack requires **PostgreSQL 19, which is not yet a final release**.
-The Compose file pins release candidate 1 (`postgres:19rc1`).
+RememberStack requires **PostgreSQL 18**, the sole supported server major.
+`Dockerfile.postgres` pins the official `18.6-trixie` image by digest. It is
+the newest minor and image satisfying the two-week minimum age at selection
+on 2026-11-14; 18.7 was released on 2026-11-12.
 
-It needs 19 because the engine is built and tested only against
-PostgreSQL 19, and the graph's readiness check refuses any other major
-version. Entity neighbourhoods and paths run live, as ordinary SQL over the
-same database that holds the facts, with no separate graph store to build or
-keep in sync.
+Entity neighbourhoods and paths run live as ordinary SQL over the database
+that holds the facts. They need no separate graph store and no prerelease
+property-graph feature. Readiness refuses a different server major.
 
-Running a prerelease has a consequence you should plan for: there is no
-promise that a data directory created by one PostgreSQL 19 prerelease opens
-under a later one or under the final release. See [Upgrades and migrations](/docs/self-hosting/upgrades).
+Existing prerelease development data must be recreated and replayed into
+fresh PostgreSQL 18 storage. Replacing the image cannot open a PostgreSQL 19
+data directory on 18. See [Upgrades and migrations](/docs/self-hosting/upgrades#postgresql-server-versions).
 
 ### Extensions
 
@@ -83,11 +81,12 @@ The migrations create these extensions:
 | `unaccent` | contrib | Accent folding of names |
 | `btree_gist` | contrib | The time-range exclusion constraint on relations |
 
-`pg_textsearch` has no PostgreSQL 19 package yet. `Dockerfile.postgres`
-downloads the pinned `v1.5.1` source revision from `timescale/pg_textsearch`
-(which supports PostgreSQL 19 upstream) and compiles it. `pgvector` and `pg_partman` come from the PostgreSQL apt
-archive at the exact versions above. `remember ops graph-catalog ensure`
-checks these three versions (see [Operating the pipeline](/docs/self-hosting/operating)).
+`Dockerfile.postgres` compiles `pg_textsearch` from the same checksum-verified
+`v1.5.1` source revision used by the preceding image, without a local patch or
+compiler workaround. `pgvector` and `pg_partman` come from the PostgreSQL apt
+archive at the exact versions above, built for PostgreSQL 18. The server also
+includes `plpgsql`. `remember ops graph-catalog ensure` checks the three
+external extension versions (see [Operating the pipeline](/docs/self-hosting/operating)).
 
 ### Server settings
 
@@ -104,7 +103,7 @@ Everything else stays at the image defaults.
 
 Running the engine against a PostgreSQL server you manage yourself is not a
 documented path. If you try it, the server must match everything on this
-page: version 19, the extensions at those versions, and the preload
+page: version 18, the extensions at those versions, and the preload
 settings. The one exception is `pg_partman_bgw`: instead of the background
 worker you may run `CALL run_maintenance_proc();` in the database on a
 schedule (see [Upgrades and migrations](/docs/self-hosting/upgrades)).
