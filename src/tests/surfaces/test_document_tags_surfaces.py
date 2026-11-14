@@ -367,6 +367,18 @@ def test_sdk_resolves_names_for_routes_that_take_an_id(
     assert tags.registry == {}
 
 
+def test_sdk_finds_a_tag_by_any_unicode_spelling_of_its_name(
+    client: MemoryClient, tags: _Tags
+) -> None:
+    """The registry holds NFC names; a decomposed spelling still resolves."""
+    created = client.create_tag(name="caf\u00e9:menu", description="")
+    assert created.name == "caf\u00e9:menu"
+    renamed = client.update_tag(tag="CAFE\u0301:MENU", description="Menu.")
+    assert renamed.tag_id == created.tag_id
+    assert client.delete_tag(tag="cafe\u0301:menu").tag_id == created.tag_id
+    assert tags.registry == {}
+
+
 def test_sdk_tags_documents_and_maps_typed_refusals(
     client: MemoryClient, ingest: _Ingest
 ) -> None:

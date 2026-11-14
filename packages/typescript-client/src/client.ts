@@ -378,8 +378,8 @@ export class MemoryClient {
   /** Resolve a tag name (NFC, ignoring case) to its id; an id is used as given. */
   async #tagId({tag,signal}:{tag:string;signal?:AbortSignal}):Promise<string> {
     try{return uuid({value:tag,field:'tag'});}catch(error){if(!(error instanceof InputValidationError))throw error;}
-    const wanted=tag.normalize('NFC').toLowerCase();
-    for(const registered of (await this.listTags({query:tag,signal})).tags)if(registered.name.toLowerCase()===wanted)return registered.tag_id;
+    const normalized=tag.normalize('NFC'),wanted=normalized.toLowerCase();
+    for(const registered of (await this.listTags({query:normalized,signal})).tags)if(registered.name.toLowerCase()===wanted)return registered.tag_id;
     throw new UnknownTag({tags:[tag],statusCode:404});
   }
   /** List deployment-side connectors; never execute their adapters in this client. */

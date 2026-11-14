@@ -8,8 +8,12 @@ processing input, and nothing here enqueues work: a tag write costs no model
 call and never creates a version (D56).
 
 A tag is named by its name (matched case-insensitively, after NFC) or by its
-``tag_id``. Any write naming an unregistered tag is refused with
-:class:`UnknownTagError` listing every unknown tag, before anything is stored.
+``tag_id``; a tag addressed alone (``update_tag``, ``delete_tag``) by a
+UUID-shaped reference is looked up by id only. Any write naming an
+unregistered tag is refused with :class:`UnknownTagError` listing every
+unknown tag, before anything is stored. Resolved tags stay locked until the
+writing transaction commits, so a concurrent ``delete_tag`` cannot remove a
+tag between its resolution and its assignment.
 """
 
 from collections.abc import Sequence
@@ -84,20 +88,19 @@ class TagCatalog:
                     f"a deployment registers at most {TAGS_PER_DEPLOYMENT_MAX} tags"
                 )
             try:
-                with connection.begin_nested():
-                    row = (
-                        connection.execute(
-                            _INSERT_TAG,
-                            {
-                                "deployment_id": deployment_id,
-                                "tag_id": uuid4(),
-                                "name": request.name,
-                                "description": request.description,
-                            },
-                        )
-                        .mappings()
-                        .one()
+                row = (
+                    connection.execute(
+                        _INSERT_TAG,
+                        {
+                            "deployment_id": deployment_id,
+                            "tag_id": uuid4(),
+                            "name": request.name,
+                            "description": request.description,
+                        },
                     )
+                    .mappings()
+                    .one()
+                )
             except IntegrityError as error:
                 raise TagConflictError(name=request.name) from error
             return _tag(row=row)
@@ -112,20 +115,19 @@ class TagCatalog:
                 connection=connection, deployment_id=deployment_id, tag=tag
             )
             try:
-                with connection.begin_nested():
-                    row = (
-                        connection.execute(
-                            _UPDATE_TAG,
-                            {
-                                "deployment_id": deployment_id,
-                                "tag_id": tag_id,
-                                "name": request.name,
-                                "description": request.description,
-                            },
-                        )
-                        .mappings()
-                        .one()
+                row = (
+                    connection.execute(
+                        _UPDATE_TAG,
+                        {
+                            "deployment_id": deployment_id,
+                            "tag_id": tag_id,
+                            "name": request.name,
+                            "description": request.description,
+                        },
                     )
+                    .mappings()
+                    .one()
+                )
             except IntegrityError as error:
                 raise TagConflictError(name=str(request.name)) from error
             return _tag(row=row)
@@ -218,7 +220,23 @@ def resolve_tags_on(
             {"deployment_id": deployment_id, "refs": list(dict.fromkeys(tags))},
         ).mappings()
     }
-    unknown = [tag for tag in dict.fromkeys(tags) if tag not in found]
+    # Hold the resolved rows until the caller commits, so a concurrent
+    # delete_tag either commits first (the tag is then unknown here) or waits
+    # for this write (and then cascades over the assignment it made).
+    locked = set(
+        connection.execute(
+            _LOCK_TAGS,
+            {
+                "deployment_id": deployment_id,
+                "tag_ids": [str(tag_id) for tag_id in set(found.values())],
+            },
+        ).scalars()
+    )
+    unknown = [
+        tag
+        for tag in dict.fromkeys(tags)
+        if tag not in found or found[tag] not in locked
+    ]
     if unknown:
         raise UnknownTagError(tags=unknown)
     return found
@@ -286,13 +304,29 @@ def check_document_tags_on(
 
 
 def _resolve_one(*, connection: Connection, deployment_id: UUID, tag: str) -> UUID:
-    """The one addressed tag's id; an unknown tag is a 404-shaped refusal."""
+    """The one addressed tag's id, locked; an unknown tag is a 404-shaped refusal.
+
+    A reference that parses as a UUID addresses a ``tag_id`` only, never a
+    name: a tag may be named like another tag's id, and an id-addressed
+    write must never fall through to it once the id is gone.
+    """
     try:
-        return resolve_tags_on(
-            connection=connection, deployment_id=deployment_id, tags=(tag,)
-        )[tag]
-    except UnknownTagError as error:
-        raise UnknownTagError(tags=error.tags, status_code=404) from error
+        tag_id = UUID(tag)
+    except ValueError:
+        tag_id = None
+    if tag_id is None:
+        try:
+            tag_id = resolve_tags_on(
+                connection=connection, deployment_id=deployment_id, tags=(tag,)
+            )[tag]
+        except UnknownTagError as error:
+            raise UnknownTagError(tags=error.tags, status_code=404) from error
+    locked = connection.execute(
+        _LOCK_TAG_FOR_UPDATE, {"deployment_id": deployment_id, "tag_id": tag_id}
+    ).scalar_one_or_none()
+    if locked is None:
+        raise UnknownTagError(tags=(tag,), status_code=404)
+    return locked
 
 
 def _lock_registry(*, connection: Connection, deployment_id: UUID) -> None:
@@ -370,6 +404,23 @@ _RESOLVE_TAGS = text(
        OR lower(tag.name) = lower(normalize(ref.value, NFC))
      )
     ORDER BY ref.value, (tag.tag_id::text = lower(ref.value)) DESC
+    """
+)
+
+_LOCK_TAGS = text(
+    """
+    SELECT tag_id FROM tags
+    WHERE deployment_id = :deployment_id
+      AND tag_id = ANY(CAST(:tag_ids AS uuid[]))
+    FOR SHARE
+    """
+)
+
+_LOCK_TAG_FOR_UPDATE = text(
+    """
+    SELECT tag_id FROM tags
+    WHERE deployment_id = :deployment_id AND tag_id = :tag_id
+    FOR UPDATE
     """
 )
 
