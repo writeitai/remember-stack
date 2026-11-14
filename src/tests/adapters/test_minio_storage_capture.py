@@ -244,7 +244,7 @@ def live_tree(
             engine,
             replace(
                 source,
-                doc_id=UUID(int=1000 + number),
+                doc_id=UUID(int=number),
                 version_id=UUID(int=2000 + number),
                 representation_id=UUID(int=3000 + number),
                 structure_generation_id=UUID(int=4000 + number),

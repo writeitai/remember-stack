@@ -138,7 +138,10 @@ When `writeitai/ultimate-memory-cloud` pins this engine:
 - Rebuild the pinned engine/runtime artifacts and update `runtime/engine.lock`.
   Regenerate the native source, expected schema definition/profile and native
   qualification/profile preimages for `p9_52_0073`, including the new corpus
-  page/selector and the default corpus builder policy. Regenerate the managed
+  page and `spine/corpus_export.py`'s served selector, plus
+  `core/corpus_export.py`'s builder policy, reader-kind registry, original naming
+  and revision function and `model/conversion.py`'s asset-name contract. The
+  source artifact pin must cover their dependency closure. Regenerate the managed
   runtime source digest and producer identity at that actual engine/image pin.
 - Feed the resulting `NativeCaptureProfile` and existing provider/clock/run
   bounds into `runtime/src/umc_runtime/storage_capture_profile.py`'s

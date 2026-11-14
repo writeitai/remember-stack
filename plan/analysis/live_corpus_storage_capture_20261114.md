@@ -17,6 +17,10 @@ suffix folder are staging, including unrecorded paths, deleted/forgotten
 documents and interrupted publication. Unknown keys outside the writer grammar
 refuse capture instead of inheriting an inclusion rule.
 
+Limit the document page before joining served inputs and seek using the native
+UUID index, so advancing a page does not rescan all earlier UUID text values.
+The first page includes UUID zero; subsequent pages exclude their cursor row.
+
 Retain D152's purpose/component vocabulary: separate native classes identify
 corpus original copies, derivatives and navigation, all `projection_origin` in
 `p3_origin`. Raw originals remain `canonical_raw` in `canonical_object`. Thus

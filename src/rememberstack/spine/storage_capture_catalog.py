@@ -251,7 +251,10 @@ BEGIN
     WITH bounded_documents AS MATERIALIZED (
       SELECT doc_id, corpus_paths FROM public.documents
       WHERE deployment_id=native_scope
-        AND doc_id::text COLLATE "C" > after_id COLLATE "C"
+        -- Keep the seek on the native UUID index, including UUID zero on page one.
+        AND doc_id >= COALESCE(NULLIF(after_id,'')::uuid,
+          '00000000-0000-0000-0000-000000000000'::uuid)
+        AND doc_id IS DISTINCT FROM NULLIF(after_id,'')::uuid
       ORDER BY doc_id LIMIT page_limit
     )
     SELECT COALESCE(jsonb_agg(to_jsonb(bounded) ORDER BY doc_id),'[]'::jsonb)
