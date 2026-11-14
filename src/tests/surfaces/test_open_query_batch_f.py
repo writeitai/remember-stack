@@ -789,9 +789,9 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
         assert descriptor.answer_intent == operation.answer_intent.value
     # Pin the closed surface versions explicitly.
     assert descriptors["resolve_entity"].version == 1
-    assert descriptors["claims_and_sources_context"].version == 4
-    assert descriptors["facts_context"].version == 4
-    assert descriptors["combined_context"].version == 5
+    assert descriptors["claims_and_sources_context"].version == 5
+    assert descriptors["facts_context"].version == 5
+    assert descriptors["combined_context"].version == 6
 
 
 def _expected_input_schema(operation: object) -> dict[str, object]:

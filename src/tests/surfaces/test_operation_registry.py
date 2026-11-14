@@ -95,9 +95,9 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     )
     assert tuple(operation.version for operation in CANONICAL_OPERATIONS) == (
         1,
-        4,  # Configurable candidate depths and automatic overfetch.
-        4,
+        5,  # D156: the optional documents filter.
         5,
+        6,
     )
     descriptors = {
         descriptor.name: descriptor

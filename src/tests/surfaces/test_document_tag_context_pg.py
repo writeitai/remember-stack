@@ -576,18 +576,27 @@ def test_a_filtered_fact_read_stopped_by_its_work_bound_reports_boundary(
 def test_resolve_entity_is_unaffected_by_tag_state(rig: _Rig) -> None:  # noqa: F811
     """§4.2: name resolution has no document filter and ignores tags."""
     products = _products(rig)
-    before = _run(
-        rig, "resolve_entity", name="worker runs restart after 12 hours subject"
-    )
+    with rig.engine.begin() as connection:
+        subject = connection.execute(
+            text("SELECT subject_entity_id FROM relations WHERE relation_id = :r"),
+            {"r": products.twelve},
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO aliases (alias_id, deployment_id, entity_id, alias_text,"
+                " normalized_lemma, provenance) VALUES (:alias, :d, :entity,"
+                " 'Worker Pool', 'worker pool', 'source')"
+            ),
+            {"alias": uuid4(), "d": _DEPLOYMENT_ID, "entity": subject},
+        )
+    before = _run(rig, "resolve_entity", name="Worker Pool")
     assert before.entities
     rig.tags.update_document_tags(
         deployment_id=_DEPLOYMENT_ID,
         doc_id=products.autoboard.doc_id,
         request=DocumentTagsUpdate(set=()),
     )
-    after = _run(
-        rig, "resolve_entity", name="worker runs restart after 12 hours subject"
-    )
+    after = _run(rig, "resolve_entity", name="Worker Pool")
     assert json.loads(
         after.model_dump_json(exclude={"freshness", "temporal_scope"})
     ) == json.loads(before.model_dump_json(exclude={"freshness", "temporal_scope"}))
