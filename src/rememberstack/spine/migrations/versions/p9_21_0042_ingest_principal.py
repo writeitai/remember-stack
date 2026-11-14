@@ -92,7 +92,7 @@ COMMENT ON COLUMN document_versions.ingested_by_principal_id IS
 # measured, with a concurrent UPDATE timing out. NOT VALID is scan-free
 # (seq_scan=0), which removes that table-size dependence.
 #
-# It is NOT lock-free: PostgreSQL 19 still takes ShareRowExclusiveLock for
+# It is NOT lock-free: PostgreSQL 18 takes ShareRowExclusiveLock for
 # ADD FOREIGN KEY ... NOT VALID, held until this atomic transaction commits,
 # and a concurrent writer will wait on it. The difference that matters is
 # bounded-and-brief versus proportional-to-row-count.

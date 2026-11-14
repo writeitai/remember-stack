@@ -7074,31 +7074,29 @@ Graviton, Ampere) runs them natively, without emulation:
 | Image | Used by |
 |---|---|
 | `ghcr.io/writeitai/remember-stack:0.20.0` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.20.0` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.20.0` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
-when you pass `--build`. Version 0.18.1 is the first release on the `19rc1`
-image; releases up to 0.17.2 ran Beta 3 (`19beta3`), and moving an existing
-Beta 3 deployment needs the steps in
-[Upgrades](https://remember.dev/docs/self-hosting/upgrades#postgresql-prerelease-versions).
-Building PostgreSQL compiles one extension and takes a few minutes. The third image, SeaweedFS, is also published for both
-architectures.
+when you pass `--build`. Between releases, use `--build` with a main checkout
+so both engine and database come from the same source revision. Building
+PostgreSQL compiles one extension and takes a few minutes. SeaweedFS is also
+published for both architectures.
 
-## PostgreSQL 19 (release candidate)
+## PostgreSQL 18
 
-RememberStack requires **PostgreSQL 19, which is not yet a final release**.
-The Compose file pins release candidate 1 (`postgres:19rc1`).
+RememberStack requires **PostgreSQL 18**, the sole supported server major.
+`Dockerfile.postgres` pins the official `18.6-trixie` image by digest. It is
+the newest minor and image satisfying the two-week minimum age at selection
+on 2026-11-14; 18.7 was released on 2026-11-12.
 
-It needs 19 because the engine is built and tested only against
-PostgreSQL 19, and the graph's readiness check refuses any other major
-version. Entity neighbourhoods and paths run live, as ordinary SQL over the
-same database that holds the facts, with no separate graph store to build or
-keep in sync.
+Entity neighbourhoods and paths run live as ordinary SQL over the database
+that holds the facts. They need no separate graph store and no prerelease
+property-graph feature. Readiness refuses a different server major.
 
-Running a prerelease has a consequence you should plan for: there is no
-promise that a data directory created by one PostgreSQL 19 prerelease opens
-under a later one or under the final release. See [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades).
+Existing prerelease development data must be recreated and replayed into
+fresh PostgreSQL 18 storage. Replacing the image cannot open a PostgreSQL 19
+data directory on 18. See [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#postgresql-server-versions).
 
 ### Extensions
 
@@ -7115,11 +7113,12 @@ The migrations create these extensions:
 | `unaccent` | contrib | Accent folding of names |
 | `btree_gist` | contrib | The time-range exclusion constraint on relations |
 
-`pg_textsearch` has no PostgreSQL 19 package yet. `Dockerfile.postgres`
-downloads the pinned `v1.5.1` source revision from `timescale/pg_textsearch`
-(which supports PostgreSQL 19 upstream) and compiles it. `pgvector` and `pg_partman` come from the PostgreSQL apt
-archive at the exact versions above. `remember ops graph-catalog ensure`
-checks these three versions (see [Operating the pipeline](https://remember.dev/docs/self-hosting/operating)).
+`Dockerfile.postgres` compiles `pg_textsearch` from the same checksum-verified
+`v1.5.1` source revision used by the preceding image, without a local patch or
+compiler workaround. `pgvector` and `pg_partman` come from the PostgreSQL apt
+archive at the exact versions above, built for PostgreSQL 18. The server also
+includes `plpgsql`. `remember ops graph-catalog ensure` checks the three
+external extension versions (see [Operating the pipeline](https://remember.dev/docs/self-hosting/operating)).
 
 ### Server settings
 
@@ -7136,7 +7135,7 @@ Everything else stays at the image defaults.
 
 Running the engine against a PostgreSQL server you manage yourself is not a
 documented path. If you try it, the server must match everything on this
-page: version 19, the extensions at those versions, and the preload
+page: version 18, the extensions at those versions, and the preload
 settings. The one exception is `pg_partman_bgw`: instead of the background
 worker you may run `CALL run_maintenance_proc();` in the database on a
 schedule (see [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades)).
@@ -7334,7 +7333,7 @@ RememberStack image, and starts everything in dependency order:
 
 | Service | Command | Role |
 |---|---|---|
-| `postgres` | `postgres` | PostgreSQL 19 prerelease with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
+| `postgres` | `postgres` | PostgreSQL 18 with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
 | `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and the live corpus. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
@@ -9739,33 +9738,25 @@ Three things are shared across the server, so keep them in mind:
   ample for monthly partitions). RememberStack does not depend on the
   background worker itself.
 
-## PostgreSQL prerelease versions
+## PostgreSQL server versions
 
-RememberStack runs on a PostgreSQL 19 prerelease, release candidate 1
-(`19rc1`); releases up to v0.17.2 ran Beta 3 (`19beta3`). A PostgreSQL
-prerelease does not promise that its data directory opens under the next
-prerelease or the final release. The Beta 3 to RC 1 step changes the
-catalog version, so a Beta 3 data directory does not open under RC 1.
+PostgreSQL 18 is the reference server. Compose builds the pinned official
+18.x base with the project's extensions. PostgreSQL 19 was adopted for
+SQL/PGQ property graphs, but upstream removed that feature and the engine
+uses ordinary joins, so a prerelease server is no longer needed.
 
-Beta 3 also had SQL/PGQ property graphs, which RC 1 removed, and a Beta 3
-database still holds two of them. `pg_upgrade` and `pg_restore` would replay
-their definitions, which RC 1 cannot parse. To move a Beta 3 deployment:
+This is a major-version change. A PostgreSQL 19 data directory cannot be
+opened by PostgreSQL 18, and `pg_upgrade` cannot downgrade it. With no user
+databases, the supported development path is fresh PostgreSQL 18 storage,
+`setup`, and replaying the source documents. To remove only the database
+volume, stop the stack, identify its `postgres-data` volume with
+`docker volume ls`, and remove that volume before starting with `--build`.
+Keep object-store and other volumes when their contents must survive.
 
-1. Upgrade RememberStack while it still runs on the Beta 3 PostgreSQL image.
-   `setup` runs migration `p9_44_0065`, which drops the two property graphs.
-2. Move the data into a new RC 1 volume with `pg_upgrade`, or with a logical
-   dump and restore (below).
-
-The logical path was tested for this release: after step 1, take the roles
-file and the `pg_dump` described under [A logical backup](#a-logical-backup)
-from the Beta 3 database, create the roles in the new RC 1 server (skip the
-superuser that already exists), `pg_restore` the dump into its empty
-database, then run `setup` and `remember ops graph-catalog ensure`.
-`pg_upgrade` was not tested. Starting a new deployment and sending your
-documents again also works.
-
-If a release changes the PostgreSQL image, its release notes are the place
-to look.
+If you must preserve data, qualify a logical export/import or source replay
+in a separate operator migration plan before replacing the server. This
+release provides no automatic PG19 conversion or dual-version runtime.
+Release notes record subsequent PostgreSQL 18 minor image changes.
 
 ## The deployment id is permanent
 
@@ -21547,7 +21538,7 @@ existing deployment. A 0.17 deployment upgrades in place: its data is kept and
   2. Dump the database and restore it into a new RC 1 volume.
 
   The order matters: a dump taken before step 1 holds definitions RC 1 cannot
-  restore. [Upgrades](https://remember.dev/docs/self-hosting/upgrades#postgresql-prerelease-versions)
+  restore. [Upgrades](https://remember.dev/docs/self-hosting/upgrades#postgresql-server-versions)
   has the commands.
 - The graph no longer uses SQL/PGQ, which RC 1 removed. One-hop neighbourhoods
   are plain joins over the same views, and they return the same results.
@@ -22290,7 +22281,7 @@ You need:
 - [uv](https://docs.astral.sh/uv/) version **0.12.6** exactly (the project
   pins it);
 - Python 3.12 or newer (CI uses 3.13);
-- Docker, for the PostgreSQL 19 database most tests need.
+- Docker, for the PostgreSQL 18 database most tests need.
 
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
@@ -22321,7 +22312,7 @@ Two rules the linters enforce:
 ### Tests and the database
 
 Tests live in `src/tests/`. Unit tests run without a database. Integration
-tests need PostgreSQL 19 with the project's extensions, built from
+tests need PostgreSQL 18 with the project's extensions, built from
 `Dockerfile.postgres`. The CI script starts one on port 5432:
 
 ```bash
@@ -22370,7 +22361,7 @@ updates or supersedes its entry.
 | `src/tests/` | The test suite, mirroring the layers above. |
 | `benchmarks/` | LoCoMo and BEAM harnesses; see [Benchmarks](https://remember.dev/docs/project/benchmarks). |
 | `packages/` | The deprecated forwarding package; see the [changelog](https://remember.dev/docs/project/changelog). |
-| `Dockerfile`, `Dockerfile.postgres`, `docker/` | The engine image and the PostgreSQL 19 image with extensions. |
+| `Dockerfile`, `Dockerfile.postgres`, `docker/` | The engine image and the PostgreSQL 18 image with extensions. |
 | `compose.yaml`, `.env.example` | The Docker Compose deployment. |
 | `alembic.ini` | Database migration configuration. |
 | `openapi.json` | The HTTP API schema, generated by `scripts/export_openapi.py`. |

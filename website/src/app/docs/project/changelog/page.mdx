@@ -250,7 +250,7 @@ existing deployment. A 0.17 deployment upgrades in place: its data is kept and
   2. Dump the database and restore it into a new RC 1 volume.
 
   The order matters: a dump taken before step 1 holds definitions RC 1 cannot
-  restore. [Upgrades](/docs/self-hosting/upgrades#postgresql-prerelease-versions)
+  restore. [Upgrades](/docs/self-hosting/upgrades#postgresql-server-versions)
   has the commands.
 - The graph no longer uses SQL/PGQ, which RC 1 removed. One-hop neighbourhoods
   are plain joins over the same views, and they return the same results.

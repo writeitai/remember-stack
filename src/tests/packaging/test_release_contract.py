@@ -425,6 +425,22 @@ def test_compose_pulls_the_published_postgres_image(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="published PostgreSQL image"):
         _validate_postgres_release(root=tmp_path, version="0.0.0")
 
+    dockerfile = tmp_path / "Dockerfile.postgres"
+    source = dockerfile.read_text(encoding="utf-8")
+    for before, after in (
+        ("18.6-trixie@", "19rc1-trixie@"),
+        ("@sha256:", "@unpinned:"),
+    ):
+        dockerfile.write_text(source.replace(before, after), encoding="utf-8")
+        with pytest.raises(ValueError, match="PostgreSQL 18 by digest"):
+            _validate_postgres_release(root=tmp_path, version=version)
+    dockerfile.write_text(
+        source.replace("18.6-trixie@", "18.7-trixie@", 1), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="same base image"):
+        _validate_postgres_release(root=tmp_path, version=version)
+    dockerfile.write_text(source, encoding="utf-8")
+
     workflow = tmp_path / ".github/workflows/release.yml"
     workflow.write_text(
         workflow.read_text(encoding="utf-8").replace(

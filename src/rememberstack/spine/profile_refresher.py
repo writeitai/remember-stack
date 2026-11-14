@@ -557,9 +557,8 @@ def _acquire_profile_lock(
         connection.execute(statement, {"key": key})
     except OperationalError as exc:
         cause = exc.orig
-        if (
-            getattr(cause, "sqlstate", None) == "57014"
-            and "advisory lock" in str(cause).lower()
+        if getattr(cause, "sqlstate", None) == "57014" and (
+            statement is _LOCK_IDENTITY_SHARED or statement is _LOCK_ENTITY
         ):
             raise ProfileRefreshContendedError(
                 f"entity profile lock remained busy: {key}"

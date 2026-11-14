@@ -1,7 +1,11 @@
 # Analysis: PostgreSQL 19 SQL/PGQ as the live graph
 
-**Status:** non-binding analysis for D98; SQL/PGQ parts overtaken by §10
-(2026-11-06)  
+**Status:** historical, non-binding D98 analysis. SQL/PGQ was overtaken by
+§10 (2026-11-06); the PostgreSQL 19 server choice is superseded by
+[D157](../../decisions.md#d157-postgresql-18-is-the-reference-server)
+(2026-11-14). The current reference is PostgreSQL 18; the measurements below
+remain evidence for their original PG19 builds. See the
+[PG18 analysis](postgres18_reference_server.md).
 **Date:** 2026-08-27  
 **Repository baseline:** `origin/main` on branch
 `design/postgres19-sqlpgq-live-graph`  

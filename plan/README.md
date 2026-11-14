@@ -92,6 +92,10 @@ and its [analysis](analysis/version_effective_time_and_section_references.md); t
 [delivery plan](plans/effective_time_and_section_references.md) says which parts ship
 together. It also makes D56's version reuse hold for dated versions (text origin time).
 
+For the sole supported server major, see [D157](../decisions.md#d157-postgresql-18-is-the-reference-server),
+its [analysis](analysis/postgres18_reference_server.md) and
+[graph runtime contract](designs/p2_graph_design.md#9-postgresql-18-and-extension-posture).
+
 For why ranked search must use its indexes, how it keeps eligibility exact and
 reports every early stop, and how semantic recall is measured, start with [D142 in the P1 search design](designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
 its [analysis](analysis/index_driven_ranked_search.md), the unchosen
