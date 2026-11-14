@@ -1438,6 +1438,13 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
             ("search_documents", {"filters": {"tags": {"all": "project:a"}}}),
             ("search_documents", {"filters": {"tags": {"all": [123]}}}),
             ("search_documents", {"filters": {"tags": {"none": None}}}),
+            ("search_documents", {"filters": {"tags": {"all": [""]}}}),
+            ("search_documents", {"filters": {"tags": {"any": ["t" * 129]}}}),
+            ("search_documents", {"filters": {"tags": {"none": ["t" * 513]}}}),
+            (
+                "search_claims",
+                {"query": "x", "documents": {"tags": {"all": ["t" * 129]}}},
+            ),
             (
                 "ingest",
                 {

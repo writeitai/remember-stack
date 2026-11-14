@@ -12893,6 +12893,59 @@
       }
     },
     {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "all": [
+              ""
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "any": [
+              "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "none": [
+              "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "search_claims",
+      "typescriptMethod": "searchClaims",
+      "typescriptOptions": {
+        "documents": {
+          "tags": {
+            "all": [
+              "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            ]
+          }
+        },
+        "query": "x"
+      }
+    },
+    {
       "method": "ingest",
       "typescriptMethod": "ingest",
       "typescriptOptions": {

@@ -1537,11 +1537,14 @@ class PostgresP1Index:
     ) -> tuple[tuple[str, str], ...] | None:
         """Facts with a supporting claim from a matching lineage, or ``None`` if many.
 
-        Read from the matching lineages through their claims' evidence rows,
-        at most ``EXACT_TIER_THRESHOLD + 1`` support rows. The result is a
-        superset of the eligible facts: the keyed exact branch re-applies the
-        filter, the evidence gate and every other predicate. Above the
-        threshold the filter is broad and ordinary nomination is cheaper.
+        Read from the matching lineages through their claims' evidence rows.
+        The threshold applies to distinct fact keys, so a few facts with many
+        matching supports still take the exact branch; the read itself stops
+        after ``FILTER_PUSHDOWN_LIMIT + 1`` support rows, and a filter that
+        reaches that many is broad. The result is a superset of the eligible
+        facts: the keyed exact branch re-applies the filter, the evidence gate
+        and every other predicate. Above the threshold ordinary nomination is
+        cheaper.
         """
         lineages_sql, _ = live_matching_lineages(filters=documents, prefix="documents_")
         branches = [
@@ -1565,18 +1568,22 @@ class PostgresP1Index:
             if target in required
         ]
         limit = p1_ranked.EXACT_TIER_THRESHOLD
+        read_limit = p1_ranked.FILTER_PUSHDOWN_LIMIT
         rows = self._engine_rows(
+            "WITH supports AS MATERIALIZED ("
             f"SELECT support.fact_kind, support.fact_id FROM ({lineages_sql}) AS matching"
             f" CROSS JOIN LATERAL ({' UNION ALL '.join(branches)} OFFSET 0) AS support"
+            " LIMIT :read_limit)"
+            " SELECT keys.fact_kind, keys.fact_id,"
+            " (SELECT count(*) FROM supports) AS support_rows"
+            " FROM (SELECT DISTINCT fact_kind, fact_id FROM supports) AS keys"
             " LIMIT :tier_limit",
-            {**parameters, "tier_limit": limit + 1},
+            {**parameters, "read_limit": read_limit + 1, "tier_limit": limit + 1},
             deadline=deadline,
         )
-        if len(rows) > limit:
+        if len(rows) > limit or (rows and int(rows[0]["support_rows"]) > read_limit):
             return None
-        return tuple(
-            dict.fromkeys((str(row["fact_kind"]), str(row["fact_id"])) for row in rows)
-        )
+        return tuple((str(row["fact_kind"]), str(row["fact_id"])) for row in rows)
 
     def _require_fact_scope_budget(
         self,

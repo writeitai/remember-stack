@@ -201,6 +201,14 @@ def main() -> None:
     )
     d140.MAINTENANCE_WORK_MEM[0] = args.maintenance_work_mem
     sweep._reset(engine)  # noqa: SLF001 -- the same isolated benchmark database
+    with engine.begin() as connection:
+        # deterministic ids: clear the facts an earlier run left behind
+        connection.execute(
+            text(
+                "TRUNCATE TABLE relation_evidence, relations, resolution_decisions,"
+                " mentions, entities CASCADE"
+            )
+        )
     timings = d140.seed(
         engine=engine,
         lineages=args.lineages,

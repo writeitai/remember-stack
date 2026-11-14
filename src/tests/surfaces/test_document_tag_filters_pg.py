@@ -1040,3 +1040,53 @@ def test_a_narrow_tag_filter_finds_items_ranked_beyond_the_work_budget(
     assert {UUID(item) for item in _ids(facts)} == quiet_facts
     assert chunks.truncation is None and claims.truncation is None
     assert search_account(facts).termination.complete
+
+
+def test_a_few_facts_with_many_matching_supports_still_take_the_exact_tier(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r2: the fact tier counts distinct facts, not supporting rows.
+
+    Two tagged facts are each supported by four tagged documents: eight
+    supporting rows, two facts. With an exact tier of three facts and a work
+    budget of four candidates behind twelve better-ranked untagged facts,
+    the filtered read still returns both facts, complete.
+    """
+    for n in range(12):
+        lineage = _lineage(
+            rig, label=f"loud-{n}", bodies=("loud text",), tags=("project:b",)
+        )
+        claim_id = _claim(rig, lineage=lineage, body="the loud fact")
+        _relation(
+            rig, label=f"loud {n}", support=((claim_id, lineage, 0),), vector=_NEAR
+        )
+    tagged_facts = set()
+    for fact in range(2):
+        supports = []
+        for n in range(4):
+            lineage = _lineage(
+                rig,
+                label=f"quiet-{fact}-{n}",
+                bodies=("quiet text",),
+                tags=("project:a",),
+            )
+            supports.append(
+                (_claim(rig, lineage=lineage, body="the quiet fact"), lineage, 0)
+            )
+        tagged_facts.add(
+            _relation(rig, label=f"quiet {fact}", support=tuple(supports), vector=_FAR)
+        )
+    monkeypatch.setattr(p1_ranked, "MIN_WORK_BUDGET", 4)
+    monkeypatch.setattr(p1_ranked, "WORK_BUDGET_PER_K", 0)
+    monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 3)
+    facts = rig.index.search_facts_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        vector=_NEAR,
+        k=3,
+        kind="relation",
+        documents=rig.query._resolve_documents(  # noqa: SLF001
+            deployment_id=_DEPLOYMENT_ID, documents=_tags(all=("project:a",))
+        ),
+    )
+    assert {UUID(item) for item in _ids(facts)} == tagged_facts
+    assert search_account(facts).termination is P1Termination.EXHAUSTED
