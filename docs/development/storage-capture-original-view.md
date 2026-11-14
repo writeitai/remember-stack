@@ -74,7 +74,7 @@ intent, including `preparing`. A forget seed carries its actual UUID with
 `locator_kind=journal_intent`; the qualified journal adapter derives its
 concrete key and proves stored presence. PostgreSQL alone cannot assert the
 ObjectStore or LocalFS journal layout. Native content identities and locators use private fields with
-suppressed repr/validation inputs. Trees, manifests, K origin/history and
+suppressed repr/validation inputs. Manifests, K origin/history and
 unmatched store resources still require the engine's qualified store profile
 and complete provider evidence. A locator seed is neither a provider item nor
 a publishable storage member. Missing lengths remain unknown; reference

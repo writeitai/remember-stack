@@ -176,3 +176,4 @@ src/tests/adapters/test_object_operations.py
 src/tests/surfaces/test_pagination_documentation.py
 src/tests/adapters/test_mount_provisioning.py
 src/tests/benchmarks/test_locomo_corpus_attestation.py
+src/tests/spine/test_storage_capture_profile.py

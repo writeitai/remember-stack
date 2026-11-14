@@ -70,7 +70,7 @@ class NativeCatalogAcquisition(_NativeRecord):
 class NativeStoreReference(_NativeRecord):
     """One native store locator or journal intent, including unfinished state.
 
-    A tree/repository locator is a root to expand through qualified store
+    A repository locator is a root to expand through qualified store
     evidence, never a fabricated object or a row-byte estimate. Only raw
     objects record a native length; missing length remains explicit. A journal
     intent carries the actual forget UUID, not an invented store path. Its
@@ -81,7 +81,7 @@ class NativeStoreReference(_NativeRecord):
     native_id: SecretStr = Field(repr=False)
     store_role: Literal["raw", "artifacts", "corpus", "forget", "knowledge"]
     locator: SecretStr = Field(repr=False)
-    locator_kind: Literal["object", "tree", "repository_path", "journal_intent"]
+    locator_kind: Literal["object", "repository_path", "journal_intent"]
     recorded_bytes: UnsignedDecimal | None
     native_state: str | None
     recorded_digest: SecretStr | None = Field(repr=False)
@@ -248,15 +248,19 @@ BEGIN
     IF after_class <> '' THEN
       RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_cursor';
     END IF;
+    WITH bounded_documents AS MATERIALIZED (
+      SELECT doc_id, corpus_paths FROM public.documents
+      WHERE deployment_id=native_scope
+        AND doc_id::text COLLATE "C" > after_id COLLATE "C"
+      ORDER BY doc_id LIMIT page_limit
+    )
     SELECT COALESCE(jsonb_agg(to_jsonb(bounded) ORDER BY doc_id),'[]'::jsonb)
       INTO page FROM (
         SELECT owner.doc_id, COALESCE(owner.corpus_paths, ARRAY[]::text[]) AS paths,
           to_jsonb(served) AS document
-        FROM public.documents owner
+        FROM bounded_documents owner
         LEFT JOIN LATERAL (__CORPUS_DOCUMENTS__ AND d.doc_id=owner.doc_id) served ON true
-        WHERE owner.deployment_id=native_scope
-          AND owner.doc_id::text COLLATE "C" > after_id COLLATE "C"
-        ORDER BY owner.doc_id LIMIT page_limit) bounded;
+        ) bounded;
   ELSIF section = 'terminals' THEN
     IF after_class <> '' THEN
       RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_cursor';

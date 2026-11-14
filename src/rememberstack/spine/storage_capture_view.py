@@ -119,7 +119,7 @@ class NativeCapturedStorageView:
         """Read all native locator seeds, including failed/superseded rows.
 
         This is not the complete classified member set: immutable artifact
-        manifests, store trees, K history and unmatched provider resources still
+        manifests, K history and unmatched provider resources still
         require the engine's qualified store/profile classifier.
         """
         after = ("", "")
