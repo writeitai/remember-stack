@@ -333,8 +333,8 @@ remember tags list --query billing | jq -r '.tags[] | "\(.name)  \(.description)
 ### `remember query`
 
 ```text
-remember query "QUESTION" [--combined]
-remember query text "QUESTION" [--combined] [--layers LIST]
+remember query "QUESTION" [--combined] [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
+remember query text "QUESTION" [--combined] [--layers LIST] [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
 remember query sql STATEMENT [--parameters JSON] [--max-rows N] [--layers LIST]
 remember query explain-sql STATEMENT [--parameters JSON] [--layers LIST]
 remember query space [--pattern GLOB] [--include-examples]
@@ -363,7 +363,16 @@ It runs the `facts_context` operation and prints the result
 ```bash
 remember query "Who owns the billing migration?"
 remember query --combined "Why did the cutover move to October?"
+remember query "Who owns the cutover?" --tag project:billing-migration
 ```
+
+`--tag`, `--any-tag` and `--not-tag` (each repeatable) read only documents
+that carry every `--tag`, at least one `--any-tag` and no `--not-tag`, as on
+[`remember documents search`](#remember-documents). Facts then come only
+from those documents' support, while contradictions from other documents
+stay in the answer, marked `"in_documents_filter": false`; see
+[The documents filter](/docs/reference/assured-operations#the-documents-filter).
+An unregistered tag is refused with `unknown_tag`.
 
 <Callout type="note">
 

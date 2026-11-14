@@ -4478,15 +4478,8 @@ and the agents she works with can see it at a glance.
 Tags do that. A tag is a name, such as `project:billing-migration`, with a
 description of what it means. You register a tag once, then assign it to the
 documents it applies to. A document can carry several tags. This guide shows
-how to register, assign, change and remove tags, how to search only the
-documents that carry them, and where they show up.
-
-**Note:**
-
-Claim and chunk search and `search_documents` filter by tag. The assured
-operations (`claims_and_sources_context`, `facts_context`,
-`combined_context`) do not take a document filter yet. See
-[What is not built yet](https://remember.dev/docs/project/not-built-yet#documents).
+how to register, assign, change and remove tags, how to search and ask
+about only the documents that carry them, and where they show up.
 
 Setup is in the [Quickstart](https://remember.dev/docs/start/quickstart). The routes are in
 [Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest#get-tags).
@@ -4677,6 +4670,52 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
 Tags only choose which documents a search reads. They never change what the
 memory extracted or believes.
 
+## Ask about one project
+
+The context operations an agent uses most, `facts_context`,
+`claims_and_sources_context` and `combined_context`, take the same filter as
+`documents`. Dana's agent, working on the billing migration, asks only what
+that project's documents say:
+
+```python
+billing = {"tags": {"all": ["project:billing-migration"]}}
+facts = memory.facts_context("When is the invoice cutover?", documents=billing)
+said = memory.claims_and_sources_context("invoice cutover", documents=billing)
+both = memory.combined_context("invoice cutover risks", documents=billing)
+```
+
+```bash
+remember query "When is the invoice cutover?" --tag project:billing-migration
+```
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/operations/facts_context" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "When is the invoice cutover?",
+       "documents": {"tags": {"all": ["project:billing-migration"]}}}'
+```
+
+- `claims_and_sources_context` returns only claims and passages from
+  tagged documents: what those documents said.
+- `facts_context` returns the facts the tagged documents support, and their
+  supporting evidence comes only from those documents. The memory's answer
+  is not narrowed, though: if the support team's notes say the cutover is a
+  week later, that note comes back as contradicting evidence marked
+  `"in_documents_filter": false`, and the competing fact comes back in the
+  fact's contradiction, marked the same way. Each `evidence_totals` entry
+  keeps its count across all documents and adds `in_documents_filter_total`.
+  A filtered answer never looks more certain than the memory is.
+- A fact's value, validity and support are the memory's, the same as in an
+  unfiltered read.
+- With `entity_ids` as well, a result must be about one of those entities
+  and come from a tagged document.
+
+Agents connected over MCP get the same `documents` argument on the three
+tools; their descriptions tell them to call `list_tags` first. The whole
+contract is in
+[The documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter).
+
 ## Rename, re-describe or delete a tag
 
 ```python
@@ -4721,8 +4760,9 @@ the name and look the id up.
   ```
 
 - **MCP.** Agents get the tools `list_tags`, `create_tag`, `update_tag`,
-  `delete_tag` and `update_document_tags`; `ingest` takes `tags`, and
-  `search_documents` takes a `tags` filter. See
+  `delete_tag` and `update_document_tags`; `ingest` takes `tags`,
+  `search_documents` takes a `tags` filter, and the three context tools take
+  `documents`. See
   [MCP tools](https://remember.dev/docs/reference/mcp#tag-tools).
 
 ## Tags and deleted documents
@@ -12304,6 +12344,9 @@ runs:
   float such as `3.0` is accepted, `true` is not);
 - `entity_ids` must be an array of UUID strings, with no duplicates;
 - `time` must be an object in one of the four modes;
+- `documents` must be a closed
+  [documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter)
+  object, and every tag it names must be registered;
 - length, item-count and range bounds from the descriptor apply;
 - for every context operation, `candidate_k` may not be smaller than `k`.
 
@@ -12333,7 +12376,8 @@ See [Reading a result](https://remember.dev/docs/concepts/reading-results).
 | `404` | the operation name, as a string | No active operation has that name. |
 | `422` | `{"code": "invalid_parameter", "message": "<name>"}` | A required argument is missing; the message is its name. |
 | `422` | `{"code": "invalid_parameter", "message": "unknown argument(s): …"}` | An argument the operation does not take. |
-| `422` | `{"code": "invalid_parameter", "message": "invalid <name>: …"}` | Wrong type, a malformed UUID, or a bad `time` object. |
+| `422` | `{"code": "invalid_parameter", "message": "invalid <name>: …"}` | Wrong type, a malformed UUID, or a bad `time` or `documents` object. |
+| `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": [...]}` | `documents.tags` names a tag that is not registered; nothing was searched. |
 | `422` | `{"code": "invalid_parameter", "message": "<name> violates maxLength=8192"}` (and similar) | A length, item-count, uniqueness or range bound. |
 | `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | All three context operations. |
 | `422` | validation list | The body is not a JSON object. |
@@ -12371,7 +12415,10 @@ both = memory.combined_context("billing migration status", time={"mode": "curren
 
 `run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
 says `"contract": "ContextBundle/v2"`. All three context helpers accept
-`query`, `k`, `candidate_k` and `time`. `facts_context` also accepts `hops`,
+`query`, `k`, `candidate_k`, `time` and `documents` (a
+`DocumentSearchFilters` or the same object as a dict, such as
+`{"tags": {"all": ["project:billing-migration"]}}`); an unregistered tag
+raises `remember.UnknownTag`. `facts_context` also accepts `hops`,
 `predicate` and `entity_ids`; `resolve_entity` takes `name`. Use
 `run_operation` to set `evidence_per_fact` on `facts_context`, `entity_ids`
 on `claims_and_sources_context`, or `entity_ids`, `hops` and `predicate`
@@ -12761,6 +12808,9 @@ Each returned claim was found in a version Alice wrote; its cited evidence is
 where the claim was first extracted, which can be another version of the same
 document.
 Every result cites the document it came from.
+
+The three context operations take the same filter as `documents`; see
+[The documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter).
 
 ### Reading text as of a date
 
@@ -13977,9 +14027,9 @@ four:
 | Operation | Version | Answers from | Result | Grain |
 |---|---|---|---|---|
 | [`resolve_entity`](#resolve_entity) | 1 | identity | `Envelope` | `fact` |
-| [`claims_and_sources_context`](#claims_and_sources_context) | 4 | what sources said | `Envelope` | `evidence` |
-| [`facts_context`](#facts_context) | 4 | what is held true | `Envelope` | `fact` |
-| [`combined_context`](#combined_context) | 5 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
+| [`claims_and_sources_context`](#claims_and_sources_context) | 5 | what sources said | `Envelope` | `evidence` |
+| [`facts_context`](#facts_context) | 5 | what is held true | `Envelope` | `fact` |
+| [`combined_context`](#combined_context) | 6 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
 
 None of them calls a language model. `claims_and_sources_context`,
 `facts_context` and `combined_context` embed the query text to search by
@@ -14020,6 +14070,7 @@ before anything runs:
   `true` and `"3"` are not);
 - `entity_ids` must be an array of UUID strings with no duplicates, and at
   least one item if present;
+- `documents` must be a [documents filter](#the-documents-filter) object;
 - lengths, item counts and ranges below are enforced.
 
 A refused argument is HTTP `422` with
@@ -14084,6 +14135,74 @@ The two conditions are independent. If a claim says something holds "from
 2025" but it occurs only in an edition in force from 2026, a `current` read
 in mid-2025 does not return the fact, and an `at` read in February 2026 does.
 
+## The documents filter
+
+`claims_and_sources_context`, `facts_context` and `combined_context` take an
+optional `documents` object that limits the read to certain documents. It is
+the same filter claim and chunk search take
+([Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents)):
+`family`, `authors`, `recipients`, `created_from`, `created_to`,
+`modified_from`, `modified_to`, `language`, `thread_ref`, `doc_ids` and
+`tags`. Every field given must hold.
+
+```json
+{"query": "worker restart interval",
+ "documents": {"tags": {"all": ["project:autoboard"]}}}
+```
+
+`tags` has three lists of tag names (any letter case) or ids: `all` (the
+document carries every one), `any` (at least one) and `none` (none of them).
+Call `GET /tags` (MCP `list_tags`) to see which tags exist. Every tag named
+must be registered; otherwise the call is refused with `422`
+`{"code": "unknown_tag", "tags": [...]}` before anything is searched. An
+object with an unknown field, an empty or repeated `tags` list, or a malformed
+date or id is `422` `invalid_parameter`. See
+[Tag documents](https://remember.dev/docs/guides/tag-documents).
+
+What the filter keeps, before the `k` best are chosen:
+
+| Grain | Kept when |
+|---|---|
+| Chunk | its document version is live and matches |
+| Claim | it occurs in a live version of a matching document |
+| Fact | at least one live claim supporting it comes from a matching document |
+
+With a `time` object as well, the filter and the time scope must hold on the
+same occurrence: a fact whose only tagged support is out of force, and whose
+in-force support comes from an untagged document, is not returned. With
+`entity_ids` as well, an item must be about one of the entities **and** come
+from a matching document. `resolve_entity` takes no filter: a name resolves
+the same way whatever the question's scope.
+
+The filter only chooses what is read. A fact's value, validity, support and
+contradiction status are the same as in an unfiltered read, and so is its
+evidence count. What changes is which evidence comes back:
+
+- **Supporting evidence** comes only from matching documents.
+- **Contradicting evidence** comes from every document, matching documents
+  first within the same evidence budget. Each `fact_evidence` entry says
+  whether its claim's document matches, in `in_documents_filter`.
+- **Competing facts** in the fact's `contradiction.co_members` are returned
+  even when no matching document supports them, each marked
+  `in_documents_filter`.
+- **Totals** stay deployment-wide: each `evidence_totals` entry keeps
+  `total` (distinct documents supporting or contradicting the fact anywhere)
+  and adds `in_documents_filter_total`, how many of them match.
+
+So a read filtered to `project:autoboard` returns the fact "worker runs
+restart after 12 hours" with its Autoboard support, and also the Legalit note
+that says 6 hours, as contradicting evidence marked
+`"in_documents_filter": false`, with the 6-hour fact as a co-member. An
+agent working on Autoboard learns, in the same answer, that another part of
+the memory disagrees. `claims_and_sources_context` is testimony, so its
+claims and chunks all come from matching documents.
+
+These fields appear only on a filtered read; an unfiltered response has
+none of them. When a filtered read finds nothing, its `known_empty`
+explanation ends with `no live document matches the documents filter` or
+`live documents match the documents filter, but none of them says anything
+relevant`. A read that stopped early is a `boundary`, as without a filter.
+
 ## resolve_entity
 
 Resolve a name to the current entities it can mean, ranked, without guessing.
@@ -14139,7 +14258,7 @@ Return what the sources said about a query: claims and the source passages
 around them, with high recall. This is testimony, not the memory's settled
 view.
 
-**Version** 4. **Answer intent** `claims_and_sources`. **Result contract**
+**Version** 5. **Answer intent** `claims_and_sources`. **Result contract**
 `envelope`, grain `evidence`. **Plan** one step: `claims_and_sources_context`.
 
 ### Parameters
@@ -14150,6 +14269,7 @@ view.
 | `entity_ids` | array of UUID | no | none | 1 to 20 unique ids. Restricts the search to claims and chunks about these entities. |
 | `k` | integer | no | `50` | 1 to 100. The most claims, and separately the most chunks, returned. |
 | `candidate_k` | integer | no | `max(4*k, 60)` | 1 to 400, and at least `k`. How many candidates each search channel nominates. |
+| `documents` | object | no | none | Only what matching documents say. See [The documents filter](#the-documents-filter). |
 | `time` | object | no | `{"mode": "current"}` | Which versions of documents with declared effective periods are read. See [The time object](#the-time-object). |
 
 ### What it does
@@ -14200,7 +14320,7 @@ Return the facts the memory holds true — relations and observations it has
 adjudicated — for a query, under an explicit time scope, each with its
 supporting and contradicting evidence.
 
-**Version** 4. **Answer intent** `facts`. **Result contract** `envelope`,
+**Version** 5. **Answer intent** `facts`. **Result contract** `envelope`,
 grain `fact`. **Plan** two steps: `graph_neighborhood`, then `facts_context`.
 
 ### Parameters
@@ -14214,6 +14334,7 @@ grain `fact`. **Plan** two steps: `graph_neighborhood`, then `facts_context`.
 | `evidence_per_fact` | integer | no | `3` | 1 to 5. The most claims returned per fact and per stance (supporting, contradicting). |
 | `hops` | integer | no | `1` | 1 to 2. How far the live graph expands from each anchor. |
 | `predicate` | string | no | none | 1 to 200 characters. Only relations with this predicate are expanded and returned. |
+| `documents` | object | no | none | Only facts supported by matching documents; contradictions from every document stay. See [The documents filter](#the-documents-filter). |
 | `time` | object | no | `{"mode": "current"}` | See [The time object](#the-time-object). |
 
 ### What it does
@@ -14250,8 +14371,8 @@ graph or search index cannot answer, the result is `negative.kind`
 |---|---|
 | `facts` | Up to `k` [`FactResult`](https://remember.dev/docs/reference/result-types#factresult) entries: `kind` (`relation` or `observation`), `label`, `validity`, `temporal_match`, `support`, and the other sides of any contradiction. |
 | `evidence` | The claims attached to those facts, each once. |
-| `fact_evidence` | Which claim supports or contradicts which fact (`stance`). |
-| `evidence_totals` | For each fact and each stance, how many claims were `returned` and how many exist in `total`. |
+| `fact_evidence` | Which claim supports or contradicts which fact (`stance`); with `documents`, also `in_documents_filter`. |
+| `evidence_totals` | For each fact and each stance, how many claims were `returned` and how many documents back it in `total`; with `documents`, also `in_documents_filter_total`. |
 | `nodes` | The neighbours the graph expansion added, when `entity_ids` were given. |
 | `temporal_scope` | The time mode used, with `evaluated_at` and `believed_at`. |
 | `truncation` | Whether more facts (or neighbours) existed. |
@@ -14344,7 +14465,7 @@ envelope = memory.facts_context(
 Return `claims_and_sources_context` and `facts_context` for the same query in
 one response, side by side and never blended.
 
-**Version** 5. **Answer intent** `combined_context`. **Result contract**
+**Version** 6. **Answer intent** `combined_context`. **Result contract**
 `context_bundle_v2`; no single grain. **Plan** an operation bundle whose
 children are `claims_and_sources_context` then `facts_context`; its
 `implementation_plan_hash` covers both children's plan hashes.
@@ -14359,6 +14480,7 @@ children are `claims_and_sources_context` then `facts_context`; its
 | `candidate_k` | integer | no | `max(4*k, 60)` | 1 to 400, and at least `k`; passed to both children. |
 | `hops` | integer | no | `1` | 1 to 2. Passed to `facts_context`. |
 | `predicate` | string | no | none | 1 to 200 characters. Passed to `facts_context`. |
+| `documents` | object | no | none | Passed unchanged to both children. See [The documents filter](#the-documents-filter). |
 | `time` | object | no | `{"mode": "current"}` | Passed to both children. |
 
 Both children use the requested `k` and `candidate_k` at the same evaluation
@@ -14405,9 +14527,9 @@ per operation. The values that identify the shipped build:
 | Operation | `version` | `result_contract` | `output_grain` | `answer_intent` | `implementation_plan_hash` |
 |---|---|---|---|---|---|
 | `resolve_entity` | 1 | `envelope` | `fact` | `identity` | `fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a` |
-| `claims_and_sources_context` | 4 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
-| `facts_context` | 4 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
-| `combined_context` | 5 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
+| `claims_and_sources_context` | 5 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
+| `facts_context` | 5 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
+| `combined_context` | 6 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
 
 The hashes are those recorded in the `memory_v1` manifest for this release.
 The registry refuses any stored operation that does not match its canonical
@@ -14613,12 +14735,13 @@ A fact's live contradiction, returned with all its sides up to a cap.
 
 ### CoMember
 
-| Field | Type |
-|---|---|
-| `fact_id` | UUID |
-| `label` | string |
-| `evidence_count` | integer |
-| `validity` | [`Validity`](#validity) |
+| Field | Type | Contents |
+|---|---|---|
+| `fact_id` | UUID | |
+| `label` | string | |
+| `evidence_count` | integer | |
+| `validity` | [`Validity`](#validity) | |
+| `in_documents_filter` | boolean | Only on a read with a `documents` filter: whether this side has live support from a matching document. Absent otherwise. |
 
 ### EvidenceResult
 
@@ -14679,12 +14802,13 @@ Where a claim occurs in one selected version.
 
 ### FactEvidence
 
-| Field | Type |
-|---|---|
-| `fact_kind` | `relation` \| `observation` |
-| `fact_id` | UUID |
-| `claim_id` | UUID |
-| `stance` | `supports` \| `contradicts` |
+| Field | Type | Contents |
+|---|---|---|
+| `fact_kind` | `relation` \| `observation` | |
+| `fact_id` | UUID | |
+| `claim_id` | UUID | |
+| `stance` | `supports` \| `contradicts` | |
+| `in_documents_filter` | boolean | Only on a read with a `documents` filter: whether the claim's document matches it. Supporting claims always do; contradicting claims may come from any document. Absent otherwise. |
 
 ### EvidenceTotal
 
@@ -14694,7 +14818,8 @@ Where a claim occurs in one selected version.
 | `fact_id` | UUID | |
 | `stance` | `supports` \| `contradicts` | |
 | `returned` | integer ≥ 0 | Claims of this stance in the result. |
-| `total` | integer ≥ 0 | Claims of this stance that exist. Never less than `returned`. |
+| `total` | integer ≥ 0 | Claims of this stance that exist, counted once per document, across the whole deployment. Never less than `returned`. |
+| `in_documents_filter_total` | integer ≥ 0 | Only on a read with a `documents` filter: how many of those documents match it. Absent otherwise. |
 
 ### ChunkEvidenceResult
 
@@ -17959,6 +18084,7 @@ MemoryClient.facts_context(
     hops: int | None = None,
     predicate: str | None = None,
     entity_ids: Sequence[str | UUID] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> Envelope
 ```
 
@@ -17972,11 +18098,17 @@ evidence.
 | `hops` | 1 or 2; default 1 |
 | `predicate` | 1 to 200 characters |
 | `entity_ids` | 1 to 19 unique entity UUIDs |
+| `documents` | a [documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter), as `DocumentSearchFilters` or a dict; tags must be registered (`remember.UnknownTag` otherwise) |
 
 ```python
 facts = memory.facts_context(
     "billing migration owner", time={"mode": "history"}
 )
+billing = memory.facts_context(
+    "cutover date", documents={"tags": {"all": ["project:billing-migration"]}}
+)
+for link in billing.fact_evidence:
+    print(link.stance, link.claim_id, link.in_documents_filter)
 for fact in facts.facts:
     print(fact.label, fact.validity.valid_from, fact.validity.valid_until)
 ```
@@ -17995,13 +18127,15 @@ MemoryClient.claims_and_sources_context(
     candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     layers: Sequence[str] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> Envelope
 ```
 
 Returns what sources said about `query` (claims) and the matching source
 passages (chunks). `query` is 1 to 8,192 characters. `time` takes the same
 values as in `facts_context`; for documents with declared effective periods
-it reads only the text in force for that scope (default: now). See
+it reads only the text in force for that scope (default: now). `documents`
+returns only what matching documents say. See
 [Assured operations](https://remember.dev/docs/reference/assured-operations#claims_and_sources_context).
 
 ```python
@@ -18024,12 +18158,14 @@ MemoryClient.combined_context(
     candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     layers: Sequence[str] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> ContextBundleV2
 ```
 
 Runs `claims_and_sources_context` and `facts_context` together and returns
 both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
-`time` takes the same values as in `facts_context` and applies to both.
+`time` and `documents` take the same values as in `facts_context` and apply
+to both.
 
 ```python
 bundle = memory.combined_context("What did John decide about invoicing?")
@@ -18797,9 +18933,13 @@ status 404. `updateDocumentTags({ docId, add, remove })` or
 `updateDocumentTags({ docId, set })` changes one document's tags in one step
 (`set: []` removes every tag) and returns its tags afterwards. `ingest`
 takes `tags`, an array of tag names or ids added to the document.
-`searchDocuments` takes `filters.tags`, and `searchClaims` / `searchChunks`
-take `documents.tags`: `{ all: [...], any: [...], none: [...] }` of tag
+`searchDocuments` takes `filters.tags`, and `searchClaims`, `searchChunks`,
+`factsContext`, `claimsAndSourcesContext` and `combinedContext` take
+`documents.tags`: `{ all: [...], any: [...], none: [...] }` of tag
 names or ids; a tag that is not registered is refused with `unknown_tag`.
+On `factsContext`, contradicting evidence from non-matching documents stays
+in the answer, marked `in_documents_filter: false`; see
+[The documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter).
 What tags are: [Tag documents](https://remember.dev/docs/guides/tag-documents).
 
 ### Version history and references
@@ -19263,8 +19403,8 @@ remember tags list --query billing | jq -r '.tags[] | "\(.name)  \(.description)
 ### `remember query`
 
 ```text
-remember query "QUESTION" [--combined]
-remember query text "QUESTION" [--combined] [--layers LIST]
+remember query "QUESTION" [--combined] [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
+remember query text "QUESTION" [--combined] [--layers LIST] [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
 remember query sql STATEMENT [--parameters JSON] [--max-rows N] [--layers LIST]
 remember query explain-sql STATEMENT [--parameters JSON] [--layers LIST]
 remember query space [--pattern GLOB] [--include-examples]
@@ -19293,7 +19433,16 @@ It runs the `facts_context` operation and prints the result
 ```bash
 remember query "Who owns the billing migration?"
 remember query --combined "Why did the cutover move to October?"
+remember query "Who owns the cutover?" --tag project:billing-migration
 ```
+
+`--tag`, `--any-tag` and `--not-tag` (each repeatable) read only documents
+that carry every `--tag`, at least one `--any-tag` and no `--not-tag`, as on
+[`remember documents search`](#remember-documents). Facts then come only
+from those documents' support, while contradictions from other documents
+stay in the answer, marked `"in_documents_filter": false`; see
+[The documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter).
+An unregistered tag is refused with `unknown_tag`.
 
 **Note:**
 
@@ -20065,6 +20214,7 @@ What sources said: current claims and the source passages that confirm them.
 | `entity_ids` | array of UUID strings | no | 1–20, unique. |
 | `k` | integer | no | 1–100; default 50. |
 | `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
+| `documents` | object | no | Only what matching documents say; the fields are under `facts_context`. |
 | `time` | object | no | Default `{"mode": "current"}`; the forms are under `facts_context`. Which versions of documents with declared effective periods are read. |
 
 #### `facts_context`
@@ -20081,6 +20231,7 @@ with a bounded look at the entities' neighbourhood.
 | `evidence_per_fact` | integer | no | 1–5; default 3. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
+| `documents` | object | no | Only facts supported by matching documents. See below. |
 | `time` | object | no | Default `{"mode": "current"}`. See below. |
 
 `time` is one of:
@@ -20096,6 +20247,16 @@ Timestamps are ISO 8601 date-times. What each mode means: [Time](https://remembe
 For documents with declared effective periods, `time` also decides which
 versions count as evidence: [Text in force](https://remember.dev/docs/reference/assured-operations#text-in-force).
 
+`documents` limits the read to certain documents, with the fields of
+`search_documents`' filters: `family`, `authors`, `recipients`,
+`created_from`, `created_to`, `modified_from`, `modified_to`, `language`,
+`thread_ref`, `doc_ids` and `tags` (`{"all": [...], "any": [...], "none":
+[...]}`). Call `list_tags` before filtering by tag; an unregistered tag is
+`unknown_tag`. Supporting evidence then comes only from matching documents,
+while contradicting evidence and competing facts from every other document
+stay in the answer, marked `"in_documents_filter": false`:
+[The documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter).
+
 #### `combined_context`
 
 Both of the above in one call, returned as `ContextBundle/v2`. The same
@@ -20110,6 +20271,7 @@ each search channel, rather than the total across channels.
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
+| `documents` | object | no | As in `facts_context`; applies to both halves. |
 | `time` | object | no | As in `facts_context`; applies to both halves. |
 
 For every operation, unknown keys are refused, and integers must be whole
@@ -21953,16 +22115,12 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
-- **Document filters on facts and operations.** Claim and chunk search
-  take a `documents` filter; the assured operations (`facts_context` and the
-  others), fact lookups and the SQL query functions do not yet, and there is
-  no `documents` filter over MCP because MCP has no claim or chunk search
-  tool.
-- **Filtering the assured operations by tag.** Claim and chunk search and
-  `search_documents` filter by tag; `claims_and_sources_context`,
-  `facts_context` and `combined_context` take no document filter, so they
-  read every document whatever tags it carries. In SQL queries you can join
-  on `document_tags_live`.
+- **Document filters on fact lookups and SQL functions.** Claim and chunk
+  search and the three context operations (`claims_and_sources_context`,
+  `facts_context`, `combined_context`) take a `documents` filter, tags
+  included; the direct fact lookups (`/lookup/relations`,
+  `/lookup/observations`) and the SQL query functions do not. In SQL queries
+  you can join on `document_tags_live`.
 - **Metadata from other formats.** Word, PowerPoint, PDF and email files
   give their title, people and dates, and `.xlsx` workbooks their title,
   author and dates; HTML, EPUB and notebooks give only a title, and other

@@ -105,6 +105,9 @@ runs:
   float such as `3.0` is accepted, `true` is not);
 - `entity_ids` must be an array of UUID strings, with no duplicates;
 - `time` must be an object in one of the four modes;
+- `documents` must be a closed
+  [documents filter](/docs/reference/assured-operations#the-documents-filter)
+  object, and every tag it names must be registered;
 - length, item-count and range bounds from the descriptor apply;
 - for every context operation, `candidate_k` may not be smaller than `k`.
 
@@ -134,7 +137,8 @@ See [Reading a result](/docs/concepts/reading-results).
 | `404` | the operation name, as a string | No active operation has that name. |
 | `422` | `{"code": "invalid_parameter", "message": "<name>"}` | A required argument is missing; the message is its name. |
 | `422` | `{"code": "invalid_parameter", "message": "unknown argument(s): …"}` | An argument the operation does not take. |
-| `422` | `{"code": "invalid_parameter", "message": "invalid <name>: …"}` | Wrong type, a malformed UUID, or a bad `time` object. |
+| `422` | `{"code": "invalid_parameter", "message": "invalid <name>: …"}` | Wrong type, a malformed UUID, or a bad `time` or `documents` object. |
+| `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": [...]}` | `documents.tags` names a tag that is not registered; nothing was searched. |
 | `422` | `{"code": "invalid_parameter", "message": "<name> violates maxLength=8192"}` (and similar) | A length, item-count, uniqueness or range bound. |
 | `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | All three context operations. |
 | `422` | validation list | The body is not a JSON object. |
@@ -179,7 +183,10 @@ both = memory.combined_context("billing migration status", time={"mode": "curren
 
 `run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
 says `"contract": "ContextBundle/v2"`. All three context helpers accept
-`query`, `k`, `candidate_k` and `time`. `facts_context` also accepts `hops`,
+`query`, `k`, `candidate_k`, `time` and `documents` (a
+`DocumentSearchFilters` or the same object as a dict, such as
+`{"tags": {"all": ["project:billing-migration"]}}`); an unregistered tag
+raises `remember.UnknownTag`. `facts_context` also accepts `hops`,
 `predicate` and `entity_ids`; `resolve_entity` takes `name`. Use
 `run_operation` to set `evidence_per_fact` on `facts_context`, `entity_ids`
 on `claims_and_sources_context`, or `entity_ids`, `hops` and `predicate`

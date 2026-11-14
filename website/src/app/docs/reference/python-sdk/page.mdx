@@ -982,6 +982,7 @@ MemoryClient.facts_context(
     hops: int | None = None,
     predicate: str | None = None,
     entity_ids: Sequence[str | UUID] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> Envelope
 ```
 
@@ -995,11 +996,17 @@ evidence.
 | `hops` | 1 or 2; default 1 |
 | `predicate` | 1 to 200 characters |
 | `entity_ids` | 1 to 19 unique entity UUIDs |
+| `documents` | a [documents filter](/docs/reference/assured-operations#the-documents-filter), as `DocumentSearchFilters` or a dict; tags must be registered (`remember.UnknownTag` otherwise) |
 
 ```python
 facts = memory.facts_context(
     "billing migration owner", time={"mode": "history"}
 )
+billing = memory.facts_context(
+    "cutover date", documents={"tags": {"all": ["project:billing-migration"]}}
+)
+for link in billing.fact_evidence:
+    print(link.stance, link.claim_id, link.in_documents_filter)
 for fact in facts.facts:
     print(fact.label, fact.validity.valid_from, fact.validity.valid_until)
 ```
@@ -1019,13 +1026,15 @@ MemoryClient.claims_and_sources_context(
     candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     layers: Sequence[str] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> Envelope
 ```
 
 Returns what sources said about `query` (claims) and the matching source
 passages (chunks). `query` is 1 to 8,192 characters. `time` takes the same
 values as in `facts_context`; for documents with declared effective periods
-it reads only the text in force for that scope (default: now). See
+it reads only the text in force for that scope (default: now). `documents`
+returns only what matching documents say. See
 [Assured operations](/docs/reference/assured-operations#claims_and_sources_context).
 
 ```python
@@ -1049,12 +1058,14 @@ MemoryClient.combined_context(
     candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     layers: Sequence[str] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> ContextBundleV2
 ```
 
 Runs `claims_and_sources_context` and `facts_context` together and returns
 both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
-`time` takes the same values as in `facts_context` and applies to both.
+`time` and `documents` take the same values as in `facts_context` and apply
+to both.
 
 ```python
 bundle = memory.combined_context("What did John decide about invoicing?")

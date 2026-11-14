@@ -3,11 +3,11 @@
 Build order for D156 ([document tags](../designs/document_tags_design.md)). The design
 describes the system; this file says what to build first and why.
 
-**Status.** Steps 1, 2 and 4 are implemented: the registry, assignments, all four
+**Status.** All four steps are implemented: the registry, assignments, all four
 surfaces, the D56 reuse proof, the two `memory_v1` views and `examples.facts_by_tag`
-(steps 1 and 4), and the `tags` selector on `search` (claims and chunks) and
-`search_documents` (step 2). Step 3 (the context operations, and with them the §4.4
-fact-evidence rule) is not built yet.
+(steps 1 and 4), the `tags` selector on `search` (claims and chunks) and
+`search_documents` (step 2), and the `documents` filter on the three context
+operations with the §4.4 fact-evidence rule (step 3).
 
 **Step 2 as built.** The selector lives in the shared compiler
 `core/document_filters.py`, so `search_documents`, claim and chunk search and the P1
@@ -19,17 +19,30 @@ occurrence for claims and on the same supporting occurrence for facts, for every
 independently before. A completed empty filtered claim/chunk search says whether a live
 document matched (§4.5). Surfaces: HTTP and SDK `filters.tags` / `documents.tags`, MCP
 `search_documents` `tags` (`tool_version` 4), CLI `--tag` / `--any-tag` / `--not-tag`
-on `remember documents search` (the only CLI query command with document filters),
+on `remember documents search` (at step 2 the only CLI query command with document filters),
 TypeScript parity.
 
-What step 2 did not build, and why: no deployment surface searches relations or
-observations with a `documents` filter (only P1's internal `search_facts_scored`
-accepts one), so the §4.4 evidence rule — supporting evidence from matching documents,
-contradictions and co-members from everywhere marked `in_documents_filter`, two-sided
-`evidence_totals` — has no step 2 reader. It is built in step 3 inside the
-`facts_context` evidence path, which is where fact evidence is assembled today. The
-`entity_ids` combination is proven at the P1 nomination level; no public step 2 read
-takes both.
+Step 2 left the §4.4 evidence rule to step 3, because no step 2 deployment surface
+searched relations or observations with a `documents` filter.
+
+**Step 3 as built.** `claims_and_sources_context@5`, `facts_context@5` and
+`combined_context@6` take the `documents` object `search` takes (`combined_context`
+passes it unchanged to both children); `surface_manifest_hash` rolls, and the MCP
+tools rise to `tool_version` 5, 5 and 6 with descriptions telling agents to call
+`list_tags` first. The filter is an eligibility input of every existing nomination
+channel (global and entity-scoped claim and chunk nomination,
+`nominate_facts_scored` and `search_facts_scored`, the entity-profile fact channel)
+and is re-checked at confirmation, through the step 2 compiler plus one shared fact
+predicate (`document_filters.fact_supported_matching`). The `facts_context` evidence
+statement marks each lineage `in_documents_filter`, ranks matching lineages first
+within each stance, keeps supporting rows only from matching lineages and returns the
+matching count beside the deployment-wide D54 count; contradiction co-members are
+marked the same way. These fields are omitted from unfiltered responses, which are
+unchanged apart from the version numbers. A completed empty filtered read carries the
+§4.5 explanation. Surfaces: HTTP `POST /operations/{name}` (`unknown_tag` 422),
+SDK `documents=` on the three context methods, CLI `--tag` / `--any-tag` /
+`--not-tag` on `remember query`, TypeScript parity. The end-to-end check is
+`src/tests/surfaces/test_document_tag_context_pg.py`.
 
 Qualification (step 2): the D142 sweep (`benchmarks/p1_ranked/sweep.py`) gained 1% and
 90% tag strata for chunk search and, with `--claims`, for claim search; the measured
