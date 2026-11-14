@@ -22,6 +22,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import IntegrityError
 
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentTagFilter
 from remember.models import DocumentTags
 from remember.models import DocumentTagsUpdate
 from remember.models import Tag
@@ -222,6 +224,39 @@ def resolve_tags_on(
     if unknown:
         raise UnknownTagError(tags=unknown)
     return found
+
+
+def resolve_filter_tags_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    filters: DocumentSearchFilters | None,
+) -> DocumentSearchFilters | None:
+    """The filter with every tag replaced by its ``tag_id``, or refuse them all.
+
+    A read naming an unregistered tag fails with ``UnknownTagError`` listing
+    every one, before anything is searched (D156 §4.1). The returned filter is
+    what ``core.document_filters`` compiles.
+    """
+    if filters is None or filters.tags is None:
+        return filters
+    tags = filters.tags
+    found = resolve_tags_on(
+        connection=connection,
+        deployment_id=deployment_id,
+        tags=(*tags.all, *tags.any, *tags.none),
+    )
+
+    def ids(values: Sequence[str]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(str(found[value]) for value in values))
+
+    return filters.model_copy(
+        update={
+            "tags": DocumentTagFilter(
+                all=ids(tags.all), any=ids(tags.any), none=ids(tags.none)
+            )
+        }
+    )
 
 
 def add_document_tags_on(

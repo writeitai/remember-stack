@@ -30,6 +30,7 @@ from remember.models import DocumentSearchResult
 from remember.models import DocumentStatus
 from remember.models import DocumentStatusFilter
 from remember.models import DocumentSummary
+from remember.models import DocumentTagFilter
 from remember.models import DocumentVersionSummary
 from remember.models import EffectiveInterval
 from remember.models import MatchingEdition
@@ -75,6 +76,7 @@ __all__ = (
     "DocumentPage",
     "DocumentPeopleMatch",
     "DocumentSearchFilters",
+    "DocumentTagFilter",
     "DocumentSearchPage",
     "DocumentSearchPerson",
     "DocumentSearchRequest",

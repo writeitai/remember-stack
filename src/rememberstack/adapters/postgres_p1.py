@@ -21,6 +21,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from remember.models import DocumentSearchFilters
 from rememberstack.adapters import p1_ranked
+from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_matching_versions
 from rememberstack.core.document_filters import live_version_matches
@@ -786,11 +787,9 @@ class PostgresP1Index:
             )
             predicates, filter_parameters = _claim_filters(equality_filters)
             parameters.update(filter_parameters)
-            _add_claim_documents(
-                documents=documents, predicates=predicates, parameters=parameters
-            )
             _add_claim_scope(
                 time=time,
+                documents=documents,
                 published=published,
                 predicates=predicates,
                 parameters=parameters,
@@ -1293,7 +1292,8 @@ class PostgresP1Index:
         in force for the scope is never a candidate.
 
         ``documents`` keeps a fact only when at least one live supporting
-        claim has a live occurrence in a matching document version (D134).
+        claim has a live occurrence in a matching document version (D134)
+        that also passes the time scope's evidence gate (D156 §4.3).
         """
         # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
         deadline = self._deadline(deadline)
@@ -1324,8 +1324,14 @@ class PostgresP1Index:
         parameters.update(gate.parameters())
         supporting_sql = ""
         if documents is not None and not is_empty(documents):
+            # D156 §4.3: the supporting occurrence that matches the filter
+            # must itself pass the D140 evidence gate; tagged support out of
+            # force plus untagged support in force admits nothing.
             occurrence_sql, document_parameters = matching_occurrence_exists(
-                filters=documents, claim="support.claim_id", prefix="documents_"
+                filters=documents,
+                claim="support.claim_id",
+                prefix="documents_",
+                in_scope="evidence",
             )
             parameters.update(document_parameters)
             supporting_sql = (
@@ -2014,46 +2020,46 @@ def _configure_p1_connection(
     )
 
 
-def _add_claim_documents(
-    *,
-    documents: DocumentSearchFilters | None,
-    predicates: list[str],
-    parameters: dict[str, Any],
-) -> None:
-    """Keep a claim only when a live occurrence lies in a matching version (D134)."""
-    if documents is None or is_empty(documents):
-        return
-    occurrence_sql, document_parameters = matching_occurrence_exists(
-        filters=documents, claim="indexed.claim_id", prefix="documents_"
-    )
-    predicates.append(occurrence_sql)
-    parameters.update(document_parameters)
-
-
 def _add_claim_scope(
     *,
     time: TextScope | None,
+    documents: DocumentSearchFilters | None,
     published: str,
     predicates: list[str],
     parameters: dict[str, Any],
 ) -> None:
-    """Select claims by the D140 time scope (default current) in the statement.
+    """Select claims by the D140 time scope (default current) and any D134 filter.
 
     ``published`` is the relation whose membership is today's rule for the
     claim; it keeps deciding claims of lineages without declared periods.
+    With ``documents`` the filter and the scope hold on the same occurrence
+    (D156 §4.3): a claim of a periodised lineage needs one occurrence that is
+    both in a selected version and in a matching version.
     """
     scope = time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
-    predicates.append(
-        claim_selected(
+    current_testimony = (
+        f"EXISTS (SELECT 1 FROM {published} AS published"
+        " WHERE published.deployment_id = indexed.deployment_id"
+        " AND published.claim_id = indexed.claim_id)"
+    )
+    if documents is None or is_empty(documents):
+        predicates.append(
+            claim_selected(
+                claim="indexed.claim_id",
+                doc="indexed.doc_id",
+                current_testimony=current_testimony,
+            )
+        )
+    else:
+        selected_sql, document_parameters = claim_selected_matching(
+            filters=documents,
             claim="indexed.claim_id",
             doc="indexed.doc_id",
-            current_testimony=(
-                f"EXISTS (SELECT 1 FROM {published} AS published"
-                " WHERE published.deployment_id = indexed.deployment_id"
-                " AND published.claim_id = indexed.claim_id)"
-            ),
+            current_testimony=current_testimony,
+            prefix="documents_",
         )
-    )
+        predicates.append(selected_sql)
+        parameters.update(document_parameters)
     parameters.update(scope.parameters())
 
 

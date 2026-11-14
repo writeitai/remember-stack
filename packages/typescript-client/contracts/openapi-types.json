@@ -1628,7 +1628,7 @@
       },
       "DocumentSearchFilters": {
         "additionalProperties": false,
-        "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
+        "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate. ``tags`` (D156) tests the document's caller tags.",
         "properties": {
           "authors": {
             "default": [],
@@ -1726,6 +1726,17 @@
             },
             "title": "Recipients",
             "type": "array"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentTagFilter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "thread_ref": {
             "anyOf": [
@@ -1867,6 +1878,7 @@
               "modified_from": null,
               "modified_to": null,
               "recipients": [],
+              "tags": null,
               "thread_ref": null
             }
           },
@@ -2290,6 +2302,48 @@
           "serving"
         ],
         "title": "DocumentSummary",
+        "type": "object",
+        "x-extra": "forbid"
+      },
+      "DocumentTagFilter": {
+        "additionalProperties": false,
+        "description": "Caller tags a document must carry (D156 \u00a74.1); every list given must hold.\n\n``all``: the document has every listed tag; ``any``: at least one;\n``none``: none of them. A tag is a registered name (matched ignoring case)\nor a ``tag_id``; an unregistered tag fails the read with ``unknown_tag``\nbefore anything is searched. Tags are the document's (lineage's) current\ntags, also when a time scope reads an older version. An untagged document\nmatches ``none`` and fails ``all`` and ``any``.",
+        "properties": {
+          "all": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "All",
+            "type": "array"
+          },
+          "any": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Any",
+            "type": "array"
+          },
+          "none": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "None",
+            "type": "array"
+          }
+        },
+        "title": "DocumentTagFilter",
         "type": "object",
         "x-extra": "forbid"
       },
@@ -6151,7 +6205,7 @@
       },
       "OutputDocumentSearchFilters": {
         "additionalProperties": false,
-        "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
+        "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate. ``tags`` (D156) tests the document's caller tags.",
         "properties": {
           "authors": {
             "default": [],
@@ -6250,6 +6304,17 @@
             "title": "Recipients",
             "type": "array"
           },
+          "tags": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutputDocumentTagFilter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "thread_ref": {
             "anyOf": [
               {
@@ -6273,6 +6338,7 @@
           "modified_from",
           "modified_to",
           "recipients",
+          "tags",
           "thread_ref"
         ],
         "title": "DocumentSearchFilters",
@@ -6410,6 +6476,7 @@
               "modified_from": null,
               "modified_to": null,
               "recipients": [],
+              "tags": null,
               "thread_ref": null
             }
           },
@@ -6866,6 +6933,53 @@
           "title"
         ],
         "title": "DocumentSummary",
+        "type": "object",
+        "x-extra": "forbid"
+      },
+      "OutputDocumentTagFilter": {
+        "additionalProperties": false,
+        "description": "Caller tags a document must carry (D156 \u00a74.1); every list given must hold.\n\n``all``: the document has every listed tag; ``any``: at least one;\n``none``: none of them. A tag is a registered name (matched ignoring case)\nor a ``tag_id``; an unregistered tag fails the read with ``unknown_tag``\nbefore anything is searched. Tags are the document's (lineage's) current\ntags, also when a time scope reads an older version. An untagged document\nmatches ``none`` and fails ``all`` and ``any``.",
+        "properties": {
+          "all": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "All",
+            "type": "array"
+          },
+          "any": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Any",
+            "type": "array"
+          },
+          "none": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "None",
+            "type": "array"
+          }
+        },
+        "required": [
+          "all",
+          "any",
+          "none"
+        ],
+        "title": "DocumentTagFilter",
         "type": "object",
         "x-extra": "forbid"
       },
@@ -14973,7 +15087,7 @@
     },
     "/documents/search": {
       "post": {
-        "description": "Find documents by observed name, general metadata and content.\n\nEach result is a document judged by one version: its current version\nby default, or with ``versions: all`` the newest live version that\nmatches. With a ``query`` results are ranked and not paged; with\nfilters only they are ordered by declared creation date and paged by\n``cursor``, which pins the first call's as-of instant.",
+        "description": "Find documents by observed name, general metadata and content.\n\nEach result is a document judged by one version: its current version\nby default, or with ``versions: all`` the newest live version that\nmatches. With a ``query`` results are ranked and not paged; with\nfilters only they are ordered by declared creation date and paged by\n``cursor``, which pins the first call's as-of instant. ``filters.tags``\n(D156) tests each document's current tags; an unregistered tag is 422\n``unknown_tag`` naming every one.",
         "operationId": "search_documents_documents_search_post",
         "requestBody": {
           "content": {
@@ -15000,14 +15114,7 @@
             "description": "cursor is malformed"
           },
           "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
+            "description": "unknown_tag"
           }
         },
         "security": [
@@ -17037,7 +17144,7 @@
         "summary": "Search Chunks"
       },
       "post": {
-        "description": "Search live source chunks as separately typed evidence.\n\n``documents`` keeps chunks whose document version matches (D134);\n``time`` keeps chunks of versions in force for the scope (D140).",
+        "description": "Search live source chunks as separately typed evidence.\n\n``documents`` keeps chunks whose document version matches (D134,\nwith D156 ``tags``; an unregistered tag is 422 ``unknown_tag``);\n``time`` keeps chunks of versions in force for the scope (D140).",
         "operationId": "post_search_chunks_search_chunks_post",
         "requestBody": {
           "content": {
@@ -17061,14 +17168,7 @@
             "description": "Successful Response"
           },
           "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
+            "description": "unknown_tag"
           }
         },
         "security": [
@@ -17150,7 +17250,7 @@
         "summary": "Search Claims"
       },
       "post": {
-        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the returned evidence is the claim's origin, as\nwithout a filter. ``time`` (D140) selects claims of documents with\ndeclared effective periods through their occurrences in the versions\nin force for the scope, and returns those occurrences.",
+        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134, with D156 ``tags``; an unregistered tag is 422\n``unknown_tag``); the returned evidence is the claim's origin, as\nwithout a filter. ``time`` (D140) selects claims of documents with\ndeclared effective periods through their occurrences in the versions\nin force for the scope, and returns those occurrences.",
         "operationId": "post_search_claims_search_claims_post",
         "requestBody": {
           "content": {
@@ -17174,14 +17274,7 @@
             "description": "Successful Response"
           },
           "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
+            "description": "unknown_tag"
           }
         },
         "security": [

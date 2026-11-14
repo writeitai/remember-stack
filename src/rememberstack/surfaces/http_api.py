@@ -920,42 +920,58 @@ def build_api(
     # access logs, kept by proxies and retained in browser history — so the
     # surface a browser uses must not put it there (D59). The GET forms stay
     # for existing clients, which reach the deployment over a private path.
-    @app.post("/search/claims", response_model=Envelope)
+    @app.post(
+        "/search/claims",
+        response_model=Envelope,
+        responses={422: {"description": "unknown_tag"}},
+    )
     def post_search_claims(
         deployment: _Deployment, body: Annotated[SearchRequest, Body()]
     ) -> Envelope:
         """Claim search — evidence grain, never current-fact truth.
 
         ``documents`` keeps claims with a live occurrence in a matching
-        document (D134); the returned evidence is the claim's origin, as
+        document (D134, with D156 ``tags``; an unregistered tag is 422
+        ``unknown_tag``); the returned evidence is the claim's origin, as
         without a filter. ``time`` (D140) selects claims of documents with
         declared effective periods through their occurrences in the versions
         in force for the scope, and returns those occurrences.
         """
-        return deployment.engine.search_claims(
-            deployment_id=deployment.deployment_id,
-            query=body.query,
-            k=body.k,
-            channel=body.channel,
-            **_documents_scope(body),
-        )
+        try:
+            return deployment.engine.search_claims(
+                deployment_id=deployment.deployment_id,
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
+            )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
 
-    @app.post("/search/chunks", response_model=Envelope)
+    @app.post(
+        "/search/chunks",
+        response_model=Envelope,
+        responses={422: {"description": "unknown_tag"}},
+    )
     def post_search_chunks(
         deployment: _Deployment, body: Annotated[SearchRequest, Body()]
     ) -> Envelope:
         """Search live source chunks as separately typed evidence.
 
-        ``documents`` keeps chunks whose document version matches (D134);
+        ``documents`` keeps chunks whose document version matches (D134,
+        with D156 ``tags``; an unregistered tag is 422 ``unknown_tag``);
         ``time`` keeps chunks of versions in force for the scope (D140).
         """
-        return deployment.engine.search_chunks(
-            deployment_id=deployment.deployment_id,
-            query=body.query,
-            k=body.k,
-            channel=body.channel,
-            **_documents_scope(body),
-        )
+        try:
+            return deployment.engine.search_chunks(
+                deployment_id=deployment.deployment_id,
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
+            )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
     def adjacent_chunks(
@@ -1685,7 +1701,10 @@ def _mount_document_search(*, app: FastAPI) -> None:
     @app.post(
         "/documents/search",
         response_model=DocumentSearchPage,
-        responses={400: {"description": "cursor is malformed"}},
+        responses={
+            400: {"description": "cursor is malformed"},
+            422: {"description": "unknown_tag"},
+        },
     )
     def search_documents(
         deployment: _Deployment, body: Annotated[DocumentSearchRequest, Body()]
@@ -1696,12 +1715,16 @@ def _mount_document_search(*, app: FastAPI) -> None:
         by default, or with ``versions: all`` the newest live version that
         matches. With a ``query`` results are ranked and not paged; with
         filters only they are ordered by declared creation date and paged by
-        ``cursor``, which pins the first call's as-of instant.
+        ``cursor``, which pins the first call's as-of instant. ``filters.tags``
+        (D156) tests each document's current tags; an unregistered tag is 422
+        ``unknown_tag`` naming every one.
         """
         try:
             return _served(deployment.document_search).search_documents(
                 deployment_id=deployment.deployment_id, request=body
             )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 

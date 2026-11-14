@@ -36,6 +36,7 @@ export type { OutputDocumentSearchRequest as DocumentSearchRequest, DocumentSear
 export type { OutputDocumentSearchResult as DocumentSearchResult, DocumentSearchResult as DocumentSearchResultInput } from './generated';
 export type { OutputDocumentStatusFilter as DocumentStatusFilter, DocumentStatusFilter as DocumentStatusFilterInput } from './generated';
 export type { OutputDocumentSummary as DocumentSummary, DocumentSummary as DocumentSummaryInput } from './generated';
+export type { OutputDocumentTagFilter as DocumentTagFilter, DocumentTagFilter as DocumentTagFilterInput } from './generated';
 export type { OutputDocumentTags as DocumentTags, DocumentTags as DocumentTagsInput } from './generated';
 export type { OutputDocumentTagsUpdate as DocumentTagsUpdate, DocumentTagsUpdate as DocumentTagsUpdateInput } from './generated';
 export type { OutputDocumentVersionSummary as DocumentVersionSummary, DocumentVersionSummary as DocumentVersionSummaryInput } from './generated';

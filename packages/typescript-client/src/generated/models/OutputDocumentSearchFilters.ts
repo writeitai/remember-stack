@@ -3,6 +3,7 @@ import type { JsonValue } from './JsonValue';
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutputDocumentTagFilter } from './OutputDocumentTagFilter';
 /**
  * General document metadata filters (D134 §3); every one given must hold.
  *
@@ -10,7 +11,7 @@ import type { JsonValue } from './JsonValue';
  * their normalized address or appears as whole words in their normalized
  * name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
  * Date ranges are inclusive and exclude documents that do not declare the
- * date.
+ * date. ``tags`` (D156) tests the document's caller tags.
  */
 export type OutputDocumentSearchFilters = {
     authors: Array<string>;
@@ -22,5 +23,6 @@ export type OutputDocumentSearchFilters = {
     modified_from: string | null;
     modified_to: string | null;
     recipients: Array<string>;
+    tags: OutputDocumentTagFilter | null;
     thread_ref: string | null;
 };

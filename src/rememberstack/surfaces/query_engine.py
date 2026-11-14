@@ -51,6 +51,8 @@ from remember.retrieval import MAX_CONTEXT_K
 from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from rememberstack.core.cursor_scope import assert_cursor_scope
 from rememberstack.core.cursor_scope import cursor_scope_hash
+from rememberstack.core.document_filters import any_live_document_matches
+from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -145,6 +147,7 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostOutcome
+from rememberstack.spine.tags import resolve_filter_tags_on
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 
@@ -675,6 +678,47 @@ class QueryEngine:
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             connection.exec_driver_sql("SELECT 1")
             yield connection
+
+    def _resolve_documents(
+        self, *, deployment_id: UUID, documents: DocumentSearchFilters | None
+    ) -> DocumentSearchFilters | None:
+        """Resolve the filter's D156 tags to ids, refusing unknown tags first."""
+        if documents is None or documents.tags is None:
+            return documents
+        with self._read() as connection:
+            return resolve_filter_tags_on(
+                connection=connection, deployment_id=deployment_id, filters=documents
+            )
+
+    def _empty_explanation(
+        self,
+        *,
+        deployment_id: UUID,
+        documents: DocumentSearchFilters | None,
+        empty: bool,
+        unfiltered: str,
+    ) -> str:
+        """The ``known_empty`` explanation of a completed read (D156 §4.5).
+
+        Only a completed, empty, filtered read asks whether any live document
+        matches the filter, so it can say which of the two cases occurred;
+        every other read keeps its ordinary explanation and costs nothing.
+        """
+        if not empty or documents is None:
+            return unfiltered
+        statement, parameters = any_live_document_matches(
+            filters=documents, prefix="documents_"
+        )
+        with self._read() as connection:
+            matched = connection.execute(
+                text(statement), {"deployment_id": deployment_id, **parameters}
+            ).scalar_one()
+        if matched:
+            return (
+                f"{unfiltered}: live documents match the documents filter,"
+                " but none of them says anything relevant"
+            )
+        return f"{unfiltered}: no live document matches the documents filter"
 
     def _touched_pending(
         self,
@@ -2360,6 +2404,9 @@ class QueryEngine:
         # for nomination, confirmation and the pending/freshness reads.
         try:
             with self._operation(evaluated_at=None) as evaluation:
+                documents = self._resolve_documents(
+                    deployment_id=deployment_id, documents=documents
+                )
                 scope = TextScope.of(time=time, evaluated_at=evaluation)
                 nominated = self._nominate_claim_ids(
                     deployment_id=deployment_id,
@@ -2393,11 +2440,17 @@ class QueryEngine:
                     ),
                     pending_complete=_touched_complete(touched),
                 )
+                account = search_account(nominated)
+                explanation = self._empty_explanation(
+                    deployment_id=deployment_id,
+                    documents=documents,
+                    empty=not evidence and account.termination.complete,
+                    unfiltered="no current-testimony claims match the query",
+                )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
-        account = search_account(nominated)
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
@@ -2409,7 +2462,7 @@ class QueryEngine:
             if evidence
             else _empty_negative(
                 account,
-                explanation="no current-testimony claims match the query",
+                explanation=explanation,
                 workaround="broaden the query or inspect the source artifacts",
             ),
         )
@@ -2474,6 +2527,9 @@ class QueryEngine:
         # for nomination, confirmation and the pending/freshness reads.
         try:
             with self._operation(evaluated_at=None) as evaluation:
+                documents = self._resolve_documents(
+                    deployment_id=deployment_id, documents=documents
+                )
                 scope = TextScope.of(time=time, evaluated_at=evaluation)
                 nominated = self._nominate_chunk_ids(
                     deployment_id=deployment_id,
@@ -2507,11 +2563,17 @@ class QueryEngine:
                     ),
                     pending_complete=_touched_complete(touched),
                 )
+                account = search_account(nominated)
+                explanation = self._empty_explanation(
+                    deployment_id=deployment_id,
+                    documents=documents,
+                    empty=not chunks and account.termination.complete,
+                    unfiltered="no live source chunks match the query",
+                )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
-        account = search_account(nominated)
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
@@ -2523,7 +2585,7 @@ class QueryEngine:
             if chunks
             else _empty_negative(
                 account,
-                explanation="no live source chunks match the query",
+                explanation=explanation,
                 workaround="broaden the query or inspect the source artifacts",
             ),
         )
@@ -4102,10 +4164,15 @@ class QueryEngine:
             )
         extra: dict[str, Any] = {}
         if scope is not None:
-            statement = _confirm_claims_in_scope_statement(
-                current_only=current_only, entity_scoped=bool(entity_ids)
+            # With ``documents`` the time scope and the filter are re-checked
+            # on the same occurrence (D156 §4.3).
+            statement, document_parameters = _confirm_claims_in_scope_statement(
+                current_only=current_only,
+                entity_scoped=bool(entity_ids),
+                documents=documents,
             )
             extra.update(scope.parameters())
+            extra.update(document_parameters)
         else:
             statement = (
                 _CONFIRM_CLAIMS_CURRENT_SCOPED
@@ -4114,16 +4181,17 @@ class QueryEngine:
                 if current_only
                 else _CONFIRM_CLAIMS_HISTORY
             )
-        if documents is not None:
-            # D134: the filter decides inclusion only. The claim is re-checked
-            # for a live occurrence in a matching version, and the evidence is
-            # its origin occurrence, exactly as without a filter.
-            occurrence_sql, document_parameters = matching_occurrence_exists(
-                filters=documents, claim="c.claim_id", prefix="documents_"
-            )
-            extra.update(document_parameters)
-            base = statement if scope is not None else _CONFIRM_CLAIMS_CURRENT
-            statement = text(f"{base.text}  AND {occurrence_sql}\n")
+            if documents is not None:
+                # D134: the filter decides inclusion only. The claim is
+                # re-checked for a live occurrence in a matching version, and
+                # the evidence is its origin occurrence, as without a filter.
+                occurrence_sql, document_parameters = matching_occurrence_exists(
+                    filters=documents, claim="c.claim_id", prefix="documents_"
+                )
+                extra.update(document_parameters)
+                statement = text(
+                    f"{_CONFIRM_CLAIMS_CURRENT.text}  AND {occurrence_sql}\n"
+                )
         rows: list[RowMapping] = []
         occurrences: dict[UUID, list[ClaimOccurrence]] = {}
         # Multiple chunks are one answer, so they must observe one database
@@ -4150,6 +4218,7 @@ class QueryEngine:
                     deployment_id=deployment_id,
                     claim_ids=periodised,
                     scope=scope,
+                    documents=documents,
                 )
         confirmed = {row["claim_id"]: row for row in rows}
         coverage = {
@@ -6025,27 +6094,40 @@ _ADJACENT_CHUNKS = text(
 
 
 def _confirm_claims_in_scope_statement(
-    *, current_only: bool, entity_scoped: bool
-) -> TextClause:
-    """Confirm claims under a D140 time scope (§3.4).
+    *,
+    current_only: bool,
+    entity_scoped: bool,
+    documents: DocumentSearchFilters | None = None,
+) -> tuple[TextClause, dict[str, Any]]:
+    """Confirm claims under a D140 time scope (§3.4), with any D134/D156 filter.
 
     The claim is read from the base table, so a claim of a periodised lineage
     confirms through an occurrence in a selected version even when its origin
     version was deleted. Undeclared lineages keep today's rule: membership of
-    the live (current-testimony) claim relation.
+    the live (current-testimony) claim relation. With ``documents`` the
+    selected occurrence must also lie in a matching version (D156 §4.3).
     """
     published = (
         "memory_v1.claims_live" if current_only else "memory_v1.claims_visible_history"
     )
-    selected = claim_selected(
-        claim="c.claim_id",
-        doc="c.doc_id",
-        current_testimony=(
-            f"EXISTS (SELECT 1 FROM {published} AS published"
-            " WHERE published.deployment_id = c.deployment_id"
-            " AND published.claim_id = c.claim_id)"
-        ),
+    current_testimony = (
+        f"EXISTS (SELECT 1 FROM {published} AS published"
+        " WHERE published.deployment_id = c.deployment_id"
+        " AND published.claim_id = c.claim_id)"
     )
+    parameters: dict[str, Any] = {}
+    if documents is None:
+        selected = claim_selected(
+            claim="c.claim_id", doc="c.doc_id", current_testimony=current_testimony
+        )
+    else:
+        selected, parameters = claim_selected_matching(
+            filters=documents,
+            claim="c.claim_id",
+            doc="c.doc_id",
+            current_testimony=current_testimony,
+            prefix="documents_",
+        )
     coverage_column = ", scope.coverage" if entity_scoped else ""
     coverage_ctes = (
         "WITH RECURSIVE "
@@ -6090,7 +6172,7 @@ def _confirm_claims_in_scope_statement(
       {"AND c.is_current_testimony" if current_only else ""}
       AND {selected}
     """  # noqa: S608 -- interpolated fragments are module constants
-    )
+    ), parameters
 
 
 # One occurrence per (claim, selected version): the earliest attachment in
@@ -6113,6 +6195,7 @@ _SELECTED_OCCURRENCES = f"""
     WHERE cc.deployment_id = :deployment_id
       AND cc.claim_id = ANY(CAST(:claim_ids AS uuid[]))
       AND {version_selected(version="ch.version_id")}
+      {{documents}}
     ORDER BY cc.claim_id, ch.version_id, cc.created_at,
              cc.derivation_kind NULLS FIRST, ch.chunk_id
 """  # noqa: S608 -- interpolated fragment is a module constant
@@ -6147,15 +6230,28 @@ def _selected_occurrences(
     deployment_id: UUID,
     claim_ids: tuple[UUID, ...],
     scope: TextScope,
+    documents: DocumentSearchFilters | None = None,
 ) -> dict[UUID, list[ClaimOccurrence]]:
-    """Each claim's occurrences in the versions the scope selects, by effective start."""
+    """Each claim's occurrences in the versions the scope selects, by effective start.
+
+    With ``documents`` only occurrences in matching versions are returned: a
+    filtered testimony read shows what matching documents said (D156 §4.4).
+    """
+    document_sql = ""
+    document_parameters: dict[str, Any] = {}
+    if documents is not None:
+        version_sql, document_parameters = live_version_matches(
+            filters=documents, version="ch.version_id", prefix="documents_"
+        )
+        document_sql = f"AND {version_sql}"
     rows = (
         connection.execute(
-            text(_SELECTED_OCCURRENCES),
+            text(_SELECTED_OCCURRENCES.format(documents=document_sql)),
             {
                 "deployment_id": deployment_id,
                 "claim_ids": [str(claim_id) for claim_id in claim_ids],
                 **scope.parameters(),
+                **document_parameters,
             },
         )
         .mappings()

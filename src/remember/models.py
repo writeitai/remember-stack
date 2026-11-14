@@ -439,6 +439,38 @@ DOCUMENT_SEARCH_DEFAULT_LIMIT: Final = 50
 DOCUMENT_SEARCH_MAX_LIMIT: Final = 200
 
 
+TAG_FILTER_LIST_MAX: Final = 32
+"""Most tags one list of a ``tags`` filter may name (a starting point)."""
+
+
+class DocumentTagFilter(BaseModel):
+    """Caller tags a document must carry (D156 §4.1); every list given must hold.
+
+    ``all``: the document has every listed tag; ``any``: at least one;
+    ``none``: none of them. A tag is a registered name (matched ignoring case)
+    or a ``tag_id``; an unregistered tag fails the read with ``unknown_tag``
+    before anything is searched. Tags are the document's (lineage's) current
+    tags, also when a time scope reads an older version. An untagged document
+    matches ``none`` and fails ``all`` and ``any``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    all: tuple[TagRef, ...] = Field(default=(), max_length=TAG_FILTER_LIST_MAX)
+    any: tuple[TagRef, ...] = Field(default=(), max_length=TAG_FILTER_LIST_MAX)
+    none: tuple[TagRef, ...] = Field(default=(), max_length=TAG_FILTER_LIST_MAX)
+
+    @model_validator(mode="after")
+    def _one_list_without_duplicates(self) -> Self:
+        lists = {"all": self.all, "any": self.any, "none": self.none}
+        if not any(lists.values()):
+            raise ValueError("tags needs a non-empty all, any or none list")
+        for name, tags in lists.items():
+            keys = [unicodedata.normalize("NFC", tag).lower() for tag in tags]
+            if len(set(keys)) != len(keys):
+                raise ValueError(f"tags.{name} names a tag more than once")
+        return self
+
+
 class DocumentSearchFilters(BaseModel):
     """General document metadata filters (D134 §3); every one given must hold.
 
@@ -446,7 +478,7 @@ class DocumentSearchFilters(BaseModel):
     their normalized address or appears as whole words in their normalized
     name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
     Date ranges are inclusive and exclude documents that do not declare the
-    date.
+    date. ``tags`` (D156) tests the document's caller tags.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -460,6 +492,7 @@ class DocumentSearchFilters(BaseModel):
     language: str | None = None
     thread_ref: str | None = None
     doc_ids: tuple[UUID, ...] = ()
+    tags: DocumentTagFilter | None = None
 
 
 class DocumentSearchRequest(BaseModel):

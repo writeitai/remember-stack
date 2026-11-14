@@ -1628,7 +1628,7 @@ export default {
     },
     "DocumentSearchFilters": {
       "additionalProperties": false,
-      "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
+      "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate. ``tags`` (D156) tests the document's caller tags.",
       "properties": {
         "authors": {
           "default": [],
@@ -1726,6 +1726,17 @@ export default {
           },
           "title": "Recipients",
           "type": "array"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentTagFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "thread_ref": {
           "anyOf": [
@@ -1867,6 +1878,7 @@ export default {
             "modified_from": null,
             "modified_to": null,
             "recipients": [],
+            "tags": null,
             "thread_ref": null
           }
         },
@@ -2290,6 +2302,48 @@ export default {
         "serving"
       ],
       "title": "DocumentSummary",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentTagFilter": {
+      "additionalProperties": false,
+      "description": "Caller tags a document must carry (D156 \u00a74.1); every list given must hold.\n\n``all``: the document has every listed tag; ``any``: at least one;\n``none``: none of them. A tag is a registered name (matched ignoring case)\nor a ``tag_id``; an unregistered tag fails the read with ``unknown_tag``\nbefore anything is searched. Tags are the document's (lineage's) current\ntags, also when a time scope reads an older version. An untagged document\nmatches ``none`` and fails ``all`` and ``any``.",
+      "properties": {
+        "all": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "All",
+          "type": "array"
+        },
+        "any": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Any",
+          "type": "array"
+        },
+        "none": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "None",
+          "type": "array"
+        }
+      },
+      "title": "DocumentTagFilter",
       "type": "object",
       "x-extra": "forbid"
     },

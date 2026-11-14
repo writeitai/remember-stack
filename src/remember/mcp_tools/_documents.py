@@ -1,4 +1,4 @@
-"""The ``search_documents`` MCP tool (D134): argument parsing and dispatch.
+"""The ``search_documents`` MCP tool (D134, D156 tags): argument parsing and dispatch.
 
 Every host parses the flat tool arguments into one
 :class:`~remember.models.DocumentSearchRequest` here and hands it to its own
@@ -38,6 +38,7 @@ _FILTER_KEYS = frozenset(
         "language",
         "thread_ref",
         "doc_ids",
+        "tags",
     }
 )
 _TOP_LEVEL_KEYS = frozenset({"query", "versions", "time", "k", "limit", "cursor"})

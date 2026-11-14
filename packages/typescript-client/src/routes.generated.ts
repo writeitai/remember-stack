@@ -1502,14 +1502,7 @@ export default {
         "description": "cursor is malformed"
       },
       "422": {
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/HTTPValidationError"
-            }
-          }
-        },
-        "description": "Validation Error"
+        "description": "unknown_tag"
       }
     }
   },
@@ -2309,14 +2302,7 @@ export default {
         "description": "Successful Response"
       },
       "422": {
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/HTTPValidationError"
-            }
-          }
-        },
-        "description": "Validation Error"
+        "description": "unknown_tag"
       }
     }
   },
@@ -2347,14 +2333,7 @@ export default {
         "description": "Successful Response"
       },
       "422": {
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/HTTPValidationError"
-            }
-          }
-        },
-        "description": "Validation Error"
+        "description": "unknown_tag"
       }
     }
   },
