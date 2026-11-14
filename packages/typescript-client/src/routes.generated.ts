@@ -1258,6 +1258,26 @@ export default {
           ],
           "title": "Query"
         }
+      },
+      {
+        "description": "Keep only the tag with exactly this name, matched as the registry matches names (NFC, ignoring letter case).",
+        "in": "query",
+        "name": "name",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Keep only the tag with exactly this name, matched as the registry matches names (NFC, ignoring letter case).",
+          "title": "Name"
+        }
       }
     ],
     "path": "/tags",

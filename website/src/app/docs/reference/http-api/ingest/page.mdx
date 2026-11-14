@@ -1182,6 +1182,7 @@ how to use them: [Tag documents](/docs/guides/tag-documents).
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `query` | query | string | no | | 1 to 200 characters. Keeps the tags whose name or description contains it, ignoring letter case. |
+| `name` | query | string | no | | 1 to 128 characters. Keeps only the tag with exactly this name, matched the way the engine matches tag names (Unicode NFC, ignoring letter case); the list then has at most one tag. The Python and TypeScript clients use it to look up a tag's id from its name. |
 
 The list is ordered by name, ignoring letter case, and is not paged: a
 deployment registers at most 10,000 tags. It carries no document counts.

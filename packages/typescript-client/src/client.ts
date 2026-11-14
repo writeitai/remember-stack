@@ -375,12 +375,13 @@ export class MemoryClient {
     const body=modelDump({name:'DocumentTagsUpdate',value:{add:tagList({value:add,field:'add'}),remove:tagList({value:remove,field:'remove'}),set:set==null?null:tagList({value:set,field:'set'})},excludeDefaults:true});
     return validateModel({name:'DocumentTags',value:await this.json({method:'POST',path:`/documents/${document}/tags`,body,signal}),response:true});
   }
-  /** Resolve a tag name (NFC, ignoring case) to its id; an id is used as given. */
+  /** Resolve a tag name to its id through the engine's exact-name match; an id is used as given. */
   async #tagId({tag,signal}:{tag:string;signal?:AbortSignal}):Promise<string> {
     try{return uuid({value:tag,field:'tag'});}catch(error){if(!(error instanceof InputValidationError))throw error;}
-    const normalized=tag.normalize('NFC'),wanted=normalized.toLowerCase();
-    for(const registered of (await this.listTags({query:normalized,signal})).tags)if(registered.name.toLowerCase()===wanted)return registered.tag_id;
-    throw new UnknownTag({tags:[tag],statusCode:404});
+    // The engine matches the name exactly as the registry does (NFC, ignoring case); comparing case here could disagree with it.
+    const matches=validateModel<Models.OutputTagList>({name:'TagList',value:await this.json({method:'GET',path:'/tags',params:{name:tag},signal}),response:true}).tags;
+    if(matches.length!==1)throw new UnknownTag({tags:[tag],statusCode:404});
+    return matches[0]!.tag_id;
   }
   /** List deployment-side connectors; never execute their adapters in this client. */
   async connectors({signal}:RequestOptions={}):Promise<Models.OutputConnectorDescriptor[]> {return listResponse({name:'ConnectorDescriptor',value:await this.json({method:'GET',path:'/connectors',signal})});}

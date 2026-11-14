@@ -1,0 +1,3395 @@
+{
+  "kind": "synthetic_live_corpus_regression_not_deployment_qualification",
+  "profile": {
+    "bindings": {
+      "contract": "rememberstack.storage_bindings.v1",
+      "deployment_id": "00000000000000000000000000000001",
+      "filesystems": [
+        {
+          "filesystem_id": "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "role": "artifacts"
+        },
+        {
+          "filesystem_id": "aeaqcaibaeaqcaibaeaqcaibae",
+          "role": "corpus"
+        },
+        {
+          "filesystem_id": "aibaeaqcaibaeaqcaibaeaqcai",
+          "role": "forget"
+        },
+        {
+          "filesystem_id": "ambqgaydambqgaydambqgaydam",
+          "role": "raw"
+        }
+      ],
+      "knowledge_repository": "unconfigured",
+      "postgres_database_name": "rememberstack",
+      "provider_cell_id": "synthetic-cell",
+      "provider_organisation_id": "11111111111111111111111111111111"
+    },
+    "classification": {
+      "contract": "rememberstack.storage_classification.v1",
+      "rules": [
+        {
+          "native_class_id": "007d68f4820d727d19e154bfd5172468513c2222ca61b2476a1deb363a75c520",
+          "purpose": "projection_origin"
+        },
+        {
+          "native_class_id": "04460935eecd43c597332f3ece89566e037a4df2b52179383c02a77e9826d71b",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "044ec9dcaf142fb30a298d1ab81870e928891e35995364943a1aed639128e615",
+          "purpose": "paid_checkpoint"
+        },
+        {
+          "native_class_id": "08fa711cd73b924722a4d038f5249345bc7abe996bc0a416db18383ebee3e5bb",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "0cee34b41111b4ce11e944d4510dccb5e97edb2e56a838749371bdeb7939b29c",
+          "purpose": "staging"
+        },
+        {
+          "native_class_id": "0d65a6d0aa9398e59c8b371f96f5d96553df4cade5d5ca597d4b2e4e9a11aa48",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "0eec45f5745b8309f3d2a3e843f35995bd7ccf29729f01d25866bf450e98d3a7",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "0f84fea08613372902cf3a55121793c23ac6134945b2f7e92343fcbe9fa545bd",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "0fb3ae827a975bf9278f3bed7066b4e976999cf6e92d9362e56dd351d8bc7039",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "101a094a68e531d95f2942f4d2b79db1648dd916324bd654fed7d0b29fed22b8",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "18f5abc52e6326573821085782bcf289518e66761b590414771d19f0cee58ace",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "19ca460a0b58bf873c77199ee43157903fa692056b0877125b7ddc2c4fe77901",
+          "purpose": "privacy_control"
+        },
+        {
+          "native_class_id": "1a9686dddb81706f19a92dcd0622c56444dfe1d15e9b521cbbf3d3330a59c615",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "1d473a6a5b8f89c6fa5631cf532eb23969379cd1af44b0a2dc3b7412b760337a",
+          "purpose": "paid_checkpoint"
+        },
+        {
+          "native_class_id": "1eb995d00ec01bb580b0fd40a0a28231d9e09d849a3110ed9fdf33ee04177c90",
+          "purpose": "canonical_raw"
+        },
+        {
+          "native_class_id": "1f1eddd4ddc69d66a73cb740ac52c086eb1fb570835d48c594bdaa2ef29e8259",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "23152804509f328bcd63ecf80640d716b816b3138d9d9163c4eed44a8d49b860",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "2382bf468dd9b2593f64394fbed2cbda824bf3fb524f7c388862156e081893f2",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "24d9c28c173b6f7d1406feb1129dc7a7c7ba9b74c4faf25dcabe9889f8017ffa",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "25bf7d36538251a34023a8951b96296c68d3b2b30248716db1df4acb1ac4eb6c",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "2755471d8a8015e5fa023414b77dcfa1aa0d06c02f8d2bd624f5a56e4e56cc66",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "287e680499ec94e25dd7f32cc62cb7cc58ca2c5218440a0e4fff60b84ad8065a",
+          "purpose": "paid_checkpoint"
+        },
+        {
+          "native_class_id": "29e311f3c2b2faf0325ea57c053a1bdab6e0307a39972d9379851545558851bf",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "2ba362a5cfc80a67053fe9c6aeda58159423d411006982ce9b887a622d7bda30",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "2bcfe26b2e2d6484290a3634e3f3b9864033a70dc8160897734df7b12843b442",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "2f87062786cf1ebfe2cfd968ffa5d917890ffaa53a51160da0e3447400e522b9",
+          "purpose": "projection_origin"
+        },
+        {
+          "native_class_id": "30ae07477f98239736e89e86e498908d9ef3d177b3f7e1812a917cf33cd3c022",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "30da655802e9fbbf082920aa4835968ab626d376dec899415eb2b1c25875d1b1",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "37d6a61ae54b960a76baf4b2daf620f7dcafaa7b3ce41d3a3738901451ca97d9",
+          "purpose": "projection_origin"
+        },
+        {
+          "native_class_id": "39f7f9778a16e938565bc178aebb769cd49682fdb53757c21a6fc6c97bbb53a7",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "3a4368afbfa3bb62db58adb2fb0cdb3c050226aff1ef63f172813850dbf1207a",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "3aa2dc29e9fc59b1fbb16fc3a2c7bae8503f0a2238342596378a5bbd4aacae58",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "3d0253695555bd13842ed85b2e3ff1018be88a955b97ea3d4c5536dde148e95a",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "3f9882bd5a51113017a54698652c0547627ac325253d2be7eced60827d1383f5",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "41a62a23bd3fe7b0b1a3fbd1e2cc858d73831c9834574225ef5880298fbe66f1",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "41bd895213e7ee727253199ebc3e4c8a4c31bda89862bc8b6013ecc719d205db",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "4adc529939ddf48377baf0d6d28c1cbf52be8c1df205f2af1ec8351aef489a87",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "4d631843d1a72ddabad103cd830fd5dc1e9dc98ced6c2b31b197cfb0ac5ac180",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "4e513fe30b801eb61a6abacc5949e4f2b2cdf84284926299236a14bc54da7279",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "50d724d739dbf4b3ae1102e29f9f8991427b835d9438c9b7cf1c283408e6ecc9",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "5364a616d40eef3d07b3df3086a78c81e254bfb880f9f2c6934e0afe82b153d8",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "53cd353573a08f42a416f690138d60e9df7c59420438413d53c8b63e92ee8467",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "53d8f885f9d6fae8add0bf9028908395975e79f842099717d7139a73e41c86d1",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "5728869e8ed1782b67f743410a7b2ec7ed2d9b480013851e2259a7b06fd8da09",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "58af645de336dd16dbb319df951f4a1bd2b1c9edc2f136633c33e954d126b811",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "5996eea739695b314ecd11e770aa10e858c30ddf21ac5f0df7bb2e62ac21278d",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "5aa953c006b43063843841929c47ccfdac1d5dc6d7a139c3f25c0b373679170d",
+          "purpose": "staging"
+        },
+        {
+          "native_class_id": "5bc0631494b204494721ca77702ada8b7e45c4bdd30e5ead95554d1fd4a4d32b",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "5eb16c636d4ff6183bf6b038e3b4534fd8d08dec8901b043698bb39de3829401",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "66b6d79937604ad52686bb06cbe19c0666887a17d2a6e2f73571d225438d3d58",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "68c9b5aad31690d6ed30b86338ecac0556b0acfe8bb3e2dff17158a94bcd9dba",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "6e1bcde34cf72176006d16c3606d154954ad9b95f49d63203203f35e95df74ab",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "6e99bf7061da62a8721c9f6a49e54f3058639b977765a4df67bf639ae2b290b3",
+          "purpose": "paid_checkpoint"
+        },
+        {
+          "native_class_id": "702a8c1251f9b9c6212b8174342a6c74bd2970943d0148d91f7de0f64def5d58",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "70ca039e090a69f321a79ce28d3e58fa161210f4cf57ba736e00c65cd35b05bb",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "718eec380d0490821560f7aa16e4c4aee1b819f59c0e901085ded8da74e2bcbe",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "71efcd1f3527740b64508b32e0b10616d4fa8307a220098ecaddbb4797a3a823",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "72120945bb7e8fb1875e8d81cd4d721fd8d84165c42c27ad343f2af6d3d9bf9c",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "756d6ca2a7cc1be2b98abf05aae2350f5180df70a5288f5ba4de4623d36f3369",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "7d52c29ff2e88329e30374dcca2d18093f5460023c2570b3066d17ac3f1a651e",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "7d69f40e929c419fbb3b3f6cc3a49daf511dd90358b5ca4d1da5905d7dba3e95",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "7e18c1cbf0a09a697207b77ec971101c9299ea4d208d0f600c0d0e61d043870c",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "7e2e94aeda6dcce0f19dd40be74aa1f81f550b0380e95570d312c1fa6763bb32",
+          "purpose": "projection_origin"
+        },
+        {
+          "native_class_id": "7f1bf2ae90a7e4cadc0f2ac4fe595ebc3250e291a334309c3ef25d5d1aaa6836",
+          "purpose": "paid_checkpoint"
+        },
+        {
+          "native_class_id": "80ef68961b8cc8044b597b4c4ec04abc0d327979151e41ce335e6e45140de98c",
+          "purpose": "paid_checkpoint"
+        },
+        {
+          "native_class_id": "81ac981ba0c8d93c89cf4e3ceed44748a3fd230f573b333a92aa7bbd859e5072",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "85241cbfb2089c18a02f465a423444433a6e78e047db07cbb53af57f7cb73674",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "86305cced2ed68ee65399ffeb490009c86d11db6ce41015487e65bf2f0916ef0",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "89b56815c8a21f484cb4dcbd5ae35605f1ebe879875bfee12f1b8f70f30a33f1",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "8ed87ade6387efd0f4c58f6934d990512d4cdd6f893137130f9a74b2de57e6cb",
+          "purpose": "projection_origin"
+        },
+        {
+          "native_class_id": "8f1c9de220f26cfa48b14bc08749cd495e3d8bb930d2adcc072fffe266b630ed",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "92b0cc803816c4985c4ddea87165192e2facf463af56b5463a65514737c903c3",
+          "purpose": "privacy_control"
+        },
+        {
+          "native_class_id": "94dbbf109e06061786430bc767111f0ceb499717bfe1a428346bf3a33a0de6a1",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "9808d804724f7aa9aab6072306cb35c7f5061091d095f654f2aa9db64590829a",
+          "purpose": "paid_checkpoint"
+        },
+        {
+          "native_class_id": "9a338a4086d8bb2cfa0f6719f0016c5c8dc23081f7b6d5a9c7516d279ff61bf7",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "9b7902a64a49b222b5cf5d9a4167c710f2374395fc698aaa4688841f0f4700f9",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "9edb8f7fa0f1babe298706a35f53427cfab7ece8f89ad04b9c5fd1afe5494b76",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "a1814ab88563a5452e9cc59a57993ea94d4a8d5146d3f50ce532dd7027ff178c",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "a1ab9f23ec27e55685185f26a6a7dc87def133070c6d5d55c6b67ebdf630d767",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "a4a2de29eb70c0461fe71f6408468ae8bd2a734e59afaf8799f88f950d4bc4b0",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "a74b2b9c8562f560d5ed2d1159f801c01778137abfc8b509f6dfbebf8d10d868",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "b0e90e177c457000d60b8b535c1d4690d51f52a79c64785ffa9dfe347a12943a",
+          "purpose": "staging"
+        },
+        {
+          "native_class_id": "b467512e185449766c693aa13f27f56626c9d08f06e50850c15218d98dfb0bb9",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "b929de99c5233a6051bfc535316753915ea6b13ee67a2ca7616f7ec3e899b7a6",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "ba761847100ae259cea49d9f781e1f4b043bd69494e54df7cf0229ef9903d9a0",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "bb4013371712004ebaabfb6fedfef19c5752114f510da2ac01e478d353f79379",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "bd243e6625453916fbe7ce391f6d7cab377858d5cc8d8abf1ec6e3efa6ac0ad6",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "bd2ab2ec0f386d451e57df2f8d20b158ac9beb17274c4605e51720ad6e25d8de",
+          "purpose": "projection_origin"
+        },
+        {
+          "native_class_id": "be08185e503972f1b82786d3412cfd82770dfe4aef0c17a1ebac29b65c9a65fa",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "c3a16d749378891eb43acf0f599be95a33a3d7b4e0c617e7a77c4cb80bfdb29f",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "c3d9a531e7c23233549a319a6be47eb9e5a18a35eecdcfa9e352498a09a8e2c3",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "c47416508fe973f327d5927f300362bcb7341e1c08a7fa337c64dd1d6d948785",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "c8e57437f11507ef7b9ff57d1364693db9a5e290bf57be992d20ffffe6a4465f",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "c9316ba8454850f22cb27c644a6f5e33dcae8b5978c17371b528c1b97abc5027",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "cc31aa38366188f51d9a834cf209282ad3dda58f6bd083bd42bcee04891825a9",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "cd04faab508e2dba4e2a06f59fe8869bb82133f76a581331716fc51418b02e93",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "d19837767c5600c50941b7f7685fc311c4e1563e531baeafe619c5d41799252f",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "d2cc380917b04d1410a88bc2e92f129c6f4300b56c06cab6433e3eee5c12f246",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "d466a968005e8b81c1b2873cb2f172ca0f034394f76ae0fdf95007cd800546b4",
+          "purpose": "staging"
+        },
+        {
+          "native_class_id": "d9bf90520d9634013604e977e9a3155e5a94ec3f7d846124ce9b771e2f3bd8cb",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "d9f659ca21ed73e385d63b5c1599ba40d9d98e2267d2f85c194a817f2ad38cee",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "db2af848348091fe1d7c40b579016b2a0362fe7533ec98804fa98fcf60dff8f6",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "db58b6c3a463ad4870fcb0ec6b9fac4b00cd1be4a80d579bc9ca46d619cbcb8a",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "ddb53fbed6e150360165192484e3c820d0f176ca13d71b9c85d513f36958903b",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "e6d618a8985f73270532ca9773bfbac6461dda6ddd98341f85c57d9c0d19dbd7",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "e6fe63a7aec064a276e8480b38e45b37fd689bf5dc21d31514fbf1c699343d29",
+          "purpose": "adapter_metadata"
+        },
+        {
+          "native_class_id": "ea8c357e4b0c3e4af47f524bfaffc94a7231ac08ac347bdd6dd0d80fb38f2ec6",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "ec252df44880bcf4d3e0b0d6f99b061aa60ed0310631a5130d22fe82e7959d82",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "ec851e95d52aa61f2a58e24334ed164b512350e102907c5c6f64b418e974cccf",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "ed313ab1dd45fdc2e129d51c3a824b50bbc8facf3608c10a007a6bd1f9452946",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "ed60972fbdbc27ba6952dbd918d4aeada2609d53c474c6515697339c0d2e205c",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "ef8ab17e6d87fab0819cf4620754fc706212ebca5287ed79a76b900b48184fdb",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "f088e395a0bfb900e127f2aba2f537154491334b7e0eba85c7edb1364d280b1e",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "f09679510c97fb182b3a09744c1d33c1d428ff3e34499bddb0f218cacc68c2ef",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "f1239dd4bd65df68f95aade59e220e394f409b748e00f568dfd97acfbf2e764b",
+          "purpose": "referenced_artifact"
+        },
+        {
+          "native_class_id": "f36c5b4c98d2af8d14c6b8b843fd18d4132e382d9d0cc6513b7e42ad377d47e9",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "f92fc20e161eb1dc9d2bbc0886fcbcbf38d3a22f902ee1450fdf66f634fef139",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "f9b4e6deeba99510dd8597893b61df057343cd46dff582eaa06413f1b596a54c",
+          "purpose": "projection_origin"
+        },
+        {
+          "native_class_id": "fcfa3c8322023b8892e04a3ea0ac81a0e84ce3dbe728ff5dc12cfcc32cfb78d8",
+          "purpose": "privacy_control"
+        },
+        {
+          "native_class_id": "fd1933d8c3eb23f10859179238b15d97d999d0ddf7528534d1918ed93a1f5f13",
+          "purpose": "audit_operations"
+        },
+        {
+          "native_class_id": "fdca8028f368eb3ccb310d2a80c1f8dacb89794d5b9c5a78412dc52638372259",
+          "purpose": "staging"
+        },
+        {
+          "native_class_id": "fe438b24446793b0d0380312cc54a593a0fcdcf84889a876fe7a17ba038b4268",
+          "purpose": "truth_provenance"
+        },
+        {
+          "native_class_id": "ffb57a726d6964d00c9e26954cb4ef6c6564469e41926c92a738e01138ed3937",
+          "purpose": "truth_provenance"
+        }
+      ],
+      "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
+      "source_digest": "af1c940fa14f19417577acbf6af88f5463041989a90a78c2e130dbe5db3f0b8b"
+    },
+    "contract": "rememberstack.managed_storage_profile.v1",
+    "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+    "mapping": {
+      "classification_digest": "56fbf04d2376fa7e47d902c160e8c6847360201fa5f4ef3cfb8b2a8c8a0a3f1f",
+      "contract": "rememberstack.storage_mapping.v1",
+      "rules": [
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "007d68f4820d727d19e154bfd5172468513c2222ca61b2476a1deb363a75c520",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "04460935eecd43c597332f3ece89566e037a4df2b52179383c02a77e9826d71b",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "044ec9dcaf142fb30a298d1ab81870e928891e35995364943a1aed639128e615",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "08fa711cd73b924722a4d038f5249345bc7abe996bc0a416db18383ebee3e5bb",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "0cee34b41111b4ce11e944d4510dccb5e97edb2e56a838749371bdeb7939b29c",
+          "store_binding_id": "raw"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "0d65a6d0aa9398e59c8b371f96f5d96553df4cade5d5ca597d4b2e4e9a11aa48",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "0eec45f5745b8309f3d2a3e843f35995bd7ccf29729f01d25866bf450e98d3a7",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "0f84fea08613372902cf3a55121793c23ac6134945b2f7e92343fcbe9fa545bd",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "0fb3ae827a975bf9278f3bed7066b4e976999cf6e92d9362e56dd351d8bc7039",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "101a094a68e531d95f2942f4d2b79db1648dd916324bd654fed7d0b29fed22b8",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "18f5abc52e6326573821085782bcf289518e66761b590414771d19f0cee58ace",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "19ca460a0b58bf873c77199ee43157903fa692056b0877125b7ddc2c4fe77901",
+          "store_binding_id": "forget"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "1a9686dddb81706f19a92dcd0622c56444dfe1d15e9b521cbbf3d3330a59c615",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "1d473a6a5b8f89c6fa5631cf532eb23969379cd1af44b0a2dc3b7412b760337a",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "1eb995d00ec01bb580b0fd40a0a28231d9e09d849a3110ed9fdf33ee04177c90",
+          "store_binding_id": "raw"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "1f1eddd4ddc69d66a73cb740ac52c086eb1fb570835d48c594bdaa2ef29e8259",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "23152804509f328bcd63ecf80640d716b816b3138d9d9163c4eed44a8d49b860",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "2382bf468dd9b2593f64394fbed2cbda824bf3fb524f7c388862156e081893f2",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "24d9c28c173b6f7d1406feb1129dc7a7c7ba9b74c4faf25dcabe9889f8017ffa",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "25bf7d36538251a34023a8951b96296c68d3b2b30248716db1df4acb1ac4eb6c",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "2755471d8a8015e5fa023414b77dcfa1aa0d06c02f8d2bd624f5a56e4e56cc66",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "287e680499ec94e25dd7f32cc62cb7cc58ca2c5218440a0e4fff60b84ad8065a",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "29e311f3c2b2faf0325ea57c053a1bdab6e0307a39972d9379851545558851bf",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "2ba362a5cfc80a67053fe9c6aeda58159423d411006982ce9b887a622d7bda30",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "2bcfe26b2e2d6484290a3634e3f3b9864033a70dc8160897734df7b12843b442",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "p3_origin",
+          "native_class_id": "2f87062786cf1ebfe2cfd968ffa5d917890ffaa53a51160da0e3447400e522b9",
+          "store_binding_id": "corpus"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "30ae07477f98239736e89e86e498908d9ef3d177b3f7e1812a917cf33cd3c022",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "30da655802e9fbbf082920aa4835968ab626d376dec899415eb2b1c25875d1b1",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "p3_origin",
+          "native_class_id": "37d6a61ae54b960a76baf4b2daf620f7dcafaa7b3ce41d3a3738901451ca97d9",
+          "store_binding_id": "corpus"
+        },
+        {
+          "component": null,
+          "native_class_id": "39f7f9778a16e938565bc178aebb769cd49682fdb53757c21a6fc6c97bbb53a7",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "3a4368afbfa3bb62db58adb2fb0cdb3c050226aff1ef63f172813850dbf1207a",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "3aa2dc29e9fc59b1fbb16fc3a2c7bae8503f0a2238342596378a5bbd4aacae58",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "3d0253695555bd13842ed85b2e3ff1018be88a955b97ea3d4c5536dde148e95a",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "3f9882bd5a51113017a54698652c0547627ac325253d2be7eced60827d1383f5",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "41a62a23bd3fe7b0b1a3fbd1e2cc858d73831c9834574225ef5880298fbe66f1",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "41bd895213e7ee727253199ebc3e4c8a4c31bda89862bc8b6013ecc719d205db",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "4adc529939ddf48377baf0d6d28c1cbf52be8c1df205f2af1ec8351aef489a87",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "4d631843d1a72ddabad103cd830fd5dc1e9dc98ced6c2b31b197cfb0ac5ac180",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "4e513fe30b801eb61a6abacc5949e4f2b2cdf84284926299236a14bc54da7279",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "50d724d739dbf4b3ae1102e29f9f8991427b835d9438c9b7cf1c283408e6ecc9",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "5364a616d40eef3d07b3df3086a78c81e254bfb880f9f2c6934e0afe82b153d8",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "53cd353573a08f42a416f690138d60e9df7c59420438413d53c8b63e92ee8467",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "53d8f885f9d6fae8add0bf9028908395975e79f842099717d7139a73e41c86d1",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "5728869e8ed1782b67f743410a7b2ec7ed2d9b480013851e2259a7b06fd8da09",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "58af645de336dd16dbb319df951f4a1bd2b1c9edc2f136633c33e954d126b811",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "5996eea739695b314ecd11e770aa10e858c30ddf21ac5f0df7bb2e62ac21278d",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "5aa953c006b43063843841929c47ccfdac1d5dc6d7a139c3f25c0b373679170d",
+          "store_binding_id": "raw"
+        },
+        {
+          "component": null,
+          "native_class_id": "5bc0631494b204494721ca77702ada8b7e45c4bdd30e5ead95554d1fd4a4d32b",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "5eb16c636d4ff6183bf6b038e3b4534fd8d08dec8901b043698bb39de3829401",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "66b6d79937604ad52686bb06cbe19c0666887a17d2a6e2f73571d225438d3d58",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "68c9b5aad31690d6ed30b86338ecac0556b0acfe8bb3e2dff17158a94bcd9dba",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "6e1bcde34cf72176006d16c3606d154954ad9b95f49d63203203f35e95df74ab",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "6e99bf7061da62a8721c9f6a49e54f3058639b977765a4df67bf639ae2b290b3",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "702a8c1251f9b9c6212b8174342a6c74bd2970943d0148d91f7de0f64def5d58",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "70ca039e090a69f321a79ce28d3e58fa161210f4cf57ba736e00c65cd35b05bb",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "718eec380d0490821560f7aa16e4c4aee1b819f59c0e901085ded8da74e2bcbe",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "71efcd1f3527740b64508b32e0b10616d4fa8307a220098ecaddbb4797a3a823",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "72120945bb7e8fb1875e8d81cd4d721fd8d84165c42c27ad343f2af6d3d9bf9c",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "756d6ca2a7cc1be2b98abf05aae2350f5180df70a5288f5ba4de4623d36f3369",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "7d52c29ff2e88329e30374dcca2d18093f5460023c2570b3066d17ac3f1a651e",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "7d69f40e929c419fbb3b3f6cc3a49daf511dd90358b5ca4d1da5905d7dba3e95",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "7e18c1cbf0a09a697207b77ec971101c9299ea4d208d0f600c0d0e61d043870c",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "7e2e94aeda6dcce0f19dd40be74aa1f81f550b0380e95570d312c1fa6763bb32",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "7f1bf2ae90a7e4cadc0f2ac4fe595ebc3250e291a334309c3ef25d5d1aaa6836",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "80ef68961b8cc8044b597b4c4ec04abc0d327979151e41ce335e6e45140de98c",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "81ac981ba0c8d93c89cf4e3ceed44748a3fd230f573b333a92aa7bbd859e5072",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "85241cbfb2089c18a02f465a423444433a6e78e047db07cbb53af57f7cb73674",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "86305cced2ed68ee65399ffeb490009c86d11db6ce41015487e65bf2f0916ef0",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "89b56815c8a21f484cb4dcbd5ae35605f1ebe879875bfee12f1b8f70f30a33f1",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "p3_origin",
+          "native_class_id": "8ed87ade6387efd0f4c58f6934d990512d4cdd6f893137130f9a74b2de57e6cb",
+          "store_binding_id": "corpus"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "8f1c9de220f26cfa48b14bc08749cd495e3d8bb930d2adcc072fffe266b630ed",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "92b0cc803816c4985c4ddea87165192e2facf463af56b5463a65514737c903c3",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "94dbbf109e06061786430bc767111f0ceb499717bfe1a428346bf3a33a0de6a1",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": null,
+          "native_class_id": "9808d804724f7aa9aab6072306cb35c7f5061091d095f654f2aa9db64590829a",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "9a338a4086d8bb2cfa0f6719f0016c5c8dc23081f7b6d5a9c7516d279ff61bf7",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": null,
+          "native_class_id": "9a338a4086d8bb2cfa0f6719f0016c5c8dc23081f7b6d5a9c7516d279ff61bf7",
+          "store_binding_id": "corpus"
+        },
+        {
+          "component": null,
+          "native_class_id": "9a338a4086d8bb2cfa0f6719f0016c5c8dc23081f7b6d5a9c7516d279ff61bf7",
+          "store_binding_id": "forget"
+        },
+        {
+          "component": null,
+          "native_class_id": "9a338a4086d8bb2cfa0f6719f0016c5c8dc23081f7b6d5a9c7516d279ff61bf7",
+          "store_binding_id": "raw"
+        },
+        {
+          "component": null,
+          "native_class_id": "9b7902a64a49b222b5cf5d9a4167c710f2374395fc698aaa4688841f0f4700f9",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "9edb8f7fa0f1babe298706a35f53427cfab7ece8f89ad04b9c5fd1afe5494b76",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "a1814ab88563a5452e9cc59a57993ea94d4a8d5146d3f50ce532dd7027ff178c",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "a1ab9f23ec27e55685185f26a6a7dc87def133070c6d5d55c6b67ebdf630d767",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "a4a2de29eb70c0461fe71f6408468ae8bd2a734e59afaf8799f88f950d4bc4b0",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "a74b2b9c8562f560d5ed2d1159f801c01778137abfc8b509f6dfbebf8d10d868",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "b0e90e177c457000d60b8b535c1d4690d51f52a79c64785ffa9dfe347a12943a",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "b467512e185449766c693aa13f27f56626c9d08f06e50850c15218d98dfb0bb9",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "b929de99c5233a6051bfc535316753915ea6b13ee67a2ca7616f7ec3e899b7a6",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "ba761847100ae259cea49d9f781e1f4b043bd69494e54df7cf0229ef9903d9a0",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "bb4013371712004ebaabfb6fedfef19c5752114f510da2ac01e478d353f79379",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "bd243e6625453916fbe7ce391f6d7cab377858d5cc8d8abf1ec6e3efa6ac0ad6",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "bd2ab2ec0f386d451e57df2f8d20b158ac9beb17274c4605e51720ad6e25d8de",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "be08185e503972f1b82786d3412cfd82770dfe4aef0c17a1ebac29b65c9a65fa",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "c3a16d749378891eb43acf0f599be95a33a3d7b4e0c617e7a77c4cb80bfdb29f",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "c3d9a531e7c23233549a319a6be47eb9e5a18a35eecdcfa9e352498a09a8e2c3",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "c47416508fe973f327d5927f300362bcb7341e1c08a7fa337c64dd1d6d948785",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "c8e57437f11507ef7b9ff57d1364693db9a5e290bf57be992d20ffffe6a4465f",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "c9316ba8454850f22cb27c644a6f5e33dcae8b5978c17371b528c1b97abc5027",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "cc31aa38366188f51d9a834cf209282ad3dda58f6bd083bd42bcee04891825a9",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "cd04faab508e2dba4e2a06f59fe8869bb82133f76a581331716fc51418b02e93",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "d19837767c5600c50941b7f7685fc311c4e1563e531baeafe619c5d41799252f",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "d2cc380917b04d1410a88bc2e92f129c6f4300b56c06cab6433e3eee5c12f246",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "d466a968005e8b81c1b2873cb2f172ca0f034394f76ae0fdf95007cd800546b4",
+          "store_binding_id": "corpus"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "d9bf90520d9634013604e977e9a3155e5a94ec3f7d846124ce9b771e2f3bd8cb",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "d9f659ca21ed73e385d63b5c1599ba40d9d98e2267d2f85c194a817f2ad38cee",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "db2af848348091fe1d7c40b579016b2a0362fe7533ec98804fa98fcf60dff8f6",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "db58b6c3a463ad4870fcb0ec6b9fac4b00cd1be4a80d579bc9ca46d619cbcb8a",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": null,
+          "native_class_id": "ddb53fbed6e150360165192484e3c820d0f176ca13d71b9c85d513f36958903b",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "e6d618a8985f73270532ca9773bfbac6461dda6ddd98341f85c57d9c0d19dbd7",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "e6fe63a7aec064a276e8480b38e45b37fd689bf5dc21d31514fbf1c699343d29",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "ea8c357e4b0c3e4af47f524bfaffc94a7231ac08ac347bdd6dd0d80fb38f2ec6",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "ec252df44880bcf4d3e0b0d6f99b061aa60ed0310631a5130d22fe82e7959d82",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "ec851e95d52aa61f2a58e24334ed164b512350e102907c5c6f64b418e974cccf",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "ed313ab1dd45fdc2e129d51c3a824b50bbc8facf3608c10a007a6bd1f9452946",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "ed60972fbdbc27ba6952dbd918d4aeada2609d53c474c6515697339c0d2e205c",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "ef8ab17e6d87fab0819cf4620754fc706212ebca5287ed79a76b900b48184fdb",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "f088e395a0bfb900e127f2aba2f537154491334b7e0eba85c7edb1364d280b1e",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "f09679510c97fb182b3a09744c1d33c1d428ff3e34499bddb0f218cacc68c2ef",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "canonical_object",
+          "native_class_id": "f1239dd4bd65df68f95aade59e220e394f409b748e00f568dfd97acfbf2e764b",
+          "store_binding_id": "artifacts"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "f36c5b4c98d2af8d14c6b8b843fd18d4132e382d9d0cc6513b7e42ad377d47e9",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "f92fc20e161eb1dc9d2bbc0886fcbcbf38d3a22f902ee1450fdf66f634fef139",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "f9b4e6deeba99510dd8597893b61df057343cd46dff582eaa06413f1b596a54c",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "fcfa3c8322023b8892e04a3ea0ac81a0e84ce3dbe728ff5dc12cfcc32cfb78d8",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "fd1933d8c3eb23f10859179238b15d97d999d0ddf7528534d1918ed93a1f5f13",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": null,
+          "native_class_id": "fdca8028f368eb3ccb310d2a80c1f8dacb89794d5b9c5a78412dc52638372259",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "fe438b24446793b0d0380312cc54a593a0fcdcf84889a876fe7a17ba038b4268",
+          "store_binding_id": "postgres"
+        },
+        {
+          "component": "postgres_allocated",
+          "native_class_id": "ffb57a726d6964d00c9e26954cb4ef6c6564469e41926c92a738e01138ed3937",
+          "store_binding_id": "postgres"
+        }
+      ],
+      "store_binding_digest": "e65a24fea35f132abbafaee8eb0f7421577234c011f86c911bcc1b0bf0c029ae"
+    },
+    "native": {
+      "clock_error_us": "1000",
+      "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+      "profile_digest": "a8270925e61ab5587c132e00a88ab7b5560b21e1146d76891f286a6108949f8c",
+      "release_margin_us": 500000,
+      "schema_digest": "ad67ca0c8a5d7c8b2468eb6790457ee4af7857fc3ce835bb3f865b44d4e38004",
+      "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
+      "source_digest": "af1c940fa14f19417577acbf6af88f5463041989a90a78c2e130dbe5db3f0b8b",
+      "view_lifetime_ms": 30000
+    },
+    "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "request": {
+    "classification_digest": "56fbf04d2376fa7e47d902c160e8c6847360201fa5f4ef3cfb8b2a8c8a0a3f1f",
+    "contract": "rememberstack.storage_capture_request.v1",
+    "cut_at_unix_us": "1800000000000000",
+    "deployment_id": "00000000000000000000000000000001",
+    "native_capture_profile_digest": "a8270925e61ab5587c132e00a88ab7b5560b21e1146d76891f286a6108949f8c",
+    "operator_mapping_digest": "2e8592788fa4ea5f0be1f3c683721d162e139239f4aa4dd53415a06022f71792",
+    "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
+    "store_binding_digest": "e65a24fea35f132abbafaee8eb0f7421577234c011f86c911bcc1b0bf0c029ae"
+  },
+  "schema": {
+    "catalog": {
+      "EXPECTED_CONSTRAINT_COUNTS": {
+        "c": 121,
+        "f": 150,
+        "n": 653,
+        "p": 87,
+        "t": 7,
+        "u": 41
+      },
+      "EXPECTED_ENUMS": [
+        "adjudication_method",
+        "adjudication_outcome",
+        "alias_provenance",
+        "claim_temporal_class",
+        "claim_valid_kind",
+        "claim_valid_precision",
+        "crossref_binding",
+        "crossref_kind",
+        "crossref_origin",
+        "currency_reason",
+        "decision_actor",
+        "deployment_status",
+        "document_origin",
+        "document_status",
+        "entity_status",
+        "eval_suite",
+        "evidence_stance",
+        "extraction_decision_type",
+        "forget_manifest_status",
+        "golden_hardness",
+        "golden_label",
+        "grounding_audit_status",
+        "ingest_principal_kind",
+        "knowledge_artifact_status",
+        "knowledge_evidence_role",
+        "knowledge_layer",
+        "knowledge_page_kind",
+        "knowledge_rule_kind",
+        "knowledge_trigger",
+        "ontology_status",
+        "ontology_tier",
+        "pipeline_component",
+        "pipeline_stage",
+        "plan_action",
+        "plan_decision_status",
+        "plan_trigger",
+        "processing_defer_reason",
+        "processing_lane",
+        "processing_status",
+        "processing_target",
+        "projection_plane",
+        "assured_answer_intent",
+        "assured_operation_name",
+        "assured_output_grain",
+        "assured_result_contract",
+        "refresh_status",
+        "relation_status",
+        "saved_query_assurance",
+        "saved_query_origin",
+        "saved_query_status",
+        "resolution_exclusion_basis",
+        "resolution_tier",
+        "review_item_kind",
+        "review_status",
+        "review_verdict",
+        "rule_key_kind",
+        "scope_interest_kind",
+        "section_role",
+        "selection_drop_reason",
+        "selection_outcome",
+        "skeleton_check_outcome",
+        "snapshot_status",
+        "structure_route_tag",
+        "subscription_status",
+        "surface_cost_kind",
+        "surface_cost_outcome",
+        "versioning_mode"
+      ],
+      "EXPECTED_EXTENSIONS": [
+        "btree_gist",
+        "fuzzystrmatch",
+        "pg_partman",
+        "pg_textsearch",
+        "pg_trgm",
+        "pgcrypto",
+        "unaccent",
+        "vector"
+      ],
+      "EXPECTED_HASH_PARENTS": [
+        "document_entity_bindings",
+        "observation_evidence",
+        "relation_evidence"
+      ],
+      "EXPECTED_INDEXES": [
+        "ix_adjud_live",
+        "ix_adjud_relation",
+        "ix_aliases_entity",
+        "ix_aliases_lemma_dm",
+        "ix_aliases_lemma_exact",
+        "ix_aliases_lemma_trgm",
+        "ix_application_context_entity",
+        "ix_chunkclaims_claim",
+        "ix_chunk_search_bm25",
+        "ix_chunk_search_embedding_hnsw",
+        "ix_chunks_doc",
+        "ix_chunks_reuse",
+        "ix_chunks_reuse_identity",
+        "ix_chunks_section",
+        "ix_chunks_version",
+        "ix_claims_audit",
+        "ix_claims_chunk",
+        "ix_claims_current",
+        "ix_claims_current_bm25",
+        "ix_claims_current_embedding_hnsw",
+        "ix_claims_doc",
+        "ix_claims_flagged",
+        "ix_claims_valid_window",
+        "ix_cost_budget_window",
+        "ix_cost_export",
+        "ix_crossrefs_from",
+        "ix_crossrefs_incoming",
+        "ix_crossrefs_pending",
+        "ix_currency_claim",
+        "ix_currency_doc",
+        "ix_cxd_chunk",
+        "ix_cxd_drops",
+        "ix_docreps_version",
+        "ix_document_metadata_family",
+        "ix_document_metadata_thread",
+        "ix_document_names_bm25",
+        "ix_document_names_trgm",
+        "ix_document_people_address",
+        "ix_document_people_name",
+        "ix_document_tags_tag",
+        "ix_documents_entity",
+        "ix_documents_live",
+        "ix_docversions_doc",
+        "ix_docversions_hash",
+        "ix_docversions_status",
+        "ix_effective_periods_lineage",
+        "ix_entities_name_trgm",
+        "ix_entities_embedding_hnsw",
+        "ix_entities_redirect",
+        "ix_entity_types_parent",
+        "ix_eval_suite_ver",
+        "ix_forget_content_guard",
+        "ix_forget_source_guard",
+        "ix_grounding_claim",
+        "ix_kae_claim_coordinate",
+        "ix_kae_doc",
+        "ix_kae_relation",
+        "ix_kartifacts_parent",
+        "ix_kartifacts_scope",
+        "ix_kartifacts_stale",
+        "ix_kcompilations_artifact",
+        "ix_kdispatch_pending",
+        "ux_kdispatch_pending_subscription",
+        "ix_kplan_proposed",
+        "ix_kplan_runs_deployment",
+        "ix_krefresh_runnable",
+        "ux_krefresh_open_authored_review",
+        "ix_krule_keys_lookup",
+        "ix_kwatch_watched",
+        "ix_mentions_claim",
+        "ix_mentions_deployment_chunk",
+        "ix_mentions_doc",
+        "ix_merge_absorbed",
+        "ix_merge_survivor",
+        "ix_merge_trigger",
+        "ix_obsadjud_live",
+        "ix_obsadjud_observation",
+        "ix_observations_block",
+        "ix_observations_contradiction",
+        "ix_observations_entity",
+        "ix_observations_embedding_hnsw",
+        "ix_obsevidence_claim",
+        "ix_predicates_other",
+        "ix_procstate_dlq",
+        "ix_procstate_due",
+        "ix_procstate_running_lease",
+        "ix_procstate_target",
+        "ix_relations_block_obj",
+        "ix_relations_block_subj",
+        "ix_relations_contradiction",
+        "ix_relations_live",
+        "ix_relations_embedding_hnsw",
+        "ix_relations_predicate",
+        "ix_relevidence_claim",
+        "ix_resdec_entity",
+        "ix_resdec_entity_live",
+        "ix_resdec_live",
+        "ix_resdec_mention",
+        "ix_review_pending",
+        "ix_sections_doc",
+        "ix_sections_doc_key",
+        "ix_sections_parent",
+        "ix_sections_role",
+        "ix_selection_results_representation",
+        "ix_selection_results_reuse",
+        "ix_skeleton_checks_representation",
+        "ix_structure_generations_representation",
+        "ix_surface_cost_export",
+        "ix_version_scope_in_force",
+        "ix_version_scope_lineage",
+        "ux_docversions_version_key",
+        "ux_effective_periods_live_start",
+        "ux_kae_link",
+        "ux_kquarantine_open_artifact",
+        "ux_kwatch",
+        "ux_reference_generations_active",
+        "ux_sections_key",
+        "ux_snapshot_latest",
+        "ux_tags_name"
+      ],
+      "EXPECTED_RANGE_PARENTS": {
+        "chunk_claims": "created_at",
+        "chunks": "created_at",
+        "claim_extraction_decisions": "decided_at",
+        "mentions": "created_at",
+        "resolution_decisions": "decided_at",
+        "surface_cost_ledger": "occurred_at",
+        "testimony_currency_events": "occurred_at"
+      },
+      "EXPECTED_TABLES": [
+        "aliases",
+        "application_context_bindings",
+        "canary_cases",
+        "chunk_claims",
+        "chunk_search",
+        "chunks",
+        "claim_extraction_decisions",
+        "claims",
+        "connector_sync_cycles",
+        "content_objects",
+        "cost_ledger",
+        "deployment_extension_packs",
+        "deployment_processing_layers",
+        "deployments",
+        "document_crossrefs",
+        "document_effective_periods",
+        "document_effective_time_events",
+        "document_entity_bindings",
+        "document_metadata",
+        "document_names",
+        "document_people",
+        "document_reference_generations",
+        "document_representations",
+        "document_skeleton_checks",
+        "document_sections",
+        "document_structure_generations",
+        "document_tags",
+        "document_version_scope",
+        "document_versions",
+        "documents",
+        "entities",
+        "entity_types",
+        "eval_runs",
+        "extension_packs",
+        "forget_manifests",
+        "fact_applications",
+        "fact_window_review_attempts",
+        "normalization_outputs",
+        "golden_claim_labels",
+        "golden_pairs",
+        "grounding_audits",
+        "knowledge_artifact_evidence",
+        "knowledge_artifacts",
+        "knowledge_compilations",
+        "knowledge_dispatches",
+        "knowledge_page_rules",
+        "knowledge_page_watches",
+        "knowledge_plan_decisions",
+        "knowledge_plan_runs",
+        "knowledge_quarantines",
+        "knowledge_refresh_queue",
+        "knowledge_rule_keys",
+        "knowledge_subscriptions",
+        "mentions",
+        "normalize_observation_staging",
+        "merge_events",
+        "obs_flush_entity_units",
+        "obs_flush_version_state",
+        "p1_search_channels",
+        "observation_adjudications",
+        "observation_evidence",
+        "observations",
+        "perimeter_state",
+        "pipeline_component_versions",
+        "predicates",
+        "processing_layer_gaps",
+        "processing_state",
+        "projection_snapshots",
+        "relation_adjudications",
+        "relation_evidence",
+        "relations",
+        "resolution_decisions",
+        "resolution_exclusions",
+        "resolver_versions",
+        "assured_operations",
+        "review_queue",
+        "saved_queries",
+        "saved_query_audit",
+        "saved_query_registry_state",
+        "saved_query_versions",
+        "scope_interests",
+        "scopes",
+        "selection_results",
+        "surface_cost_ledger",
+        "surface_cost_meter_state",
+        "tags",
+        "testimony_currency_events"
+      ],
+      "EXPECTED_VIEWS": [
+        "v_cost_receipts",
+        "v_graph_survivor",
+        "v_memory_entity_survivor",
+        "v_memory_evidence_lineage_live",
+        "v_memory_fact_claim_live",
+        "v_memory_claim_carried_periodised",
+        "v_memory_fact_source_qualified",
+        "v_memory_fact_visible",
+        "v_memory_mention_current_content",
+        "v_memory_page_citation_visible"
+      ]
+    },
+    "extensions": [
+      "btree_gist=1.9",
+      "fuzzystrmatch=1.2",
+      "pg_partman=5.5.0",
+      "pg_textsearch=1.5.1",
+      "pg_trgm=1.6",
+      "pgcrypto=1.4",
+      "plpgsql=1.0",
+      "unaccent=1.1",
+      "vector=0.8.6"
+    ],
+    "guard_roots": [
+      "alembic_version",
+      "aliases",
+      "application_context_bindings",
+      "assured_operations",
+      "canary_cases",
+      "chunk_claims",
+      "chunk_search",
+      "chunks",
+      "claim_extraction_decisions",
+      "claims",
+      "connector_sync_cycles",
+      "content_objects",
+      "cost_ledger",
+      "deployment_extension_packs",
+      "deployment_processing_layers",
+      "deployments",
+      "document_crossrefs",
+      "document_effective_periods",
+      "document_effective_time_events",
+      "document_entity_bindings",
+      "document_metadata",
+      "document_names",
+      "document_people",
+      "document_reference_generations",
+      "document_representations",
+      "document_sections",
+      "document_skeleton_checks",
+      "document_structure_generations",
+      "document_tags",
+      "document_version_scope",
+      "document_versions",
+      "documents",
+      "entities",
+      "entity_types",
+      "eval_runs",
+      "extension_packs",
+      "fact_applications",
+      "fact_window_review_attempts",
+      "forget_manifests",
+      "golden_claim_labels",
+      "golden_pairs",
+      "grounding_audits",
+      "ingest_principals",
+      "knowledge_artifact_evidence",
+      "knowledge_artifacts",
+      "knowledge_compilations",
+      "knowledge_dispatches",
+      "knowledge_page_rules",
+      "knowledge_page_watches",
+      "knowledge_plan_decisions",
+      "knowledge_plan_runs",
+      "knowledge_quarantines",
+      "knowledge_refresh_queue",
+      "knowledge_rule_keys",
+      "knowledge_subscriptions",
+      "managed_ingest_measurements",
+      "managed_ingest_outcomes",
+      "mentions",
+      "merge_events",
+      "normalization_outputs",
+      "normalize_observation_staging",
+      "obs_flush_entity_units",
+      "obs_flush_version_state",
+      "observation_adjudications",
+      "observation_evidence",
+      "observations",
+      "p1_search_channels",
+      "part_config",
+      "part_config_sub",
+      "perimeter_state",
+      "pipeline_component_versions",
+      "predicates",
+      "processing_layer_gaps",
+      "processing_state",
+      "projection_snapshots",
+      "relation_adjudications",
+      "relation_evidence",
+      "relations",
+      "resolution_decisions",
+      "resolution_exclusions",
+      "resolver_versions",
+      "review_queue",
+      "saved_queries",
+      "saved_query_audit",
+      "saved_query_registry_state",
+      "saved_query_versions",
+      "scope_interests",
+      "scopes",
+      "selection_results",
+      "surface_cost_ledger",
+      "surface_cost_meter_state",
+      "tags",
+      "template_public_chunk_claims",
+      "template_public_chunks",
+      "template_public_claim_extraction_decisions",
+      "template_public_mentions",
+      "template_public_resolution_decisions",
+      "template_public_surface_cost_ledger",
+      "template_public_testimony_currency_events",
+      "testimony_currency_events"
+    ],
+    "head": "p9_53_0074",
+    "migrations": {
+      "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
+      "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
+      "p0_02_0002_infrastructure_registries.py": "7b9929014065629100cedec18fee50049865619d72d06171d905d0bf1c6ddffe",
+      "p0_02_0003_entities_evaluation_e0_e1.py": "42cfb39ee1848ec7b248166d9d0d40fbd35efa71cd9f82c276d801107c70833c",
+      "p0_02_0004_claims_facts_evidence.py": "ad33c54c7e142f327d2ef46bd5eb811cce7bcd174b1b0a3e25ad03bf49795375",
+      "p0_02_0005_projection_knowledge_retrieval.py": "0b0d6acb1509076257dfb27ef16f4fc09c171120a4ad6671b2875b5fa1627584",
+      "p0_02_0006_partitions_views.py": "a553999fd0189879b56ba65205865d8cdbc7ffaddf7d79d6b54b5e17be5fb039",
+      "p1_03_0018_claimify_loss_ledger.py": "96af6b4af378f622b9c8ba5bbfdcb9f43f74eb80c2f258d72dd75e9dff7edeb8",
+      "p1_04_0019_d79_structure_generations.py": "d30ba3d4375d9588dcd2ae33847d8dddb717f9721af192bd290afb6daafd0512",
+      "p2_06_0007_invalidated_outcome.py": "044ff502cdba127b2167f55903de47ab263df811208cab617bebbe4b429adaf1",
+      "p3_01_0008_document_version_target.py": "4ae4e00526a7f38b44ef29ed690027762ee7959fb7ec1ebe88d20bd1e503e638",
+      "p3_05_0009_reconcile_stage.py": "6daf8f8104f296ad47a570ed91578209033491436b2431242bf931103c8fd9af",
+      "p3_07_0010_lifecycle_eval_suite.py": "d4ba2a8aaea1a37dde33b58690d6fbc7ce251c21a5e3396eb536484ea9c20855",
+      "p4_01_0011_survivor_view_rewrite.py": "f3c88efb53d61555ce50a2a7d861d49e57b78d1a2c57c713af5eff7f163ada6f",
+      "p5_07_0020_retrieval_batch_b_indexes.py": "009eb5c1206c2cd062ccfe7ee91699624d2ce2dec428178ea43e80fbd89ff378",
+      "p6_02_0012_knowledge_compile_recovery.py": "d19a9d414dfeba792f7dfadf7d54c716c3ffee9c1c03195abc708ce6360f24cb",
+      "p6_04_0013_knowledge_writer_ledger.py": "ecd8c3b12970d957aa1a8c5447fbec278824cd845d3a963b17671b4b35150969",
+      "p6_05_0014_knowledge_planner_runtime.py": "8cb851cb4e2471e827f466becb70b41332eda08147bfc56d02abcdf471f17c19",
+      "p6_06_0015_authored_dispatch_runtime.py": "431a9d6a8a2c1d141d68fe92b03524a4020db688101f3a6d35f0cdc7f84b4c9d",
+      "p7_02_0016_operational_eval_suite.py": "999dd6b77531371670e160d3f98531ccc098edea69171edac9c0a13002b3ffed",
+      "p7_05_0017_hard_forget.py": "6052c3be64afe6a282b4aec9edaebb8cf3ff3151ad54edcfb19057499c6f4530",
+      "p8_01_0021_d80_embedding_input.py": "02b0bc8350f780bc38a0313272e63356b90e2ada51a2504cf373796b0fae006f",
+      "p8_01_0022_d80_packaging_fields.py": "bc02fef4d16419f81acdcc55a88b66e1d49b206c24875f75c7a4545a081cae01",
+      "p9_01_0022_memory_v1_query_space.py": "6eb1f5d5dd7c453e19fd279d4ed56e3012038009aa418594dd2e66d7de39350e",
+      "p9_02_0023_query_space_roles.py": "e5da2a0970f88f8d74f2554ae56e955dbc9ef6fb36422694670e5912b097be0e",
+      "p9_03_0024_facts_as_of.py": "c5542144cf61185880965bc88c5070174364d6525a7513e5a953aa2e1b4c937f",
+      "p9_04_0025_coordinate_binding.py": "b992281ddfaecf8da75df370c3ff90ca2d82669369a2220fbda1932bc40e398e",
+      "p9_05_0026_graph_helpers.py": "fad7cfbba43b62a03db5b078dd8a2c074394074f32ca5853ac9cf9495c65cc58",
+      "p9_06_0027_saved_query_registry.py": "03fba3b4a2b4c08e21fe45e3cc3935687d058dafa2dff880002054a274f555c5",
+      "p9_07_0028_chunk_extract_indexes.py": "2bb23b9aaf3d3f35f7fa846bcc1b7534f10604b7f84c7eac3f577ad68bb83a46",
+      "p9_08_0029_normalize_claim_fanout.py": "e13cc30c99119f70bef9d04243349ad39c5b661a02f522e04de50ff6c7f2bfaa",
+      "p9_09_0030_fact_authority_performance.py": "3eb1bd95e54877e3a1e86cd704d40b93354074a81cb3af310c9748a313856613",
+      "p9_10_0031_entity_obs_flush_fanout.py": "e7335eb5e3701f1e7b4bba0e5f3704e23416cff5436599e4a7696f9e2e7367e9",
+      "p9_11_0032_surface_cost_ledger.py": "219620b27f9e9e4aca4666f5536515ad520d83358b84b7a8dd6e0579abc9a639",
+      "p9_13_0034_postgres_p1_search.py": "1c13f6881705c1aa4426ebbcf299227c3e6dad4ea75682a477a10601c06a7432",
+      "p9_14_0035_drop_entity_type.py": "b419e64cffd372fa8f1ac4cf8d0300c4d8764ae174d7301d52338e8e573c532a",
+      "p9_15_0036_global_resolution_eval.py": "f17ad5a8221c382f859de4b2ee7c8b37cf8aeb50d8dde5b21358a9ad9e9706c0",
+      "p9_16_0037_entity_profile_projection.py": "66cb76281aeb6525a77b5c2919acb566f9310a6bbd6ba2b53d6ad11d7062abcf",
+      "p9_17_0038_postgres19_live_graph.py": "34606b43a7a04a23b8ecda04aa6ab4572e33177014f4b212e3e09fac731650f3",
+      "p9_18_0039_graph_entity_provenance_plan.py": "9a15d3dc20738416cd568664f9e1787f51e9195a54a7b10a7d53306ce8ac7cb4",
+      "p9_19_0040_graph_tenant_planner_settings.py": "b0edb0d7e3242396feda06e5ab9111f1b168563409c837902420328df6ed9784",
+      "p9_20_0041_resolution_uncertainty.py": "0b851abd7b8eb4ae1c321ec30c114641c63674bbe5c1842c6d23e7d48827a533",
+      "p9_21_0042_ingest_principal.py": "b09b93758a6fbb7ae7d97703ccabf8345061f6df562ade3c42f18bf9be468826",
+      "p9_22_0043_document_entity_bindings.py": "76d23b26645f412a1a243c0c096c9dcf543e3ff5fa23ebb32ac78b09d4302576",
+      "p9_23_0044_drop_generic_identifier_guard.py": "474148f337353e834debba9e9723201e14906c99ff8acc2efb8ede4ba69bb672",
+      "p9_24_0045_managed_text_metering.py": "d1f29f87c1bfc85858fd8cd3a8debb84e5001c8b40f68a8aafd1bc4d990d0dd8",
+      "p9_25_0046_document_inventory_order.py": "e99c3ef3ba365d5e2378f315fd6dac46c0afc68a26c6abb57ed18ba5d3d124b6",
+      "p9_26_0047_canonical_bounds.py": "7f2a54a284b757a613af3a9ca0596faddddd9206fb83a5fbefdda6c6afea937a",
+      "p9_27_0048_query_space_canonical_bounds.py": "83960e3ee22723468a430efc598db5afb6569a947dbcbb7d153edd8e6906db0f",
+      "p9_28_0049_context_operation_names.py": "62bae9e7be45537693c94448ec6e9471f993059b817e2e1bcae51faa951ee4af",
+      "p9_29_0050_no_route_defer_reason.py": "6d4641d713bab02164015b0d38d5aee3ca75d7f5dac1f36d39e938d886cd71c7",
+      "p9_30_0051_mutable_fact_windows.py": "a1556055c60d67006e5498cd5bc15c4314ed307b61b6289680c2063bb748432f",
+      "p9_31_0052_multi_span_claim_evidence.py": "e93ca491aca4304e9bdb64afe63795fae46877fcf395b369f92556608ace50fa",
+      "p9_32_0053_source_reference_context.py": "0cbc0088d59990cd721589ae69e59aadcab5544c11b490ae09feea4e389d24fd",
+      "p9_33_0054_perimeter_state.py": "936e3f9998d6eec2e81d33e92e3a0cecc61ee22f536a83297b237c3e3b4be34a",
+      "p9_34_0055_embedding_model_indexes.py": "2bd330e868726babadd6006cf8e9c8213c26934366cd67a60a0158b182e64d2a",
+      "p9_35_0056_document_metadata.py": "1d848699e8fdc9f47dd75404f8df56ee3397d3f0b6b63955073c3c31661b83d2",
+      "p9_36_0057_own_document_name_span.py": "342a1050b7a01c8e42717310b841907c05388140f7f45ad6d9b676a3fba2cafc",
+      "p9_37_0058_extraction_eligibility.py": "fe8ea5cf632ebcd153fbe05698b4c364a839932eb336e731c74e9632a0959f46",
+      "p9_38_0059_d140_effective_time.py": "00dabcd91a8807240a2f6b2692d588a8675ba1cc624a5557343cce60be76354b",
+      "p9_39_0060_d140_period_window_review.py": "e2b7ebe89097aca3da748139da05e9b63ca497adfc88de544a0d5fc73b70eb6d",
+      "p9_40_0061_citation_path_projection.py": "1cc76784bf2ef1cc69a5bfe710b54c83beaae92cef61a70957a404b62e9ffc52",
+      "p9_41_0062_processing_layers.py": "d07fc0409b2a202b7e6c7ff293ac4802ac0f17dbb3eebf68332625e7fe008979",
+      "p9_42_0063_entity_counts_demand.py": "1e8a0dfb4dcc4018d0ca9f8d35fae0f1bb81957ee179126d3f6229ec23f78109",
+      "p9_43_0064_claim_leases.py": "921e84fd940b0050cfca6af71d6570f049a38a5beaed9ca93b7586113a3e7b88",
+      "p9_44_0065_drop_property_graphs.py": "b1e93ee583d1780f9b77752154d38495ac2402fb20cb0757c79e2a5b64c4b69b",
+      "p9_45_0066_fact_counts_demand.py": "34bc365f01b18f76fd061c48b53f40499f6a0c9b952f384272024f16059f2a71",
+      "p9_46_0067_generic_meter.py": "b04141b59c33d519ea7527bcb775d6b435507445c1fb4c0b3741804ecd2a2636",
+      "p9_47_0068_mention_chunk_lookup.py": "ff3bc78538b3cdb1b32b4136f2c9add72cb172302ef0c7ba3103aebecbbc19c1",
+      "p9_48_0069_shared_eligibility.py": "88361a8676a6d4103081dfc2e7a8fb360c2cc41ba08a3e2cdb04cfd3b20f4bec",
+      "p9_49_0070_corpus_publication_marker.py": "a3a976f504ba0f41f156989e4d347b7d42f8df6da07e54c1843ce8d3c411696e",
+      "p9_50_0071_corpus_publication_work.py": "2e44caec296f2e2437a0b7176b9850398fb30467b819cf17c1cbc7d1b74ceaeb",
+      "p9_51_0072_corpus_paths.py": "43840fe88f2a637bc48517174fadd273eb5eb88eeb51e60505824306a927d668",
+      "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255",
+      "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a"
+    },
+    "records": {
+      "NativeCatalogAcquisition": {
+        "$defs": {
+          "NativeCatalogIdentity": {
+            "additionalProperties": false,
+            "description": "Actual session, virtual transaction and MVCC snapshot, without handoff.",
+            "properties": {
+              "backend_pid": {
+                "exclusiveMinimum": 0,
+                "title": "Backend Pid",
+                "type": "integer"
+              },
+              "database_name": {
+                "title": "Database Name",
+                "type": "string"
+              },
+              "database_oid": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Database Oid",
+                "type": "string"
+              },
+              "postmaster_started_unix_us": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Postmaster Started Unix Us",
+                "type": "string"
+              },
+              "session_login": {
+                "title": "Session Login",
+                "type": "string"
+              },
+              "snapshot_identity": {
+                "title": "Snapshot Identity",
+                "type": "string"
+              },
+              "virtual_transaction_id": {
+                "title": "Virtual Transaction Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_login",
+              "database_name",
+              "database_oid",
+              "postmaster_started_unix_us",
+              "backend_pid",
+              "virtual_transaction_id",
+              "snapshot_identity"
+            ],
+            "title": "NativeCatalogIdentity",
+            "type": "object"
+          },
+          "NativeStorageConfiguration": {
+            "additionalProperties": false,
+            "description": "Private native store roots; these do not repair an incomplete binding.",
+            "properties": {
+              "artifacts_bucket": {
+                "format": "password",
+                "title": "Artifacts Bucket",
+                "type": "string",
+                "writeOnly": true
+              },
+              "corpusfs_bucket": {
+                "format": "password",
+                "title": "Corpusfs Bucket",
+                "type": "string",
+                "writeOnly": true
+              },
+              "knowledge_repo_uri": {
+                "anyOf": [
+                  {
+                    "format": "password",
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Knowledge Repo Uri"
+              },
+              "raw_bucket": {
+                "format": "password",
+                "title": "Raw Bucket",
+                "type": "string",
+                "writeOnly": true
+              }
+            },
+            "required": [
+              "raw_bucket",
+              "artifacts_bucket",
+              "corpusfs_bucket",
+              "knowledge_repo_uri"
+            ],
+            "title": "NativeStorageConfiguration",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Original session plus native scope materialised only after release.",
+        "properties": {
+          "deployment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Id"
+          },
+          "identity": {
+            "$ref": "#/$defs/NativeCatalogIdentity"
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NativeStorageConfiguration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "identity",
+          "deployment_id",
+          "storage"
+        ],
+        "title": "NativeCatalogAcquisition",
+        "type": "object"
+      },
+      "NativeCorpusPage": {
+        "$defs": {
+          "CorpusDocument": {
+            "description": "One served reading, selected within a consistent database read.",
+            "properties": {
+              "content_hash": {
+                "title": "Content Hash",
+                "type": "string"
+              },
+              "conversion_uri": {
+                "title": "Conversion Uri",
+                "type": "string"
+              },
+              "corpus_published_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Corpus Published Revision"
+              },
+              "deployment_id": {
+                "format": "uuid",
+                "title": "Deployment Id",
+                "type": "string"
+              },
+              "doc_id": {
+                "format": "uuid",
+                "title": "Doc Id",
+                "type": "string"
+              },
+              "family": {
+                "title": "Family",
+                "type": "string"
+              },
+              "file_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "File Name"
+              },
+              "lineage_title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Lineage Title"
+              },
+              "manifest_hash": {
+                "title": "Manifest Hash",
+                "type": "string"
+              },
+              "markdown_hash": {
+                "title": "Markdown Hash",
+                "type": "string"
+              },
+              "markdown_uri": {
+                "title": "Markdown Uri",
+                "type": "string"
+              },
+              "mime": {
+                "title": "Mime",
+                "type": "string"
+              },
+              "pageindex_uri": {
+                "title": "Pageindex Uri",
+                "type": "string"
+              },
+              "placement_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Placement Path"
+              },
+              "raw_uri": {
+                "title": "Raw Uri",
+                "type": "string"
+              },
+              "representation_id": {
+                "format": "uuid",
+                "title": "Representation Id",
+                "type": "string"
+              },
+              "root_summary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Root Summary"
+              },
+              "route": {
+                "title": "Route",
+                "type": "string"
+              },
+              "source_date": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Date"
+              },
+              "source_kind": {
+                "title": "Source Kind",
+                "type": "string"
+              },
+              "source_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Ref"
+              },
+              "source_uri": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Uri"
+              },
+              "structure_generation_id": {
+                "format": "uuid",
+                "title": "Structure Generation Id",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Title"
+              },
+              "version_id": {
+                "format": "uuid",
+                "title": "Version Id",
+                "type": "string"
+              },
+              "version_no": {
+                "title": "Version No",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "deployment_id",
+              "doc_id",
+              "version_id",
+              "representation_id",
+              "structure_generation_id",
+              "version_no",
+              "source_kind",
+              "source_ref",
+              "source_uri",
+              "source_date",
+              "title",
+              "file_name",
+              "lineage_title",
+              "mime",
+              "family",
+              "route",
+              "content_hash",
+              "raw_uri",
+              "markdown_uri",
+              "markdown_hash",
+              "conversion_uri",
+              "manifest_hash",
+              "pageindex_uri",
+              "placement_path",
+              "root_summary"
+            ],
+            "title": "CorpusDocument",
+            "type": "object"
+          },
+          "NativeCatalogIdentity": {
+            "additionalProperties": false,
+            "description": "Actual session, virtual transaction and MVCC snapshot, without handoff.",
+            "properties": {
+              "backend_pid": {
+                "exclusiveMinimum": 0,
+                "title": "Backend Pid",
+                "type": "integer"
+              },
+              "database_name": {
+                "title": "Database Name",
+                "type": "string"
+              },
+              "database_oid": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Database Oid",
+                "type": "string"
+              },
+              "postmaster_started_unix_us": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Postmaster Started Unix Us",
+                "type": "string"
+              },
+              "session_login": {
+                "title": "Session Login",
+                "type": "string"
+              },
+              "snapshot_identity": {
+                "title": "Snapshot Identity",
+                "type": "string"
+              },
+              "virtual_transaction_id": {
+                "title": "Virtual Transaction Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_login",
+              "database_name",
+              "database_oid",
+              "postmaster_started_unix_us",
+              "backend_pid",
+              "virtual_transaction_id",
+              "snapshot_identity"
+            ],
+            "title": "NativeCatalogIdentity",
+            "type": "object"
+          },
+          "NativeCorpusDocument": {
+            "additionalProperties": false,
+            "description": "Recorded cleanup folders and current served inputs from the same cut.\n\nA path is only a possibly written folder. The consumer must compare the\nnullable publication marker with the current input/policy identity before\ntreating any of its files as a completed document copy.",
+            "properties": {
+              "doc_id": {
+                "format": "uuid",
+                "title": "Doc Id",
+                "type": "string"
+              },
+              "document": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CorpusDocument"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "paths": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Paths",
+                "type": "array"
+              }
+            },
+            "required": [
+              "doc_id",
+              "paths",
+              "document"
+            ],
+            "title": "NativeCorpusDocument",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A bounded page including deleted/unselected documents' cleanup paths.",
+        "properties": {
+          "deployment_id": {
+            "format": "uuid",
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/$defs/NativeCatalogIdentity"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/NativeCorpusDocument"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "identity",
+          "deployment_id",
+          "rows"
+        ],
+        "title": "NativeCorpusPage",
+        "type": "object"
+      },
+      "NativeReferencePage": {
+        "$defs": {
+          "NativeCatalogIdentity": {
+            "additionalProperties": false,
+            "description": "Actual session, virtual transaction and MVCC snapshot, without handoff.",
+            "properties": {
+              "backend_pid": {
+                "exclusiveMinimum": 0,
+                "title": "Backend Pid",
+                "type": "integer"
+              },
+              "database_name": {
+                "title": "Database Name",
+                "type": "string"
+              },
+              "database_oid": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Database Oid",
+                "type": "string"
+              },
+              "postmaster_started_unix_us": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Postmaster Started Unix Us",
+                "type": "string"
+              },
+              "session_login": {
+                "title": "Session Login",
+                "type": "string"
+              },
+              "snapshot_identity": {
+                "title": "Snapshot Identity",
+                "type": "string"
+              },
+              "virtual_transaction_id": {
+                "title": "Virtual Transaction Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_login",
+              "database_name",
+              "database_oid",
+              "postmaster_started_unix_us",
+              "backend_pid",
+              "virtual_transaction_id",
+              "snapshot_identity"
+            ],
+            "title": "NativeCatalogIdentity",
+            "type": "object"
+          },
+          "NativeStoreReference": {
+            "additionalProperties": false,
+            "description": "One native store locator or journal intent, including unfinished state.\n\nA repository locator is a root to expand through qualified store\nevidence, never a fabricated object or a row-byte estimate. Only raw\nobjects record a native length; missing length remains explicit. A journal\nintent carries the actual forget UUID, not an invented store path. Its\nqualified adapter derives the concrete journal key and proves presence.",
+            "properties": {
+              "locator": {
+                "format": "password",
+                "title": "Locator",
+                "type": "string",
+                "writeOnly": true
+              },
+              "locator_kind": {
+                "enum": [
+                  "object",
+                  "repository_path",
+                  "journal_intent"
+                ],
+                "title": "Locator Kind",
+                "type": "string"
+              },
+              "native_class": {
+                "title": "Native Class",
+                "type": "string"
+              },
+              "native_id": {
+                "format": "password",
+                "title": "Native Id",
+                "type": "string",
+                "writeOnly": true
+              },
+              "native_state": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Native State"
+              },
+              "recorded_bytes": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|[1-9][0-9]*)$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Recorded Bytes"
+              },
+              "recorded_digest": {
+                "anyOf": [
+                  {
+                    "format": "password",
+                    "type": "string",
+                    "writeOnly": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Recorded Digest"
+              },
+              "store_role": {
+                "enum": [
+                  "raw",
+                  "artifacts",
+                  "corpus",
+                  "forget",
+                  "knowledge"
+                ],
+                "title": "Store Role",
+                "type": "string"
+              }
+            },
+            "required": [
+              "native_class",
+              "native_id",
+              "store_role",
+              "locator",
+              "locator_kind",
+              "recorded_bytes",
+              "native_state",
+              "recorded_digest"
+            ],
+            "title": "NativeStoreReference",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A bounded, strictly ordered page from the same retained view.",
+        "properties": {
+          "deployment_id": {
+            "format": "uuid",
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/$defs/NativeCatalogIdentity"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/NativeStoreReference"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "identity",
+          "deployment_id",
+          "rows"
+        ],
+        "title": "NativeReferencePage",
+        "type": "object"
+      },
+      "NativeRelationGuardSample": {
+        "$defs": {
+          "NativeRelationAllocation": {
+            "additionalProperties": false,
+            "description": "One actual relation/fork record, still requiring profile classification.",
+            "properties": {
+              "fsm_bytes": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Fsm Bytes",
+                "type": "string"
+              },
+              "init_bytes": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Init Bytes",
+                "type": "string"
+              },
+              "main_bytes": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Main Bytes",
+                "type": "string"
+              },
+              "relation_oid": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Relation Oid",
+                "type": "string"
+              },
+              "resource_kind": {
+                "enum": [
+                  "table",
+                  "index",
+                  "toast",
+                  "toast_index"
+                ],
+                "title": "Resource Kind",
+                "type": "string"
+              },
+              "root_relation": {
+                "title": "Root Relation",
+                "type": "string"
+              },
+              "vm_bytes": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Vm Bytes",
+                "type": "string"
+              }
+            },
+            "required": [
+              "resource_kind",
+              "root_relation",
+              "relation_oid",
+              "main_bytes",
+              "fsm_bytes",
+              "vm_bytes",
+              "init_bytes"
+            ],
+            "title": "NativeRelationAllocation",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A same-transaction sample, never a completed historic capture witness.",
+        "properties": {
+          "allocated_fork_bytes": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Allocated Fork Bytes",
+            "type": "string"
+          },
+          "backend_pid": {
+            "exclusiveMinimum": 0,
+            "title": "Backend Pid",
+            "type": "integer"
+          },
+          "contract": {
+            "const": "rememberstack.native_relation_guard.v1",
+            "title": "Contract",
+            "type": "string"
+          },
+          "definer_role": {
+            "title": "Definer Role",
+            "type": "string"
+          },
+          "deployment_id": {
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "guard_started_unix_us": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Guard Started Unix Us",
+            "type": "string"
+          },
+          "physical_table_total_bytes": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Physical Table Total Bytes",
+            "type": "string"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/$defs/NativeRelationAllocation"
+            },
+            "title": "Relations",
+            "type": "array"
+          },
+          "sample_after_unix_us": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Sample After Unix Us",
+            "type": "string"
+          },
+          "sample_before_unix_us": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Sample Before Unix Us",
+            "type": "string"
+          },
+          "schema_head": {
+            "const": "p9_53_0074",
+            "title": "Schema Head",
+            "type": "string"
+          },
+          "session_login": {
+            "title": "Session Login",
+            "type": "string"
+          },
+          "transaction_id": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Transaction Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract",
+          "deployment_id",
+          "schema_head",
+          "session_login",
+          "definer_role",
+          "backend_pid",
+          "transaction_id",
+          "guard_started_unix_us",
+          "sample_before_unix_us",
+          "sample_after_unix_us",
+          "allocated_fork_bytes",
+          "physical_table_total_bytes",
+          "relations"
+        ],
+        "title": "NativeRelationGuardSample",
+        "type": "object"
+      },
+      "NativeTerminalPage": {
+        "$defs": {
+          "ManagedDocumentVersionOutcome": {
+            "additionalProperties": false,
+            "description": "The v3 terminal receipt replayed until the control plane acknowledges it.",
+            "properties": {
+              "completed_at": {
+                "format": "date-time",
+                "title": "Completed At",
+                "type": "string"
+              },
+              "contract_version": {
+                "const": "rememberstack.document_version_outcome.v3",
+                "default": "rememberstack.document_version_outcome.v3",
+                "title": "Contract Version",
+                "type": "string"
+              },
+              "document_version_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Document Version Id"
+              },
+              "measurement_id": {
+                "format": "uuid",
+                "title": "Measurement Id",
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "succeeded",
+                  "failed"
+                ],
+                "title": "Outcome",
+                "type": "string"
+              },
+              "profile_complete": {
+                "title": "Profile Complete",
+                "type": "boolean"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason Code"
+              },
+              "version_commit_sequence": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version Commit Sequence"
+              }
+            },
+            "required": [
+              "measurement_id",
+              "outcome",
+              "completed_at",
+              "profile_complete"
+            ],
+            "title": "ManagedDocumentVersionOutcome",
+            "type": "object"
+          },
+          "NativeCatalogIdentity": {
+            "additionalProperties": false,
+            "description": "Actual session, virtual transaction and MVCC snapshot, without handoff.",
+            "properties": {
+              "backend_pid": {
+                "exclusiveMinimum": 0,
+                "title": "Backend Pid",
+                "type": "integer"
+              },
+              "database_name": {
+                "title": "Database Name",
+                "type": "string"
+              },
+              "database_oid": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Database Oid",
+                "type": "string"
+              },
+              "postmaster_started_unix_us": {
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "title": "Postmaster Started Unix Us",
+                "type": "string"
+              },
+              "session_login": {
+                "title": "Session Login",
+                "type": "string"
+              },
+              "snapshot_identity": {
+                "title": "Snapshot Identity",
+                "type": "string"
+              },
+              "virtual_transaction_id": {
+                "title": "Virtual Transaction Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_login",
+              "database_name",
+              "database_oid",
+              "postmaster_started_unix_us",
+              "backend_pid",
+              "virtual_transaction_id",
+              "snapshot_identity"
+            ],
+            "title": "NativeCatalogIdentity",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Existing v3 terminal bodies, with no processing-delivery filter.",
+        "properties": {
+          "deployment_id": {
+            "format": "uuid",
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/$defs/NativeCatalogIdentity"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/ManagedDocumentVersionOutcome"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "identity",
+          "deployment_id",
+          "rows"
+        ],
+        "title": "NativeTerminalPage",
+        "type": "object"
+      }
+    }
+  },
+  "source_rules": [
+    [
+      "postgres.public.aliases",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.application_context_bindings",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.assured_operations",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.chunk_claims",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.chunk_search",
+      "postgres",
+      "projection_origin",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.chunks",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.claim_extraction_decisions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.claims",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.connector_sync_cycles",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.content_objects",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.deployment_extension_packs",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.deployment_processing_layers",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.deployments",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_crossrefs",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_effective_periods",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_effective_time_events",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_entity_bindings",
+      "postgres",
+      "projection_origin",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_metadata",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_names",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_people",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_reference_generations",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_representations",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_sections",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_skeleton_checks",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_structure_generations",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_tags",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_version_scope",
+      "postgres",
+      "projection_origin",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.document_versions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.documents",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.entities",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.entity_types",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.extension_packs",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.fact_applications",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.ingest_principals",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_artifact_evidence",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_artifacts",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_compilations",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_page_rules",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_page_watches",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_plan_decisions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_quarantines",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_rule_keys",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.knowledge_subscriptions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.mentions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.merge_events",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.normalization_outputs",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.observation_adjudications",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.observation_evidence",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.observations",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.p1_search_channels",
+      "postgres",
+      "projection_origin",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.pipeline_component_versions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.predicates",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.processing_layer_gaps",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.projection_snapshots",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.relation_adjudications",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.relation_evidence",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.relations",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.resolution_decisions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.resolution_exclusions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.resolver_versions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.review_queue",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.saved_queries",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.saved_query_registry_state",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.saved_query_versions",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.scope_interests",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.scopes",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.selection_results",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.tags",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.testimony_currency_events",
+      "postgres",
+      "truth_provenance",
+      "postgres_allocated"
+    ],
+    [
+      "postgres.public.canary_cases",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.cost_ledger",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.eval_runs",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.golden_claim_labels",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.golden_pairs",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.grounding_audits",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.knowledge_plan_runs",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.managed_ingest_measurements",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.managed_ingest_outcomes",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.saved_query_audit",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.surface_cost_ledger",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.surface_cost_meter_state",
+      "postgres",
+      "audit_operations",
+      null
+    ],
+    [
+      "postgres.public.fact_window_review_attempts",
+      "postgres",
+      "paid_checkpoint",
+      null
+    ],
+    [
+      "postgres.public.knowledge_dispatches",
+      "postgres",
+      "paid_checkpoint",
+      null
+    ],
+    [
+      "postgres.public.knowledge_refresh_queue",
+      "postgres",
+      "paid_checkpoint",
+      null
+    ],
+    [
+      "postgres.public.obs_flush_entity_units",
+      "postgres",
+      "paid_checkpoint",
+      null
+    ],
+    [
+      "postgres.public.obs_flush_version_state",
+      "postgres",
+      "paid_checkpoint",
+      null
+    ],
+    [
+      "postgres.public.processing_state",
+      "postgres",
+      "paid_checkpoint",
+      null
+    ],
+    [
+      "postgres.public.forget_manifests",
+      "postgres",
+      "privacy_control",
+      null
+    ],
+    [
+      "postgres.public.perimeter_state",
+      "postgres",
+      "privacy_control",
+      null
+    ],
+    [
+      "postgres.public.normalize_observation_staging",
+      "postgres",
+      "staging",
+      null
+    ],
+    [
+      "postgres.public.alembic_version",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.part_config",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.part_config_sub",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.template_public_chunk_claims",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.template_public_chunks",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.template_public_claim_extraction_decisions",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.template_public_mentions",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.template_public_resolution_decisions",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.template_public_surface_cost_ledger",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "postgres.public.template_public_testimony_currency_events",
+      "postgres",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "content_objects.raw_uri",
+      "raw",
+      "canonical_raw",
+      "canonical_object"
+    ],
+    [
+      "document_representations.markdown_uri",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_representations.pageindex_uri",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_representations.conversion_uri",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_representations.blocks_uri",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_representations.meta_uri",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_representations.source_map",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_representations.derived_asset",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_structure_generations.pageindex_uri",
+      "artifacts",
+      "referenced_artifact",
+      "canonical_object"
+    ],
+    [
+      "document_reference_generations.artifact_uri",
+      "artifacts",
+      "truth_provenance",
+      "canonical_object"
+    ],
+    [
+      "knowledge_compilations.session_transcript_uri",
+      "artifacts",
+      "audit_operations",
+      null
+    ],
+    [
+      "knowledge_plan_runs.session_transcript_uri",
+      "artifacts",
+      "audit_operations",
+      null
+    ],
+    [
+      "documents.corpus_original",
+      "corpus",
+      "projection_origin",
+      "p3_origin"
+    ],
+    [
+      "documents.corpus_derivative",
+      "corpus",
+      "projection_origin",
+      "p3_origin"
+    ],
+    [
+      "corpus.navigation",
+      "corpus",
+      "projection_origin",
+      "p3_origin"
+    ],
+    [
+      "forget_manifests.portable_intent",
+      "forget",
+      "privacy_control",
+      null
+    ],
+    [
+      "raw.unregistered_upload",
+      "raw",
+      "staging",
+      null
+    ],
+    [
+      "raw.unregistered_original",
+      "raw",
+      "staging",
+      null
+    ],
+    [
+      "artifacts.unregistered_representation",
+      "artifacts",
+      "staging",
+      null
+    ],
+    [
+      "artifacts.conversion_checkpoint",
+      "artifacts",
+      "paid_checkpoint",
+      null
+    ],
+    [
+      "artifacts.session_transcript",
+      "artifacts",
+      "audit_operations",
+      null
+    ],
+    [
+      "corpus.incomplete_or_orphan",
+      "corpus",
+      "staging",
+      null
+    ],
+    [
+      "provider.directory",
+      "raw",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "provider.directory",
+      "artifacts",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "provider.directory",
+      "corpus",
+      "adapter_metadata",
+      null
+    ],
+    [
+      "provider.directory",
+      "forget",
+      "adapter_metadata",
+      null
+    ]
+  ]
+}

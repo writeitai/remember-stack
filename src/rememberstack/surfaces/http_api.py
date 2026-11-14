@@ -92,6 +92,7 @@ from remember.models import ReferenceGenerations
 from remember.models import REFERENCES_BODY_MAX_BYTES
 from remember.models import ReferencesSet
 from remember.models import Tag
+from remember.models import TAG_NAME_MAX_LEN
 from remember.models import TagCreate
 from remember.models import TagList
 from remember.models import TAGS_PER_DOCUMENT_MAX
@@ -390,8 +391,10 @@ class EffectiveTimePort(Protocol):
 class TagPort(Protocol):
     """The deployment's tag registry and document tag writes (D156)."""
 
-    def list_tags(self, *, deployment_id: UUID, query: str | None = None) -> TagList:
-        """Every registered tag, optionally narrowed by a substring."""
+    def list_tags(
+        self, *, deployment_id: UUID, query: str | None = None, name: str | None = None
+    ) -> TagList:
+        """Every registered tag, optionally narrowed by a substring or exact name."""
         ...
 
     def create_tag(self, *, deployment_id: UUID, request: TagCreate) -> Tag:
@@ -2104,14 +2107,27 @@ def _mount_tags(*, app: FastAPI) -> None:
     def list_tags(
         deployment: _Deployment,
         query: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+        name: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                max_length=TAG_NAME_MAX_LEN,
+                description=(
+                    "Keep only the tag with exactly this name, matched as the"
+                    " registry matches names (NFC, ignoring letter case)."
+                ),
+            ),
+        ] = None,
     ) -> TagList:
         """Every registered tag with its id, name and description, by name.
 
         ``query`` keeps the tags whose name or description contains it,
-        ignoring case. No document counts are returned.
+        ignoring case; ``name`` keeps the one tag with exactly that name, so a
+        client resolves a name to its ``tag_id`` the way the engine does. No
+        document counts are returned.
         """
         return _served(deployment.tags).list_tags(
-            deployment_id=deployment.deployment_id, query=query
+            deployment_id=deployment.deployment_id, query=query, name=name
         )
 
     @app.post(

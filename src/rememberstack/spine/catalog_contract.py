@@ -132,6 +132,7 @@ EXPECTED_TABLES: Final = (
     "document_skeleton_checks",
     "document_sections",
     "document_structure_generations",
+    "document_tags",
     "document_version_scope",
     "document_versions",
     "documents",
@@ -190,6 +191,7 @@ EXPECTED_TABLES: Final = (
     "selection_results",
     "surface_cost_ledger",
     "surface_cost_meter_state",
+    "tags",
     "testimony_currency_events",
 )
 EXPECTED_INDEXES: Final = (
@@ -232,6 +234,7 @@ EXPECTED_INDEXES: Final = (
     "ix_document_names_trgm",
     "ix_document_people_address",
     "ix_document_people_name",
+    "ix_document_tags_tag",
     "ix_documents_entity",
     "ix_documents_live",
     "ix_docversions_doc",
@@ -310,6 +313,7 @@ EXPECTED_INDEXES: Final = (
     "ux_reference_generations_active",
     "ux_sections_key",
     "ux_snapshot_latest",
+    "ux_tags_name",
 )
 EXPECTED_RANGE_PARENTS: Final = {
     "chunk_claims": "created_at",
@@ -379,10 +383,10 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 119,
-    "f": 148,
-    "n": 643,
-    "p": 85,
+    "c": 121,
+    "f": 150,
+    "n": 653,
+    "p": 87,
     "t": 7,
     "u": 41,
 }
@@ -446,6 +450,7 @@ DECISION_OBJECTS: Final = {
         "ix_chunks_reuse_identity",
         "fact_window_review_attempts",
     ),
+    "D156": ("tags", "document_tags", "ux_tags_name", "ix_document_tags_tag"),
 }
 
 

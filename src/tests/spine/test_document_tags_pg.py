@@ -530,10 +530,10 @@ def _raw_objects(rig: _Rig) -> set[str]:
 
 
 @pytest.mark.parametrize("path", ["upload", "observe"])
-def test_a_tag_deleted_after_the_precheck_leaves_no_bytes_or_rows(
+def test_a_tag_deleted_after_the_precheck_records_nothing_and_retries_cleanly(
     rig: _Rig, path: str
 ) -> None:
-    """The writing transaction refuses the deleted tag and the bytes are removed."""
+    """The writing transaction refuses the deleted tag; a retry registers the bytes."""
     rig.create("project:a")
     before = _raw_objects(rig)
 
@@ -558,13 +558,35 @@ def test_a_tag_deleted_after_the_precheck_leaves_no_bytes_or_rows(
                 source_version_ref=None,
                 sync_cycle_id=None,
             )
-    assert _raw_objects(rig) == before
+    # The refusal records nothing. The written original is left unreferenced,
+    # like any attempt refused after storage, and the same bytes ingested
+    # again register that same object.
     assert rig.count("SELECT count(*) FROM documents") == 0
     assert rig.count("SELECT count(*) FROM content_objects") == 0
+    retry = upload.model_copy(update={"tags": ()})
+    if path == "upload":
+        again = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=retry)
+    else:
+        again = rig.ingestor.ingest_observed(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="drive",
+            source_ref="docs/race.md",
+            upload=retry,
+            versioning_mode="snapshot",
+            source_modified_at=None,
+            source_version_ref=None,
+            sync_cycle_id=None,
+        )
+    assert again.created
+    stored = _raw_objects(rig) - before
+    assert len(stored) == 1
+    with rig.engine.connect() as connection:
+        kept = connection.execute(text("SELECT raw_uri FROM content_objects")).one()[0]
+    assert next(iter(stored)).endswith(kept)
 
 
-def test_a_tag_limit_reached_after_the_precheck_leaves_no_new_bytes(rig: _Rig) -> None:
-    """A concurrent assignment fills the lineage; the new version's bytes go."""
+def test_a_tag_limit_reached_after_the_precheck_records_no_version(rig: _Rig) -> None:
+    """A concurrent assignment fills the lineage; the version is not recorded."""
     names = [f"t:{index:02d}" for index in range(TAGS_PER_DOCUMENT_MAX + 1)]
     for name in names:
         rig.create(name)
@@ -591,9 +613,12 @@ def test_a_tag_limit_reached_after_the_precheck_leaves_no_new_bytes(rig: _Rig) -
             source_version_ref=None,
             sync_cycle_id=None,
         )
-    assert _raw_objects(rig) == before
     assert rig.count("SELECT count(*) FROM document_versions") == 1
+    assert rig.count("SELECT count(*) FROM content_objects") == 1
     assert len(rig.document_tags(first.doc_id)) == TAGS_PER_DOCUMENT_MAX
+    again = rig.observe(body="Edition two.")
+    assert again.created
+    assert rig.count("SELECT count(*) FROM document_versions") == 2
 
 
 def test_a_tag_named_like_a_deleted_tags_id_is_never_addressed_by_that_id(
@@ -670,3 +695,67 @@ def test_an_assignment_racing_a_committed_delete_is_unknown_tag_not_an_error(
                 assigning.result(timeout=30)
     assert refused.value.tags == ("project:a",)
     assert rig.count("SELECT count(*) FROM document_tags") == 0
+
+
+def test_concurrent_name_addressed_mutations_do_not_deadlock(rig: _Rig) -> None:
+    """Two writers addressing one tag by name queue on one lock, never upgrade it."""
+    tag_id = rig.create("project:a")
+    with rig.engine.connect() as holder:
+        transaction = holder.begin()
+        holder.execute(
+            text("SELECT 1 FROM tags WHERE tag_id = :t FOR UPDATE"), {"t": tag_id}
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writers = [
+                pool.submit(
+                    rig.tags.update_tag,
+                    deployment_id=_DEPLOYMENT_ID,
+                    tag="PROJECT:A",
+                    request=TagUpdate(description=f"writer {index}"),
+                )
+                for index in range(2)
+            ]
+            with pytest.raises(TimeoutError):
+                writers[0].result(timeout=1)  # both wait on the held row
+            transaction.commit()
+            results = [writer.result(timeout=30) for writer in writers]
+    assert {result.tag_id for result in results} == {tag_id}
+    assert {result.description for result in results} == {"writer 0", "writer 1"}
+
+
+def test_sdk_resolves_names_with_the_registry_case_rule(
+    rig: _Rig, database_engine: Engine
+) -> None:
+    """A name differing only in a case mapping PostgreSQL folds resolves via HTTP."""
+    from fastapi.testclient import TestClient
+
+    from remember import MemoryClient
+    from rememberstack.surfaces.http_api import build_api
+
+    class _Open:
+        def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+            return ()
+
+        def assert_available(self, *, deployment_id: UUID) -> None:
+            return None
+
+    client = MemoryClient(
+        client=TestClient(
+            build_api(
+                engine=MagicMock(),
+                deployment_id=_DEPLOYMENT_ID,
+                admission=_Open(),
+                readiness=_Open(),
+                tags=rig.tags,
+            )
+        )
+    )
+    tag_id = rig.create("\u039f\u03a3")  # "ΟΣ"
+    with database_engine.connect() as connection:
+        folded = connection.execute(
+            text("SELECT lower('\u039f\u03a3') = lower('\u03bf\u03c3')")
+        ).scalar_one()
+    assert folded, "this check needs PostgreSQL to fold the final sigma"
+    renamed = client.update_tag(tag="\u03bf\u03c3", description="Sigma.")
+    assert (renamed.tag_id, renamed.description) == (tag_id, "Sigma.")
+    assert client.delete_tag(tag="\u03bf\u03c3").tag_id == tag_id
