@@ -8,7 +8,7 @@
 > replacement public bounded `graph_neighborhood`/`graph_path`/
 > `graph_citation_path` SQL functions and
 > typed graph operations use recursive SQL for variable/shortest traversal.
-> PostgreSQL 19 RC 1 has no SQL/PGQ (Beta 4 removed it; D98 RC 1 amendment),
+> PostgreSQL 18 has no SQL/PGQ (D157),
 > so SQL/PGQ is not part of any surface. All plain-SQL, invariant
 > compilation, tenancy, saved-query,
 > discovery, result-cap, audit, and assured-operation rules below remain binding.
@@ -46,7 +46,7 @@ D54, D80, and D87 remain controlling.*
 ## 1. Principles (binding)
 
 1. **PostgreSQL authorizes every live result.** The live public data language IS
-   PostgreSQL 19 SQL over the versioned `memory_v1` schema. Physical tables,
+   PostgreSQL 18 SQL over the versioned `memory_v1` schema. Physical tables,
    raw projection tables, and operator schemas are never public. PostgreSQL
    views compile row-level invariants; P1 ranked scans, the fixed one-hop read,
    and recursive graph helpers apply those authorities in the same transaction.
@@ -858,7 +858,7 @@ EXECUTE privilege for subsequent functions in this schema.
 
 ### 3.5 Graph query boundary
 
-Public Cypher is removed. The reference server (PostgreSQL 19 RC 1 and later)
+Public Cypher is removed. The reference server (PostgreSQL 18)
 has no SQL/PGQ, so there is no graph-pattern syntax to admit, and the
 default-deny `pglast` gate rejects it as well. The typed graph API and
 server-owned SQL use the live-graph contract in
@@ -1723,7 +1723,7 @@ for the shipping surface pass before release.
 |---|---|---|
 | `lexical_facts(query, k, filters)` | D94 stores fact embeddings on natural relation/observation rows but deliberately does not expand the admitted facts lexical surface. The binding P1 contract exposes semantic facts only. | Trigger: **a pg_textsearch BM25 index and scored fact-label lexical method are designed together**. Adoption requires frozen exact-term fixtures, the same analyzer/rank/score and D142 ranked-read nomination/confirmation contract as claims/chunks, current/at/overlap/history equivalence, the facts-filter allowlist, manifest enumeration, a `facts_context` descriptor/version roll adding lexical fusion, and same-change OSS docs. |
 | Complete removal of the assured-operation layer | One-call typed defaults remain product value; this design does not decide their deletion | An open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
-| Public arbitrary SQL/PGQ | PostgreSQL 19 Beta 4 removed SQL/PGQ, so the reference server (RC 1 and later) cannot run it. The release exposes only the server-owned one-hop read and typed/bounded graph functions. | Adopt only if a supported PostgreSQL release ships SQL/PGQ again and the public AST gate parses its complete admitted grammar and rejects every unsupported/mutating form by structure. A separate binding proposal must define the admitted subset, tenancy rewrite, budgets, result contract, fuzz corpus, and manifest representation. |
+| Public arbitrary SQL/PGQ | The reference server, PostgreSQL 18, has no SQL/PGQ. The release exposes only the server-owned one-hop read and typed/bounded graph functions. | Adopt only if a supported PostgreSQL release ships SQL/PGQ again and the public AST gate parses its complete admitted grammar and rejects every unsupported/mutating form by structure. A separate binding proposal must define the admitted subset, tenancy rewrite, budgets, result contract, fuzz corpus, and manifest representation. |
 | Pgvectorscale StreamingDiskANN as the default ANN index | D94 binds pgvector HNSW first; installing an additional index extension without a present need violates YAGNI | The open proposal may inform a later binding decision. D94 does not install, test, benchmark, or pre-authorize it; a future promotion changes only the private vector index, never the public query contract or storage boundary. |
 | Media-segment public views/SRF | The binding media row/embedding contract is not yet part of this schema | First production corpus requiring SQL composition over D65 media segments; a separate design adds typed locators/derivation and rolls the schema/hash. |
 | Saved-query marketplace and shared dependencies | Signing, supply-chain review, publisher liability, and fleet recall are outside customer-local registry v1 | First operator-approved cross-deployment sharing requirement, followed by a signing/install/revocation design and adversarial supply-chain suite. |

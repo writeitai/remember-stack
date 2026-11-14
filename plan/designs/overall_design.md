@@ -1,7 +1,7 @@
 # Overall System Design
 
 > **Binding D98 amendment (2026-08-27).** The architecture has no LadybugDB or
-> physical P2 graph projection. PostgreSQL 19 serves a live graph over
+> physical P2 graph projection. PostgreSQL 18 serves a live graph over
 > authority views: a fixed relational join handles one-hop neighborhoods and
 > bounded recursive SQL handles depth-two, variable, and shortest traversal
 > (SQL/PGQ served the one-hop read until PostgreSQL 19 Beta 4 removed it; D98
@@ -168,7 +168,7 @@ through ordinary engine work and retains full reconcile as repair (D155).
   supported by compiled cross-project pattern summaries. Only an accountable author promotes
   or changes a principle; citations, watches, review flags, and dispatch keep it connected to
   changing evidence without rewriting it. E3 remains the system's current fact state.
-- **Live graph**: private live PostgreSQL 19 views over normalized authority
+- **Live graph**: private live PostgreSQL 18 views over normalized authority
   tables are the graph's nodes and edges; a fixed relational join serves the
   one-hop neighborhood; deployment-scoped, work-bounded frontier
   traversal serves depth-two, variable, and shortest paths. There is no copied graph data,
@@ -267,7 +267,7 @@ PG entity registry             (D98)                      → GCS bytes
 | `entity_identity_and_retrieval_design.md` | referent identity, no entity types, profile from observations, default retrieval (D95–D97) | **current** |
 | `k_layers_design.md` | plane K: planner/writer/driver compile system, compiled + authored pages, K1 plus K2 purpose scopes (D45–D47, D73) | **current** |
 | `k3_beliefs_design.md` | *(withdrawn — D73; principles are authored K2 content)* | — |
-| `p2_graph_design.md` | PostgreSQL 19 live graph, one-hop join, bounded traversal, limits, recovery | **current** |
+| `p2_graph_design.md` | PostgreSQL 18 live graph, one-hop join, bounded traversal, limits, recovery | **current** |
 | `retrieval_design.md` | the query machine: primitives, assured operations, envelope, mounts, skill (D48–D51, D87) | **current** |
 | `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, deletion cascade | **current** |
 | `postgres_p1_search_projection_design.md` | PostgreSQL-native P1 storage, retrieval indexes, readiness, rebuild, and Lance removal (D94) | **current** |

@@ -47,7 +47,7 @@ def _coordinate(*, version: str) -> re.Pattern[str]:
 
     Image tags, release and PyPI URLs, the checkout command and the CLI page
     heading move with each release; prose that names a past version (for
-    example "0.18.1 is the first release on 19rc1") keeps it.
+    example "0.18.1 introduced the former RC image") keeps it.
     """
     prefixes = "|".join(
         (

@@ -104,7 +104,7 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 19 with required extensions
+      - name: Start PostgreSQL 18 with required extensions
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
@@ -135,7 +135,7 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 19 with required extensions
+      - name: Start PostgreSQL 18 with required extensions
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
@@ -164,7 +164,7 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 19 with required extensions
+      - name: Start PostgreSQL 18 with required extensions
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
@@ -194,7 +194,7 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 19 with required extensions
+      - name: Start PostgreSQL 18 with required extensions
         run: .github/ci/start-postgres.sh
       - name: Start real MinIO for D155 object contracts
         run: .github/ci/start-minio.sh

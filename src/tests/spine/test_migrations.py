@@ -661,7 +661,7 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
 
 
 def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> None:
-    """Exercise the complete PostgreSQL 19 lifecycle and negative catalog proof."""
+    """Exercise the complete PostgreSQL 18 lifecycle and negative catalog proof."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
 
@@ -1280,9 +1280,9 @@ def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
 
 
 def test_fresh_setup_runs_on_a_server_without_sql_pgq() -> None:
-    """A fresh install reaches head on PostgreSQL 19 RC 1 or later (D98 amendment).
+    """A fresh install reaches head on PostgreSQL 18 (D157).
 
-    Beta 4 removed SQL/PGQ, so the test first proves the server has none: it
+    The reference server has no SQL/PGQ, so the test first proves it
     rejects ``CREATE PROPERTY GRAPH``. The migrations then create no property
     graph, and the live-graph catalog check passes.
     """
@@ -1299,7 +1299,8 @@ def test_fresh_setup_runs_on_a_server_without_sql_pgq() -> None:
         with engine.connect() as connection:
             assert (
                 int(connection.execute(text("SHOW server_version_num")).scalar_one())
-                >= 190000
+                // 10000
+                == 18
             )
             with pytest.raises(ProgrammingError, match="syntax error"):
                 connection.exec_driver_sql(

@@ -7,7 +7,7 @@
 [postgres_p1_search_projection_analysis.md](../analysis/postgres_p1_search_projection_analysis.md)
 **Supersedes:** D8's LanceDB placement, D93, and the removed D93 maintenance design
 **Amends:** D9, D23, D37, D48, D61, D63, and D80 as recorded in D94;
-PostgreSQL version/runtime amended by D98; ranked-query execution (§8–§9),
+PostgreSQL version/runtime amended by D98 and D157; ranked-query execution (§8–§9),
 the `pg_textsearch` pin (§6) and the benchmark scope (§3) amended by
 [D142](../../decisions.md#d142-ranked-search-nominates-from-the-index-and-confirms-in-one-snapshot)
 ([analysis](../analysis/index_driven_ranked_search.md))
@@ -27,7 +27,7 @@ and functional proof that the existing retrieval contracts still hold.
 
 ## 2. Decision
 
-P1 SHALL be implemented in PostgreSQL 19 using:
+P1 SHALL be implemented in PostgreSQL 18 using:
 
 - `pgvector` for semantic vectors and HNSW indexes;
 - `pg_textsearch` for the admitted BM25 channels;
@@ -168,20 +168,18 @@ normalized searchable copy per live chunk, not another full source document.
 
 ## 6. Extensions and supported PostgreSQL
 
-Reference and self-host images SHALL run PostgreSQL 19. Before GA, they pin the
-latest proven beta/RC image digest and replay from disposable storage; after
-GA, they track the current patched 19.x minor. The image carries pinned and
-tested builds of:
+Reference and self-host images SHALL run only PostgreSQL 18 (D157). Pin an
+official 18.x image by digest, selecting the newest minor and image at least
+two weeks old. The image carries pinned and tested builds of:
 
 - `vector` (0.8 or later, for iterative index scans; the image pins 0.8.6); and
 - `pg_textsearch`, including its required preload configuration, at **1.5.1
-  or later** (D142). 1.5.0 added upstream PostgreSQL 19 beta support, so the
-  D98 compatibility patch is retired; it also made post-filtered BM25 index
+  or later** (D142; the image pins 1.5.1). No local compatibility patch or
+  forced-header compiler workaround is carried. 1.5.0 made post-filtered BM25 index
   scans grow their internal batch until the `LIMIT` is filled or matches are
   exhausted and fixed silent truncation in deep scans. Releases before 1.4.0
   return the index's top-k *before* filtering, which §8 must never rely on.
-  Upstream describes PostgreSQL 19 support as best-effort with non-blocking
-  CI, so compatibility on the pinned PostgreSQL 19 image is a **local gate**:
+  Compatibility on the pinned PostgreSQL 18 image remains a **local gate**:
   the image build runs the extension's upstream SQL tests and the §8.3
   cursor/scoring-generation tests on that exact image.
   1.5.1 scores unspilled (memtable) rows with raw document length while

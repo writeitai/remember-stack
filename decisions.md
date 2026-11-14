@@ -1046,6 +1046,10 @@ tool, roles, summaries, and placement hints are unchanged. `e1_chunks_design.md`
 
 ## D40. P3 — the corpus filesystem: a mountable, rebuildable projection
 
+> **D157 reference-server amendment (2026-11-14).** P3 rebuilds from
+> PostgreSQL 18 plus immutable artifacts. Its projection/publication contract
+> is unchanged; see [D157](#d157-postgresql-18-is-the-reference-server).
+
 **Status:** superseded for layout, inputs, publication and K composition by
 [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders). P3 remains a read-only, derived, rebuildable consumption surface.
 Its current contract is actual per-document original/derivative folders in a
@@ -2173,6 +2177,12 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 ---
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
+
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
 
 > **Amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders) for corpus storage/mounts.** The existing S3
 > adapter serves mountable.io, AWS S3, GCS XML/HMAC and MinIO; local FS is the dev
@@ -4254,6 +4264,12 @@ projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
 
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
 > **P3 registry clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Mutable P3 publication
 > receipts replace immutable snapshot rows. D94's PostgreSQL-native P1 and other
 > storage/search contracts remain unchanged.
@@ -4533,8 +4549,15 @@ query path, envelope grain, or hydration (D48–D49).
 
 ## D98. The graph is live PostgreSQL 19 SQL/PGQ plus work-bounded frontier traversal
 
-**Status:** amended 2026-11-06 — SQL/PGQ was removed upstream; the one-hop
-read is relational SQL over the same views (see the RC 1 amendment below).
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
+**Status:** amended by D157 (2026-11-14): PostgreSQL 18 is the reference
+server. The 2026-11-06 RC 1 amendment had already replaced SQL/PGQ with
+relational joins over the same live views; that query contract survives.
 
 > **D142 amendment (2026-10-21, proposed).** The `pg_textsearch` 1.3.1 pin
 > and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
@@ -5643,6 +5666,12 @@ D32, D43's untyped statement, D98, D100–D105.
 
 ## D108. Single canonical PyPI distribution (`remember`), container-first engine (`remember-stack`), and platform CLI
 
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
 > **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
 > In item 4, the *Authentication & Project Context* host (`https://api.remember.dev`
 > was never a live host; login now uses the issuer's metadata, default issuer
@@ -5678,6 +5707,12 @@ D32, D43's untyped statement, D98, D100–D105.
 **Amends.** D43 (CLI entry point owned by `remember`, not `rememberstack`); D62 (replaces dual-distribution on PyPI with single client package + GHCR Docker engine); D24 (retires `review` from public surfaces; autonomous bitemporal adjudication is sole authority); D92 (structures CLI credentials into control-plane session and per-project data-plane tokens with strict audience isolation). Preserves D66, D98, D107.
 
 ## D109. Unified documentation architecture (the Qdrant model) and full cloud query space parity
+
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
 
 **Context.** Prior to D109, documentation was divided across two repositories: `remember-stack` (`website/` deployed to `docs.remember.dev`) and `ultimate-memory-cloud` (`fe/src/app/(public)/docs` deployed to `remember.dev/docs`). This caused continuous maintenance drift between engine features and cloud documentation, fragmented brand SEO, and confused developers and AI agents. Concurrently, early cloud compatibility matrices marked `open_query_execute` (`POST /query/sql`, `GET /query/space`, and open-query MCP tools) as unsupported on Remember Cloud out of initial conservative scoping, creating an artificial divide where agents lost relational and graph query tools when moving from local Docker to Cloud.
 
@@ -7234,6 +7269,12 @@ only through D118 adjudication.
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
 **Status:** accepted (design approved by review round 3, 2026-10-21;
 implementation approved by review round 5 pending the latency decision, which
 the owner took on 2026-10-22 — amendment below); binding on merge of PR #505. Issue
@@ -8376,3 +8417,42 @@ deployments.
 **Refines:** D134 (filters and fact evidence). **Amends:** the open query
 space §3.1/§3.2 contract and the D136 MCP catalogue. **Retains:** D54, D56,
 D80, D135, D140, D142, D153 and D74.
+
+
+## D157. PostgreSQL 18 is the reference server
+
+**Decision (2026-11-14, owner).** PostgreSQL 18 is the only reference and
+self-host server major. Pin an official Debian trixie 18.x image by immutable
+multi-platform digest, selecting the newest minor and image at least two
+weeks old. The initial pin is 18.6 from 2026-10-28: 18.7 was released only
+2026-11-12 and does not meet that age floor. Keep the existing pinned
+pgvector 0.8.6, pg_partman 5.5.0 and pg_textsearch 1.5.1 sources/packages,
+and the bundled pg_trgm, pgcrypto, btree_gist, unaccent, fuzzystrmatch and
+plpgsql extensions. Remove the RC-only forced `<limits.h>` include.
+
+**Why.** D98 adopted PostgreSQL 19 only for SQL/PGQ. Beta 4 reverted it,
+and the owner's 2026-11-06 RC 1 amendment replaced graph patterns with plain
+joins. No remaining capability requires 19. A prerelease server and compiler
+workaround therefore add operational risk without a feature benefit.
+
+**Consequences.** Image builds, Compose, CI, release foundation tags
+(`remember-stack-postgres:18-<engine-version>`), query-space manifests,
+graph readiness and native storage-capture guards use 18. Migrations must
+run from empty on 18; no Beta 3 cleanup or dual-major path remains. Recreate
+and replay development storage. Physical PG19 storage is not PG18-compatible;
+any managed data transfer needs a separately qualified operator plan.
+Both architectures retain upstream extension regression and engine gates.
+No paid-work reuse identity or generation changes; moving servers does not
+require re-embedding or re-extraction.
+
+**Amends.** D98 and its RC 1 amendment, D40's projection rebuild substrate,
+and the server/version clauses of D61, D94, D108, D109 and D142. Their
+non-version contracts remain binding. Historical measurements stay dated
+and do not become PostgreSQL 18 qualification evidence.
+
+**Analysis.** [PostgreSQL 18 reference server](plan/analysis/postgres18_reference_server.md).
+**Current designs.** [Graph](plan/designs/p2_graph_design.md#9-postgresql-18-and-extension-posture),
+[P1 search](plan/designs/postgres_p1_search_projection_design.md#6-extensions-and-supported-postgresql).
+
+**Rejected.** Remaining on 19 for a removed feature, supporting two server
+majors, adding compatibility shims, or opening a PG19 data directory on 18.

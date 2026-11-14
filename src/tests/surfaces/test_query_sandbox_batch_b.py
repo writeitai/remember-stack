@@ -697,7 +697,7 @@ def test_parameters_execute_end_to_end(migrated: str) -> None:
 
 
 def test_server_and_public_executor_both_reject_pgq(migrated: str) -> None:
-    """PostgreSQL 19 RC 1 has no SQL/PGQ, and the public AST gate rejects it."""
+    """PostgreSQL 18 has no SQL/PGQ, and the public AST gate rejects it."""
     sql = (
         "SELECT * FROM GRAPH_TABLE (memory_v1.memory_current "
         "MATCH (x IS entity) COLUMNS (x.entity_id AS entity_id)) AS g LIMIT 0"

@@ -523,13 +523,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
-      "source_digest": "a5bf0196bd28adf558a25c29ca423dce32cce35bc90872b680afea0d6e167255"
+      "schema_profile_digest": "b7a817a69bec4c17fbbc6e2b2d4f3c8042add0cd3fad08d371f0e2b3edfe85b3",
+      "source_digest": "0ee7c61cca14a39cb6fb41d50f086bd639c52ace5aa93700a6ee55c1877a674e"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "1f35aa4ead6330b9c02792ace7db9cfbdc60c328a91289e6e9ef16081da8d310",
+      "classification_digest": "099faec53d2014a94c1200479e85152e4d687944c9eee2aac9d3bab19f758a06",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1168,24 +1168,24 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "41a3fcfca04d017cf8bb9cde7081da521e5145212ecda60e282a5588087517fb",
+      "profile_digest": "874a2be3aa1de826ad87951ffab507446602cc02713d6a658928f9b5524007a1",
       "release_margin_us": 500000,
-      "schema_digest": "ad67ca0c8a5d7c8b2468eb6790457ee4af7857fc3ce835bb3f865b44d4e38004",
-      "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
-      "source_digest": "a5bf0196bd28adf558a25c29ca423dce32cce35bc90872b680afea0d6e167255",
+      "schema_digest": "0673cc66503c10d27b6161d6fbf5f17f82403276bdaadc37f881ce14323b61f4",
+      "schema_profile_digest": "b7a817a69bec4c17fbbc6e2b2d4f3c8042add0cd3fad08d371f0e2b3edfe85b3",
+      "source_digest": "0ee7c61cca14a39cb6fb41d50f086bd639c52ace5aa93700a6ee55c1877a674e",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "1f35aa4ead6330b9c02792ace7db9cfbdc60c328a91289e6e9ef16081da8d310",
+    "classification_digest": "099faec53d2014a94c1200479e85152e4d687944c9eee2aac9d3bab19f758a06",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "41a3fcfca04d017cf8bb9cde7081da521e5145212ecda60e282a5588087517fb",
-    "operator_mapping_digest": "bd6de5b3c20ebb3e188c27fd5413b5186325c8312c6d048e1d053ec0dc03eadf",
-    "schema_profile_digest": "c0d73e05e47907c5297e8bd625149f7df3b94460b9ee2c830fd147c1b4a35c9a",
+    "native_capture_profile_digest": "874a2be3aa1de826ad87951ffab507446602cc02713d6a658928f9b5524007a1",
+    "operator_mapping_digest": "97c15f31526478b3a83924ec0ac41844c249961e742a28df2994066162e64a46",
+    "schema_profile_digest": "b7a817a69bec4c17fbbc6e2b2d4f3c8042add0cd3fad08d371f0e2b3edfe85b3",
     "store_binding_digest": "e65a24fea35f132abbafaee8eb0f7421577234c011f86c911bcc1b0bf0c029ae"
   },
   "schema": {
@@ -1667,11 +1667,11 @@
       "p9_14_0035_drop_entity_type.py": "b419e64cffd372fa8f1ac4cf8d0300c4d8764ae174d7301d52338e8e573c532a",
       "p9_15_0036_global_resolution_eval.py": "f17ad5a8221c382f859de4b2ee7c8b37cf8aeb50d8dde5b21358a9ad9e9706c0",
       "p9_16_0037_entity_profile_projection.py": "66cb76281aeb6525a77b5c2919acb566f9310a6bbd6ba2b53d6ad11d7062abcf",
-      "p9_17_0038_postgres19_live_graph.py": "34606b43a7a04a23b8ecda04aa6ab4572e33177014f4b212e3e09fac731650f3",
+      "p9_17_0038_postgres19_live_graph.py": "43447f4252ae49424f3c7eab3864a6a524112160fced2bc8c62e0fbb690d0513",
       "p9_18_0039_graph_entity_provenance_plan.py": "9a15d3dc20738416cd568664f9e1787f51e9195a54a7b10a7d53306ce8ac7cb4",
       "p9_19_0040_graph_tenant_planner_settings.py": "b0edb0d7e3242396feda06e5ab9111f1b168563409c837902420328df6ed9784",
       "p9_20_0041_resolution_uncertainty.py": "0b851abd7b8eb4ae1c321ec30c114641c63674bbe5c1842c6d23e7d48827a533",
-      "p9_21_0042_ingest_principal.py": "b09b93758a6fbb7ae7d97703ccabf8345061f6df562ade3c42f18bf9be468826",
+      "p9_21_0042_ingest_principal.py": "0db8df390e2e12b90425c76b73960b413c4b2467e76a7886ca639128ddfe5736",
       "p9_22_0043_document_entity_bindings.py": "76d23b26645f412a1a243c0c096c9dcf543e3ff5fa23ebb32ac78b09d4302576",
       "p9_23_0044_drop_generic_identifier_guard.py": "474148f337353e834debba9e9723201e14906c99ff8acc2efb8ede4ba69bb672",
       "p9_24_0045_managed_text_metering.py": "d1f29f87c1bfc85858fd8cd3a8debb84e5001c8b40f68a8aafd1bc4d990d0dd8",
@@ -1688,13 +1688,13 @@
       "p9_35_0056_document_metadata.py": "1d848699e8fdc9f47dd75404f8df56ee3397d3f0b6b63955073c3c31661b83d2",
       "p9_36_0057_own_document_name_span.py": "342a1050b7a01c8e42717310b841907c05388140f7f45ad6d9b676a3fba2cafc",
       "p9_37_0058_extraction_eligibility.py": "fe8ea5cf632ebcd153fbe05698b4c364a839932eb336e731c74e9632a0959f46",
-      "p9_38_0059_d140_effective_time.py": "00dabcd91a8807240a2f6b2692d588a8675ba1cc624a5557343cce60be76354b",
+      "p9_38_0059_d140_effective_time.py": "b14474970d59ee05c88302bb975faecc14396bf15daa51a31a276726a4592045",
       "p9_39_0060_d140_period_window_review.py": "e2b7ebe89097aca3da748139da05e9b63ca497adfc88de544a0d5fc73b70eb6d",
-      "p9_40_0061_citation_path_projection.py": "1cc76784bf2ef1cc69a5bfe710b54c83beaae92cef61a70957a404b62e9ffc52",
+      "p9_40_0061_citation_path_projection.py": "e83a77ecd72e118565df2d810475bacb1f27f46694ccd46d70c7c06daab11aa4",
       "p9_41_0062_processing_layers.py": "d07fc0409b2a202b7e6c7ff293ac4802ac0f17dbb3eebf68332625e7fe008979",
       "p9_42_0063_entity_counts_demand.py": "1e8a0dfb4dcc4018d0ca9f8d35fae0f1bb81957ee179126d3f6229ec23f78109",
       "p9_43_0064_claim_leases.py": "921e84fd940b0050cfca6af71d6570f049a38a5beaed9ca93b7586113a3e7b88",
-      "p9_44_0065_drop_property_graphs.py": "b1e93ee583d1780f9b77752154d38495ac2402fb20cb0757c79e2a5b64c4b69b",
+      "p9_44_0065_drop_property_graphs.py": "e3f2b1448aadb34f22e148575061842858513804d0a7980c68459c5e8fbb0b52",
       "p9_45_0066_fact_counts_demand.py": "34bc365f01b18f76fd061c48b53f40499f6a0c9b952f384272024f16059f2a71",
       "p9_46_0067_generic_meter.py": "b04141b59c33d519ea7527bcb775d6b435507445c1fb4c0b3741804ecd2a2636",
       "p9_47_0068_mention_chunk_lookup.py": "ff3bc78538b3cdb1b32b4136f2c9add72cb172302ef0c7ba3103aebecbbc19c1",

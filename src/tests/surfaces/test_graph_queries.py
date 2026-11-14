@@ -1,4 +1,4 @@
-"""Acceptance proofs for live PostgreSQL 19 graph queries.
+"""Acceptance proofs for live PostgreSQL 18 graph queries.
 
 The corpus is authority data only: there is no graph export, rebuild, snapshot,
 or cache. One-hop reads exercise the relational one-hop statement; deeper
@@ -58,7 +58,7 @@ def _walk_plan_nodes(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
 
 @pytest.fixture(scope="module")
 def database_engine() -> Iterator[Engine]:
-    """Apply structural head and expose a PostgreSQL 19 engine."""
+    """Apply structural head and expose a PostgreSQL 18 engine."""
     try:
         database_url = load_database_settings().sqlalchemy_url()
     except ValidationError:

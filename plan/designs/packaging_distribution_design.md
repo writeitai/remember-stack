@@ -1,7 +1,7 @@
 # Packaging & Distribution — Artifacts, Task Execution, Code Architecture (Design)
 
 > **Binding D98 amendment (2026-08-27).** The shipped database is the pinned
-> PostgreSQL 19 image with pgvector, pg_textsearch, and pg_partman (the
+> PostgreSQL 18 image (D157) with pgvector, pg_textsearch, and pg_partman (the
 > server has no SQL/PGQ since the D98 RC 1 amendment). Packaging contains no Ladybug wheel, graph snapshot volume, graph
 > builder/reader, or public Cypher API/CLI/MCP surface. Typed live graph
 > operations and public bounded SQL helpers remain. Pre-D98 references to open

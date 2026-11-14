@@ -1,72 +1,86 @@
 # PostgreSQL image release evidence
 
-`Dockerfile.postgres` is the only supported database image definition. It pins
-the PostgreSQL 19 prerelease base (release candidate 1, `19rc1-trixie`) by
-digest, pins PGDG extension package versions, and builds pg_textsearch from a
-checksum-verified source archive (no local patch: v1.5.1 supports PostgreSQL 19
-upstream, D142).
+`Dockerfile.postgres` is the only supported database image definition.
+[D157](../decisions.md#d157-postgresql-18-is-the-reference-server) selects
+PostgreSQL 18 as the sole reference server. Graph reads use ordinary joins
+and bounded traversal; SQL/PGQ no longer justifies a prerelease dependency.
 
-The RC 1 headers no longer include `<limits.h>` indirectly, and pg_textsearch
-v1.5.1 uses `INT_MAX` without including it (upstream issue
-[timescale/pg_textsearch#586](https://github.com/timescale/pg_textsearch/issues/586),
-open on 2026-11-06). The build adds `-include limits.h` to the server's own
-preprocessor flags instead of changing the source; drop the flag once a pinned
-release includes the header itself.
+## PostgreSQL 18 base (2026-11-14)
 
-pgvector is pinned to the PGDG build `0.8.6-1.pgdg13+2`, which PGDG rebuilt
-against the Beta 4 headers; that is the tested pin (PGDG also publishes
-`0.8.7-1.pgdg13+1`). Between Beta 4 and RC 1 the
-index access-method interface (`access/amapi.h`) is unchanged, and the one
-changed index-vacuum struct (`IndexVacuumInfo`, a new `is_autovacuum` flag)
-moves only fields pgvector 0.8.6 does not read (checked against the
-`postgresql-server-dev-19` 19~beta4 and 19~rc1 packages and the v0.8.6 source,
-2026-11-06). pg_partman's background worker uses only interfaces whose headers
-are unchanged between Beta 3 and RC 1.
+The official image is `postgres:18.6-trixie`, pinned in both stages to index
+`sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4`.
+The server package is `18.6-1.pgdg13+2`; build headers and libpq-dev use
+that exact version. The official
+[2026-10-28 image record](https://github.com/docker-library/repo-info/blob/e99222a981c35f94ad85de0959a7869ea8e39b80/repos/postgres/remote/18.6-trixie.md)
+records the index and both platform builds, over two weeks before selection:
 
-Exact pgvector and pg_partman Debian versions resolve from PGDG's all-versions
-`trixie-pgdg-archive` repository, not the rotating current-version index. PGDG
-documents that archive as the daily-updated repository containing every
-released package version; retrieved 2026-08-27 from
-<https://apt-archive.postgresql.org/>.
+| Platform | Base child digest |
+|---|---|
+| linux/amd64 | `sha256:f4b419e350fd98d4a8429603295208976dea4c8fb8326d818d346d3e29f1db6f` |
+| linux/arm64 | `sha256:9a74990a5c776ff210361b67616b347750c66c36ea0dfbb4f575d19fcc3d8437` |
 
-## pg_textsearch provenance
+[18.6 was released 2026-08-13](https://www.postgresql.org/docs/release/18.6/).
+[18.7 was released 2026-11-12](https://www.postgresql.org/docs/release/18.7/),
+so 18.6 is the newest minor satisfying the owner's two-week age floor on
+2026-11-14. Future updates select the newest eligible 18.x minor and official
+image digest; no floating tag enters the build.
+
+## Extension pins and provenance
+
+The PGDG packages retain their previous pinned versions and source releases,
+now built for PostgreSQL 18:
+
+- `postgresql-18-pgvector=0.8.6-1.pgdg13+2`
+- `postgresql-18-partman=5.5.0-1.pgdg13+1`
+- bundled `pg_trgm`, `pgcrypto`, `btree_gist`, `unaccent`, `fuzzystrmatch`
+  and `plpgsql` from the official server image
+
+Exact PGDG versions resolve from the all-versions `trixie-pgdg-archive`
+repository, rather than the rotating current index. PGDG describes that
+archive at <https://apt-archive.postgresql.org/>; pins verified 2026-11-14.
+
+pg_textsearch keeps the same checksum-verified upstream 1.5.1 source:
 
 - source revision: `fa142d049d08eac45a263f5abc250c8877ae076e` (tag `v1.5.1`)
 - source archive SHA-256:
   `445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0`
-- PostgreSQL 19: supported upstream since v1.5.0 as best effort with
-  non-blocking CI ([README at the pinned revision](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/README.md#postgresql-version-compatibility)),
-  so this image's own integration suite is the PostgreSQL 19 gate; the former
-  local compatibility patch is retired (retrieved 2026-10-21)
+- PostgreSQL 18 is supported by the
+  [pinned source](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/README.md#postgresql-version-compatibility).
+  No local patch or forced `<limits.h>` include is used. The former compiler
+  flag addressed RC 1 headers; PostgreSQL 18 builds without it.
 - license determination: the pinned revision's `LICENSE` identifies **The
-  PostgreSQL License** (`PostgreSQL` identifier), and its `NOTICE` says the
-  extension is licensed under that license; unchanged at v1.5.1 (same
-  checksums), retrieved 2026-10-21
+  PostgreSQL License** (`PostgreSQL` identifier); `NOTICE` carries the same
+  license. Both are checksum-verified and copied to
+  `/usr/share/doc/pg_textsearch/` in the runtime image.
 - license SHA-256:
   `d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5`
 - notice SHA-256:
   `ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d`
-- license evidence: both files are checksum-verified during the build and
-  copied to `/usr/share/doc/pg_textsearch/` in the runtime image
 
-The build writes SHA-256 values for the installed shared object, control file,
-and SQL migration files to
-`/usr/share/doc/pg_textsearch/artifacts.sha256`. Because that file is produced
-inside each build platform, it is also the per-architecture binary record.
+The build writes SHA-256 values for the installed shared object, control file
+and SQL migrations to `/usr/share/doc/pg_textsearch/artifacts.sha256` and
+runs the complete upstream SQL regression suite against its exact server.
+The manifest is produced per architecture, so it records each binary build.
 
 ## Release matrix
 
-For each PostgreSQL beta, RC, and GA candidate, build both `linux/amd64` and
-`linux/arm64`. Record the immutable image digest and the embedded artifact
-manifest for each architecture, then run migrations, extension smoke tests,
-the pg_textsearch regression suite, graph correctness tests, and the complete
-RememberStack test suite. Managed deployment remains blocked unless amd64
-passes; self-host release remains blocked unless both architectures pass.
+For every PostgreSQL image update, build both `linux/amd64` and `linux/arm64`.
+Record immutable image digests and embedded artifact manifests; run migrations
+from empty, extension smoke tests, upstream pg_textsearch regression tests,
+graph correctness/repair, backup/restore and the complete RememberStack suite.
+Managed deployment requires amd64 to pass; self-host releases require both.
 
-The tag workflow mechanically publishes the two-platform manifest and attaches
-`postgres-image-digests.json`, containing its immutable digest plus both child
-digests, to the GitHub release. The release-contract checker fails if that job,
-either required platform, or the digest evidence artifact disappears.
+The release workflow builds natively on each architecture and publishes
+`ghcr.io/writeitai/remember-stack-postgres:18-<engine-version>`. It attaches
+`postgres-image-digests.json`, containing the immutable manifest and both child
+digests, to the GitHub release. The release-contract checker enforces the
+publisher, platforms, tag scheme and evidence artifact. Between releases,
+build the checkout's image with `docker compose up --build`.
+
+## Historical PostgreSQL 19 release evidence
+
+The following records describe the former server. They are retained as dated
+evidence and do not qualify PostgreSQL 18 or prescribe an upgrade path.
 
 ### 0.19.0 (PostgreSQL 19 RC 1), 2026-11-07
 

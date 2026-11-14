@@ -10,7 +10,7 @@ import tomllib
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _IMAGE = "ghcr.io/writeitai/remember-stack"
 _POSTGRES_SOURCE_MARKER = re.compile(
-    r"^FROM postgres:(19(?:beta\d+|rc\d+|(?:\.\d+)*))-"
+    r"^FROM (postgres:18\.\d+-trixie@sha256:[0-9a-f]{64})(?: AS \w+)?$"
 )
 
 
@@ -121,16 +121,18 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
 def _validate_postgres_release(*, root: Path, version: str) -> None:
     """Bind Compose to the multi-architecture immutable image publisher."""
     dockerfile = (root / "Dockerfile.postgres").read_text(encoding="utf-8")
-    base = next(
-        (
-            match.group(1)
-            for line in dockerfile.splitlines()
-            if (match := _POSTGRES_SOURCE_MARKER.match(line)) is not None
-        ),
-        None,
-    )
-    if base is None:
-        raise ValueError("Dockerfile.postgres must pin a PostgreSQL 19 source marker")
+    sources = [
+        _POSTGRES_SOURCE_MARKER.fullmatch(line)
+        for line in dockerfile.splitlines()
+        if line.startswith("FROM ")
+    ]
+    if len(sources) != 2 or any(match is None for match in sources):
+        raise ValueError(
+            "Dockerfile.postgres must pin both stages to PostgreSQL 18 by digest"
+        )
+    if len({match.group(1) for match in sources if match is not None}) != 1:
+        raise ValueError("PostgreSQL builder and runtime must use the same base image")
+    base = "18"
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
     if f"image: {_IMAGE}-postgres:{base}-{version}" not in compose:
         raise ValueError(

@@ -140,7 +140,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: ghcr.io/writeitai/remember-stack-postgres:19rc1-0.20.0
+    image: ghcr.io/writeitai/remember-stack-postgres:18-0.20.0
     command:
       - postgres
       - -c

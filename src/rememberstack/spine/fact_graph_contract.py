@@ -90,7 +90,6 @@ def _rebuild(
 ) -> None:
     """Execute the drop-and-recreate sequence."""
     from rememberstack.spine.migrations._helpers import _split_sql
-    from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
     from rememberstack.spine.migrations.versions import (
         p9_17_0038_postgres19_live_graph as graph,
     )
@@ -102,7 +101,6 @@ def _rebuild(
     )
 
     statements = (
-        DROP_PROPERTY_GRAPHS,
         "DROP FUNCTION IF EXISTS memory_v1.graph_citation_path(uuid,uuid,uuid,integer,integer,integer,integer,integer)",
         "DROP FUNCTION IF EXISTS memory_v1.graph_path(uuid,uuid,uuid,integer,text[],timestamptz,timestamptz,integer,integer,integer,integer)",
         "DROP FUNCTION IF EXISTS memory_v1.graph_neighborhood(uuid,uuid,integer,text[],timestamptz,timestamptz,integer,integer,integer,integer)",

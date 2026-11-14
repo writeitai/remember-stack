@@ -103,7 +103,7 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   their transcript/description happened to mention — D65; the media embedding model is
   per-deployment configuration, and its absence is reported as a stated capability boundary);
   fully rebuildable from the spine plus immutable artifacts.
-- **Live graph** *(formerly physical P2/L6)*: private PostgreSQL 19 node and
+- **Live graph** *(formerly physical P2/L6)*: private PostgreSQL 18 node and
   edge views over normalized authority views plus bounded recursive traversal;
   relationships are bi-temporal and support as-of queries. It copies no graph
   rows, has no projection generation, and becomes visible by ordinary MVCC.
@@ -221,8 +221,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 **Fixed engine choices** — the system's identity, never abstracted behind ports:
 
 - Relational spine, derived P1 search projection, and live graph:
-  **PostgreSQL 19**. Before GA, pin the latest proven beta/RC image and keep
-  storage disposable/replayable; after GA, keep the current patched 19.x minor.
+  **PostgreSQL 18** (D157), the sole supported major. Pin the official
+  image by digest, choosing the newest minor and image at least two weeks old.
   Install
   **pgvector** (semantic indexes; reference Qwen profile fixed at 1,536
   dimensions) and **pg_textsearch** (BM25). Pgvectorscale
