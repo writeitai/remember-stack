@@ -83,6 +83,10 @@ non-null native repository URI. A zero K component still requires that closed
 runtime source/configuration and the complete original native inventory;
 loading `knowledge_repository=unconfigured` is no absence proof.
 
+The snapshot classification in the next paragraph is historical and superseded
+by [D155 live-tree classification](live_corpus_storage_capture_20261114.md).
+The PostgreSQL snapshot relation remains only for the historical operations API.
+
 P3 cannot be blanket-declared absent: managed `umc_runtime/setup.py:run_setup`
 calls `SelfHostProfile.setup`, whose facts-layer reconciliation can call
 `run_projection(p3)` (`profiles/selfhost.py`, around lines 1241–1244). The

@@ -68,13 +68,13 @@ private schema must be pinned by the qualified native profile.
 
 `iter_store_references` reads actual catalog locator seeds without live/current
 or success-only filters: raw objects; all five representation URI fields;
-structure sidecars; supplied reference artifacts; projection trees; K page and
+structure sidecars; supplied reference artifacts; K page and
 curation paths; K planner/compiler transcripts; and every native forget
 intent, including `preparing`. A forget seed carries its actual UUID with
 `locator_kind=journal_intent`; the qualified journal adapter derives its
 concrete key and proves stored presence. PostgreSQL alone cannot assert the
 ObjectStore or LocalFS journal layout. Native content identities and locators use private fields with
-suppressed repr/validation inputs. Trees, manifests, K origin/history and
+suppressed repr/validation inputs. Manifests, K origin/history and
 unmatched store resources still require the engine's qualified store profile
 and complete provider evidence. A locator seed is neither a provider item nor
 a publishable storage member. Missing lengths remain unknown; reference
@@ -87,6 +87,14 @@ is the member identity, and the existing canonical v3 body determines the
 receipt digest. Post-cut rows and ACK changes cannot alter this original view.
 Both iterators use fixed keyset pages of at most 1,024 rows, with no later
 pool or caller-supplied SQL.
+
+`iter_corpus_documents` uses the same original view and page bound. It returns
+each document's recorded cleanup folders, including deleted/unselected rows,
+and its nullable served-reading inputs. The classifier recomputes the current
+D155 publication revision before expanding reader-file references. Paths alone
+do not prove publication; no snapshot registry is consulted. All selector joins
+are pinned with AccessShare during acquisition. Both helpers require exact
+schema head `p9_52_0073`.
 
 The first native run exposed a real integration boundary: the guard's native
 index exclusions hold AccessExclusive on `deployments_pkey`. Reading public
