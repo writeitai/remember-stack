@@ -38,7 +38,9 @@ Primary sources retrieved 2026-11-14:
   supports PG18. Its archive, license and notice checksums stay unchanged.
 - [PostgreSQL 18 constraint catalog](https://www.postgresql.org/docs/18/catalog-pg-constraint.html)
   already includes first-class NOT NULL constraints (`contype = 'n'`);
-  their presence is not a PG19 dependency.
+  their presence is not a PG19 dependency. The built image exposes
+  `btree_gist` 1.8 rather than PG19's 1.9; the native capture guard must
+  use the actual PG18 version.
 
 ## Failure, recovery and boundaries
 

@@ -33,7 +33,8 @@ now built for PostgreSQL 18:
 - `postgresql-18-pgvector=0.8.6-1.pgdg13+2`
 - `postgresql-18-partman=5.5.0-1.pgdg13+1`
 - bundled `pg_trgm`, `pgcrypto`, `btree_gist`, `unaccent`, `fuzzystrmatch`
-  and `plpgsql` from the official server image
+  and `plpgsql` from the official server image (`btree_gist` is 1.8 on
+  PostgreSQL 18, rather than 1.9 on PostgreSQL 19)
 
 Exact PGDG versions resolve from the all-versions `trixie-pgdg-archive`
 repository, rather than the rotating current index. PGDG describes that

@@ -3,8 +3,8 @@ set -euo pipefail
 
 container_name="rememberstack-postgres-ci"
 
-# POSTGRES_IMAGE runs a published image instead of building Dockerfile.postgres
-# (a released engine needs the PostgreSQL it was released with).
+# PostgreSQL 18 is the sole server baseline (D157). POSTGRES_IMAGE may select
+# a released PG18 foundation instead of building this checkout's Dockerfile.
 if [ -n "${POSTGRES_IMAGE:-}" ]; then
   image_name="${POSTGRES_IMAGE}"
   docker pull "${image_name}"

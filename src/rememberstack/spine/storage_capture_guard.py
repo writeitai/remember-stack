@@ -40,7 +40,7 @@ _ROOTS = tuple(
     )
 )
 _EXTENSIONS = (
-    "btree_gist=1.9",
+    "btree_gist=1.8",
     "fuzzystrmatch=1.2",
     "pg_partman=5.5.0",
     "pg_textsearch=1.5.1",
