@@ -539,6 +539,17 @@
             "title": "Fact Id",
             "type": "string"
           },
+          "in_documents_filter": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Documents Filter"
+          },
           "label": {
             "title": "Label",
             "type": "string"
@@ -2810,6 +2821,18 @@
             "title": "Fact Kind",
             "type": "string"
           },
+          "in_documents_filter_total": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Documents Filter Total"
+          },
           "returned": {
             "minimum": 0.0,
             "title": "Returned",
@@ -2860,6 +2883,17 @@
             ],
             "title": "Fact Kind",
             "type": "string"
+          },
+          "in_documents_filter": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Documents Filter"
           },
           "stance": {
             "enum": [

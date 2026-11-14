@@ -5,6 +5,7 @@
 export type OutputEvidenceTotal = {
     fact_id: string;
     fact_kind: 'relation' | 'observation';
+    in_documents_filter_total: number | null;
     returned: number;
     stance: 'supports' | 'contradicts';
     total: number;

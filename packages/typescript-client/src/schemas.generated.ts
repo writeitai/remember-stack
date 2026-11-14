@@ -548,6 +548,18 @@ export default {
           "title": "Fact Id",
           "type": "string"
         },
+        "in_documents_filter": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In Documents Filter"
+        },
         "label": {
           "title": "Label",
           "type": "string"
@@ -3146,6 +3158,19 @@ export default {
           "title": "Fact Kind",
           "type": "string"
         },
+        "in_documents_filter_total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In Documents Filter Total"
+        },
         "returned": {
           "minimum": 0,
           "title": "Returned",
@@ -3196,6 +3221,18 @@ export default {
           ],
           "title": "Fact Kind",
           "type": "string"
+        },
+        "in_documents_filter": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In Documents Filter"
         },
         "stance": {
           "enum": [

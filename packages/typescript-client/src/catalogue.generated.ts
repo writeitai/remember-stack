@@ -1067,7 +1067,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "High-recall current claims and confirmed source passages.",
+      "description": "High-recall current claims and confirmed source passages. documents limits both to what matching documents say; call list_tags before filtering by tag.",
       "destructive": false,
       "http_route": "POST /operations/claims_and_sources_context",
       "input_schema": {
@@ -1078,6 +1078,114 @@ export default {
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
           },
           "entity_ids": {
             "items": {
@@ -1176,14 +1284,14 @@ export default {
       },
       "name": "claims_and_sources_context",
       "permission": "memory:read",
-      "tool_version": 4
+      "tool_version": 5
     },
     {
       "annotations": {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded live-graph expansion for current or point-in-time entity anchors.",
+      "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded live-graph expansion for current or point-in-time entity anchors. documents keeps facts supported by matching documents; their contradictions and competing facts from other documents stay in the answer, marked in_documents_filter=false. Call list_tags before filtering by tag.",
       "destructive": false,
       "http_route": "POST /operations/facts_context",
       "input_schema": {
@@ -1194,6 +1302,114 @@ export default {
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
           },
           "entity_ids": {
             "items": {
@@ -1309,14 +1525,14 @@ export default {
       },
       "name": "facts_context",
       "permission": "memory:read",
-      "tool_version": 4
+      "tool_version": 5
     },
     {
       "annotations": {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2.",
+      "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2. documents applies to both; call list_tags before filtering by tag.",
       "destructive": false,
       "http_route": "POST /operations/combined_context",
       "input_schema": {
@@ -1327,6 +1543,114 @@ export default {
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
           },
           "entity_ids": {
             "items": {
@@ -1436,7 +1760,7 @@ export default {
       },
       "name": "combined_context",
       "permission": "memory:read",
-      "tool_version": 5
+      "tool_version": 6
     },
     {
       "annotations": {

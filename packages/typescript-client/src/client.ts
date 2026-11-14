@@ -198,17 +198,17 @@ export class MemoryClient {
       default:throw new InputValidationError({detail:'unknown open-query tool'});
     }
   }
-  /** Run assured facts recall with optional temporal and entity context. */
-  async factsContext({query,time,hops,predicate,entityIds,k,candidateK,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;hops?:number|null;predicate?:string|null;entityIds?:string[]|null;k?:number;candidateK?:number;signal?:AbortSignal}):Promise<Envelope> {
-    const args:Record<string,Models.JsonValue>={query};if(time!=null)args.time=time;if(hops!=null)args.hops=hops;if(predicate!=null)args.predicate=predicate;if(entityIds!=null)args.entity_ids=entityIds;if(k!=null)args.k=k;if(candidateK!=null)args.candidate_k=candidateK;
+  /** Run assured facts recall with optional temporal, entity and document (D156) context. */
+  async factsContext({query,time,hops,predicate,entityIds,k,candidateK,documents,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;hops?:number|null;predicate?:string|null;entityIds?:string[]|null;k?:number;candidateK?:number;documents?:Models.DocumentSearchFilters|null;signal?:AbortSignal}):Promise<Envelope> {
+    const args:Record<string,Models.JsonValue>={query};if(time!=null)args.time=time;if(hops!=null)args.hops=hops;if(predicate!=null)args.predicate=predicate;if(entityIds!=null)args.entity_ids=entityIds;if(k!=null)args.k=k;if(candidateK!=null)args.candidate_k=candidateK;if(documents!=null)args.documents=documentsArgument({documents});
     const value=await this.runOperation({name:'facts_context',arguments:args,signal});return validateModel({name:'Envelope',value,response:true});
   }
   /** Run assured combined fact and source recall; a side with none of its layers admitted returns empty with a boundary negative. */
-  async combinedContext({query,time,k,candidateK,layers,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<ContextBundle> {
-    const value=await this.runOperation({name:'combined_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},layers,signal});return validateModel({name:'ContextBundleV2',value,response:true});
+  async combinedContext({query,time,k,candidateK,layers,documents,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;layers?:readonly string[]|null;documents?:Models.DocumentSearchFilters|null;signal?:AbortSignal}):Promise<ContextBundle> {
+    const value=await this.runOperation({name:'combined_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{}),...(documents!=null?{documents:documentsArgument({documents})}:{})},layers,signal});return validateModel({name:'ContextBundleV2',value,response:true});
   }
   /** Run assured source-claim recall; layers ['sources'] answers from source passages only. */
-  async claimsAndSourcesContext({query,time,k,candidateK,layers,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},layers,signal}),response:true});}
+  async claimsAndSourcesContext({query,time,k,candidateK,layers,documents,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;layers?:readonly string[]|null;documents?:Models.DocumentSearchFilters|null;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{}),...(documents!=null?{documents:documentsArgument({documents})}:{})},layers,signal}),response:true});}
   /** Run assured entity resolution. */
   async resolveEntity({name,signal}:{name:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'resolve_entity',arguments:{name},signal}),response:true});}
   /** Resolve a name with optional repeated focal-entity query parameters. */
@@ -391,6 +391,8 @@ export class MemoryClient {
   /** Read one deployment-side connector's status. */
   async connectorStatus({connectorId,signal}:{connectorId:string;signal?:AbortSignal}):Promise<Models.OutputConnectorDescriptor> {return validateModel({name:'ConnectorDescriptor',value:await this.json({method:'GET',path:`/connectors/${segment({value:connectorId})}`,signal}),response:true});}
 }
+/** The JSON ``documents`` operation argument (D134/D156), validated and default-free. */
+function documentsArgument({documents}:{documents:Models.DocumentSearchFilters}):Models.JsonValue {return modelDump({name:'DocumentSearchFilters',value:documents,excludeDefaults:true}) as Models.JsonValue;}
 export interface SearchOptions extends RequestOptions {query:string;k?:number;channel?:'semantic'|'bm25';documents?:Models.DocumentSearchFilters|null;time?:Models.ReadTime|null;}
 /** Wait without leaving a timer or listener behind after cancellation. */
 async function sleep({milliseconds,signal}:{milliseconds:number;signal:AbortSignal}):Promise<void> {

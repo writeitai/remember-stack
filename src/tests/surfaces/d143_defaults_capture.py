@@ -15,7 +15,8 @@ originally from the pre-D143 base (fbcd489bd) and refreshed for later accepted
 baseline moves (p9_42/p9_45/D153 views, D154 pagination, D156 document tags:
 the tag port and its five tools, ``ingest``'s ``tags`` argument at
 ``tool_version`` 3 and the two tag views; D156 step 2's ``search_documents``
-``tags`` filter at ``tool_version`` 4); ``test_d143_defaults_unchanged.py``
+``tags`` filter at ``tool_version`` 4; D156 step 3's ``documents`` filter on
+the three context operations at versions 5, 5 and 6); ``test_d143_defaults_unchanged.py``
 recomputes it.
 Run as a script to print the JSON.
 """

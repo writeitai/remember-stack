@@ -150,6 +150,8 @@ function semanticInvariant({ name, value }: { name?: string; value: Record<strin
     && value.char_end <= value.char_start) fail({ detail: 'evidence span end must be after start' });
   if (name === 'EvidenceTotal' && typeof value.returned === 'number' && typeof value.total === 'number'
     && value.returned > value.total) fail({ detail: 'returned evidence exceeds total' });
+  if (name === 'EvidenceTotal' && typeof value.in_documents_filter_total === 'number' && typeof value.total === 'number'
+    && value.in_documents_filter_total > value.total) fail({ detail: 'matching evidence exceeds total' });
   if (name === 'ContextBundleV2') {
     const claims = value.claims_and_sources as Record<string, unknown> | undefined;
     const facts = value.facts as Record<string, unknown> | undefined;
