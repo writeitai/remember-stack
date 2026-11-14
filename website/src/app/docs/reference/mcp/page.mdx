@@ -490,6 +490,7 @@ What sources said: current claims and the source passages that confirm them.
 | `entity_ids` | array of UUID strings | no | 1–20, unique. |
 | `k` | integer | no | 1–100; default 50. |
 | `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
+| `documents` | object | no | Only what matching documents say; the fields are under `facts_context`. |
 | `time` | object | no | Default `{"mode": "current"}`; the forms are under `facts_context`. Which versions of documents with declared effective periods are read. |
 
 #### `facts_context`
@@ -506,6 +507,7 @@ with a bounded look at the entities' neighbourhood.
 | `evidence_per_fact` | integer | no | 1–5; default 3. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
+| `documents` | object | no | Only facts supported by matching documents. See below. |
 | `time` | object | no | Default `{"mode": "current"}`. See below. |
 
 `time` is one of:
@@ -521,6 +523,16 @@ Timestamps are ISO 8601 date-times. What each mode means: [Time](/docs/concepts/
 For documents with declared effective periods, `time` also decides which
 versions count as evidence: [Text in force](/docs/reference/assured-operations#text-in-force).
 
+`documents` limits the read to certain documents, with the fields of
+`search_documents`' filters: `family`, `authors`, `recipients`,
+`created_from`, `created_to`, `modified_from`, `modified_to`, `language`,
+`thread_ref`, `doc_ids` and `tags` (`{"all": [...], "any": [...], "none":
+[...]}`). Call `list_tags` before filtering by tag; an unregistered tag is
+`unknown_tag`. Supporting evidence then comes only from matching documents,
+while contradicting evidence and competing facts from every other document
+stay in the answer, marked `"in_documents_filter": false`:
+[The documents filter](/docs/reference/assured-operations#the-documents-filter).
+
 #### `combined_context`
 
 Both of the above in one call, returned as `ContextBundle/v2`. The same
@@ -535,6 +547,7 @@ each search channel, rather than the total across channels.
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
+| `documents` | object | no | As in `facts_context`; applies to both halves. |
 | `time` | object | no | As in `facts_context`; applies to both halves. |
 
 For every operation, unknown keys are refused, and integers must be whole

@@ -64,7 +64,7 @@ export default {
         "returns": "object"
       },
       "claims_and_sources_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None, documents: DocumentSearchFilters | Mapping[str, object] | None=None",
         "property": false,
         "returns": "Envelope"
       },
@@ -79,7 +79,7 @@ export default {
         "returns": "None"
       },
       "combined_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None, documents: DocumentSearchFilters | Mapping[str, object] | None=None",
         "property": false,
         "returns": "ContextBundleV2"
       },
@@ -144,7 +144,7 @@ export default {
         "returns": "dict[str, object]"
       },
       "facts_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None, documents: DocumentSearchFilters | Mapping[str, object] | None=None",
         "property": false,
         "returns": "Envelope"
       },

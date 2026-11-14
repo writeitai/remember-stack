@@ -2284,6 +2284,9 @@ def _mount_operations(*, app: FastAPI) -> None:
             return surface.run(
                 name=name, arguments=arguments, layers=_layer_selection(layers)
             )
+        except UnknownTagError as error:
+            # D156: a documents filter naming an unregistered tag, before retrieval.
+            raise _tag_errors(error) from error
         except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (MissingArgumentError, InvalidArgumentError) as error:

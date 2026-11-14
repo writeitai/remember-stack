@@ -268,6 +268,11 @@ class CoMember(BaseModel):
     label: str
     evidence_count: int
     validity: Validity
+    in_documents_filter: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: whether this side has live support
+    from a matching document (D156 §4.4); omitted from unfiltered reads."""
 
 
 class Contradiction(BaseModel):
@@ -414,6 +419,11 @@ class FactEvidence(BaseModel):
     fact_id: UUID
     claim_id: UUID
     stance: Literal["supports", "contradicts"]
+    in_documents_filter: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: whether the claim's document matches
+    it (D156 §4.4); omitted from unfiltered reads."""
 
 
 class EvidenceTotal(BaseModel):
@@ -426,11 +436,22 @@ class EvidenceTotal(BaseModel):
     stance: Literal["supports", "contradicts"]
     returned: int = Field(ge=0)
     total: int = Field(ge=0)
+    """Distinct supporting or contradicting lineages, deployment-wide (D54)."""
+    in_documents_filter_total: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: how many of those lineages match it
+    (D156 §4.4); omitted from unfiltered reads."""
 
     @model_validator(mode="after")
     def _returned_does_not_exceed_total(self) -> "EvidenceTotal":
         if self.returned > self.total:
             raise ValueError("returned evidence cannot exceed its exact total")
+        if (
+            self.in_documents_filter_total is not None
+            and self.in_documents_filter_total > self.total
+        ):
+            raise ValueError("matching evidence cannot exceed its exact total")
         return self
 
 

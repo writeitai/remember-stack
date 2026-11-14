@@ -9,7 +9,9 @@ D150 adds one more enum value, ``admission``, to a readiness stage's
 ``defer_reason``; it is stripped the same way. D156 adds the tag routes, the
 optional ``tags`` query parameter on ``POST /ingest``, the tag schemas and a
 ``tags`` field on document inventory and search results, and the ``tags``
-selector of the document search filter; those are stripped too.
+selector of the document search filter; D156 step 3 adds the filtered fact
+read's optional ``in_documents_filter`` marks and matching evidence total.
+Those are stripped too.
 """
 
 from __future__ import annotations
@@ -65,6 +67,12 @@ _D156_TAGGED_SCHEMAS: Final = (
     "DocumentSearchFilters",
 )
 """Schemas that gained a ``tags`` property in D156."""
+_D156_FILTER_DISCLOSURES: Final = {
+    "CoMember": "in_documents_filter",
+    "FactEvidence": "in_documents_filter",
+    "EvidenceTotal": "in_documents_filter_total",
+}
+"""D156 step 3: optional properties present only on filtered fact reads."""
 
 
 def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
@@ -101,6 +109,10 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
             schemas[name]["properties"].pop("tags")
             if "tags" in schemas[name].get("required", ()):
                 schemas[name]["required"].remove("tags")
+        elif name.removeprefix("Output") in _D156_FILTER_DISCLOSURES:
+            schemas[name]["properties"].pop(
+                _D156_FILTER_DISCLOSURES[name.removeprefix("Output")]
+            )
     reasons = schemas["PipelineStageReadiness"]["properties"]["defer_reason"]["anyOf"]
     reasons[0]["enum"] = [value for value in reasons[0]["enum"] if value != "admission"]
     return stripped

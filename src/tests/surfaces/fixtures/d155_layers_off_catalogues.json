@@ -8,8 +8,8 @@
       },
       "tools": {
         "adjacent_chunks": 1,
-        "claims_and_sources_context": 4,
-        "combined_context": 5,
+        "claims_and_sources_context": 5,
+        "combined_context": 6,
         "create_tag": 1,
         "delete_document": 1,
         "delete_tag": 1,
@@ -1140,8 +1140,8 @@
       },
       "tools": {
         "adjacent_chunks": 1,
-        "claims_and_sources_context": 4,
-        "combined_context": 5,
+        "claims_and_sources_context": 5,
+        "combined_context": 6,
         "create_tag": 1,
         "delete_document": 1,
         "delete_tag": 1,

@@ -203,12 +203,13 @@ A fact's live contradiction, returned with all its sides up to a cap.
 
 ### CoMember
 
-| Field | Type |
-|---|---|
-| `fact_id` | UUID |
-| `label` | string |
-| `evidence_count` | integer |
-| `validity` | [`Validity`](#validity) |
+| Field | Type | Contents |
+|---|---|---|
+| `fact_id` | UUID | |
+| `label` | string | |
+| `evidence_count` | integer | |
+| `validity` | [`Validity`](#validity) | |
+| `in_documents_filter` | boolean | Only on a read with a `documents` filter: whether this side has live support from a matching document. Absent otherwise. |
 
 ### EvidenceResult
 
@@ -269,12 +270,13 @@ Where a claim occurs in one selected version.
 
 ### FactEvidence
 
-| Field | Type |
-|---|---|
-| `fact_kind` | `relation` \| `observation` |
-| `fact_id` | UUID |
-| `claim_id` | UUID |
-| `stance` | `supports` \| `contradicts` |
+| Field | Type | Contents |
+|---|---|---|
+| `fact_kind` | `relation` \| `observation` | |
+| `fact_id` | UUID | |
+| `claim_id` | UUID | |
+| `stance` | `supports` \| `contradicts` | |
+| `in_documents_filter` | boolean | Only on a read with a `documents` filter: whether the claim's document matches it. Supporting claims always do; contradicting claims may come from any document. Absent otherwise. |
 
 ### EvidenceTotal
 
@@ -284,7 +286,8 @@ Where a claim occurs in one selected version.
 | `fact_id` | UUID | |
 | `stance` | `supports` \| `contradicts` | |
 | `returned` | integer ≥ 0 | Claims of this stance in the result. |
-| `total` | integer ≥ 0 | Claims of this stance that exist. Never less than `returned`. |
+| `total` | integer ≥ 0 | Claims of this stance that exist, counted once per document, across the whole deployment. Never less than `returned`. |
+| `in_documents_filter_total` | integer ≥ 0 | Only on a read with a `documents` filter: how many of those documents match it. Absent otherwise. |
 
 ### ChunkEvidenceResult
 

@@ -6,6 +6,7 @@ import type { OutputValidity } from './OutputValidity';
 export type OutputCoMember = {
     evidence_count: number;
     fact_id: string;
+    in_documents_filter: boolean | null;
     label: string;
     validity: OutputValidity;
 };

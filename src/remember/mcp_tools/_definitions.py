@@ -397,6 +397,60 @@ _STRING_LIST: Final[dict[str, object]] = {
     "items": {"type": "string", "minLength": 1},
 }
 
+_TAGS_FILTER: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "minProperties": 1,
+    "properties": {
+        key: {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1, "maxLength": TAG_REF_MAX_LEN},
+            "maxItems": TAG_FILTER_LIST_MAX,
+            "uniqueItems": True,
+            "description": description,
+        }
+        for key, description in (
+            ("all", "The document has every one of these tags."),
+            ("any", "The document has at least one of these tags."),
+            ("none", "The document has none of these tags."),
+        )
+    },
+    "description": (
+        "Registered tags (name or tag_id; call list_tags first)."
+        " Lists combine with AND; an unknown tag is unknown_tag."
+    ),
+}
+
+#: The D134/D156 ``documents`` filter of the three context operations: the
+#: same object ``search`` takes, every field given must hold.
+_DOCUMENTS_FILTER: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "family": {**_STRING_LIST, "description": "Keep these format families."},
+        "authors": {**_STRING_LIST, "description": "Any of these authors."},
+        "recipients": {**_STRING_LIST, "description": "Any of these recipients."},
+        "created_from": _DATE_TIME,
+        "created_to": _DATE_TIME,
+        "modified_from": _DATE_TIME,
+        "modified_to": _DATE_TIME,
+        "language": {"type": "string", "minLength": 1},
+        "thread_ref": {"type": "string", "minLength": 1},
+        "doc_ids": {
+            "type": "array",
+            "items": {"type": "string", "format": "uuid"},
+            "description": "Only these documents (UUIDs).",
+        },
+        "tags": _TAGS_FILTER,
+    },
+    "description": (
+        "Only read what these documents say: the search_documents filters"
+        " (family, authors, recipients, created/modified ranges, language,"
+        " thread_ref, doc_ids) and tags. Call list_tags before filtering by"
+        " tag; an unknown tag is unknown_tag."
+    ),
+}
+
 _SEARCH_DOCUMENTS_TIME_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
     "default": {"mode": "current"},
@@ -460,33 +514,7 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "items": {"type": "string", "minLength": 1},
             "description": "Only these documents (UUIDs).",
         },
-        "tags": {
-            "type": "object",
-            "additionalProperties": False,
-            "minProperties": 1,
-            "properties": {
-                key: {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": TAG_REF_MAX_LEN,
-                    },
-                    "maxItems": TAG_FILTER_LIST_MAX,
-                    "uniqueItems": True,
-                    "description": description,
-                }
-                for key, description in (
-                    ("all", "The document has every one of these tags."),
-                    ("any", "The document has at least one of these tags."),
-                    ("none", "The document has none of these tags."),
-                )
-            },
-            "description": (
-                "Registered tags (name or tag_id; call list_tags first)."
-                " Lists combine with AND; an unknown tag is unknown_tag."
-            ),
-        },
+        "tags": _TAGS_FILTER,
         "versions": {
             "type": "string",
             "enum": ["current", "all"],
@@ -1075,11 +1103,16 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
     ),
     ToolDefinition(
         name="claims_and_sources_context",
-        description="High-recall current claims and confirmed source passages.",
+        description=(
+            "High-recall current claims and confirmed source passages. documents"
+            " limits both to what matching documents say; call list_tags before"
+            " filtering by tag."
+        ),
         input_schema=_object_schema(
             properties={
                 "query": _QUERY,
                 "entity_ids": _ENTITY_IDS,
+                "documents": _DOCUMENTS_FILTER,
                 "k": _CONTEXT_K,
                 "candidate_k": _CONTEXT_CANDIDATE_K,
                 "time": _TIME_SCHEMA,
@@ -1087,7 +1120,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=4,
+        tool_version=5,
         http_route="POST /operations/claims_and_sources_context",
     ),
     ToolDefinition(
@@ -1095,7 +1128,10 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=(
             "Adjudicated relations and observations under an explicit world-time"
             " scope, with bounded live-graph expansion for current or point-in-time"
-            " entity anchors."
+            " entity anchors. documents keeps facts supported by matching"
+            " documents; their contradictions and competing facts from other"
+            " documents stay in the answer, marked in_documents_filter=false."
+            " Call list_tags before filtering by tag."
         ),
         input_schema=_object_schema(
             properties={
@@ -1111,19 +1147,21 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
                 },
                 "hops": _HOPS,
                 "predicate": _PREDICATE,
+                "documents": _DOCUMENTS_FILTER,
                 "time": _TIME_SCHEMA,
             },
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=4,
+        tool_version=5,
         http_route="POST /operations/facts_context",
     ),
     ToolDefinition(
         name="combined_context",
         description=(
             "Complete claims-and-sources and neighborhood-aware fact responses side by side"
-            " in ContextBundle/v2."
+            " in ContextBundle/v2. documents applies to both; call list_tags"
+            " before filtering by tag."
         ),
         input_schema=_object_schema(
             properties={
@@ -1133,12 +1171,13 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
                 "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
                 "hops": _HOPS,
                 "predicate": _PREDICATE,
+                "documents": _DOCUMENTS_FILTER,
                 "time": _TIME_SCHEMA,
             },
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=5,
+        tool_version=6,
         http_route="POST /operations/combined_context",
     ),
     ToolDefinition(

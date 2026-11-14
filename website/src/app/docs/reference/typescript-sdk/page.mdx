@@ -209,9 +209,13 @@ status 404. `updateDocumentTags({ docId, add, remove })` or
 `updateDocumentTags({ docId, set })` changes one document's tags in one step
 (`set: []` removes every tag) and returns its tags afterwards. `ingest`
 takes `tags`, an array of tag names or ids added to the document.
-`searchDocuments` takes `filters.tags`, and `searchClaims` / `searchChunks`
-take `documents.tags`: `{ all: [...], any: [...], none: [...] }` of tag
+`searchDocuments` takes `filters.tags`, and `searchClaims`, `searchChunks`,
+`factsContext`, `claimsAndSourcesContext` and `combinedContext` take
+`documents.tags`: `{ all: [...], any: [...], none: [...] }` of tag
 names or ids; a tag that is not registered is refused with `unknown_tag`.
+On `factsContext`, contradicting evidence from non-matching documents stays
+in the answer, marked `in_documents_filter: false`; see
+[The documents filter](/docs/reference/assured-operations#the-documents-filter).
 What tags are: [Tag documents](/docs/guides/tag-documents).
 
 ### Version history and references

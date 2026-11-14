@@ -101,6 +101,7 @@ src/tests/surfaces/test_cost_export_contract.py
 src/tests/surfaces/test_document_deletion_clients.py
 src/tests/surfaces/test_document_search_clients.py
 src/tests/surfaces/test_document_tags_surfaces.py
+src/tests/surfaces/test_document_tag_context_surfaces.py
 src/tests/surfaces/test_document_deletion_http.py
 src/tests/surfaces/test_document_inventory_http.py
 src/tests/surfaces/test_forget_admission.py

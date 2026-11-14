@@ -14,9 +14,9 @@ four:
 | Operation | Version | Answers from | Result | Grain |
 |---|---|---|---|---|
 | [`resolve_entity`](#resolve_entity) | 1 | identity | `Envelope` | `fact` |
-| [`claims_and_sources_context`](#claims_and_sources_context) | 4 | what sources said | `Envelope` | `evidence` |
-| [`facts_context`](#facts_context) | 4 | what is held true | `Envelope` | `fact` |
-| [`combined_context`](#combined_context) | 5 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
+| [`claims_and_sources_context`](#claims_and_sources_context) | 5 | what sources said | `Envelope` | `evidence` |
+| [`facts_context`](#facts_context) | 5 | what is held true | `Envelope` | `fact` |
+| [`combined_context`](#combined_context) | 6 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
 
 None of them calls a language model. `claims_and_sources_context`,
 `facts_context` and `combined_context` embed the query text to search by
@@ -57,6 +57,7 @@ before anything runs:
   `true` and `"3"` are not);
 - `entity_ids` must be an array of UUID strings with no duplicates, and at
   least one item if present;
+- `documents` must be a [documents filter](#the-documents-filter) object;
 - lengths, item counts and ranges below are enforced.
 
 A refused argument is HTTP `422` with
@@ -121,6 +122,74 @@ The two conditions are independent. If a claim says something holds "from
 2025" but it occurs only in an edition in force from 2026, a `current` read
 in mid-2025 does not return the fact, and an `at` read in February 2026 does.
 
+## The documents filter
+
+`claims_and_sources_context`, `facts_context` and `combined_context` take an
+optional `documents` object that limits the read to certain documents. It is
+the same filter claim and chunk search take
+([Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents)):
+`family`, `authors`, `recipients`, `created_from`, `created_to`,
+`modified_from`, `modified_to`, `language`, `thread_ref`, `doc_ids` and
+`tags`. Every field given must hold.
+
+```json
+{"query": "worker restart interval",
+ "documents": {"tags": {"all": ["project:autoboard"]}}}
+```
+
+`tags` has three lists of tag names (any letter case) or ids: `all` (the
+document carries every one), `any` (at least one) and `none` (none of them).
+Call `GET /tags` (MCP `list_tags`) to see which tags exist. Every tag named
+must be registered; otherwise the call is refused with `422`
+`{"code": "unknown_tag", "tags": [...]}` before anything is searched. An
+object with an unknown field, an empty or repeated `tags` list, or a malformed
+date or id is `422` `invalid_parameter`. See
+[Tag documents](/docs/guides/tag-documents).
+
+What the filter keeps, before the `k` best are chosen:
+
+| Grain | Kept when |
+|---|---|
+| Chunk | its document version is live and matches |
+| Claim | it occurs in a live version of a matching document |
+| Fact | at least one live claim supporting it comes from a matching document |
+
+With a `time` object as well, the filter and the time scope must hold on the
+same occurrence: a fact whose only tagged support is out of force, and whose
+in-force support comes from an untagged document, is not returned. With
+`entity_ids` as well, an item must be about one of the entities **and** come
+from a matching document. `resolve_entity` takes no filter: a name resolves
+the same way whatever the question's scope.
+
+The filter only chooses what is read. A fact's value, validity, support and
+contradiction status are the same as in an unfiltered read, and so is its
+evidence count. What changes is which evidence comes back:
+
+- **Supporting evidence** comes only from matching documents.
+- **Contradicting evidence** comes from every document, matching documents
+  first within the same evidence budget. Each `fact_evidence` entry says
+  whether its claim's document matches, in `in_documents_filter`.
+- **Competing facts** in the fact's `contradiction.co_members` are returned
+  even when no matching document supports them, each marked
+  `in_documents_filter`.
+- **Totals** stay deployment-wide: each `evidence_totals` entry keeps
+  `total` (distinct documents supporting or contradicting the fact anywhere)
+  and adds `in_documents_filter_total`, how many of them match.
+
+So a read filtered to `project:autoboard` returns the fact "worker runs
+restart after 12 hours" with its Autoboard support, and also the Legalit note
+that says 6 hours, as contradicting evidence marked
+`"in_documents_filter": false`, with the 6-hour fact as a co-member. An
+agent working on Autoboard learns, in the same answer, that another part of
+the memory disagrees. `claims_and_sources_context` is testimony, so its
+claims and chunks all come from matching documents.
+
+These fields appear only on a filtered read; an unfiltered response has
+none of them. When a filtered read finds nothing, its `known_empty`
+explanation ends with `no live document matches the documents filter` or
+`live documents match the documents filter, but none of them says anything
+relevant`. A read that stopped early is a `boundary`, as without a filter.
+
 ## resolve_entity
 
 Resolve a name to the current entities it can mean, ranked, without guessing.
@@ -176,7 +245,7 @@ Return what the sources said about a query: claims and the source passages
 around them, with high recall. This is testimony, not the memory's settled
 view.
 
-**Version** 4. **Answer intent** `claims_and_sources`. **Result contract**
+**Version** 5. **Answer intent** `claims_and_sources`. **Result contract**
 `envelope`, grain `evidence`. **Plan** one step: `claims_and_sources_context`.
 
 ### Parameters
@@ -187,6 +256,7 @@ view.
 | `entity_ids` | array of UUID | no | none | 1 to 20 unique ids. Restricts the search to claims and chunks about these entities. |
 | `k` | integer | no | `50` | 1 to 100. The most claims, and separately the most chunks, returned. |
 | `candidate_k` | integer | no | `max(4*k, 60)` | 1 to 400, and at least `k`. How many candidates each search channel nominates. |
+| `documents` | object | no | none | Only what matching documents say. See [The documents filter](#the-documents-filter). |
 | `time` | object | no | `{"mode": "current"}` | Which versions of documents with declared effective periods are read. See [The time object](#the-time-object). |
 
 ### What it does
@@ -237,7 +307,7 @@ Return the facts the memory holds true — relations and observations it has
 adjudicated — for a query, under an explicit time scope, each with its
 supporting and contradicting evidence.
 
-**Version** 4. **Answer intent** `facts`. **Result contract** `envelope`,
+**Version** 5. **Answer intent** `facts`. **Result contract** `envelope`,
 grain `fact`. **Plan** two steps: `graph_neighborhood`, then `facts_context`.
 
 ### Parameters
@@ -251,6 +321,7 @@ grain `fact`. **Plan** two steps: `graph_neighborhood`, then `facts_context`.
 | `evidence_per_fact` | integer | no | `3` | 1 to 5. The most claims returned per fact and per stance (supporting, contradicting). |
 | `hops` | integer | no | `1` | 1 to 2. How far the live graph expands from each anchor. |
 | `predicate` | string | no | none | 1 to 200 characters. Only relations with this predicate are expanded and returned. |
+| `documents` | object | no | none | Only facts supported by matching documents; contradictions from every document stay. See [The documents filter](#the-documents-filter). |
 | `time` | object | no | `{"mode": "current"}` | See [The time object](#the-time-object). |
 
 ### What it does
@@ -287,8 +358,8 @@ graph or search index cannot answer, the result is `negative.kind`
 |---|---|
 | `facts` | Up to `k` [`FactResult`](/docs/reference/result-types#factresult) entries: `kind` (`relation` or `observation`), `label`, `validity`, `temporal_match`, `support`, and the other sides of any contradiction. |
 | `evidence` | The claims attached to those facts, each once. |
-| `fact_evidence` | Which claim supports or contradicts which fact (`stance`). |
-| `evidence_totals` | For each fact and each stance, how many claims were `returned` and how many exist in `total`. |
+| `fact_evidence` | Which claim supports or contradicts which fact (`stance`); with `documents`, also `in_documents_filter`. |
+| `evidence_totals` | For each fact and each stance, how many claims were `returned` and how many documents back it in `total`; with `documents`, also `in_documents_filter_total`. |
 | `nodes` | The neighbours the graph expansion added, when `entity_ids` were given. |
 | `temporal_scope` | The time mode used, with `evaluated_at` and `believed_at`. |
 | `truncation` | Whether more facts (or neighbours) existed. |
@@ -381,7 +452,7 @@ envelope = memory.facts_context(
 Return `claims_and_sources_context` and `facts_context` for the same query in
 one response, side by side and never blended.
 
-**Version** 5. **Answer intent** `combined_context`. **Result contract**
+**Version** 6. **Answer intent** `combined_context`. **Result contract**
 `context_bundle_v2`; no single grain. **Plan** an operation bundle whose
 children are `claims_and_sources_context` then `facts_context`; its
 `implementation_plan_hash` covers both children's plan hashes.
@@ -396,6 +467,7 @@ children are `claims_and_sources_context` then `facts_context`; its
 | `candidate_k` | integer | no | `max(4*k, 60)` | 1 to 400, and at least `k`; passed to both children. |
 | `hops` | integer | no | `1` | 1 to 2. Passed to `facts_context`. |
 | `predicate` | string | no | none | 1 to 200 characters. Passed to `facts_context`. |
+| `documents` | object | no | none | Passed unchanged to both children. See [The documents filter](#the-documents-filter). |
 | `time` | object | no | `{"mode": "current"}` | Passed to both children. |
 
 Both children use the requested `k` and `candidate_k` at the same evaluation
@@ -442,9 +514,9 @@ per operation. The values that identify the shipped build:
 | Operation | `version` | `result_contract` | `output_grain` | `answer_intent` | `implementation_plan_hash` |
 |---|---|---|---|---|---|
 | `resolve_entity` | 1 | `envelope` | `fact` | `identity` | `fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a` |
-| `claims_and_sources_context` | 4 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
-| `facts_context` | 4 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
-| `combined_context` | 5 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
+| `claims_and_sources_context` | 5 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
+| `facts_context` | 5 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
+| `combined_context` | 6 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
 
 The hashes are those recorded in the `memory_v1` manifest for this release.
 The registry refuses any stored operation that does not match its canonical

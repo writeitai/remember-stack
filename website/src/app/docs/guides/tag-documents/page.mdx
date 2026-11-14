@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Tag documents",
-  description: "Register tags such as project:billing-migration, assign them to documents at ingest or later, filter search and search_documents by them, rename and delete them, and find tags in document lists, search results and SQL queries.",
+  description: "Register tags such as project:billing-migration, assign them to documents at ingest or later, filter search, search_documents and the context operations by them, rename and delete them, and find tags in document lists, search results and SQL queries.",
 };
 
 # Tag documents
@@ -17,17 +17,8 @@ and the agents she works with can see it at a glance.
 Tags do that. A tag is a name, such as `project:billing-migration`, with a
 description of what it means. You register a tag once, then assign it to the
 documents it applies to. A document can carry several tags. This guide shows
-how to register, assign, change and remove tags, how to search only the
-documents that carry them, and where they show up.
-
-<Callout type="note">
-
-Claim and chunk search and `search_documents` filter by tag. The assured
-operations (`claims_and_sources_context`, `facts_context`,
-`combined_context`) do not take a document filter yet. See
-[What is not built yet](/docs/project/not-built-yet#documents).
-
-</Callout>
+how to register, assign, change and remove tags, how to search and ask
+about only the documents that carry them, and where they show up.
 
 <Cloud>
 
@@ -229,6 +220,52 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
 Tags only choose which documents a search reads. They never change what the
 memory extracted or believes.
 
+## Ask about one project
+
+The context operations an agent uses most, `facts_context`,
+`claims_and_sources_context` and `combined_context`, take the same filter as
+`documents`. Dana's agent, working on the billing migration, asks only what
+that project's documents say:
+
+```python
+billing = {"tags": {"all": ["project:billing-migration"]}}
+facts = memory.facts_context("When is the invoice cutover?", documents=billing)
+said = memory.claims_and_sources_context("invoice cutover", documents=billing)
+both = memory.combined_context("invoice cutover risks", documents=billing)
+```
+
+```bash
+remember query "When is the invoice cutover?" --tag project:billing-migration
+```
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/operations/facts_context" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "When is the invoice cutover?",
+       "documents": {"tags": {"all": ["project:billing-migration"]}}}'
+```
+
+- `claims_and_sources_context` returns only claims and passages from
+  tagged documents: what those documents said.
+- `facts_context` returns the facts the tagged documents support, and their
+  supporting evidence comes only from those documents. The memory's answer
+  is not narrowed, though: if the support team's notes say the cutover is a
+  week later, that note comes back as contradicting evidence marked
+  `"in_documents_filter": false`, and the competing fact comes back in the
+  fact's contradiction, marked the same way. Each `evidence_totals` entry
+  keeps its count across all documents and adds `in_documents_filter_total`.
+  A filtered answer never looks more certain than the memory is.
+- A fact's value, validity and support are the memory's, the same as in an
+  unfiltered read.
+- With `entity_ids` as well, a result must be about one of those entities
+  and come from a tagged document.
+
+Agents connected over MCP get the same `documents` argument on the three
+tools; their descriptions tell them to call `list_tags` first. The whole
+contract is in
+[The documents filter](/docs/reference/assured-operations#the-documents-filter).
+
 ## Rename, re-describe or delete a tag
 
 ```python
@@ -273,8 +310,9 @@ the name and look the id up.
   ```
 
 - **MCP.** Agents get the tools `list_tags`, `create_tag`, `update_tag`,
-  `delete_tag` and `update_document_tags`; `ingest` takes `tags`, and
-  `search_documents` takes a `tags` filter. See
+  `delete_tag` and `update_document_tags`; `ingest` takes `tags`,
+  `search_documents` takes a `tags` filter, and the three context tools take
+  `documents`. See
   [MCP tools](/docs/reference/mcp#tag-tools).
 
 ## Tags and deleted documents

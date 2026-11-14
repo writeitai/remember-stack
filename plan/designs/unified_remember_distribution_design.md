@@ -63,7 +63,7 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 │  - Python SDK: `from remember import RememberClient`                         │
 │  - Platform CLI: `remember` (setup, login, balance, projects, ingest, query)  │
 │  - MCP Adapter: `remember mcp` (stdio & Streamable HTTP)                     │
-│  - Dependencies: `httpx>=0.28.1`, `pydantic>=2.11`, `pydantic-settings>=2.10` (zero server dependencies)│
+│  - Dependencies: `httpx>=0.28.1`, `pydantic>=2.12`, `pydantic-settings>=2.10` (zero server dependencies)│
 │  - Install footprint: < 2 MB, sub-second installation                        │
 └──────────────────────────────────────────────────────────────────────────────┘
                                      │
