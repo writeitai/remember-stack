@@ -4657,8 +4657,9 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
 ```
 
 - The lists combine with AND, and `tags` combines with the other document
-  filters with AND, so `family: ["email"]` plus `tags: {"all":
-  ["project:billing-migration"]}` finds the billing migration's emails.
+  filters with AND, so `family: ["email"]` plus
+  `tags: {"all": ["project:billing-migration"]}` finds the billing
+  migration's emails.
 - A document without tags passes a `none` list and fails `all` and `any`.
 - A tag that is not registered refuses the whole search with `422`
   `unknown_tag`, naming every one, so a typo never looks like an empty
@@ -10988,9 +10989,9 @@ tag names (any letter case) or `tag_id`s:
 
 Give at least one non-empty list. A list may hold up to 32 tags and may not
 name a tag twice. The lists combine with AND, and `tags` combines with the
-other filters with AND: `{"family": ["email"], "tags": {"all":
-["project:billing-migration"], "none": ["kind:draft"]}}` finds billing
-migration emails that are not tagged as drafts. A document with no tags
+other filters with AND:
+`{"family": ["email"], "tags": {"all": ["project:billing-migration"], "none": ["kind:draft"]}}`
+finds billing migration emails that are not tagged as drafts. A document with no tags
 matches a `none` list and fails `all` and `any`. Tags belong to the document,
 not to a version, so with `versions: all` or a past `time` every version is
 tested against the document's current tags. Any tag that is not registered

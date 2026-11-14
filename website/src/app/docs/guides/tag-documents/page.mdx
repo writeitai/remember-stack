@@ -209,8 +209,9 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
 ```
 
 - The lists combine with AND, and `tags` combines with the other document
-  filters with AND, so `family: ["email"]` plus `tags: {"all":
-  ["project:billing-migration"]}` finds the billing migration's emails.
+  filters with AND, so `family: ["email"]` plus
+  `tags: {"all": ["project:billing-migration"]}` finds the billing
+  migration's emails.
 - A document without tags passes a `none` list and fails `all` and `any`.
 - A tag that is not registered refuses the whole search with `422`
   `unknown_tag`, naming every one, so a typo never looks like an empty
