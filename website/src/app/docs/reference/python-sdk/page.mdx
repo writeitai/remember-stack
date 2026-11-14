@@ -72,6 +72,7 @@ The client is synchronous. There is no async client yet
 | `DocumentSearchRequest` | model | [Models](#models) |
 | `DocumentSearchResult` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
+| `DocumentTagFilter` | model | [Models](#models) |
 | `DocumentTags` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `EffectiveInterval` | model | [Models](#models) |
@@ -621,13 +622,17 @@ and their text, and returns a
 `filters` is a
 [`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters)
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
-`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
-and `doc_ids`. With a `query` the results are ranked and not paged; without
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`,
+`doc_ids` and `tags`, a
+[`DocumentTagFilter`](/docs/reference/result-types#documenttagfilter)
+(`all`, `any`, `none`) of tag names or ids. With a `query` the results are ranked and not paged; without
 one they are newest ingested first and `limit` (default 50) / `cursor` pages them.
 Read `next_cursor` for continuation; ranked responses disclose `truncated`. Passing `cursor` with a
-`query`, a date without a timezone, or `k` / `limit` outside 1 to 200 raises
-`pydantic.ValidationError` before any request. A malformed cursor raises
-`MemoryApiError` with `status_code` 400. `time` decides which editions of a
+`query`, a date without a timezone, `k` / `limit` outside 1 to 200, or an
+empty or repeating tag list raises `pydantic.ValidationError` before any
+request. A malformed cursor raises `MemoryApiError` with `status_code` 400; a
+tag that is not registered raises `remember.UnknownTag`, whose `tags` lists
+every one. `time` decides which editions of a
 document with declared effective periods are candidates (default: the ones
 in force now); it takes the same values as in [`search_chunks`](#search_chunks).
 What matches, and how, is in
@@ -651,6 +656,14 @@ emails = memory.search_documents(
 )
 if len(emails.people_matched) > 1:
     print("several people matched:", emails.people_matched)
+
+from remember import DocumentTagFilter
+
+decisions = memory.search_documents(
+    filters=DocumentSearchFilters(
+        tags=DocumentTagFilter(all=("kind:decision",), none=("project:ci-smoke",))
+    )
+)
 ```
 
 #### `delete_document`
@@ -1170,8 +1183,9 @@ Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
 `documents` keeps only claims found in matching document versions (each still
 cites the passage it was first extracted from), with the same fields
-as [`search_documents`](#search_documents); a filtered search is sent as
-`POST /search/claims`. `time` reads only text in force for the scope; a
+as [`search_documents`](#search_documents), tags included; a filtered search
+is sent as `POST /search/claims`. A tag that is not registered raises
+`remember.UnknownTag`. `time` reads only text in force for the scope; a
 search with `time` is sent as `POST` too. See
 [Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents)
 and [Reading text as of a date](/docs/reference/http-api/search#reading-text-as-of-a-date).

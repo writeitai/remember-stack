@@ -319,6 +319,7 @@ Alice") rather than asking about its content.
 | `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
 | `language`, `thread_ref` | string | no | Exact match. |
 | `doc_ids` | array of strings | no | Document UUIDs. |
+| `tags` | object | no | `{"all": [...], "any": [...], "none": [...]}`: tag names or ids the document carries (every one), carries at least one of, or carries none of. At least one non-empty list; up to 32 tags each, none twice. An unregistered tag is `unknown_tag`. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
 | `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
 | `k` | integer | no | Ranked results with `query`: 1–200; default 20. |

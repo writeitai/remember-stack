@@ -4478,14 +4478,15 @@ and the agents she works with can see it at a glance.
 Tags do that. A tag is a name, such as `project:billing-migration`, with a
 description of what it means. You register a tag once, then assign it to the
 documents it applies to. A document can carry several tags. This guide shows
-how to register, assign, change and remove tags, and where they show up.
+how to register, assign, change and remove tags, how to search only the
+documents that carry them, and where they show up.
 
 **Note:**
 
-Reads cannot be filtered by tag yet: search, `search_documents` and the
-assured operations return the same results whatever tags documents carry.
-Today you can assign tags, read them back, and join on them in SQL queries.
-See [What is not built yet](https://remember.dev/docs/project/not-built-yet#documents).
+Claim and chunk search and `search_documents` filter by tag. The assured
+operations (`claims_and_sources_context`, `facts_context`,
+`combined_context`) do not take a document filter yet. See
+[What is not built yet](https://remember.dev/docs/project/not-built-yet#documents).
 
 Setup is in the [Quickstart](https://remember.dev/docs/start/quickstart). The routes are in
 [Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest#get-tags).
@@ -4616,6 +4617,65 @@ To retag many documents, find them with
 [`search_documents`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch)
 and update each one; there is no bulk retag.
 
+## Search only tagged documents
+
+Claim search, chunk search and `search_documents` take a `tags` selector in
+their document filter: `documents` on
+[`POST /search/claims` and `POST /search/chunks`](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents),
+`filters` on
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+It has three lists, each of tag names (any letter case) or ids:
+
+| List | Keeps a document that carries |
+|---|---|
+| `all` | every listed tag |
+| `any` | at least one listed tag |
+| `none` | none of the listed tags |
+
+```python
+from remember import DocumentSearchFilters, DocumentTagFilter
+
+billing = DocumentSearchFilters(tags=DocumentTagFilter(all=("project:billing-migration",)))
+claims = memory.search_claims(query="invoice cutover date", documents=billing)
+
+decided = memory.search_documents(
+    filters=DocumentSearchFilters(
+        tags=DocumentTagFilter(all=("kind:decision",), any=("project:billing", "project:support"))
+    )
+)
+```
+
+```bash
+remember documents search --tag kind:decision --not-tag kind:draft
+```
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "invoice cutover", "documents": {"tags": {"none": ["kind:draft"]}}}'
+```
+
+- The lists combine with AND, and `tags` combines with the other document
+  filters with AND, so `family: ["email"]` plus `tags: {"all":
+  ["project:billing-migration"]}` finds the billing migration's emails.
+- A document without tags passes a `none` list and fails `all` and `any`.
+- A tag that is not registered refuses the whole search with `422`
+  `unknown_tag`, naming every one, so a typo never looks like an empty
+  answer. Give at least one non-empty list; a list holds up to 32 tags and
+  may not name a tag twice.
+- A document's tags apply to all its versions. A search with a past
+  `time` reads the editions in force then, chosen by the tags the
+  document carries now.
+- The filter is applied while ranking, so `k: 10` returns up to ten results
+  from tagged documents even when untagged documents score higher.
+- When a filtered search finds nothing, its explanation says whether no
+  live document carries the tags or the tagged documents say nothing
+  relevant to the query.
+
+Tags only choose which documents a search reads. They never change what the
+memory extracted or believes.
+
 ## Rename, re-describe or delete a tag
 
 ```python
@@ -4660,7 +4720,8 @@ the name and look the id up.
   ```
 
 - **MCP.** Agents get the tools `list_tags`, `create_tag`, `update_tag`,
-  `delete_tag` and `update_document_tags`, and `ingest` takes `tags`. See
+  `delete_tag` and `update_document_tags`; `ingest` takes `tags`, and
+  `search_documents` takes a `tags` filter. See
   [MCP tools](https://remember.dev/docs/reference/mcp#tag-tools).
 
 ## Tags and deleted documents
@@ -10912,8 +10973,29 @@ A [`DocumentSearchRequest`](https://remember.dev/docs/reference/result-types#doc
 | `language` | string | Exact match. |
 | `thread_ref` | string | The conversation or thread key, exact match. |
 | `doc_ids` | array of UUIDs | Only these documents. |
+| `tags` | object | The document's [tags](#get-tags): `{"all": [...], "any": [...], "none": [...]}`. See below. |
 
 Unknown fields are rejected (`422`).
+
+`filters.tags` selects documents by the tags they carry now. Each list holds
+tag names (any letter case) or `tag_id`s:
+
+| Field | Matches a document that carries |
+|---|---|
+| `all` | every listed tag |
+| `any` | at least one listed tag |
+| `none` | none of the listed tags |
+
+Give at least one non-empty list. A list may hold up to 32 tags and may not
+name a tag twice. The lists combine with AND, and `tags` combines with the
+other filters with AND: `{"family": ["email"], "tags": {"all":
+["project:billing-migration"], "none": ["kind:draft"]}}` finds billing
+migration emails that are not tagged as drafts. A document with no tags
+matches a `none` list and fails `all` and `any`. Tags belong to the document,
+not to a version, so with `versions: all` or a past `time` every version is
+tested against the document's current tags. Any tag that is not registered
+refuses the whole search with `422` `unknown_tag`, naming every one, before
+anything is searched.
 
 ### What matches
 
@@ -11052,14 +11134,15 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
 ```
 
 Each result's `tags` holds the names of the document's [tags](#get-tags),
-as in `GET /documents`. Search does not filter by tags yet.
+as in `GET /documents`.
 
 ### Errors
 
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | `cursor is malformed` | The cursor does not parse. |
-| `422` | validation list | An unknown field, `k` out of range, a date without a timezone, or `cursor` together with `query`. |
+| `422` | validation list | An unknown field, `k` out of range, a date without a timezone, `cursor` together with `query`, or an empty, repeating or too long `filters.tags` list. |
+| `422` | `{"code": "unknown_tag", "message": …, "tags": [...]}` | `filters.tags` names tags that are not registered; `tags` lists every one. |
 
 ### Example
 
@@ -11080,7 +11163,8 @@ for result in page.documents:
 ```
 
 `remember documents search "q3 sales" --family spreadsheet` prints the same page
-as JSON.
+as JSON. `--tag T` (all), `--any-tag T` and `--not-tag T`, each repeatable,
+fill `filters.tags`.
 
 ## DELETE /documents/{doc_id}
 
@@ -12631,8 +12715,10 @@ A search that finds nothing returns `200` with `negative.kind` `known_empty`.
 The `POST` forms accept a `documents` filter with the same fields as
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch):
 `family`, `authors`, `recipients`, `created_from`/`created_to`,
-`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. The
-filter decides which results are included:
+`modified_from`/`modified_to`, `language`, `thread_ref`, `doc_ids` and
+`tags` (`{"all": [...], "any": [...], "none": [...]}`, the document's
+[tags](https://remember.dev/docs/guides/tag-documents)). The filter decides which results are
+included:
 
 - **chunks** match when the chunk's document version matches;
 - **claims** match when at least one place the claim occurs is in a matching
@@ -12647,6 +12733,24 @@ Deleted documents and deleted versions never match. The filter is applied
 while ranking, before the `k` best are chosen, so asking for `k: 10` returns
 up to ten matching results even when better-scoring results from other
 documents exist.
+
+`tags` is tested on the document, not on a version: every version of a
+document carries its current tags, also when `time` reads an older edition.
+A tag that is not registered refuses the search with `422` `unknown_tag`,
+naming every unregistered tag (the Python client raises
+`remember.UnknownTag`); nothing is searched.
+
+With a `time` scope, the filter and the scope must hold for the same
+version. A claim that occurs in two versions of a document with declared
+effective periods is returned only through a version that both matches the
+filter and is in force for the scope, never by combining one version that
+matches with another that is in force.
+
+When a filtered search completes and finds nothing, `negative.explanation`
+says which case it was: no live document matches the filter, or matching
+documents exist but none of them says anything relevant to the query. A
+search stopped by its work bound reports `negative.kind` `boundary`
+instead, whatever the filter matched.
 
 For "everything about Project X from emails from Alice": find the right
 Alice with `POST /documents/search` and `filters.authors`; if several people
@@ -12764,8 +12868,11 @@ As for [`GET /search/claims`](#get-searchclaims).
 ### Errors
 
 As for `GET /search/claims`, plus `422` for an empty or over-long `query`,
-an unknown field, or a malformed `time` (an unknown mode, a missing instant,
-an instant without a time zone, or `to` before `from`).
+an unknown field, a malformed `time` (an unknown mode, a missing instant,
+an instant without a time zone, or `to` before `from`), an empty, repeating
+or too long `documents.tags` list, or `422`
+`{"code": "unknown_tag", "message": …, "tags": [...]}` when
+`documents.tags` names tags that are not registered.
 
 ### Example
 
@@ -15047,6 +15154,19 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `language` | string, nullable | | |
 | `thread_ref` | string, nullable | | |
 | `doc_ids` | array of UUIDs | `[]` | |
+| `tags` | [`DocumentTagFilter`](#documenttagfilter), nullable | | The document's current tags. |
+
+### DocumentTagFilter
+
+Tags given by name (any letter case) or `tag_id`. Give at least one
+non-empty list; each holds up to 32 tags and none twice. Every list given
+must hold. A tag that is not registered refuses the read with `unknown_tag`.
+
+| Field | Type | Default | Contents |
+|---|---|---|---|
+| `all` | array of strings | `[]` | The document carries every listed tag. |
+| `any` | array of strings | `[]` | The document carries at least one listed tag. |
+| `none` | array of strings | `[]` | The document carries none of the listed tags. |
 
 ### DocumentSearchPage
 
@@ -16999,6 +17119,7 @@ The client is synchronous. There is no async client yet
 | `DocumentSearchRequest` | model | [Models](#models) |
 | `DocumentSearchResult` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
+| `DocumentTagFilter` | model | [Models](#models) |
 | `DocumentTags` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `EffectiveInterval` | model | [Models](#models) |
@@ -17477,13 +17598,17 @@ and their text, and returns a
 `filters` is a
 [`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters)
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
-`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
-and `doc_ids`. With a `query` the results are ranked and not paged; without
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`,
+`doc_ids` and `tags`, a
+[`DocumentTagFilter`](https://remember.dev/docs/reference/result-types#documenttagfilter)
+(`all`, `any`, `none`) of tag names or ids. With a `query` the results are ranked and not paged; without
 one they are newest ingested first and `limit` (default 50) / `cursor` pages them.
 Read `next_cursor` for continuation; ranked responses disclose `truncated`. Passing `cursor` with a
-`query`, a date without a timezone, or `k` / `limit` outside 1 to 200 raises
-`pydantic.ValidationError` before any request. A malformed cursor raises
-`MemoryApiError` with `status_code` 400. `time` decides which editions of a
+`query`, a date without a timezone, `k` / `limit` outside 1 to 200, or an
+empty or repeating tag list raises `pydantic.ValidationError` before any
+request. A malformed cursor raises `MemoryApiError` with `status_code` 400; a
+tag that is not registered raises `remember.UnknownTag`, whose `tags` lists
+every one. `time` decides which editions of a
 document with declared effective periods are candidates (default: the ones
 in force now); it takes the same values as in [`search_chunks`](#search_chunks).
 What matches, and how, is in
@@ -17507,6 +17632,14 @@ emails = memory.search_documents(
 )
 if len(emails.people_matched) > 1:
     print("several people matched:", emails.people_matched)
+
+from remember import DocumentTagFilter
+
+decisions = memory.search_documents(
+    filters=DocumentSearchFilters(
+        tags=DocumentTagFilter(all=("kind:decision",), none=("project:ci-smoke",))
+    )
+)
 ```
 
 #### `delete_document`
@@ -18023,8 +18156,9 @@ Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
 `documents` keeps only claims found in matching document versions (each still
 cites the passage it was first extracted from), with the same fields
-as [`search_documents`](#search_documents); a filtered search is sent as
-`POST /search/claims`. `time` reads only text in force for the scope; a
+as [`search_documents`](#search_documents), tags included; a filtered search
+is sent as `POST /search/claims`. A tag that is not registered raises
+`remember.UnknownTag`. `time` reads only text in force for the scope; a
 search with `time` is sent as `POST` too. See
 [Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents)
 and [Reading text as of a date](https://remember.dev/docs/reference/http-api/search#reading-text-as-of-a-date).
@@ -18615,7 +18749,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -18661,8 +18795,11 @@ up with `listTags`, and one that is not registered raises `UnknownTag` with
 status 404. `updateDocumentTags({ docId, add, remove })` or
 `updateDocumentTags({ docId, set })` changes one document's tags in one step
 (`set: []` removes every tag) and returns its tags afterwards. `ingest`
-takes `tags`, an array of tag names or ids added to the document. What tags
-are: [Tag documents](https://remember.dev/docs/guides/tag-documents).
+takes `tags`, an array of tag names or ids added to the document.
+`searchDocuments` takes `filters.tags`, and `searchClaims` / `searchChunks`
+take `documents.tags`: `{ all: [...], any: [...], none: [...] }` of tag
+names or ids; a tag that is not registered is refused with `unknown_tag`.
+What tags are: [Tag documents](https://remember.dev/docs/guides/tag-documents).
 
 ### Version history and references
 
@@ -19016,6 +19153,7 @@ remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS
                           [--created-from T] [--created-to T]
                           [--modified-from T] [--modified-to T]
                           [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
                           [--versions {current,all}] [--limit N] [--cursor CURSOR]
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
@@ -19038,7 +19176,10 @@ remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.t
 `search` finds documents by name, metadata and text and prints a
 [`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage) as
 JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
-several; any listed value matches. Dates are ISO 8601 with a timezone, for
+several; any listed value matches. `--tag` keeps documents that carry every
+listed tag, `--any-tag` those that carry at least one, and `--not-tag` those
+that carry none; each is repeatable, and a tag that is not registered is an
+error. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
 there is no next page; without one they are newest ingested first and
 `--cursor` reads the next page. `--limit` is 1 to 200 (default 50), used as
@@ -19049,6 +19190,7 @@ with `--cursor` is refused before sending a request. See
 ```bash
 remember documents search "q3 sales" --family spreadsheet | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
 remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
+remember documents search --tag kind:decision --any-tag project:billing --any-tag project:support
 ```
 
 `delete` removes one document, every version of it, from the memory and
@@ -19751,6 +19893,7 @@ Alice") rather than asking about its content.
 | `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
 | `language`, `thread_ref` | string | no | Exact match. |
 | `doc_ids` | array of strings | no | Document UUIDs. |
+| `tags` | object | no | `{"all": [...], "any": [...], "none": [...]}`: tag names or ids the document carries (every one), carries at least one of, or carries none of. At least one non-empty list; up to 32 tags each, none twice. An unregistered tag is `unknown_tag`. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
 | `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
 | `k` | integer | no | Ranked results with `query`: 1–200; default 20. |
@@ -20608,7 +20751,7 @@ their code in `code`. `wait_for_readiness` raises
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. The same message names `effective_from` or `effective_until`. | Send it with `Z`. |
 | `422` | `effective_until requires an earlier effective_from` | Ingest with an end but no start, or an end not after the start. | Send a start, and an end after it. |
 | `422` | `{"code": "effective_time_requires_snapshot", …}` | An effective period for a `living` document. | Periods apply to `snapshot` documents only. |
-| `422` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `POST /ingest` or `POST /documents/{doc_id}/tags` names a tag that is not registered; `tags` lists every one. Nothing was stored or changed. | Register the tag with `POST /tags`, or fix the spelling (check `GET /tags`). |
+| `422` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `POST /ingest` or `POST /documents/{doc_id}/tags` names a tag that is not registered, or a `tags` filter on `POST /documents/search`, `POST /search/claims` or `POST /search/chunks` does; `tags` lists every one. Nothing was stored, changed or searched. | Register the tag with `POST /tags`, or fix the spelling (check `GET /tags`). |
 | `422` | `{"code": "invalid_reference_set", "line": …, "message": …}` | A line of a `PUT …/references` body is not a valid reference. Nothing was recorded. | Fix the named line. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
@@ -21814,11 +21957,11 @@ absent from the current release; nothing here has a date.
   others), fact lookups and the SQL query functions do not yet, and there is
   no `documents` filter over MCP because MCP has no claim or chunk search
   tool.
-- **Filtering by tag.** You can register tags, assign them to documents and
-  read them back, but no read filters by them yet: claim and chunk search,
-  `search_documents` and the assured operations return the same results
-  whatever tags documents carry. In SQL queries you can join on
-  `document_tags_live`.
+- **Filtering the assured operations by tag.** Claim and chunk search and
+  `search_documents` filter by tag; `claims_and_sources_context`,
+  `facts_context` and `combined_context` take no document filter, so they
+  read every document whatever tags it carries. In SQL queries you can join
+  on `document_tags_live`.
 - **Metadata from other formats.** Word, PowerPoint, PDF and email files
   give their title, people and dates, and `.xlsx` workbooks their title,
   author and dates; HTML, EPUB and notebooks give only a title, and other

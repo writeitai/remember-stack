@@ -1243,7 +1243,13 @@ def _request_scope_hash(*, request: DocumentSearchRequest, deployment_id: UUID) 
     """Hash of filters, versions and time scope (everything but limit/cursor)."""
     return cursor_scope_hash(
         {
-            "filters": request.filters.model_dump(mode="json", by_alias=True),
+            # An absent D156 ``tags`` stays out of the hash, so a cursor issued
+            # before tags existed keeps paging across the upgrade.
+            "filters": request.filters.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude={"tags"} if request.filters.tags is None else None,
+            ),
             "versions": request.versions,
             "time": None
             if request.time is None

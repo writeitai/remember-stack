@@ -519,6 +519,15 @@ def scenarios() -> list[dict[str, Any]]:
     result.extend(
         [
             {
+                "method": "search_documents",
+                "variant": "tag-filter",
+                "options": {
+                    "filters": {
+                        "tags": {"all": ["project:fixture"], "none": ["kind:draft"]}
+                    }
+                },
+            },
+            {
                 "method": "update_document_tags",
                 "variant": "set-clears",
                 "options": {"doc_id": ID, "set": []},
@@ -1415,6 +1424,8 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
             ("update_document_tags", {"doc_id": "../operations", "add": ["a"]}),
             ("update_document_tags", {"doc_id": ID, "set": ["a"], "add": ["b"]}),
             ("update_document_tags", {"doc_id": ID, "add": "project:fixture"}),
+            ("search_documents", {"filters": {"tags": {}}}),
+            ("search_documents", {"filters": {"tags": {"any": ["a", "A"]}}}),
             (
                 "ingest",
                 {
@@ -1623,8 +1634,11 @@ def tool_fixtures() -> list[dict[str, Any]]:
         ]
     )
     cases.extend(
-        {"name": name, "variant": f"max-rows-{max_rows}",
-         "arguments": {**valid[name], "max_rows": max_rows}}
+        {
+            "name": name,
+            "variant": f"max-rows-{max_rows}",
+            "arguments": {**valid[name], "max_rows": max_rows},
+        }
         for name in ("query_sql", "run_saved_query")
         for max_rows in (1000, 1001)
     )

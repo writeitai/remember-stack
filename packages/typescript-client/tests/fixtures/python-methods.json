@@ -9832,6 +9832,74 @@
       ]
     },
     {
+      "method": "search_documents",
+      "options": {
+        "filters": {
+          "tags": {
+            "all": [
+              "project:fixture"
+            ],
+            "none": [
+              "kind:draft"
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "documents": [],
+          "next_cursor": null,
+          "people_matched": [],
+          "scope_pending": null,
+          "truncated": false
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "documents": [],
+        "next_cursor": null,
+        "people_matched": [],
+        "scope_pending": null,
+        "truncated": false
+      },
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "all": [
+              "project:fixture"
+            ],
+            "none": [
+              "kind:draft"
+            ]
+          }
+        }
+      },
+      "variant": "tag-filter",
+      "wire": [
+        {
+          "body": {
+            "filters": {
+              "tags": {
+                "all": [
+                  "project:fixture"
+                ],
+                "none": [
+                  "kind:draft"
+                ]
+              }
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
       "method": "update_document_tags",
       "options": {
         "doc_id": "10000000-0000-0000-0000-000000000001",
@@ -12764,6 +12832,29 @@
       "typescriptOptions": {
         "add": "project:fixture",
         "docId": "10000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {}
+        }
+      }
+    },
+    {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "any": [
+              "a",
+              "A"
+            ]
+          }
+        }
       }
     },
     {
