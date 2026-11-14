@@ -1547,15 +1547,16 @@ class PostgresP1Index:
         cheaper.
         """
         lineages_sql, _ = live_matching_lineages(filters=documents, prefix="documents_")
+        # Claim-keyed: each claim of a matching lineage probes the evidence
+        # tables through their claim index. ``OFFSET 0`` keeps every step a
+        # per-row lookup; joined directly, the planner hash-joined a whole
+        # (partitioned) evidence table once per lineage (24 s at 90% of 20k).
         branches = [
-            f"SELECT '{kind}'::text AS fact_kind, support.{column}::text AS fact_id"
-            " FROM claims AS supporting"
-            f" JOIN {table} AS support"
-            "   ON support.deployment_id = supporting.deployment_id"
-            "  AND support.claim_id = supporting.claim_id"
-            " WHERE supporting.deployment_id = :deployment_id"
-            "   AND supporting.doc_id = matching.doc_id"
-            "   AND support.stance = 'supports'"
+            f"(SELECT '{kind}'::text AS fact_kind, support.{column}::text AS fact_id"
+            f" FROM {table} AS support"
+            " WHERE support.deployment_id = :deployment_id"
+            "   AND support.claim_id = supporting.claim_id"
+            "   AND support.stance = 'supports' OFFSET 0)"
             for target, table, kind, column in (
                 ("relations", "relation_evidence", "relation", "relation_id"),
                 (
@@ -1572,7 +1573,10 @@ class PostgresP1Index:
         rows = self._engine_rows(
             "WITH supports AS MATERIALIZED ("
             f"SELECT support.fact_kind, support.fact_id FROM ({lineages_sql}) AS matching"
-            f" CROSS JOIN LATERAL ({' UNION ALL '.join(branches)} OFFSET 0) AS support"
+            " CROSS JOIN LATERAL (SELECT claim.claim_id FROM claims AS claim"
+            " WHERE claim.deployment_id = :deployment_id"
+            " AND claim.doc_id = matching.doc_id OFFSET 0) AS supporting"
+            f" CROSS JOIN LATERAL ({' UNION ALL '.join(branches)}) AS support"
             " LIMIT :read_limit)"
             " SELECT keys.fact_kind, keys.fact_id,"
             " (SELECT count(*) FROM supports) AS support_rows"
