@@ -57,7 +57,6 @@ from sqlalchemy import text
 
 from rememberstack.spine.migrations._helpers import apply_ddl
 from rememberstack.spine.migrations._helpers import apply_view_ddl
-from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
 from rememberstack.spine.migrations._helpers import view_column_comments
 
 revision: str = "p9_38_0059"
@@ -1537,7 +1536,6 @@ def upgrade() -> None:
     op.execute(_FILL_VERSION_SCOPE)
     apply_ddl(sql=_SECTION_CHUNK_DDL)
 
-    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute("DROP VIEW rememberstack_graph_internal.crossrefs_live")
     op.execute("DROP VIEW memory_v1.document_crossrefs_live")
     op.execute("DROP TABLE document_crossrefs")
@@ -1630,7 +1628,6 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION " + _FUNCTION_SIGNATURES[1])
     op.execute("DROP FUNCTION " + _FUNCTION_SIGNATURES[0])
 
-    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute("DROP VIEW rememberstack_graph_internal.crossrefs_live")
     op.execute("DROP VIEW memory_v1.document_crossrefs_live")
     op.execute("DROP VIEW memory_v1.document_effective_periods_live")

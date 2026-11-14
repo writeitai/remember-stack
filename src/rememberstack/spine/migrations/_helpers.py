@@ -13,28 +13,6 @@ _VIEW_START = re.compile(
 _VIEW_COLUMN = re.compile(r"^(?P<column>[a-z_][a-z0-9_]*),?\s*--\s*(?P<comment>.+)$")
 
 
-DROP_PROPERTY_GRAPHS = r"""
-DO $do$
-DECLARE
-  graph_name text;
-BEGIN
-  -- Only a PostgreSQL 19 Beta 3 store can hold these SQL/PGQ property graphs
-  -- (relkind 'g'); Beta 4 removed SQL/PGQ, so on later servers this finds
-  -- nothing and the DROP is never parsed.
-  FOR graph_name IN
-    SELECT c.relname FROM pg_class AS c
-    JOIN pg_namespace AS n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'memory_v1' AND c.relkind = 'g'
-      AND c.relname IN ('memory_current', 'memory_history')
-  LOOP
-    EXECUTE format('DROP PROPERTY GRAPH memory_v1.%I', graph_name);
-  END LOOP;
-END
-$do$;
-"""
-"""Drop the D98 property graphs where they exist (PostgreSQL 19 RC 1 amendment)."""
-
-
 def apply_ddl(*, sql: str) -> None:
     """Execute explicit DDL statements and materialize inline column comments."""
     for statement in _split_sql(sql=sql):

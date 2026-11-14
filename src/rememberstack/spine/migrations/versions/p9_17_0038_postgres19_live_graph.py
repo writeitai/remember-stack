@@ -1,4 +1,4 @@
-"""Replace P2 snapshots with the PostgreSQL 19 live graph (D98).
+"""Replace P2 snapshots with the PostgreSQL live graph (D98).
 
 revision: p9_17_0038
 
@@ -8,11 +8,8 @@ on the evidence-rich ``memory_v1`` authority views.  The graph views copy no
 tenant rows and therefore need neither a generation nor a publication pointer.
 Variable-length traversal lives in bounded SQL helpers.
 
-As shipped, this revision also created two SQL/PGQ property graphs
-(``memory_v1.memory_current`` and ``memory_v1.memory_history``) over these
-views. PostgreSQL 19 Beta 4 removed SQL/PGQ, so a later server cannot parse
-that DDL; under the D98 RC 1 amendment the property graphs are no longer
-created here, and p9_44_0065 drops them from Beta 3 stores that have them.
+D157 runs this migration on PostgreSQL 18. Its historical filename retains
+its revision identity; no SQL/PGQ DDL or PG19 compatibility path is present.
 
 The development-only downgrade restores legacy graph objects but does not
 widen ``memory_v1.document_crossrefs_live`` back to unresolved or tombstoned
@@ -27,7 +24,6 @@ from alembic import op
 from rememberstack.spine.graph_catalog import GRAPH_HELPER_CONTRACT_VERSION
 from rememberstack.spine.migrations._helpers import _split_sql
 from rememberstack.spine.migrations._helpers import apply_ddl
-from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
 
 revision: str = "p9_17_0038"
 down_revision: str | None = "p9_16_0037"
@@ -1242,7 +1238,6 @@ def downgrade() -> None:
         _V_GRAPH_ENTITIES_TYPE_CUT as type_cut_graph_entities,
     )
 
-    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute(_REVOKE_GRAPH_GUARD_GRANTS)
     op.execute(
         "DROP FUNCTION IF EXISTS memory_v1.graph_citation_path(uuid, uuid, uuid, integer, integer, integer, integer, integer)"

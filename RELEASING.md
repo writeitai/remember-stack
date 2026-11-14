@@ -60,15 +60,16 @@ uv run python scripts/check_release_contract.py --tag v0.17.0
 ```
 
 That release pull request also refreshes the PostgreSQL foundation pins in
-`Dockerfile.postgres`: use the reviewed PostgreSQL 19 prerelease/GA base digest,
+`Dockerfile.postgres`: use the reviewed official PostgreSQL 18.x base digest (minor and image at
+least two weeks old),
 pin the intended PGDG pgvector and pg_partman package versions, and pin the
-pg_textsearch source revision plus source, compatibility-patch, license, and
+pg_textsearch source revision plus source, license, and
 notice checksums. Build the Dockerfile for both architectures, record each
 embedded artifact manifest and immutable image digest, and run the extension
 and graph release matrix before tagging. The tag workflow then rebuilds and
-publishes `ghcr.io/writeitai/remember-stack-postgres:19rc1-VERSION` for both
-architectures, each built on a native runner (the build's pg_textsearch
-regression suite fails under QEMU emulation), and attaches `postgres-image-digests.json` to the GitHub release;
+publishes `ghcr.io/writeitai/remember-stack-postgres:18-VERSION` for both
+architectures, each built on a native runner (the pg_textsearch worker-count
+regression has failed under QEMU emulation), and attaches `postgres-image-digests.json` to the GitHub release;
 UMC consumes the recorded manifest digest, never that human-readable tag.
 Updating the foundation pins remains a manual, reviewable patch cadence;
 publishing and digest capture are mechanical and mutable database-image tags

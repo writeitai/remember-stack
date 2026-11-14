@@ -268,6 +268,10 @@ def test_complete_old_head_parity_across_visibility_mutations(pair: _Pair) -> No
         )
     for statement, parameters in changes:
         with pair.reference.connect() as old, pair.target.connect() as new:
+            # Keep this semantic oracle focused on row equivalence: old views
+            # can JIT thousands of functions even for this tiny corpus.
+            old.exec_driver_sql("SET LOCAL jit=off")
+            new.exec_driver_sql("SET LOCAL jit=off")
             old.execute(text(statement), parameters)
             new.execute(text(statement), parameters)
             assert _snapshot(connection=old) == _snapshot(connection=new), (

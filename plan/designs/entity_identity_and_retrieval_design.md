@@ -457,10 +457,13 @@ operator can inspect or replay queued proposals. Merge and unmerge continue to
 refresh affected profiles through the non-recursive base refresher so a merge
 does not recursively trigger itself.
 
-Profile publication has its own bounded identity/evidence lock wait. A
-PostgreSQL statement timeout whose cause is specifically an advisory-lock wait
-is translated to `ProfileRefreshContendedError`; it is not a generic database
-failure. Evidence workers have already committed the authoritative fact change
+Profile publication has its own bounded identity/evidence lock wait. SQLSTATE
+`57014` while executing either fixed identity/evidence advisory-lock statement
+is translated to `ProfileRefreshContendedError`. Identify those two operations
+from their engine-owned statements: PostgreSQL 18 supplies no lock context in
+this timeout error, so matching server error prose cannot establish the cause
+(D157; [measured difference](../analysis/postgres18_reference_server.md#observed-lock-timeout-difference)).
+The existing wait bound is unchanged. Evidence workers have already committed the authoritative fact change
 before this disposable projection step, so they record the typed contention,
 leave the projection fail-closed, and complete without replaying paid
 normalization or adjudication. A later evidence mutation owns another refresh

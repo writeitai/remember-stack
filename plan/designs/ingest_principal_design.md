@@ -140,7 +140,7 @@ out). `NOT VALID` is **scan-free** (`seq_scan=0`), removing that
 table-size dependence.
 
 Be precise about what it is not: `NOT VALID` is **not lock-free**.
-PostgreSQL 19 still takes `ShareRowExclusiveLock` for the DDL, held until
+PostgreSQL 18 takes `ShareRowExclusiveLock` for the DDL, held until
 this atomic transaction commits, and a concurrent writer waits on it. The
 property gained is *bounded and brief* rather than *proportional to row
 count*. Nothing is skipped by it either:

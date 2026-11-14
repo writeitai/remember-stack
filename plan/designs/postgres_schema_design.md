@@ -7,7 +7,7 @@
 > generation readiness, source validation, conservative conflicts, rebuild,
 > and hard-forget lifecycle are part of the schema contract.
 
-> **Binding D98 amendment (2026-08-27).** PostgreSQL 19 is also the live graph
+> **Binding D98/D157 amendment (2026-11-14).** PostgreSQL 18 is also the live graph
 > execution host. Private live views over normalized authority data are the
 > graph's nodes and edges; a fixed relational join reads one hop and bounded
 > recursive functions perform variable/shortest traversal (the SQL/PGQ
@@ -182,10 +182,10 @@ CREATE EXTENSION IF NOT EXISTS vector;        -- D94 PostgreSQL-native semantic 
 CREATE EXTENSION IF NOT EXISTS pg_textsearch; -- D94 chunk/claim BM25; also required in shared_preload_libraries
 ```
 
-PostgreSQL **19** is the binding baseline under D98. Before GA the image pins
-the latest proven beta/RC digest and databases are replayable; after GA it
-tracks the current patched 19.x minor. The selected pg_textsearch source plus
-reviewed compatibility patch must pass its upstream SQL suite on PostgreSQL 19.
+PostgreSQL **18** is the binding baseline under D157. The official image
+is pinned by digest to the newest minor and image at least two weeks old.
+The pinned pg_textsearch source must build without a compatibility patch or
+forced-header workaround and pass its upstream SQL suite on PostgreSQL 18.
 `vectorscale` is absent from the baseline. Pgvectorscale remains an unchosen
 open proposal; promoting it would require a later binding decision. Composite-FK
 column-list `ON DELETE SET NULL` requires 15+; this is
@@ -2321,8 +2321,8 @@ reintroduce scrubbed authority.
 The graph schema consists of private current/history node and edge views
 (`rememberstack_graph_internal`), the normalized `memory_v1` hydration views,
 and deployment-scoped work-bounded traversal functions. There are no property
-graphs: PostgreSQL 19 RC 1 has no SQL/PGQ, and migration `p9_44_0065` drops
-the two a Beta 3 store held. Composite graph keys and all source/destination
+graphs: PostgreSQL 18 has no SQL/PGQ. The retired cleanup revision
+`p9_44_0065` is a no-op; no PG19 compatibility path remains. Composite graph keys and all source/destination
 references include `deployment_id`. Current views capture
 one `statement_timestamp()` per statement; history views expose both half-open
 time windows for explicit as-of filtering. The complete view shapes,

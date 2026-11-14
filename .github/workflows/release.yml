@@ -94,7 +94,7 @@ jobs:
           fi
           echo "${{ needs.prepare.outputs.source_sha }} is on main"
 
-      - name: Start PostgreSQL 19 with required extensions
+      - name: Start PostgreSQL 18 with required extensions
         run: .github/ci/start-postgres.sh
 
       - name: Install uv
@@ -323,8 +323,8 @@ jobs:
 
 
   # Each architecture builds on its own native runner. The build runs the
-  # pg_textsearch regression suite, whose parallel_build test fails under QEMU
-  # emulation (the parallel workers do not launch in time), so arm64 is never
+  # pg_textsearch regression suite. Its parallel_build test has failed under
+  # QEMU (parallel workers did not launch in time), so arm64 is never
   # emulated. Each leg pushes its image by digest; publish-postgres-ghcr then
   # joins both into the one immutable two-architecture tag.
   build-postgres:
@@ -362,12 +362,12 @@ jobs:
         with:
           images: ghcr.io/writeitai/remember-stack-postgres
           flavor: latest=false
-          tags: type=raw,value=19rc1-${{ needs.prepare.outputs.version }}
+          tags: type=raw,value=18-${{ needs.prepare.outputs.version }}
 
       - name: Skip a build whose immutable tag already exists (recovery)
         id: existing
         env:
-          IMAGE: ghcr.io/writeitai/remember-stack-postgres:19rc1-${{ needs.prepare.outputs.version }}
+          IMAGE: ghcr.io/writeitai/remember-stack-postgres:18-${{ needs.prepare.outputs.version }}
         run: |
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
             echo 'present=true' >> "$GITHUB_OUTPUT"
@@ -434,12 +434,12 @@ jobs:
         with:
           images: ghcr.io/writeitai/remember-stack-postgres
           flavor: latest=false
-          tags: type=raw,value=19rc1-${{ needs.prepare.outputs.version }}
+          tags: type=raw,value=18-${{ needs.prepare.outputs.version }}
 
       - name: Preserve an existing immutable foundation tag on recovery
         id: existing
         env:
-          IMAGE: ghcr.io/writeitai/remember-stack-postgres:19rc1-${{ needs.prepare.outputs.version }}
+          IMAGE: ghcr.io/writeitai/remember-stack-postgres:18-${{ needs.prepare.outputs.version }}
         run: |
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull --platform linux/amd64 "$IMAGE" >/dev/null

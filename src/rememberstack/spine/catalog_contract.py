@@ -379,7 +379,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.
-# PostgreSQL 19 represents NOT NULL declarations as first-class `n` rows in
+# PostgreSQL 18 represents NOT NULL declarations as first-class `n` rows in
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
