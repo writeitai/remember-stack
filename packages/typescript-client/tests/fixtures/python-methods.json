@@ -12900,6 +12900,41 @@
       }
     },
     {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "all": "project:a"
+          }
+        }
+      }
+    },
+    {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "all": [
+              123
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "search_documents",
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "tags": {
+            "none": null
+          }
+        }
+      }
+    },
+    {
       "method": "ingest",
       "typescriptMethod": "ingest",
       "typescriptOptions": {

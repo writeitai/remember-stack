@@ -51,6 +51,8 @@ from rememberstack.model import UnknownTagError
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1Termination
+from rememberstack.ports.p1_index import search_account
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.document_search import DocumentSearch
 from rememberstack.spine.effective_time import EffectiveTimeCatalog
@@ -918,9 +920,12 @@ def test_a_tag_filtered_read_stopped_by_its_work_bound_reports_boundary(
         lineage=quiet,
         body="a long text that names a zebra once among many other words",
     )
-    # one candidate of work: the first-ranked claim, which is not project:a
+    # one candidate of work: the first-ranked claim, which is not project:a;
+    # the eligible-set tiers are off, as for a filter too broad to enumerate
     monkeypatch.setattr(p1_ranked, "MIN_WORK_BUDGET", 1)
     monkeypatch.setattr(p1_ranked, "WORK_BUDGET_PER_K", 0)
+    monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)
+    monkeypatch.setattr(p1_ranked, "FILTER_PUSHDOWN_LIMIT", 0)
     envelope = rig.query.search_claims(
         deployment_id=_DEPLOYMENT_ID,
         query="zebra",
@@ -933,3 +938,105 @@ def test_a_tag_filtered_read_stopped_by_its_work_bound_reports_boundary(
     assert envelope.negative.kind is NegativeKind.BOUNDARY
     assert envelope.truncation is not None
     assert envelope.truncation.reason == "p1_work_budget"
+
+
+@pytest.mark.parametrize("tiers", ["enumerated", "disabled"])
+def test_a_narrow_tag_filter_finds_items_ranked_beyond_the_work_budget(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch, tiers: str
+) -> None:
+    """§4.6: a selective filter's small eligible set is scored exactly.
+
+    Twelve untagged documents outrank three tagged ones on every grain, and the
+    work budget is four candidates. Plain nomination stops on the budget
+    before reaching a tagged item; the enumerated eligible set finds all
+    three and is complete. With the eligible-set tiers switched off the same
+    read is a ``boundary``, so the proof depends on the tier.
+    """
+    loud = [
+        _lineage(
+            rig,
+            label=f"loud-{n}",
+            bodies=("zebra zebra zebra crossing",),
+            tags=("project:b",),
+        )
+        for n in range(12)
+    ]
+    quiet = [
+        _lineage(
+            rig,
+            label=f"quiet-{n}",
+            bodies=("a long text that names a zebra once among many other words",),
+            tags=("project:a",),
+        )
+        for n in range(3)
+    ]
+    loud_claims = [
+        _claim(rig, lineage=lineage, body="zebra zebra zebra crossing")
+        for lineage in loud
+    ]
+    quiet_claims = [
+        _claim(
+            rig,
+            lineage=lineage,
+            body="a long text that names a zebra once among many other words",
+        )
+        for lineage in quiet
+    ]
+    for n, (claim_id, lineage) in enumerate(zip(loud_claims, loud, strict=True)):
+        _relation(
+            rig,
+            label=f"zebra loud {n}",
+            support=((claim_id, lineage, 0),),
+            vector=_NEAR,
+        )
+    quiet_facts = {
+        _relation(
+            rig,
+            label=f"zebra quiet {n}",
+            support=((claim_id, lineage, 0),),
+            vector=_FAR,
+        )
+        for n, (claim_id, lineage) in enumerate(zip(quiet_claims, quiet, strict=True))
+    }
+    monkeypatch.setattr(p1_ranked, "MIN_WORK_BUDGET", 4)
+    monkeypatch.setattr(p1_ranked, "WORK_BUDGET_PER_K", 0)
+    if tiers == "disabled":
+        monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)
+        monkeypatch.setattr(p1_ranked, "FILTER_PUSHDOWN_LIMIT", 0)
+    only_a = _tags(all=("project:a",))
+    chunks = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        query="zebra",
+        k=3,
+        channel="bm25",
+        documents=only_a,
+    )
+    claims = rig.query.search_claims(
+        deployment_id=_DEPLOYMENT_ID,
+        query="zebra",
+        k=3,
+        channel="bm25",
+        documents=only_a,
+    )
+    facts = rig.index.search_facts_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        vector=_NEAR,
+        k=3,
+        kind="relation",
+        documents=rig.query._resolve_documents(  # noqa: SLF001
+            deployment_id=_DEPLOYMENT_ID, documents=only_a
+        ),
+    )
+    if tiers == "disabled":
+        for envelope in (chunks, claims):
+            assert envelope.negative is not None
+            assert envelope.negative.kind is NegativeKind.BOUNDARY
+        assert search_account(facts).termination is P1Termination.WORK_BUDGET
+        return
+    assert {item.chunk_id for item in chunks.chunks} == {
+        lineage.chunk() for lineage in quiet
+    }
+    assert {item.claim_id for item in claims.evidence} == set(quiet_claims)
+    assert {UUID(item) for item in _ids(facts)} == quiet_facts
+    assert chunks.truncation is None and claims.truncation is None
+    assert search_account(facts).termination.complete

@@ -215,13 +215,7 @@ def resolve_tags_on(
     """
     if not tags:
         return {}
-    found = {
-        row["ref"]: row["tag_id"]
-        for row in connection.execute(
-            _RESOLVE_TAGS,
-            {"deployment_id": deployment_id, "refs": list(dict.fromkeys(tags))},
-        ).mappings()
-    }
+    found = _registered(connection=connection, deployment_id=deployment_id, tags=tags)
     # Hold the resolved rows until the caller commits, so a concurrent
     # delete_tag either commits first (the tag is then unknown here) or waits
     # for this write (and then cascades over the assignment it made).
@@ -244,6 +238,19 @@ def resolve_tags_on(
     return found
 
 
+def _registered(
+    *, connection: Connection, deployment_id: UUID, tags: Sequence[str]
+) -> dict[str, UUID]:
+    """The registered tags among ``tags`` (names or ids), mapped to their ids."""
+    return {
+        row["ref"]: row["tag_id"]
+        for row in connection.execute(
+            _RESOLVE_TAGS,
+            {"deployment_id": deployment_id, "refs": list(dict.fromkeys(tags))},
+        ).mappings()
+    }
+
+
 def resolve_filter_tags_on(
     *,
     connection: Connection,
@@ -259,11 +266,13 @@ def resolve_filter_tags_on(
     if filters is None or filters.tags is None:
         return filters
     tags = filters.tags
-    found = resolve_tags_on(
-        connection=connection,
-        deployment_id=deployment_id,
-        tags=(*tags.all, *tags.any, *tags.none),
-    )
+    # A read locks nothing (it may run in a read-only snapshot): a tag deleted
+    # concurrently simply matches no document.
+    wanted = (*tags.all, *tags.any, *tags.none)
+    found = _registered(connection=connection, deployment_id=deployment_id, tags=wanted)
+    unknown = [tag for tag in dict.fromkeys(wanted) if tag not in found]
+    if unknown:
+        raise UnknownTagError(tags=unknown)
 
     def ids(values: Sequence[str]) -> tuple[str, ...]:
         return tuple(dict.fromkeys(str(found[value]) for value in values))

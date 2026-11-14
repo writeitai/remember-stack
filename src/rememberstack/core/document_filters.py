@@ -188,6 +188,25 @@ def live_matching_versions(
     The set form of :func:`live_version_matches` (same parameters for the
     same ``prefix``), for statements that start from the matching versions.
     """
+    return _live_matching(filters=filters, prefix=prefix, column="dm.version_id")
+
+
+def live_matching_lineages(
+    *, filters: DocumentSearchFilters, prefix: str
+) -> tuple[str, dict[str, Any]]:
+    """The lineages with a live matching version, as a ``doc_id`` query.
+
+    The lineage form of :func:`live_matching_versions` (same parameters for
+    the same ``prefix``). Claims belong to one lineage (``claims.doc_id``),
+    so a selective filter's eligible claims and facts are enumerated from it
+    (D156 §4.6); each candidate is then confirmed by the full predicate.
+    """
+    return _live_matching(filters=filters, prefix=prefix, column="DISTINCT dm.doc_id")
+
+
+def _live_matching(
+    *, filters: DocumentSearchFilters, prefix: str, column: str
+) -> tuple[str, dict[str, Any]]:
     predicates, parameters = metadata_predicates(
         filters=filters,
         metadata="dm",
@@ -197,7 +216,7 @@ def live_matching_versions(
     )
     where = "".join(f" AND {predicate}" for predicate in predicates)
     return (
-        "SELECT dm.version_id FROM document_metadata dm"
+        f"SELECT {column} FROM document_metadata dm"
         " JOIN document_versions dv"
         "   ON dv.deployment_id = dm.deployment_id AND dv.version_id = dm.version_id"
         " JOIN documents dd"

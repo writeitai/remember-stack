@@ -23,6 +23,7 @@ from remember.models import DocumentSearchFilters
 from rememberstack.adapters import p1_ranked
 from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import is_empty
+from rememberstack.core.document_filters import live_matching_lineages
 from rememberstack.core.document_filters import live_matching_versions
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -777,7 +778,12 @@ class PostgresP1Index:
         """Build the eligibility relation and the index nomination for one search."""
         time = time or TextScope.of(time=None, evaluated_at=self._instant())
         parameters: dict[str, Any] = {"deployment_id": UUID(deployment_id)}
-        versions_sql: str | None = None
+        # D156 §4.6: a document filter's eligible set is enumerated from the
+        # matching versions (chunks) or lineages (claims), then confirmed by
+        # the full predicate; small sets are scored exactly (``_run_testimony``).
+        eligible_from: str | None = None
+        eligible_join = ""
+        filtered = documents is not None and not is_empty(documents)
         if target == "claims":
             id_column = "claim_id"
             published = (
@@ -802,6 +808,12 @@ class PostgresP1Index:
             )
             if current_only:
                 predicates.append("indexed.is_current_testimony")
+            if filtered:
+                assert documents is not None
+                eligible_from, _ = live_matching_lineages(
+                    filters=documents, prefix="documents_"
+                )
+                eligible_join = "indexed.doc_id = matching.doc_id"
             search_table = "claims"
             search_column = "claim_text"
             bm25_index = "ix_claims_current_bm25"
@@ -811,10 +823,12 @@ class PostgresP1Index:
             id_column = "chunk_id"
             predicates, filter_parameters = _chunk_filters(equality_filters)
             parameters.update(filter_parameters)
-            if documents is not None and not is_empty(documents):
-                versions_sql, _ = live_matching_versions(
+            if filtered:
+                assert documents is not None
+                eligible_from, _ = live_matching_versions(
                     filters=documents, prefix="documents_"
                 )
+                eligible_join = "published.version_id = matching.version_id"
                 version_sql, document_parameters = live_version_matches(
                     filters=documents,
                     version="published.version_id",
@@ -914,17 +928,31 @@ class PostgresP1Index:
                 parameters=parameters,
                 expected_index=bm25_index,
             )
-        where = " ".join(f"AND {item}" for item in predicates)
+        where = "WHERE indexed.deployment_id = :deployment_id " + " ".join(
+            f"AND {item}" for item in predicates
+        )
+        # The probe reads each matching version's (lineage's) rows through a
+        # LATERAL subquery; ``OFFSET 0`` keeps the planner from flattening it
+        # and starting from every row instead (6 s against 83 ms at 3M chunks).
+        eligible_sql = (
+            None
+            if eligible_from is None
+            else "SELECT eligible.item_id"
+            f" FROM ({eligible_from}) AS matching"
+            " CROSS JOIN LATERAL ("
+            f"SELECT indexed.{id_column}::text AS item_id {relation} {where}"
+            f" AND {eligible_join} OFFSET 0) AS eligible"
+        )
         return _TestimonyQuery(
             channel=channel,
             id_column=id_column,
             relation=relation,
-            where=f"WHERE indexed.deployment_id = :deployment_id {where}",
+            where=where,
             score_sql=score_sql,
             parameters=parameters,
             nomination=nomination,
             coverage_sql=coverage_sql,
-            versions_sql=versions_sql,
+            eligible_sql=eligible_sql,
             mentions_sql=mentions_sql,
         )
 
@@ -955,7 +983,7 @@ class PostgresP1Index:
             if entity_ids:
                 return _entity_tiers(connection, query=query, k=k, deadline=deadline)
             statement = query.nomination
-            if query.versions_sql is not None:
+            if query.eligible_sql is not None:
                 eligible = _enumerate_eligible(
                     connection, query=query, limit=p1_ranked.FILTER_PUSHDOWN_LIMIT
                 )
@@ -1224,7 +1252,7 @@ class PostgresP1Index:
                 f"{scope_ctes} SELECT item_id::text AS item_id, coverage FROM scope_coverage"
             ),
             mentions_sql=f"{scope_ctes} SELECT 1 FROM scope_mentions",
-            versions_sql=None,
+            eligible_sql=None,
         )
         deadline = self._deadline()
         with self._ranked_connection(deadline=deadline) as connection:
@@ -1359,6 +1387,16 @@ class PostgresP1Index:
                 "ranking_entity_ids": _uuid_strings(ranking_ids),
             }
         )
+        if documents is not None and supporting_sql and candidate_keys is None:
+            if not entity_ids:
+                # D156 §4.6: a selective document filter's few eligible facts
+                # are scored exactly instead of walking the whole index.
+                candidate_keys = self._enumerate_supported_facts(
+                    documents=documents,
+                    required=required,
+                    parameters=parameters,
+                    deadline=deadline,
+                )
         key_sql = ""
         if candidate_keys is not None:
             parameters["candidate_kinds"] = [item[0] for item in candidate_keys]
@@ -1463,6 +1501,57 @@ class PostgresP1Index:
                 qualified=True,
             ),
             k=k,
+        )
+
+    def _enumerate_supported_facts(
+        self,
+        *,
+        documents: DocumentSearchFilters,
+        required: tuple[str, ...],
+        parameters: Mapping[str, Any],
+        deadline: float | None,
+    ) -> tuple[tuple[str, str], ...] | None:
+        """Facts with a supporting claim from a matching lineage, or ``None`` if many.
+
+        Read from the matching lineages through their claims' evidence rows,
+        at most ``EXACT_TIER_THRESHOLD + 1`` support rows. The result is a
+        superset of the eligible facts: the keyed exact branch re-applies the
+        filter, the evidence gate and every other predicate. Above the
+        threshold the filter is broad and ordinary nomination is cheaper.
+        """
+        lineages_sql, _ = live_matching_lineages(filters=documents, prefix="documents_")
+        branches = [
+            f"SELECT '{kind}'::text AS fact_kind, support.{column}::text AS fact_id"
+            " FROM claims AS supporting"
+            f" JOIN {table} AS support"
+            "   ON support.deployment_id = supporting.deployment_id"
+            "  AND support.claim_id = supporting.claim_id"
+            " WHERE supporting.deployment_id = :deployment_id"
+            "   AND supporting.doc_id = matching.doc_id"
+            "   AND support.stance = 'supports'"
+            for target, table, kind, column in (
+                ("relations", "relation_evidence", "relation", "relation_id"),
+                (
+                    "observations",
+                    "observation_evidence",
+                    "observation",
+                    "observation_id",
+                ),
+            )
+            if target in required
+        ]
+        limit = p1_ranked.EXACT_TIER_THRESHOLD
+        rows = self._engine_rows(
+            f"SELECT support.fact_kind, support.fact_id FROM ({lineages_sql}) AS matching"
+            f" CROSS JOIN LATERAL ({' UNION ALL '.join(branches)} OFFSET 0) AS support"
+            " LIMIT :tier_limit",
+            {**parameters, "tier_limit": limit + 1},
+            deadline=deadline,
+        )
+        if len(rows) > limit:
+            return None
+        return tuple(
+            dict.fromkeys((str(row["fact_kind"]), str(row["fact_id"])) for row in rows)
         )
 
     def _require_fact_scope_budget(
@@ -2279,8 +2368,9 @@ class _TestimonyQuery:
     parameters: Mapping[str, Any]
     nomination: p1_ranked.NominationStatement
     coverage_sql: str | None
-    versions_sql: str | None = None
-    """Matching versions of a document-filtered chunk search (small-set tier)."""
+    eligible_sql: str | None = None
+    """A document-filtered search's eligible ids, read from the matching
+    versions (chunks) or lineages (claims); the small-set tier's probe."""
     mentions_sql: str | None = None
     """The mention rows behind ``coverage_sql``; the entity budget counts them."""
 
@@ -2325,28 +2415,15 @@ def _enumerate_eligible(
     """The whole eligible set of a document-filtered search, or ``None`` above
     ``limit`` rows.
 
-    A selective document filter leaves few eligible rows among many index
-    matches, so plain nomination would fetch up to the work budget and still
-    stop short (the scaling sweep's 1% document stratum). A small set is
-    scored exactly (D142 §8.4); a larger one, up to ``limit``, is pushed into
-    the index scan (:func:`_pushdown`). The probe starts from the matching
-    versions and reads each one's chunks through a ``LATERAL`` subquery
-    (``OFFSET 0`` keeps the planner from flattening it and starting from every
-    chunk instead: 6 s against 83 ms at 3M chunks); it reads at most
-    ``limit + 1`` rows.
+    A selective document filter (a 1% tag) leaves few eligible rows among many
+    index matches, so plain nomination would fetch up to the work budget and
+    still stop short. A small set is scored exactly (D142 §8.4); a larger one,
+    up to ``limit``, is pushed into the index scan (:func:`_pushdown`). The
+    probe reads at most ``limit + 1`` rows.
     """
-    assert query.versions_sql is not None
+    assert query.eligible_sql is not None
     rows = connection.execute(
-        text(
-            "SELECT eligible.item_id"
-            f" FROM ({query.versions_sql}) AS matching_version"
-            " CROSS JOIN LATERAL ("
-            f"SELECT indexed.{query.id_column}::text AS item_id"
-            f" {query.relation} {query.where}"
-            " AND published.version_id = matching_version.version_id"
-            " OFFSET 0) AS eligible"
-            " LIMIT :tier_limit"
-        ),
+        text(f"{query.eligible_sql} LIMIT :tier_limit"),
         {**query.parameters, "tier_limit": limit + 1},
     ).scalars()
     eligible = tuple(str(item) for item in rows)

@@ -122,9 +122,13 @@ function semanticInvariant({ name, value }: { name?: string; value: Record<strin
   if (name === 'DocumentSearchRequest' && value.query != null && value.cursor != null) fail({ detail: 'query and cursor cannot be combined' });
   if(name==='TagUpdate'&&value.name==null&&value.description==null)fail({detail:'give name, description or both'});
   if(name==='DocumentTagFilter'){
-    const lists={all:(value.all??[]) as string[],any:(value.any??[]) as string[],none:(value.none??[]) as string[]};
-    if(Object.values(lists).every(list=>list.length===0))fail({detail:'tags needs a non-empty all, any or none list'});
-    for(const [key,list] of Object.entries(lists)){const keys=list.map(tag=>tag.normalize('NFC').toLowerCase());if(new Set(keys).size!==keys.length)fail({detail:`tags.${key} names a tag more than once`});}
+    // Shapes are checked first, so a malformed list is the schema's refusal, not a TypeError.
+    const lists=(['all','any','none'] as const).map(key=>[key,value[key]??[]] as const);
+    if(lists.every(([,list])=>Array.isArray(list)&&list.every(tag=>typeof tag==='string'))){
+      const strings=lists as unknown as (readonly [string,string[]])[];
+      if(strings.every(([,list])=>list.length===0))fail({detail:'tags needs a non-empty all, any or none list'});
+      for(const [key,list] of strings){const keys=list.map(tag=>tag.normalize('NFC').toLowerCase());if(new Set(keys).size!==keys.length)fail({detail:`tags.${key} names a tag more than once`});}
+    }
   }
   if(name==='DocumentTagsUpdate'&&value.set!=null&&(((value.add??[]) as unknown[]).length>0||((value.remove??[]) as unknown[]).length>0))fail({detail:'set replaces the tags; it excludes add and remove'});
   if(name==='OverlapTemporalScope'||name==='OverlapReadTime'){const end=utcMicroseconds({value:value.to}),start=utcMicroseconds({value:value.from});if(end!==null&&start!==null&&end<start)fail({detail:'temporal scope ends before it starts'});}

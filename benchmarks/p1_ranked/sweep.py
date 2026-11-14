@@ -197,6 +197,8 @@ def _seed_claims(engine: Engine) -> int:
     unchanged chunk's claim. The claim BM25 index is rebuilt after the load.
     """
     with engine.begin() as connection:
+        # claims and their occurrences outlive the deployment truncate
+        connection.execute(text("TRUNCATE TABLE chunk_claims, claims CASCADE"))
         connection.execute(text("DROP INDEX IF EXISTS ix_claims_current_bm25"))
         connection.execute(text("SET LOCAL session_replication_role = replica"))
         created = connection.execute(
@@ -571,15 +573,10 @@ def _tag_eligibility_plan(engine: Engine, *, tag: str) -> dict[str, Any]:
             time=None,
             query_text="w1",
         )
-        assert query.versions_sql is not None
+        assert query.eligible_sql is not None
         statement = (
-            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT eligible.item_id"
-            f" FROM ({query.versions_sql}) AS matching_version"
-            " CROSS JOIN LATERAL ("
-            f"SELECT indexed.{query.id_column}::text AS item_id"
-            f" {query.relation} {query.where}"
-            " AND published.version_id = matching_version.version_id"
-            " OFFSET 0) AS eligible LIMIT :tier_limit"
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)"
+            f" {query.eligible_sql} LIMIT :tier_limit"
         )
         plan = connection.execute(
             text(statement),

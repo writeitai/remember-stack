@@ -1434,6 +1434,9 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
             ("update_document_tags", {"doc_id": ID, "add": "project:fixture"}),
             ("search_documents", {"filters": {"tags": {}}}),
             ("search_documents", {"filters": {"tags": {"any": ["a", "A"]}}}),
+            ("search_documents", {"filters": {"tags": {"all": "project:a"}}}),
+            ("search_documents", {"filters": {"tags": {"all": [123]}}}),
+            ("search_documents", {"filters": {"tags": {"none": None}}}),
             (
                 "ingest",
                 {
