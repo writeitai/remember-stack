@@ -36,6 +36,12 @@ from rememberstack.adapters.fsit_storage_capture import ProviderItem
 from rememberstack.adapters.fsit_storage_capture import ProviderManifest
 from rememberstack.adapters.fsit_storage_capture import ProviderPage
 from rememberstack.adapters.fsit_storage_capture import ProviderRequest
+from rememberstack.core.corpus_export import corpus_suffix
+from rememberstack.core.corpus_export import CORPUS_TYPES
+from rememberstack.core.corpus_export import desired_export_revision
+from rememberstack.core.corpus_export import original_name
+from rememberstack.core.corpus_export import PIPELINE_ASSET_KINDS
+from rememberstack.core.corpus_export import READER_ASSET_KINDS
 from rememberstack.core.storage_capture import capture_request_id
 from rememberstack.core.storage_capture import check_capture_encoding
 from rememberstack.core.storage_capture import iter_capture_pages
@@ -44,6 +50,7 @@ from rememberstack.core.storage_capture import member_payload_digest
 from rememberstack.core.storage_capture import membership_set_digest
 from rememberstack.core.storage_capture import native_witness_digest
 from rememberstack.core.storage_capture import page_payload_digest
+from rememberstack.model.conversion import AssetName
 from rememberstack.model.object_store import ObjectKey
 from rememberstack.model.storage_capture import StorageCaptureManifest
 from rememberstack.model.storage_capture import StorageCapturePage
@@ -64,6 +71,7 @@ from rememberstack.profiles.storage_capture_profile import profile_bytes
 from rememberstack.profiles.storage_capture_profile import (
     STORAGE_CAPTURE_PAGE_MEMBER_LIMIT,
 )
+from rememberstack.spine.storage_capture_catalog import NativeCorpusDocument
 from rememberstack.spine.storage_capture_catalog import NativeStoreReference
 from rememberstack.spine.storage_capture_view import NativeCapturedStorageView
 from rememberstack.spine.storage_capture_view import NativeStorageCaptureCatalog
@@ -85,6 +93,12 @@ _REP_ATTEMPT = re.compile(
     rf"{_UUID}/{_SHA}/{_UUID}/(?:document\.md|blocks\.json|conversion\.json|meta\.json|source_map\.json|media/.+)"
 )
 _UPLOAD = re.compile(r"uploads/[A-Za-z0-9_-]{32}")
+_SLUG = r"[a-z0-9]+(?:-[a-z0-9]+)*"
+_CORPUS_PARENT = rf"(?:{'|'.join(CORPUS_TYPES)})(?:/{_SLUG}){{0,4}}"
+_CORPUS_FOLDER = re.compile(rf"{_CORPUS_PARENT}/{_SLUG}--[0-9a-f]{{24}}")
+_CORPUS_KEY = re.compile(rf"(?P<folder>{_CORPUS_FOLDER.pattern})/(?P<file>.+)")
+_CORPUS_NAVIGATION = re.compile(rf"(?:{_CORPUS_PARENT}/)?(?:~/[a-z2-7]+/)*_index\.md")
+_ASSET_NAME = TypeAdapter(AssetName)
 
 
 class ManagedStorageCaptureUnavailable(RuntimeError):
@@ -149,7 +163,6 @@ class _Spool:
           CREATE TABLE names(role TEXT,path TEXT,name TEXT,PRIMARY KEY(role,path));
           CREATE TABLE refs(role TEXT,path TEXT,class TEXT,native_id TEXT,bytes TEXT,
             required INTEGER,matched INTEGER DEFAULT 0,PRIMARY KEY(role,path,class,native_id));
-          CREATE TABLE p3(prefix TEXT,state TEXT,PRIMARY KEY(prefix));
           CREATE TABLE resources(component TEXT,store TEXT,id TEXT,version TEXT,evidence TEXT,bytes TEXT,
             PRIMARY KEY(store,id,version));
           CREATE TABLE members(kind TEXT,id TEXT,body TEXT,PRIMARY KEY(kind,id));
@@ -270,6 +283,10 @@ class StorageCaptureCatalog:
                     self._check_native_bindings(native=native)
                     for seed in native.iter_store_references():
                         self._stage_seed(spool=spool, seed=seed, provider=provider)
+                    for document in native.iter_corpus_documents():
+                        self._stage_corpus_document(
+                            spool=spool, seed=document, provider=provider
+                        )
                     for terminal in native.iter_terminal_members():
                         spool.member(member=terminal)
                     self._stage_native_allocations(
@@ -451,48 +468,6 @@ class StorageCaptureCatalog:
             )
         if seed.locator_kind == "journal_intent":
             key = "forget-manifests/" + key + ".json"
-        if seed.locator_kind == "tree":
-            spool.db.execute("INSERT INTO p3 VALUES(?,?)", (key, seed.native_state))
-            if seed.native_state not in {"published", "superseded"}:
-                return
-            body = self._read_manifest(
-                spool=spool,
-                provider=provider,
-                role=role,
-                key=key + "/MANIFEST.json",
-                expected_digest=None,
-            )
-            payload = json.loads(body)
-            if (
-                set(payload) != {"version", "files"}
-                or payload["version"] != key.rsplit("/", 1)[-1]
-                or not isinstance(payload["files"], dict)
-            ):
-                raise ManagedStorageCaptureUnavailable("capture_p3_manifest_schema")
-            for name, digest in payload["files"].items():
-                if not isinstance(name, str) or not _is_digest(value=digest):
-                    raise ManagedStorageCaptureUnavailable("capture_p3_manifest_entry")
-                self._reference(
-                    spool=spool,
-                    provider=provider,
-                    role=role,
-                    key=key + "/" + name,
-                    native_class=seed.native_class,
-                    native_id=identifier + ":" + name,
-                    recorded_bytes=None,
-                    required=True,
-                )
-            self._reference(
-                spool=spool,
-                provider=provider,
-                role=role,
-                key=key + "/MANIFEST.json",
-                native_class=seed.native_class,
-                native_id=identifier + ":manifest",
-                recorded_bytes=str(len(body)),
-                required=True,
-            )
-            return
         self._reference(
             spool=spool,
             provider=provider,
@@ -556,6 +531,71 @@ class StorageCaptureCatalog:
                     recorded_bytes=None,
                     required=True,
                 )
+
+    def _stage_corpus_document(
+        self, *, spool: _Spool, seed: NativeCorpusDocument, provider: ProviderManifest
+    ) -> None:
+        """Bind completed copies to recorded paths AND current publication inputs.
+
+        Cleanup paths alone never imply publication. An old folder, a cleared
+        or stale marker, or a deleted/unselected document leaves only staging.
+        Read the hash-bound immutable E0 inventory, never mutable document.json.
+        """
+        document = seed.document
+        published = (
+            document is not None
+            and document.doc_id == seed.doc_id
+            and seed.paths == (document.path,)
+            and document.corpus_published_revision == desired_export_revision(document)
+        )
+        for path in seed.paths:
+            if not _CORPUS_FOLDER.fullmatch(path) or not path.endswith(
+                "--" + corpus_suffix(seed.doc_id)
+            ):
+                raise ManagedStorageCaptureUnavailable("capture_corpus_path_invalid")
+        if not published or document is None:
+            return
+        payload = json.loads(
+            self._read_manifest(
+                spool=spool,
+                provider=provider,
+                role="artifacts",
+                key=document.conversion_uri,
+                expected_digest=document.manifest_hash,
+            )
+        )
+        files = {
+            original_name(document.mime): "documents.corpus_original",
+            "document.md": "documents.corpus_derivative",
+            "pageindex.json": "documents.corpus_derivative",
+            "document.json": "documents.corpus_derivative",
+            "_index.md": "corpus.navigation",
+        }
+        if payload.get("source_map") is not None:
+            files["source_map.json"] = "documents.corpus_derivative"
+        for asset in payload["derived_assets"]:
+            name = _ASSET_NAME.validate_python(asset["name"])
+            if asset["kind"] in PIPELINE_ASSET_KINDS:
+                continue
+            if asset["kind"] not in READER_ASSET_KINDS:
+                raise ManagedStorageCaptureUnavailable(
+                    "capture_corpus_asset_kind_unknown"
+                )
+            key = "media/" + name
+            if key in files:
+                raise ManagedStorageCaptureUnavailable("capture_corpus_asset_duplicate")
+            files[key] = "documents.corpus_derivative"
+        for name, native_class in files.items():
+            self._reference(
+                spool=spool,
+                provider=provider,
+                role="corpus",
+                key=document.path + "/" + name,
+                native_class=native_class,
+                native_id=f"{seed.doc_id}:{document.corpus_published_revision}:{name}",
+                recorded_bytes=None,
+                required=True,
+            )
 
     def _read_manifest(
         self,
@@ -725,9 +765,7 @@ class StorageCaptureCatalog:
                     raise ManagedStorageCaptureUnavailable(
                         "capture_original_item_unmatched"
                     )
-                native_class = self._unreferenced_class(
-                    spool=spool, role=role, key=row[0]
-                )
+                native_class = self._unreferenced_class(role=role, key=row[0])
                 _, purpose, component = self._rules[native_class]
             self._observation(
                 spool=spool,
@@ -753,7 +791,7 @@ class StorageCaptureCatalog:
         ):
             raise ManagedStorageCaptureUnavailable("capture_native_reference_unmatched")
 
-    def _unreferenced_class(self, *, spool: _Spool, role: str, key: str) -> str:
+    def _unreferenced_class(self, *, role: str, key: str) -> str:
         """Classify only explicit current writer grammars, never an unknown file."""
         if role == "raw" and _UPLOAD.fullmatch(key):
             return "raw.unregistered_upload"
@@ -764,12 +802,12 @@ class StorageCaptureCatalog:
         if role == "artifacts" and _REP_ATTEMPT.fullmatch(key):
             return "artifacts.unregistered_representation"
         if role == "corpus":
-            prefix = "/".join(key.split("/")[:4])
-            row = spool.db.execute(
-                "SELECT state FROM p3 WHERE prefix=?", (prefix,)
-            ).fetchone()
-            if row is not None and row[0] in {"building", "validating", "failed"}:
-                return "corpus.unpublished_snapshot"
+            # Match a document folder before shared navigation: its _index.md
+            # is staging too until that document's publication is complete.
+            if _CORPUS_KEY.fullmatch(key):
+                return "corpus.incomplete_or_orphan"
+            if key == "llms.txt" or _CORPUS_NAVIGATION.fullmatch(key):
+                return "corpus.navigation"
         raise ManagedStorageCaptureUnavailable("capture_writer_class_unknown")
 
     def _native_opaque(self, *, native_class: str, native_id: str) -> str:

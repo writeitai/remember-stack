@@ -108,10 +108,22 @@ The typed current profile/source mapping is in
 source-rule technical approval is recorded in
 [the implementation analysis](../../plan/analysis/managed_storage_profile_20261111.md).
 It is not production scope/clock/cost qualification. The assembler matches
-native references, hash-bound conversion artifacts, immutable P3 manifests and
+native references, hash-bound conversion artifacts, D155 live corpus folders and
 all provider items in both directions, preserving actual zero, failed raw
 originals, excluded exposure and committed terminal members. Unknown ownership,
 unsupported K/link/legacy projection state or missing evidence refuses.
+
+Corpus classification requires the served reading's publication marker to equal
+its current DB-input/default-policy digest and `corpus_paths` to contain exactly
+that desired folder. Known original copies and reader derivatives count in
+`p3_origin`, separately from canonical raw originals. Shared navigation counts
+there too; incomplete/orphan folders are excluded staging. Unknown corpus keys
+refuse completion. Corpus originals, derivatives and navigation have separate
+native classes using the existing `projection_origin` purpose. Capture reads no
+snapshot registry or mutable corpus manifest. The native guard and reader require
+exact schema head `p9_52_0073`. The historical snapshot relation remains because
+`/operations.latest_projections` still reads it; no migration or public API change
+is part of this classification update.
 
 Completed results expose `manifest`, `native_witness`, `provider_manifest` and
 `iter_page_bytes()` from the required durable store. Lost delivery replays those

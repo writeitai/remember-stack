@@ -19,8 +19,10 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
 
+from rememberstack.core.corpus_export import CorpusDocument
 from rememberstack.model.metering import ManagedDocumentVersionOutcome
 from rememberstack.model.storage_capture import UnsignedDecimal
+from rememberstack.spine.corpus_export import _DOCUMENTS
 from rememberstack.spine.storage_capture_guard import NativeRelationGuardRefused
 
 CATALOG_FUNCTION = "rememberstack_capture_internal.read_capture_catalog"
@@ -101,6 +103,27 @@ class NativeTerminalPage(_NativeRecord):
     rows: tuple[ManagedDocumentVersionOutcome, ...]
 
 
+class NativeCorpusDocument(_NativeRecord):
+    """Recorded cleanup folders and current served inputs from the same cut.
+
+    A path is only a possibly written folder. The consumer must compare the
+    nullable publication marker with the current input/policy identity before
+    treating any of its files as a completed document copy.
+    """
+
+    doc_id: UUID
+    paths: tuple[str, ...] = Field(repr=False)
+    document: CorpusDocument | None = Field(repr=False)
+
+
+class NativeCorpusPage(_NativeRecord):
+    """A bounded page including deleted/unselected documents' cleanup paths."""
+
+    identity: NativeCatalogIdentity
+    deployment_id: UUID
+    rows: tuple[NativeCorpusDocument, ...]
+
+
 _BODY = r"""
 DECLARE
   native_scope uuid;
@@ -125,14 +148,15 @@ BEGIN
     LOCK TABLE public.deployments, public.alembic_version,
       public.content_objects, public.document_representations,
       public.document_structure_generations, public.document_reference_generations,
-      public.projection_snapshots, public.knowledge_artifacts,
+      public.documents, public.document_versions, public.document_metadata,
+      public.document_sections, public.knowledge_artifacts,
       public.knowledge_compilations, public.knowledge_plan_runs,
       public.forget_manifests, public.managed_ingest_measurements,
       public.managed_ingest_outcomes IN ACCESS SHARE MODE NOWAIT;
   ELSE
     IF (SELECT count(*) FROM public.deployments) <> 1
        OR (SELECT count(*) FROM public.alembic_version) <> 1
-       OR (SELECT version_num FROM public.alembic_version) <> 'p9_49_0070' THEN
+       OR (SELECT version_num FROM public.alembic_version) <> 'p9_52_0073' THEN
       RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_catalog_scope';
     END IF;
     SELECT deployment_id INTO STRICT native_scope FROM public.deployments;
@@ -192,12 +216,6 @@ BEGIN
         FROM public.document_reference_generations
         WHERE deployment_id=native_scope AND artifact_uri IS NOT NULL
       UNION ALL
-      SELECT CASE WHEN plane::text='P3_corpusfs' THEN 'projection_snapshots.gcs_uri'
-          ELSE 'projection_snapshots.unsupported_origin' END,
-        snapshot_id::text,'corpus',gcs_uri,
-        'tree',NULL,status::text,NULL FROM public.projection_snapshots
-        WHERE deployment_id=native_scope
-      UNION ALL
       SELECT 'knowledge_artifacts.'||u.field,k.artifact_id::text,'knowledge',
         u.locator,'repository_path',NULL,k.status::text,NULL
         FROM public.knowledge_artifacts k
@@ -226,6 +244,19 @@ BEGIN
     ) SELECT COALESCE(jsonb_agg(to_jsonb(bounded) ORDER BY
         native_class COLLATE "C",native_id COLLATE "C"),'[]'::jsonb)
         INTO page FROM bounded;
+  ELSIF section = 'corpus' THEN
+    IF after_class <> '' THEN
+      RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_cursor';
+    END IF;
+    SELECT COALESCE(jsonb_agg(to_jsonb(bounded) ORDER BY doc_id),'[]'::jsonb)
+      INTO page FROM (
+        SELECT owner.doc_id, COALESCE(owner.corpus_paths, ARRAY[]::text[]) AS paths,
+          to_jsonb(served) AS document
+        FROM public.documents owner
+        LEFT JOIN LATERAL (__CORPUS_DOCUMENTS__ AND d.doc_id=owner.doc_id) served ON true
+        WHERE owner.deployment_id=native_scope
+          AND owner.doc_id::text COLLATE "C" > after_id COLLATE "C"
+        ORDER BY owner.doc_id LIMIT page_limit) bounded;
   ELSIF section = 'terminals' THEN
     IF after_class <> '' THEN
       RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='native_catalog_cursor';
@@ -272,6 +303,8 @@ def install_native_capture_catalog(
             raise NativeRelationGuardRefused("native_catalog_installer_boundary")
         body = _BODY.replace(
             "__COLLECTOR__", sql.Literal(collector_role).as_string(connection)
+        ).replace(
+            "__CORPUS_DOCUMENTS__", _DOCUMENTS.replace(":deployment_id", "native_scope")
         )
         function = sql.Identifier(
             "rememberstack_capture_internal", "read_capture_catalog"

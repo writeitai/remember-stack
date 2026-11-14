@@ -211,14 +211,16 @@ _OBJECT_RULES: tuple[tuple[str, str, StoragePurpose, StorageComponent | None], .
         "audit_operations",
         None,
     ),
-    ("projection_snapshots.gcs_uri", "corpus", "projection_origin", "p3_origin"),
+    ("documents.corpus_original", "corpus", "projection_origin", "p3_origin"),
+    ("documents.corpus_derivative", "corpus", "projection_origin", "p3_origin"),
+    ("corpus.navigation", "corpus", "projection_origin", "p3_origin"),
     ("forget_manifests.portable_intent", "forget", "privacy_control", None),
     ("raw.unregistered_upload", "raw", "staging", None),
     ("raw.unregistered_original", "raw", "staging", None),
     ("artifacts.unregistered_representation", "artifacts", "staging", None),
     ("artifacts.conversion_checkpoint", "artifacts", "paid_checkpoint", None),
     ("artifacts.session_transcript", "artifacts", "audit_operations", None),
-    ("corpus.unpublished_snapshot", "corpus", "staging", None),
+    ("corpus.incomplete_or_orphan", "corpus", "staging", None),
 )
 
 

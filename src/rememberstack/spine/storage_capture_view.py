@@ -37,6 +37,8 @@ from rememberstack.spine.storage_capture_catalog import CATALOG_FUNCTION
 from rememberstack.spine.storage_capture_catalog import CATALOG_PAGE_LIMIT
 from rememberstack.spine.storage_capture_catalog import NativeCatalogAcquisition
 from rememberstack.spine.storage_capture_catalog import NativeCatalogIdentity
+from rememberstack.spine.storage_capture_catalog import NativeCorpusDocument
+from rememberstack.spine.storage_capture_catalog import NativeCorpusPage
 from rememberstack.spine.storage_capture_catalog import NativeReferencePage
 from rememberstack.spine.storage_capture_catalog import NativeStorageConfiguration
 from rememberstack.spine.storage_capture_catalog import NativeStoreReference
@@ -164,6 +166,25 @@ class NativeCapturedStorageView:
                 yield member.model_copy(
                     update={"payload_digest": member_payload_digest(member=member)}
                 )
+
+    def iter_corpus_documents(self) -> Iterator[NativeCorpusDocument]:
+        """Read live selections and all recorded cleanup folders in this view."""
+        after = ""
+        while True:
+            page = NativeCorpusPage.model_validate_json(
+                self._page(section="corpus", after=("", after))
+            )
+            self._check_identity(
+                identity=page.identity, deployment_id=page.deployment_id
+            )
+            if not page.rows:
+                return
+            for row in page.rows:
+                key = str(row.doc_id)
+                if key <= after:
+                    raise NativeStorageCaptureRefused("native_corpus_order")
+                after = key
+                yield row
 
     def close(self) -> None:
         """End the original view; cleanup never reconnects or reconstructs it."""
