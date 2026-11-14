@@ -315,6 +315,55 @@ def claim_selected_matching(
     ), parameters
 
 
+def fact_supported_matching(
+    *, filters: DocumentSearchFilters, fact_kind: str, fact_id: str, prefix: str
+) -> tuple[str, dict[str, Any]]:
+    """One predicate: the fact has live support from a matching document (D156 §4.3).
+
+    At least one live supporting claim of fact ``(fact_kind, fact_id)`` has an
+    occurrence that both lies in a matching version and passes the D140 time
+    scope's evidence gate (the scope's parameters must be bound). This is the
+    fact grain's eligibility under a ``documents`` filter, shared by P1
+    nomination, ``facts_context`` confirmation and the marking of
+    contradiction co-members.
+
+    The live supporting claim is read per fact from the base evidence table:
+    through ``fact_claim_evidence_live`` the planner rebuilt every live claim
+    for each fact (3.7 s for 20 keyed facts at 2,000 facts). A claim is live as
+    in that view: current testimony whose origin is visible, or, in a
+    periodised lineage, carried by a live occurrence (which the occurrence
+    test requires). ``OFFSET 0`` keeps each probe from being flattened into a
+    join.
+    """
+    occurrence_sql, parameters = matching_occurrence_exists(
+        filters=filters, claim="support.claim_id", prefix=prefix, in_scope="evidence"
+    )
+    return (
+        "("
+        + " OR ".join(
+            f"({fact_kind} = '{kind}' AND EXISTS (SELECT 1 FROM {table} support"
+            " JOIN claims supporting"
+            "   ON supporting.deployment_id = support.deployment_id"
+            "  AND supporting.claim_id = support.claim_id"
+            "  AND supporting.doc_id = support.doc_id"
+            " WHERE support.deployment_id = :deployment_id"
+            f" AND support.{column} = {fact_id}"
+            " AND support.stance = 'supports'"
+            " AND supporting.is_current_testimony"
+            " AND (EXISTS (SELECT 1 FROM memory_v1.claims_live live_claim"
+            "  WHERE live_claim.deployment_id = supporting.deployment_id"
+            "  AND live_claim.claim_id = supporting.claim_id)"
+            f" OR {lineage_periodised(doc='supporting.doc_id')})"
+            f" AND {occurrence_sql} OFFSET 0))"
+            for kind, table, column in (
+                ("relation", "relation_evidence", "relation_id"),
+                ("observation", "observation_evidence", "observation_id"),
+            )
+        )
+        + ")"
+    ), parameters
+
+
 def any_live_document_matches(
     *, filters: DocumentSearchFilters, prefix: str
 ) -> tuple[str, dict[str, Any]]:

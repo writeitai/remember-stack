@@ -30,16 +30,12 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
-- **Document filters on facts and operations.** Claim and chunk search
-  take a `documents` filter; the assured operations (`facts_context` and the
-  others), fact lookups and the SQL query functions do not yet, and there is
-  no `documents` filter over MCP because MCP has no claim or chunk search
-  tool.
-- **Filtering the assured operations by tag.** Claim and chunk search and
-  `search_documents` filter by tag; `claims_and_sources_context`,
-  `facts_context` and `combined_context` take no document filter, so they
-  read every document whatever tags it carries. In SQL queries you can join
-  on `document_tags_live`.
+- **Document filters on fact lookups and SQL functions.** Claim and chunk
+  search and the three context operations (`claims_and_sources_context`,
+  `facts_context`, `combined_context`) take a `documents` filter, tags
+  included; the direct fact lookups (`/lookup/relations`,
+  `/lookup/observations`) and the SQL query functions do not. In SQL queries
+  you can join on `document_tags_live`.
 - **Metadata from other formats.** Word, PowerPoint, PDF and email files
   give their title, people and dates, and `.xlsx` workbooks their title,
   author and dates; HTML, EPUB and notebooks give only a title, and other

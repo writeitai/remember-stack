@@ -6,6 +6,7 @@ import type { Validity } from './Validity';
 export type CoMember = {
     evidence_count: number;
     fact_id: string;
+    in_documents_filter?: boolean | null;
     label: string;
     validity: Validity;
 };

@@ -1392,6 +1392,13 @@
       "method": "facts_context",
       "options": {
         "candidate_k": 240,
+        "documents": {
+          "tags": {
+            "all": [
+              "project:fixture"
+            ]
+          }
+        },
         "entity_ids": [
           "10000000-0000-0000-0000-000000000001"
         ],
@@ -1480,6 +1487,13 @@
       "typescriptMethod": "factsContext",
       "typescriptOptions": {
         "candidateK": 240,
+        "documents": {
+          "tags": {
+            "all": [
+              "project:fixture"
+            ]
+          }
+        },
         "entityIds": [
           "10000000-0000-0000-0000-000000000001"
         ],
@@ -1496,6 +1510,13 @@
         {
           "body": {
             "candidate_k": 240,
+            "documents": {
+              "tags": {
+                "all": [
+                  "project:fixture"
+                ]
+              }
+            },
             "entity_ids": [
               "10000000-0000-0000-0000-000000000001"
             ],
@@ -1694,6 +1715,20 @@
       "method": "combined_context",
       "options": {
         "candidate_k": 200,
+        "documents": {
+          "family": [
+            "email"
+          ],
+          "tags": {
+            "any": [
+              "project:a",
+              "project:b"
+            ],
+            "none": [
+              "ci"
+            ]
+          }
+        },
         "k": 50,
         "layers": [
           "sources",
@@ -1860,6 +1895,20 @@
       "typescriptMethod": "combinedContext",
       "typescriptOptions": {
         "candidateK": 200,
+        "documents": {
+          "family": [
+            "email"
+          ],
+          "tags": {
+            "any": [
+              "project:a",
+              "project:b"
+            ],
+            "none": [
+              "ci"
+            ]
+          }
+        },
         "k": 50,
         "layers": [
           "sources",
@@ -1876,6 +1925,20 @@
         {
           "body": {
             "candidate_k": 200,
+            "documents": {
+              "family": [
+                "email"
+              ],
+              "tags": {
+                "any": [
+                  "project:a",
+                  "project:b"
+                ],
+                "none": [
+                  "ci"
+                ]
+              }
+            },
             "k": 50,
             "query": "fixture",
             "time": {
@@ -2004,6 +2067,16 @@
       "method": "claims_and_sources_context",
       "options": {
         "candidate_k": 400,
+        "documents": {
+          "doc_ids": [
+            "10000000-0000-0000-0000-000000000001"
+          ],
+          "tags": {
+            "none": [
+              "kind:draft"
+            ]
+          }
+        },
         "k": 100,
         "layers": [
           "sources"
@@ -2090,6 +2163,16 @@
       "typescriptMethod": "claimsAndSourcesContext",
       "typescriptOptions": {
         "candidateK": 400,
+        "documents": {
+          "doc_ids": [
+            "10000000-0000-0000-0000-000000000001"
+          ],
+          "tags": {
+            "none": [
+              "kind:draft"
+            ]
+          }
+        },
         "k": 100,
         "layers": [
           "sources"
@@ -2104,6 +2187,16 @@
         {
           "body": {
             "candidate_k": 400,
+            "documents": {
+              "doc_ids": [
+                "10000000-0000-0000-0000-000000000001"
+              ],
+              "tags": {
+                "none": [
+                  "kind:draft"
+                ]
+              }
+            },
             "k": 100,
             "query": "other",
             "time": {

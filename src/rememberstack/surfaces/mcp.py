@@ -56,6 +56,7 @@ from remember.models import TagCreate
 from remember.models import TagList
 from remember.models import TagUpdate
 from rememberstack.model import ForgetInProgressError
+from rememberstack.model import UnknownTagError
 from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import DocumentReferencesPage
 from rememberstack.model.client import DocumentReferencesRequest
@@ -526,6 +527,17 @@ class OperationMcpServer:
             )
         except (MissingArgumentError, InvalidArgumentError) as error:
             return error_result(invalid_arguments(detail=str(error)))
+        except UnknownTagError as error:
+            # D156: the 422 unknown_tag the HTTP route answers, before retrieval.
+            return error_result(
+                map_error(
+                    MemoryApiError(
+                        status_code=error.status_code,
+                        detail=str(error),
+                        code=error.code,
+                    )
+                )
+            )
         except LayerSelectionError as error:
             # D143 §7.2: the 422 the HTTP route answers, as engine-mode maps it.
             return error_result(

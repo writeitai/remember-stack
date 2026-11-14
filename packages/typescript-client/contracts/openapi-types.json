@@ -548,6 +548,18 @@
             "title": "Fact Id",
             "type": "string"
           },
+          "in_documents_filter": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Documents Filter"
+          },
           "label": {
             "title": "Label",
             "type": "string"
@@ -3134,6 +3146,19 @@
             "title": "Fact Kind",
             "type": "string"
           },
+          "in_documents_filter_total": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Documents Filter Total"
+          },
           "returned": {
             "minimum": 0,
             "title": "Returned",
@@ -3184,6 +3209,18 @@
             ],
             "title": "Fact Kind",
             "type": "string"
+          },
+          "in_documents_filter": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Documents Filter"
           },
           "stance": {
             "enum": [
@@ -5059,6 +5096,18 @@
             "title": "Fact Id",
             "type": "string"
           },
+          "in_documents_filter": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Documents Filter"
+          },
           "label": {
             "title": "Label",
             "type": "string"
@@ -5070,6 +5119,7 @@
         "required": [
           "evidence_count",
           "fact_id",
+          "in_documents_filter",
           "label",
           "validity"
         ],
@@ -7802,6 +7852,19 @@
             "title": "Fact Kind",
             "type": "string"
           },
+          "in_documents_filter_total": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Documents Filter Total"
+          },
           "returned": {
             "minimum": 0,
             "title": "Returned",
@@ -7824,6 +7887,7 @@
         "required": [
           "fact_id",
           "fact_kind",
+          "in_documents_filter_total",
           "returned",
           "stance",
           "total"
@@ -7853,6 +7917,18 @@
             "title": "Fact Kind",
             "type": "string"
           },
+          "in_documents_filter": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Documents Filter"
+          },
           "stance": {
             "enum": [
               "supports",
@@ -7866,6 +7942,7 @@
           "claim_id",
           "fact_id",
           "fact_kind",
+          "in_documents_filter",
           "stance"
         ],
         "title": "FactEvidence",

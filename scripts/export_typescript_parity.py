@@ -97,6 +97,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "entity_ids": [ID],
                 "k": 60,
                 "candidate_k": 240,
+                "documents": {"tags": {"all": ["project:fixture"]}},
             },
         ),
         (
@@ -108,6 +109,10 @@ def scenarios() -> list[dict[str, Any]]:
                 "k": 50,
                 "candidate_k": 200,
                 "layers": ["sources", "claims", "facts"],
+                "documents": {
+                    "family": ["email"],
+                    "tags": {"any": ["project:a", "project:b"], "none": ["ci"]},
+                },
             },
         ),
         (
@@ -119,6 +124,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "k": 100,
                 "candidate_k": 400,
                 "layers": ["sources"],
+                "documents": {"doc_ids": [ID], "tags": {"none": ["kind:draft"]}},
             },
         ),
         ("resolve_entity", {"name": "fixture"}, {"name": "other"}),
