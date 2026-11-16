@@ -21345,19 +21345,34 @@ change; a smaller prompt alone does not establish a score or latency improvement
 
 ### Independent Mem0-like grading of saved answers
 
-`python -m benchmarks.locomo.judge_sidecar` prepares a separate grading result
+`python -m benchmarks.locomo.mem0_style_judge` prepares a separate grading result
 without changing answers or canonical grades. It does not retrieve, ingest,
 or regenerate answers. The following command plans the work without model calls:
 
 ```bash
-python -m benchmarks.locomo.judge_sidecar \
+python -m benchmarks.locomo.mem0_style_judge \
   --run /data/locomo/frozen-run \
   --output /data/locomo/mem0-like-results \
   --max-calls 2000 --max-cost-usd 10
 ```
 
-Execution requires `--execute` and OpenRouter credentials. The sidecar uses
-Luna 6, high reasoning and the Flex allowlist. Its policy accepts one correct
+For saved `retrieval-ablation` answers, supply their output directory separately:
+
+```bash
+python -m benchmarks.locomo.mem0_style_judge \
+  --run /data/locomo/retained-run \
+  --answers /data/locomo/saved-answers \
+  --output /data/locomo/mem0-style-results \
+  --judge-model openai/gpt-6-luna-pro \
+  --max-calls 2000 --max-cost-usd 10
+```
+
+This reads the existing answers and validates their execution/source identities.
+The saved answer set must be complete before execution. Neither source directory
+may overlap the grading output. A changing source snapshot stops grading.
+
+Execution requires `--execute` and OpenRouter credentials. The judge defaults to Luna 6 with high reasoning; `--judge-model` can select
+Luna Pro. Routing prefers Flex and permits normal OpenAI as fallback. Its policy accepts one correct
 list item, dates within fourteen days, durations within fifty percent and
 broad paraphrases. This is a policy inspired by the
 [pinned Mem0 source](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/benchmarks/locomo/prompts.py),

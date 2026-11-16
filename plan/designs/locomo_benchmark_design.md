@@ -99,7 +99,18 @@ are identified independently. See
 [`locomo_semantic_judge_restoration_20261110.md`](../analysis/locomo_semantic_judge_restoration_20261110.md).
 Model or policy changes alone do not establish a score gain.
 
-An optional Mem0-like sidecar reads saved answers and produces separate results.
+The optional `benchmarks.locomo.mem0_style_judge` reads saved answers and
+produces separate results. `--run` identifies the retained run/dataset/manifest;
+optional `--answers` identifies a saved retrieval-ablation execution. Its outer
+and nested state fingerprints must equal the execution fingerprint, and the
+execution's source fingerprint must equal the retained run's fingerprint.
+Selected items must be unique members of that source manifest and belong to
+the declared sample. Executing requires a complete declared answer set; dry
+runs can report missing answers without model calls. Classic saved `run/state.json`
+remains an input layout when `--answers` is omitted. Full trace classes are not
+required to read either layout. `--judge-model` configures the grading model,
+with HIGH reasoning always set; the Pro comparison uses Luna Pro for both
+judges. Flex-first and normal-OpenAI fallback routing are pinned in the identity.
 Its identity pins the source run/state hashes, selected items, category-three
 reference preprocessing, prompt/schema hashes, model/effort/routing and optional
 source-evidence mode. It does not change canonical answers or grades or invoke
@@ -113,7 +124,9 @@ Sidecar execution requires an explicit execution flag and call/reported-cost
 ceilings. Each attempted call has a durable in-flight marker followed by its
 terminal result and usage. An uncertain or unaccounted paid attempt requires
 reconciliation and must not be automatically repeated. Changed input snapshots
-or policies require a new output identity. Missing source answers, failed source
+or policies require a new output identity. Output must overlap neither source
+directory in either direction. A source change during execution stops completed
+summary publication while retaining billed outcomes. Missing source answers, failed source
 attempts, failed judgments and successful labels remain distinguishable.
 
 ### 2.2 Provenance: the serving image, not the checkout

@@ -38,6 +38,8 @@ from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.ports import ModelProviderPort
 
+JUDGE_NAME = "mem0_style_judge"
+PROVIDER_ROUTE = ("openai/flex", "openai")
 POLICY_VERSION = "mem0-like-20261023-v1"
 UPSTREAM_REVISION = "4b61c5d31b9c668a12b4f5e78064248a02c82d2b"
 UPSTREAM_URL = (
@@ -90,6 +92,24 @@ class _SourceState(BaseModel):
     model_config = ConfigDict(extra="ignore")
     protocol_fingerprint: str
     answers: dict[str, SavedAnswer]
+
+
+class _AnswerExecution(BaseModel):
+    """Read only the stable identity shared by saved retrieval-ablation outputs."""
+
+    model_config = ConfigDict(extra="ignore")
+    fingerprint: str
+    source_protocol_fingerprint: str
+    sample_id: str
+    item_ids: tuple[str, ...]
+
+
+class _ExecutedAnswers(BaseModel):
+    """Keep the execution fingerprint distinct from the retained source run."""
+
+    model_config = ConfigDict(extra="ignore")
+    fingerprint: str
+    run_state: _SourceState
 
 
 class SidecarJudgment(StructuredResponseModel):
@@ -190,6 +210,8 @@ def grade_saved_answers(
     dataset_path: Path | None = None,
     sample_ids: tuple[str, ...] = (),
     with_evidence: bool = False,
+    answers_dir: Path | None = None,
+    judge_model: str = JUDGE_MODEL,
 ) -> dict[str, object]:
     """Plan or execute separate grading without mutating the saved run.
 
@@ -198,29 +220,71 @@ def grade_saved_answers(
     """
     if max_calls < 1 or not max_cost_usd.is_finite() or max_cost_usd <= 0:
         raise ValueError("positive call and finite reported-cost ceilings are required")
-    if (
-        output.resolve() == run_dir.resolve()
-        or run_dir.resolve() in output.resolve().parents
-    ):
-        raise ValueError("sidecar output must be outside the source run")
+    if not judge_model.strip():
+        raise ValueError("judge model must not be empty")
+    for source in (run_dir, answers_dir):
+        if source is not None and (
+            output.resolve().is_relative_to(source.resolve())
+            or source.resolve().is_relative_to(output.resolve())
+        ):
+            raise ValueError(
+                "sidecar output must be separate from source run and answers"
+            )
     run_bytes = (run_dir / "run.json").read_bytes()
-    state_bytes = (run_dir / "state.json").read_bytes()
+    state_path = (answers_dir or run_dir) / "state.json"
+    state_bytes = state_path.read_bytes()
     run = _SourceRun.model_validate_json(run_bytes)
-    state = _SourceState.model_validate_json(state_bytes)
-    if state.protocol_fingerprint != run.protocol_fingerprint:
-        raise ValueError("source state and run identities differ")
+    execution = None
+    execution_bytes = None
+    if answers_dir is None:
+        state = _SourceState.model_validate_json(state_bytes)
+        if state.protocol_fingerprint != run.protocol_fingerprint:
+            raise ValueError("source state and run identities differ")
+    else:
+        execution_bytes = (answers_dir / "ablation.json").read_bytes()
+        execution = _AnswerExecution.model_validate_json(execution_bytes)
+        envelope = _ExecutedAnswers.model_validate_json(state_bytes)
+        state = envelope.run_state
+        if (
+            execution.source_protocol_fingerprint != run.protocol_fingerprint
+            or execution.fingerprint != envelope.fingerprint
+            or execution.fingerprint != state.protocol_fingerprint
+        ):
+            raise ValueError("saved answer execution and source identities differ")
     dataset = load_dataset(dataset_path or Path(run.dataset_path))
     if dataset.sha256 != run.dataset_sha256:
         raise ValueError("source dataset identity differs")
-    manifest = QuestionManifest.model_validate_json(
-        (run_dir / "manifest.json").read_bytes()
-    )
+    manifest_bytes = (run_dir / "manifest.json").read_bytes()
+    manifest = QuestionManifest.model_validate_json(manifest_bytes)
     if manifest_bytes_hash(manifest=manifest) != run.manifest_sha256:
         raise ValueError("source manifest identity differs")
     questions = validate_manifest(dataset=dataset, manifest=manifest)
+    by_id = {question.item_id: question for question in questions}
+    if execution is not None:
+        if (
+            not execution.item_ids
+            or len(set(execution.item_ids)) != len(execution.item_ids)
+            or not set(execution.item_ids) <= set(by_id)
+            or any(
+                by_id[item].sample_id != execution.sample_id
+                for item in execution.item_ids
+            )
+        ):
+            raise ValueError(
+                "answer execution selection differs from the source manifest"
+            )
+        if not set(state.answers) <= set(execution.item_ids):
+            raise ValueError("saved answers are outside their execution selection")
+        if execute and set(state.answers) != set(execution.item_ids):
+            raise ValueError(
+                "answer execution is incomplete; freeze all saved answers first"
+            )
+        questions = tuple(by_id[item] for item in execution.item_ids)
+    elif not set(state.answers) <= set(by_id):
+        raise ValueError("saved answers are outside the source manifest")
     known_samples = {question.sample_id for question in questions}
     if not set(sample_ids) <= known_samples:
-        raise ValueError("sample selection is outside the source manifest")
+        raise ValueError("sample selection is outside the source answer selection")
     questions = tuple(
         q for q in questions if not sample_ids or q.sample_id in sample_ids
     )
@@ -277,6 +341,7 @@ def grade_saved_answers(
         q.item_id: _sha256(data=prompt.encode()) for q, _, prompt in prepared
     }
     identity = {
+        "judge_name": JUDGE_NAME,
         "policy": POLICY_VERSION,
         "upstream_revision": UPSTREAM_REVISION,
         "upstream_url": UPSTREAM_URL,
@@ -286,10 +351,11 @@ def grade_saved_answers(
         "dataset_sha256": dataset.sha256,
         "item_ids": [q.item_id for q in questions],
         "with_evidence": with_evidence,
-        "judge_model": JUDGE_MODEL,
+        "judge_model": judge_model,
         "reasoning_effort": "high",
         "temperature": 0.0,
-        "provider_only": ["openai/flex"],
+        "provider_only": list(PROVIDER_ROUTE),
+        "provider_order": list(PROVIDER_ROUTE),
         "policy_sha256": _sha256(
             data=(_POLICY + (_EVIDENCE_POLICY if with_evidence else "")).encode()
         ),
@@ -298,6 +364,12 @@ def grade_saved_answers(
         ),
         "prompt_sha256_by_item": prompt_hashes,
     }
+    if execution is not None and execution_bytes is not None:
+        identity.update(
+            source_answer_format="retrieval_ablation",
+            source_execution_sha256=_sha256(data=execution_bytes),
+            source_execution_fingerprint=execution.fingerprint,
+        )
     if not execute:
         return {
             "execute": False,
@@ -375,7 +447,7 @@ def grade_saved_answers(
                 try:
                     response = provider.generate(
                         request=ModelRequest(
-                            model=JUDGE_MODEL,
+                            model=judge_model,
                             prompt=prompt,
                             temperature=0.0,
                             reasoning_effort="high",
@@ -404,13 +476,13 @@ def grade_saved_answers(
                 record = record.model_copy(
                     update={
                         "status": "graded"
-                        if response.usage.model_name == JUDGE_MODEL
+                        if response.usage.model_name == judge_model
                         else "judge_failure",
                         "usage": response.usage,
                         "label": response.output.label,
                         "reasoning": response.output.reasoning,
                         "error": None
-                        if response.usage.model_name == JUDGE_MODEL
+                        if response.usage.model_name == judge_model
                         else "resolved judge model differs",
                     }
                 )
@@ -421,8 +493,20 @@ def grade_saved_answers(
                 raise ValueError(
                     "model identity or reported-cost boundary reached; outcome saved"
                 )
+        if (
+            (run_dir / "run.json").read_bytes() != run_bytes
+            or state_path.read_bytes() != state_bytes
+            or (run_dir / "manifest.json").read_bytes() != manifest_bytes
+            or (
+                answers_dir is not None
+                and (answers_dir / "ablation.json").read_bytes() != execution_bytes
+            )
+        ):
+            raise ValueError("source snapshot changed during grading; results retained")
         graded = [r for r in records.values() if r.status == "graded"]
         summary = {
+            "judge_name": JUDGE_NAME,
+            "judge_model": judge_model,
             "policy": POLICY_VERSION,
             "with_evidence": with_evidence,
             "selected_questions": len(questions),
@@ -449,6 +533,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--answers", type=Path, help="Saved retrieval-ablation output directory"
+    )
+    parser.add_argument("--judge-model", default=JUDGE_MODEL)
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--sample", action="append", default=[])
     parser.add_argument("--with-evidence", action="store_true")
@@ -460,12 +548,17 @@ def main() -> None:
     if args.execute:
         provider = OpenRouterModelProvider(
             settings=OpenRouterSettings.model_validate(
-                {"chat_provider_only": ["openai/flex"], "chat_provider_order": None}
+                {
+                    "chat_provider_only": list(PROVIDER_ROUTE),
+                    "chat_provider_order": list(PROVIDER_ROUTE),
+                }
             )
         )
     result = grade_saved_answers(
         run_dir=args.run,
         output=args.output,
+        answers_dir=args.answers,
+        judge_model=args.judge_model,
         dataset_path=args.dataset,
         sample_ids=tuple(args.sample),
         with_evidence=args.with_evidence,

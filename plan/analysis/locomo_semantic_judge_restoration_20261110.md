@@ -25,7 +25,7 @@ model and template differed, so that observation does not isolate a cause.
 Historical grading used Sol high. The owner-selected current model remains
 Luna high; restoring the template does not reproduce the entire old experiment.
 
-The independent `judge_sidecar.py` preserves a separately named Mem0-like
+The independent `mem0_style_judge.py` preserves a separately named Mem0-like
 policy and a pinned upstream URL. That sidecar additionally tolerates numeric
 and list differences and can optionally inspect source evidence. Its policy
 and outputs remain separate. This restoration uses the exact verified branch
