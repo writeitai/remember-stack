@@ -18,7 +18,7 @@ Your agents have easy access to the information - they remember!
 **[Quickstart](https://remember.dev/docs/start/quickstart)** ·
 **[What is a memory system?](https://remember.dev/docs/start/what-is-a-memory-system)**
 
-**89.94% accuracy on LoCoMo benchmark.**
+**[94.09% accuracy on LoCoMo benchmark.](benchmarks/locomo/README.md#published-results)**
 
 <br />
 

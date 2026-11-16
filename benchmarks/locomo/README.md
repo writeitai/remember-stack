@@ -21,19 +21,81 @@ Full-v46 introduced the bounded visual-label description prompt. Old image bundl
 are not relabelled: preparing this profile requires matching new visual readings,
 while independent OCR checkpoints may be reused. For a reader-only comparison
 on retained v45 stores, use the PR593 reader revision before adopting this
-profile; v46 retires the executable v45 name. The published result below is the
-unchanged v45 result, not a v46 measurement.
+profile; v46 retires the executable v45 name. The published results below reuse
+v45 ingestion and frozen image inputs; they measure fresh answering and judging
+on that saved data.
 
-## Published result
+## Published results
 
-**89.94% LLM-judge accuracy: 1,385 / 1,540 correct**, across all category 1–4
-questions in ten conversations and 272 sessions, completed November 13, 2026.
-The recorded Full-v45 publication run used `openai/gpt-6-luna-pro` at high reasoning for both
-answering and grading, Luna at low reasoning for ingestion and vision, and Jev
-for fact adjudication. It reused the frozen OCR/Luna image inputs and used
-`k=50`, `candidate_k=200` per search channel, with eight simultaneous questions
-per conversation. Serving revision: `1187ca0fbd84a43a15b152f4d79b0e641661b618`;
-ingestion revision: `13ce4a5224709b3e3cda65c429d5915d47e95e89`.
+**94.09% LLM-judge accuracy: 1,449 / 1,540 correct** with the Mem0-style judge,
+completed November 16, 2026. Both grading passes cover the same saved answers
+to all category 1–4 questions in ten conversations:
+
+| Grading policy | Correct answers | Accuracy |
+| --- | ---: | ---: |
+| Native semantic judge | 1,390 / 1,540 | 90.26% |
+| Mem0-style judge | 1,449 / 1,540 | 94.09% |
+
+The answerer and both judges used `openai/gpt-6-luna-pro` with high reasoning
+and temperature zero. The retained ingestion used Luna at low reasoning for
+ingestion and vision, Jev for fact adjudication, and frozen OCR/Luna image
+inputs. Fresh answering used `k=50`, `candidate_k=200` per search channel, eight
+simultaneous questions per conversation and up to three conversations. The
+separate Mem0-style pass then graded the completed answers without ingestion
+or answer regeneration. All answers, tool traces, grades and ingested stores
+were saved and their GCS backups verified.
+
+Serving/native-evaluator revision: `78a83408011fddbd1d62ed8957b799f456b23bbd`;
+ingestion revision: `13ce4a5224709b3e3cda65c429d5915d47e95e89`;
+answer-prompt revision: `79e80a7e4ef0f4d4cfdcf7662786da7ee07eeace`;
+Mem0-style scorer revision: `17c1e7e0ace092b7c1596ad832699c73566d2d9b`.
+
+### How the two judges differ
+
+The [native judge](protocol.py) evaluates whether the answer conveys the
+reference's core fact, entity, date or event. It accepts paraphrases, equivalent
+calendar/relative dates and extra context that preserves that meaning; a
+contradictory or fundamentally different fact, entity or time is wrong.
+
+The separate [`mem0_style_judge`](mem0_style_judge.py) uses a Mem0-inspired
+acceptance policy with explicit allowances for partial lists, approximate
+times and broader descriptions:
+
+| Case | Native semantic judge | Mem0-style judge |
+| --- | --- | --- |
+| Reference lists several items | Applies the core-fact semantic rule; no blanket one-item exception. | One correct reference item is sufficient. |
+| Dates | Accepts expressions identifying the same date/event; no fixed error tolerance. | Accepts dates within fourteen days of the reference. |
+| Durations | Applies the core-fact semantic rule; no fixed percentage tolerance. | Accepts durations within fifty percent of the reference. |
+| Emotions | Checks the reference's essential meaning about the event. | Accepts words in the same positive/negative family about the same event. |
+| Descriptive details | Extra context is accepted when the essential reference truth is conveyed. | Identifying the same referent can suffice even when descriptive details differ. |
+| Category 3 reference text | Uses the full reference answer. | Uses the reference text before the first semicolon. |
+
+The Mem0-style pass accepted 64 answers rejected by the native judge and
+rejected five native successes, for a net increase of 59. Every question keeps
+both labels. These are LLM-judged accuracy scores; the harness also records
+official token-overlap F1 separately.
+
+### Running the separate judge on saved answers
+
+The separate scorer writes its own identities, per-question grades and usage;
+the original answers and native grades remain unchanged. For a saved
+`retrieval-ablation` answer execution, explicitly supply `--answers`:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo.mem0_style_judge \
+  --run /private/source-run \
+  --answers /private/generated-answers \
+  --output /private/mem0-style-grades \
+  --judge-model openai/gpt-6-luna-pro \
+  --max-calls 1700 --max-cost-usd 4
+```
+
+This plans grading without making model calls; add `--execute` to run it.
+Omit `--answers` only when the answers to grade are in the source run's own
+`state.json`. Output must be separate from both input directories. The scorer
+checks frozen input hashes and preserves completed grades on resume; uncertain
+billed attempts require reconciliation before replay. The published comparison
+used the default question/reference/answer inputs, without `--with-evidence`.
 
 ## Reader protocol
 
@@ -287,7 +349,7 @@ attempts in `reader_attempts` and pre-tool additional calls in
 `first_step_retries`; the summary sums both signals separately. Plain provider
 outages and judge failures are not retried.
 
-The protocol pins Luna's reasoning effort to `none` for both answer and judge
+The protocol pins Luna's reasoning effort to `high` for both answer and judge
 calls and verifies the provider-reported model identity for both seats. Ambient
 OpenRouter settings or model aliases therefore cannot silently change the
 prepared protocol.
