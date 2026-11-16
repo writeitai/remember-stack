@@ -204,16 +204,19 @@ the credential covers.
 
 The memory tools are the tool catalogue of the `remember` package, taken
 unchanged: names, descriptions, input schemas and annotations. remember.dev
-serves the catalogue of the engine version its deployments run (see
-[What remember.dev serves](/docs/cloud/compatibility)); today that is
-v0.17.2:
+serves the catalogue of the latest release, the same release its deployments
+run (see [What remember.dev serves](/docs/cloud/compatibility)):
 
 | Tool | Permission |
 |---|---|
 | `ingest` | `memory:write` |
 | `delete_document` | `memory:write` |
 | `pipeline_readiness` | `memory:read` |
+| `search_documents`, `section_history`, `document_references` | `memory:read` |
+| `list_tags` | `memory:read` |
+| `create_tag`, `update_tag`, `delete_tag`, `update_document_tags` | `memory:write` |
 | `resolve_entity`, `facts_context`, `claims_and_sources_context`, `combined_context` | `memory:read` |
+| `adjacent_chunks` | `memory:read` |
 | `query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query` | `memory:read` |
 
 Each tool is described in the [MCP tools reference](/docs/reference/mcp).

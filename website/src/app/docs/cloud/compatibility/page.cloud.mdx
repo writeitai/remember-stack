@@ -1,6 +1,6 @@
 export const metadata = {
   title: "What remember.dev serves",
-  description: "Which RememberStack version remember.dev runs, which deployment routes it serves, what differs from the version these docs describe, and how changes are announced.",
+  description: "Which deployment routes remember.dev serves, what it does not serve, how authentication and limits differ from a self-hosted engine, and where changes are announced.",
 };
 
 # What remember.dev serves
@@ -9,22 +9,14 @@ export const metadata = {
 
 A remember.dev deployment is a RememberStack engine answering at its own
 hostname. It serves the engine's HTTP API directly, with remember.dev's
-authentication and limits in front. This page says which engine version
-that is, what it serves, and where it differs from what the rest of these
-docs describe.
+authentication and limits in front. This page says what it serves and
+where it differs from what the rest of these docs describe.
 
 ## Engine version
 
-| | Version |
-|---|---|
-| remember.dev deployments run | RememberStack **v0.17.2** |
-| These docs describe | RememberStack **v0.19.0**, plus changes merged after it that are not released yet |
-
-remember.dev chooses the engine version and upgrades deployments; you do
-not. [Hosted MCP](/docs/cloud/hosted-mcp) serves the tool catalogue of the
-same version.
-
-`GET /deployment` on your deployment returns the build it is running.
+remember.dev runs the latest RememberStack release and upgrades deployments
+with each release; `GET /deployment` on your deployment returns the build it
+runs.
 
 ## Served routes
 
@@ -34,7 +26,9 @@ your deployment at `https://<deployment-id>.dp.remember.dev` serves:
 | Area | Routes | Notes |
 |---|---|---|
 | Ingest | `POST /ingest` | Text only; see [Ingest limits](/docs/cloud/limits#ingest) |
-| Documents | `GET /documents`, `DELETE /documents/{doc_id}` | |
+| Documents | `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}` | |
+| Tags | `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` | See [Tag documents](/docs/guides/tag-documents) |
+| Versions in force | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `GET` and `PUT /documents/{doc_id}/versions/{version_id}/references`, `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` | See [Read a document as of a date](/docs/guides/versions-in-force) |
 | Readiness | `POST /readiness` | |
 | Search | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks` | |
 | Passages | `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` | |
@@ -42,7 +36,7 @@ your deployment at `https://<deployment-id>.dp.remember.dev` serves:
 | Entities and facts | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /transcript/relation/{relation_id}`, `GET /hydrate/relation/{relation_id}` | |
 | Graph | `POST /graph/neighborhood`, `POST /graph/path`, `POST /graph/citation-path` | At most 2 graph queries at a time |
 | SQL queries | `POST /query/sql`, `POST /query/sql/explain`, `GET /query/space`, `GET /query/space/search`, `GET /query/saved`, `GET /query/saved/{namespace}/{name}`, `POST /query/saved/{namespace}/{name}/run` | |
-| Deployment | `GET /deployment`, `GET /healthz` | `/healthz` needs no key |
+| Deployment | `GET /deployment`, `GET /processing-layers`, `GET /healthz` | `/healthz` needs no key |
 
 SQL queries run over the query space (`memory_v1`): prepared, read-only
 views and functions. Every statement is parsed and checked against that
@@ -59,11 +53,6 @@ describes, except where this page says otherwise.
 
 | Route or feature | What happens |
 |---|---|
-| `POST /documents/search` | Added in v0.18.1. Not present on remember.dev yet (`404`); `remember documents search` gets the same answer, and hosted MCP has no `search_documents` tool |
-| Document filters on search (`documents` in `POST /search/claims` and `POST /search/chunks`) and `source_path` on `POST /ingest` | Added in v0.18.1. Not available on remember.dev yet |
-| The `adjacent_chunks` MCP tool | Added in v0.18.1. Hosted MCP does not list it; the routes under *Passages* above are served |
-| Effective periods, version keys, section history and references (`version_key`, `effective_from` and `effective_until` on `POST /ingest`; the `…/effective-periods` and `…/references` routes; `GET /documents/{doc_id}/sections/{section_key}/history`; `POST /documents/references`; `time` on search and on `claims_and_sources_context`) | Added in v0.18.1. Not available on remember.dev yet, and hosted MCP has no `section_history` or `document_references` tool. See [Read a document as of a date](/docs/guides/versions-in-force) |
-| Document tags (`GET /tags`, `POST /tags`, `PATCH` and `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags`, `tags` on `POST /ingest`, in document results and in the document filter of `POST /documents/search`, `POST /search/claims` and `POST /search/chunks`, the `documents` filter of the three context operations, the five tag MCP tools, `memory_v1.tags_current`, `memory_v1.document_tags_live`, `examples.facts_by_tag`) | Newer than the engine remember.dev runs; not available on remember.dev yet. See [Tag documents](/docs/guides/tag-documents) |
 | Connectors (`/connectors…`) | The routes exist, but remember.dev does not run connectors for you and gives them no credentials. Push documents with ingest instead |
 | Files other than UTF-8 Markdown and plain text | Refused before storage; see [Ingest limits](/docs/cloud/limits#ingest). A self-hosted engine can convert PDFs and other formats |
 | Filesystem views of the corpus | Not offered on remember.dev |
@@ -110,7 +99,7 @@ your deployment's own hostname.
 
 ## Changes
 
-The engine version remember.dev runs changes over time, and routes, error
-codes or limits can change with it. Engine releases are listed in the
-[changelog](/docs/project/changelog). Check `GET /deployment` to see which
-build your deployment runs.
+Each engine release can change routes, error codes or limits, and
+remember.dev upgrades deployments with each release. Engine releases are
+listed in the [changelog](/docs/project/changelog). Check `GET /deployment`
+to see which build your deployment runs.

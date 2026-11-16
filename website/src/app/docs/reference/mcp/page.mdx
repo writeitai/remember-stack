@@ -911,7 +911,7 @@ sends an API key as `Authorization: Bearer rmb_…`. Setup per client, the
 account tools, limits and errors: [Hosted MCP](/docs/cloud/hosted-mcp).
 
 The hosted server serves the memory tools of this package's catalogue,
-unchanged, at the engine version remember.dev runs. It adds a `project`
+unchanged, from the latest release. It adds a `project`
 argument to every memory tool, which it resolves and removes before calling
 that project's deployment, and it adds account tools that exist only on
 remember.dev.
@@ -926,7 +926,7 @@ remember.dev.
 | Protocol version answered | `2025-11-25` | The requested one of `2025-11-25`, `2025-06-18`, `2025-03-26`; otherwise `2025-11-25` |
 | Sign-in | Key from flags, environment or the credential file | OAuth in the browser (PKCE, dynamic registration, consent page), or an API key in the header |
 | Configure with | `remember setup` | `remember setup --cloud`, or the agent's "add remote MCP server" setting |
-| Memory tools | The catalogue of the installed package | The catalogue of the engine version remember.dev runs |
+| Memory tools | The catalogue of the installed package | The catalogue of the latest release |
 | `project` argument | Refused (`project_routing_unavailable`) | On every memory tool |
 | `ingest` bodies | `text`, `content_base64`, `path` | `text`, `content_base64` |
 | Account tools | None | Eleven: projects, keys, members, balance and billing links |

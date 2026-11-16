@@ -34,7 +34,7 @@ remember.dev you do none of it.
 | Model access | Hold model provider keys, pick models, watch provider spend | remember.dev supplies model access through OpenRouter, with a separate provider key for each project |
 | Endpoint and TLS | Put the API behind a hostname, get certificates, renew them | Each project gets `https://<deployment-id>.dp.remember.dev` with certificates issued and renewed for you |
 | Authentication | Configure bearer tokens or signing keys on the engine | Create and revoke API keys in the console; one key covers the projects you choose, and each deployment verifies it |
-| Upgrades | Pull new images, run migrations, restart in order | remember.dev chooses the engine version and rolls it out |
+| Upgrades | Pull new images, run migrations, restart in order | remember.dev upgrades deployments with each engine release |
 | Billing your own usage | Nothing to bill, but nothing to cap either | Prepaid credits, a monthly cap and per-project caps stop spending before it happens |
 
 ## What you get
