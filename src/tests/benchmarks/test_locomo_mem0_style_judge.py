@@ -5,10 +5,11 @@ from datetime import UTC
 from decimal import Decimal
 import json
 from pathlib import Path
+from typing import NotRequired
 from typing import TypedDict
 from typing import TypeVar
 
-from benchmarks.locomo import judge_sidecar as sidecar
+from benchmarks.locomo import mem0_style_judge as sidecar
 from benchmarks.locomo.dataset import DATASET_COMMIT
 from benchmarks.locomo.dataset import item_ids_hash
 from benchmarks.locomo.dataset import manifest_bytes_hash
@@ -40,6 +41,8 @@ class _GradeOptions(TypedDict):
     max_cost_usd: Decimal
     execute: bool
     provider: ModelProviderPort
+    answers_dir: NotRequired[Path]
+    judge_model: NotRequired[str]
 
 
 class FakeProvider:
@@ -325,3 +328,254 @@ def test_received_capacity_rejection_resumes_without_repaying_prior_grades(
     assert (output / "records/fixture/qa/0000.json").read_bytes() == first_grade
     assert (output / "attempts/fixture/qa/0001/1.json").is_file()
     assert state_path.read_bytes() == source_bytes
+
+
+@pytest.fixture
+def executed_answers(source: Path, tmp_path: Path) -> Path:
+    """Represent native ablation output with its own execution fingerprint."""
+    output = tmp_path / "saved-answers"
+    output.mkdir()
+    state = json.loads((source / "state.json").read_text())
+    state["protocol_fingerprint"] = "e" * 64
+    (output / "state.json").write_text(
+        json.dumps({"fingerprint": "e" * 64, "run_state": state})
+    )
+    (output / "ablation.json").write_text(
+        json.dumps(
+            {
+                "fingerprint": "e" * 64,
+                "source_protocol_fingerprint": "source-fingerprint",
+                "sample_id": "fixture",
+                "item_ids": ["fixture/qa/0000"],
+                "answer_model": "openai/gpt-6-luna-pro",
+                "extra_trace_schema": "opaque to the independent judge",
+            }
+        )
+    )
+    return output
+
+
+def test_saved_ablation_has_separate_source_and_execution_identity(
+    source: Path, executed_answers: Path, tmp_path: Path
+) -> None:
+    """Link retained run A to answer execution B without rewriting either."""
+    result = sidecar.grade_saved_answers(
+        run_dir=source,
+        answers_dir=executed_answers,
+        output=tmp_path / "grades",
+        max_calls=1,
+        max_cost_usd=Decimal(1),
+        execute=False,
+        judge_model="openai/gpt-6-luna-pro",
+    )
+    identity = result["identity"]
+    assert isinstance(identity, dict)
+    assert identity["judge_name"] == "mem0_style_judge"
+    assert identity["source_protocol_fingerprint"] == "source-fingerprint"
+    assert identity["source_execution_fingerprint"] == "e" * 64
+    assert result["saved_answers"] == result["questions"] == 1
+    assert not (tmp_path / "grades").exists()
+
+
+def test_saved_ablation_uses_pro_high_and_preserves_answers_and_native_grades(
+    source: Path, executed_answers: Path, tmp_path: Path
+) -> None:
+    """Only alternate result files change, even when the native grade is WRONG."""
+    before = {
+        str(p): p.read_bytes()
+        for directory in (source, executed_answers)
+        for p in directory.iterdir()
+    }
+    provider = FakeProvider()
+    result = sidecar.grade_saved_answers(
+        run_dir=source,
+        answers_dir=executed_answers,
+        output=tmp_path / "grades",
+        max_calls=1,
+        max_cost_usd=Decimal(1),
+        execute=True,
+        provider=provider,
+        judge_model="openai/gpt-6-luna-pro",
+    )
+    assert result["correct"] == result["graded"] == 1
+    assert provider.requests[0].model == "openai/gpt-6-luna-pro"
+    assert provider.requests[0].reasoning_effort == "high"
+    assert before == {
+        str(p): p.read_bytes()
+        for directory in (source, executed_answers)
+        for p in directory.iterdir()
+    }
+    identity = json.loads((tmp_path / "grades/identity.json").read_text())
+    assert (
+        identity["provider_only"]
+        == identity["provider_order"]
+        == ["openai/flex", "openai"]
+    )
+    native = json.loads((executed_answers / "state.json").read_text())
+    assert native["run_state"]["judges"]["fixture/qa/0000"]["label"] == "WRONG"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "source_fingerprint",
+        "outer_fingerprint",
+        "nested_fingerprint",
+        "duplicate_item",
+        "foreign_item",
+        "other_sample",
+        "foreign_answer",
+    ],
+)
+def test_saved_ablation_rejects_mismatched_identity_or_selection(
+    source: Path, executed_answers: Path, tmp_path: Path, change: str
+) -> None:
+    """Fail before a paid call if the snapshot belongs to another execution."""
+    config_path = executed_answers / "ablation.json"
+    state_path = executed_answers / "state.json"
+    config = json.loads(config_path.read_text())
+    state = json.loads(state_path.read_text())
+    if change == "source_fingerprint":
+        config["source_protocol_fingerprint"] = "other"
+    elif change == "outer_fingerprint":
+        state["fingerprint"] = "other"
+    elif change == "nested_fingerprint":
+        state["run_state"]["protocol_fingerprint"] = "other"
+    elif change == "duplicate_item":
+        config["item_ids"].append(config["item_ids"][0])
+    elif change == "foreign_item":
+        config["item_ids"] = ["other/qa/0000"]
+    elif change == "other_sample":
+        config["sample_id"] = "other"
+    else:
+        state["run_state"]["answers"]["fixture/qa/9999"] = state["run_state"][
+            "answers"
+        ]["fixture/qa/0000"]
+    config_path.write_text(json.dumps(config))
+    state_path.write_text(json.dumps(state))
+    provider = FakeProvider()
+    with pytest.raises(ValueError):
+        sidecar.grade_saved_answers(
+            run_dir=source,
+            answers_dir=executed_answers,
+            output=tmp_path / "grades",
+            max_calls=1,
+            max_cost_usd=Decimal(1),
+            execute=True,
+            provider=provider,
+        )
+    assert not provider.requests and not (tmp_path / "grades").exists()
+
+
+def test_incomplete_ablation_can_plan_but_cannot_execute(
+    source: Path, executed_answers: Path, tmp_path: Path
+) -> None:
+    """A still-generating answer file is not a frozen complete comparison."""
+    path = executed_answers / "state.json"
+    state = json.loads(path.read_text())
+    state["run_state"]["answers"] = {}
+    path.write_text(json.dumps(state))
+    result = sidecar.grade_saved_answers(
+        run_dir=source,
+        answers_dir=executed_answers,
+        output=tmp_path / "grades",
+        max_calls=1,
+        max_cost_usd=Decimal(1),
+        execute=False,
+    )
+    assert result["saved_answers"] == 0
+    provider = FakeProvider()
+    with pytest.raises(ValueError, match="incomplete"):
+        sidecar.grade_saved_answers(
+            run_dir=source,
+            answers_dir=executed_answers,
+            output=tmp_path / "grades",
+            max_calls=1,
+            max_cost_usd=Decimal(1),
+            execute=True,
+            provider=provider,
+        )
+    assert not provider.requests
+
+
+@pytest.mark.parametrize("change", ["execution_metadata", "model"])
+def test_ablation_resume_rejects_changed_configuration(
+    source: Path, executed_answers: Path, tmp_path: Path, change: str
+) -> None:
+    """A changed judge model or answer execution cannot inherit prior grades."""
+    provider = FakeProvider()
+    kwargs = _GradeOptions(
+        run_dir=source,
+        answers_dir=executed_answers,
+        output=tmp_path / "grades",
+        max_calls=1,
+        max_cost_usd=Decimal(1),
+        execute=True,
+        provider=provider,
+    )
+    sidecar.grade_saved_answers(**kwargs)
+    if change == "execution_metadata":
+        path = executed_answers / "ablation.json"
+        path.write_text(path.read_text() + "\n")
+    else:
+        kwargs["judge_model"] = "openai/gpt-6-luna-pro"
+    with pytest.raises(ValueError, match="snapshot or grading identity changed"):
+        sidecar.grade_saved_answers(**kwargs)
+    assert len(provider.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "relation", ["run", "run_child", "answers", "answers_child", "parent"]
+)
+def test_output_cannot_overlap_either_input_directory(
+    source: Path, executed_answers: Path, tmp_path: Path, relation: str
+) -> None:
+    """Do not write alternate metadata inside or above source snapshots."""
+    output = {
+        "run": source,
+        "run_child": source / "grades",
+        "answers": executed_answers,
+        "answers_child": executed_answers / "grades",
+        "parent": tmp_path,
+    }[relation]
+    with pytest.raises(ValueError, match="separate"):
+        sidecar.grade_saved_answers(
+            run_dir=source,
+            answers_dir=executed_answers,
+            output=output,
+            max_calls=1,
+            max_cost_usd=Decimal(1),
+            execute=True,
+            provider=FakeProvider(),
+        )
+
+
+def test_input_change_during_grading_retains_billed_result_without_summary(
+    source: Path, tmp_path: Path
+) -> None:
+    """Detect a concurrently rewritten source instead of publishing a false freeze."""
+
+    class ChangingSource(FakeProvider):
+        """Simulate an external native writer while the grading call runs."""
+
+        def generate(
+            self, *, request: ModelRequest, response_type: type[ResponseT]
+        ) -> GeneratedResponse[ResponseT]:
+            """Return a billed grade after another writer changes the source."""
+            path = source / "state.json"
+            path.write_text(path.read_text() + "\n")
+            return super().generate(request=request, response_type=response_type)
+
+    output = tmp_path / "grades"
+    with pytest.raises(ValueError, match="changed during grading"):
+        sidecar.grade_saved_answers(
+            run_dir=source,
+            output=output,
+            max_calls=1,
+            max_cost_usd=Decimal(1),
+            execute=True,
+            provider=ChangingSource(),
+        )
+    record = json.loads((output / "records/fixture/qa/0000.json").read_text())
+    assert record["status"] == "graded" and record["usage"] is not None
+    assert not (output / "summary.json").exists()
