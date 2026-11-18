@@ -9,6 +9,7 @@ from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field
+import re
 import time
 
 import psycopg
@@ -126,10 +127,29 @@ class ManagedStorageCaptureInput:
 
 @dataclass(frozen=True, kw_only=True)
 class ManagedStorageCaptureResult:
-    """One selected Project's completed evidence or explicit unavailability."""
+    """One selected Project's completed evidence or its explicit failure code."""
 
     request: StorageCaptureRequest
     completed: CompletedStorageCapture | None
+    failure: str | None
+
+    def __post_init__(self) -> None:
+        """Exactly one of completed evidence or a failure code is present."""
+        if (self.completed is None) == (self.failure is None):
+            raise ValueError("capture_result_shape")
+
+
+_FAILURE_CODE = re.compile(r"[a-z0-9_]{1,64}")
+
+
+def _failure_code(error: BaseException) -> str:
+    """Return the error's code-shaped message, else only its type name.
+
+    Engine refusals carry fixed codes such as ``capture_writer_class_unknown``.
+    Free-text messages may hold paths or content, so only the name survives.
+    """
+    message = str(error)
+    return message if _FAILURE_CODE.fullmatch(message) else type(error).__name__
 
 
 def _capture_project(
@@ -195,7 +215,8 @@ def capture_storage_batch(
             raise ValueError("capture_batch_exact_scope")
         seen.add(item.request.deployment_id)
 
-    results: dict[int, CompletedStorageCapture | None] = {}
+    results: dict[int, CompletedStorageCapture] = {}
+    failures: dict[int, str] = {}
     pending: list[tuple[int, ManagedStorageCaptureInput]] = []
     for index, item in enumerate(inputs):
         try:
@@ -216,13 +237,10 @@ def capture_storage_batch(
                     identity_key=item.identity_key,
                 )
                 pending.append((index, item))
-        except Exception:
-            results[index] = None
+        except Exception as error:
+            failures[index] = _failure_code(error)
     if not pending:
-        return tuple(
-            ManagedStorageCaptureResult(request=item.request, completed=results[index])
-            for index, item in enumerate(inputs)
-        )
+        return _results(inputs=inputs, results=results, failures=failures)
 
     executor = ThreadPoolExecutor(
         max_workers=len(pending), thread_name_prefix="remember-storage-capture"
@@ -245,20 +263,36 @@ def capture_storage_batch(
             for future in as_completed(futures):
                 try:
                     results[futures[future]] = future.result()
-                except Exception:
-                    results[futures[future]] = None
-    except Exception:
+                except Exception as error:
+                    failures[futures[future]] = _failure_code(error)
+    except Exception as error:
         # A broken original stream/context cannot qualify an incomplete scope.
         # Already completed replay stays independent of this new invocation.
+        # A scope's own earlier failure is kept: it is usually the root cause.
         for index, _ in pending:
-            results[index] = None
+            results.pop(index, None)
+            failures.setdefault(index, _failure_code(error))
     finally:
         # Exiting the source first closes blocking I/O; workers then unwind
         # their native contexts before shutdown returns to the caller.
         for future in futures:
             future.cancel()
         executor.shutdown(wait=True, cancel_futures=True)
+    return _results(inputs=inputs, results=results, failures=failures)
+
+
+def _results(
+    *,
+    inputs: tuple[ManagedStorageCaptureInput, ...],
+    results: Mapping[int, CompletedStorageCapture],
+    failures: Mapping[int, str],
+) -> tuple[ManagedStorageCaptureResult, ...]:
+    """Pair each input with its evidence or failure code, in input order."""
     return tuple(
-        ManagedStorageCaptureResult(request=item.request, completed=results[index])
+        ManagedStorageCaptureResult(
+            request=item.request,
+            completed=results.get(index),
+            failure=None if index in results else failures[index],
+        )
         for index, item in enumerate(inputs)
     )
