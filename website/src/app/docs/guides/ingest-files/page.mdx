@@ -285,20 +285,14 @@ where you run</Cloud>.
 
 <Tab cloud label="remember.dev">
 
-remember.dev reads UTF-8 plain text and Markdown. Before storing
-anything it checks the bytes:
-
-| Sent | Result |
-|---|---|
-| Text declared as `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or no type | Accepted. Markdown keeps its type; everything else is read as plain text. |
-| Binary content (PDF, image, ZIP, gzip, audio) | Refused, HTTP 409 `rate_class_unavailable`. |
-| HTML, XML, SVG, RTF, a text file with any other declared type, invalid UTF-8, control characters | Refused, HTTP 422 `rate_class_ambiguous`. |
-| Empty or whitespace-only | Refused, HTTP 422 `empty_text`. |
-| More than 10,000,000 bytes | Refused, HTTP 413 `source_bytes_limit_exceeded`. |
-| A request body over 100,000,000 bytes | Refused, HTTP 413 `body_too_large`, before it is read. |
-
-Convert other formats to Markdown before you send them. See
-[What remember.dev serves](/docs/cloud/compatibility) and
+remember.dev reads the same formats as a stock self-hosted deployment:
+text, Markdown, code, HTML, EPUB, Word, PowerPoint, Excel, CSV, email,
+notebooks and PDF, with every PDF page read through OCR. Raster images
+(PNG, JPEG and the like), audio, video and archives are stored and
+described by a file card, not read; see
+[Supported file types](/docs/guides/file-types). A request body over
+100,000,000 bytes is refused with HTTP 413 `body_too_large` before it is
+read. See [What remember.dev serves](/docs/cloud/compatibility) and
 [Limits](/docs/cloud/limits).
 
 </Tab>
@@ -306,15 +300,16 @@ Convert other formats to Markdown before you send them. See
 <Tab label="Self-hosted">
 
 A fresh self-hosted deployment reads Markdown, plain text, code and
-configuration files, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`)
+configuration files, HTML, EPUB, Word, PowerPoint, email (`.eml`)
 and Jupyter notebooks, profiles spreadsheets, CSV and data files (their
 sheets, columns and first rows; no claims), and describes images, media and
 archives with a card. A file of a type it cannot read (the LibreOffice
 formats, when the engine runs without LibreOffice) is stored and its
 processing is parked, not refused: the ingest succeeds with `"parked": "no_route"`, and the version
-waits until an operator adds a converter for its type. Reading scanned
-PDFs and images with OCR needs converters that you configure with your
-own provider key.
+waits until an operator adds a converter for its type. Every PDF needs the
+Mistral OCR key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`), which reads every
+page; without it PDFs are stored and parked. Reading images needs a
+converter that you configure with your own provider key.
 See [File formats and converters](/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
@@ -336,15 +331,6 @@ its timeout. Check `parked` in the ingest result before you wait;
 | 413 | Body over the deployment limit (`body_too_large`). Split the file. |
 | 422 | Missing half of the source pair, a non-UTC `source_modified_at`, or living mode or a revision without a source pair. |
 | 401, 403 | Missing or wrong token, or a token without write access. |
-
-<Cloud>
-
-remember.dev's text checks add three more: 413 `source_bytes_limit_exceeded`
-for more than 10,000,000 bytes (split the file), 409
-`rate_class_unavailable` for binary content, and 422 `rate_class_ambiguous`
-or `empty_text`.
-
-</Cloud>
 
 The Python client raises `remember.MemoryApiError` with `status_code` and
 `detail`. Client-side checks (the source pair, UTC, a missing file) raise

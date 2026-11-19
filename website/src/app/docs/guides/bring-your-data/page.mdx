@@ -32,12 +32,12 @@ move:
 
 <Cloud>
 
-<Callout type="warning" title="On remember.dev, send Markdown or plain text">
+<Callout title="On remember.dev, send the files you have">
 
-remember.dev reads UTF-8 Markdown and plain text only, up to 10,000,000
-bytes per document. Convert PDFs, Word files and web pages to Markdown
-before you send them. A self-hosted deployment can convert more formats
-itself; see [Supported file types](/docs/guides/file-types).
+remember.dev reads the same formats as a stock self-hosted deployment,
+PDFs included, with every page read through OCR. Raster images (PNG, JPEG
+and the like), audio and video are stored with a file card, not read. See
+[Supported file types](/docs/guides/file-types).
 
 </Callout>
 
@@ -302,8 +302,11 @@ wrong?](/docs/guides/unknowns-and-ambiguity#why-is-my-answer-empty-or-wrong).
 
 ## Costs on remember.dev
 
-remember.dev charges for processed text, per million characters, and for
-the storage the result takes. A document that fails to process is not
+remember.dev charges for processing the files it reads: a PDF by its
+pages, every other read file (Markdown, text, Office files, HTML and the
+rest) by the characters of its reading after whitespace is normalised. A
+file that takes the card route (a raster image such as PNG or JPEG, audio,
+video or an archive) pays only for its storage. Everything you store is charged as stored data. A document that fails to process is not
 charged, and re-sending identical bytes is free, so re-running an import
 costs only what is new. Check your balance and set a monthly cap before a
 large import; see [Pricing and credits](/docs/cloud/pricing) and [Spend

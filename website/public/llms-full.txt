@@ -4016,15 +4016,16 @@ that to the user instead of waiting. See [Connect your coding agent](https://rem
 Every ingest is stored. Whether it is read depends on the MIME type.
 
 A fresh self-hosted deployment reads Markdown, plain text, code and
-configuration files, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`)
+configuration files, HTML, EPUB, Word, PowerPoint, email (`.eml`)
 and Jupyter notebooks, profiles spreadsheets, CSV and data files (their
 sheets, columns and first rows; no claims), and describes images, media and
 archives with a card. A file of a type it cannot read (the LibreOffice
 formats, when the engine runs without LibreOffice) is stored and its
 processing is parked, not refused: the ingest succeeds with `"parked": "no_route"`, and the version
-waits until an operator adds a converter for its type. Reading scanned
-PDFs and images with OCR needs converters that you configure with your
-own provider key.
+waits until an operator adds a converter for its type. Every PDF needs the
+Mistral OCR key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`), which reads every
+page; without it PDFs are stored and parked. Reading images needs a
+converter that you configure with your own provider key.
 See [File formats and converters](https://remember.dev/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
@@ -7915,8 +7916,9 @@ Before RememberStack can read a file, the `convert` worker turns it into
 Markdown. Every arriving file is first sorted into a **format family**
 (Markdown, code, image, archive and so on), and the family decides which
 converter reads it. A stock deployment handles text, code, configuration,
-logs, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`) and Jupyter
-notebooks with no API key, describes spreadsheets, CSV and data files with
+logs, HTML, EPUB, Word, PowerPoint, email (`.eml`) and Jupyter
+notebooks with no API key, reads every PDF with OCR once the Mistral OCR key
+is set (without it PDFs are stored and wait), describes spreadsheets, CSV and data files with
 a **profile** of their shape and first rows, and describes images, audio,
 video, archives and unknown files with a short **file card**. Formats that
 need LibreOffice are stored and wait when the engine runs without it; the
@@ -8109,10 +8111,13 @@ Cards are searchable but never used for claims.
 
 ### Size limits
 
-A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
-is not read: it gets a file card that states the size limit it exceeded,
-whether or not a converter is configured for its type. Every file is
-stored whatever its size.
+A Word or PowerPoint file over 100 MB, or a spreadsheet over 200 MB, is
+not read: it gets a file card that states the size limit it exceeded. A PDF
+over its 100 MB limit gets no card: its conversion fails with that reason.
+These limits protect the engine process, which reads the file itself. A
+converter that fetches files by a signed URL from S3 storage reads nothing
+in the engine, so these files go to that converter instead and only its own
+input limit applies. Every file is stored whatever its size.
 
 ## What a stock deployment reads
 

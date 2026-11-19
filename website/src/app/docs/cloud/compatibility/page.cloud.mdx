@@ -25,7 +25,7 @@ your deployment at `https://<deployment-id>.dp.remember.dev` serves:
 
 | Area | Routes | Notes |
 |---|---|---|
-| Ingest | `POST /ingest` | Text only; see [Ingest limits](/docs/cloud/limits#ingest) |
+| Ingest | `POST /ingest` | The stock formats, PDFs included; see [Ingest limits](/docs/cloud/limits#ingest) |
 | Documents | `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}` | |
 | Tags | `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` | See [Tag documents](/docs/guides/tag-documents) |
 | Versions in force | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `GET` and `PUT /documents/{doc_id}/versions/{version_id}/references`, `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` | See [Read a document as of a date](/docs/guides/versions-in-force) |
@@ -54,7 +54,7 @@ describes, except where this page says otherwise.
 | Route or feature | What happens |
 |---|---|
 | Connectors (`/connectors…`) | The routes exist, but remember.dev does not run connectors for you and gives them no credentials. Push documents with ingest instead |
-| Files other than UTF-8 Markdown and plain text | Refused before storage; see [Ingest limits](/docs/cloud/limits#ingest). A self-hosted engine can convert PDFs and other formats |
+| Reading raster images (PNG, JPEG and the like), audio and video | They take the card route: stored and described by a file card, not read. An SVG is read as text. A self-hosted engine can read PNG and JPEG with an OCR converter; see [Supported file types](/docs/guides/file-types) |
 | Filesystem views of the corpus | Not offered on remember.dev |
 | Direct database access | Not offered. Use SQL queries over the query space |
 
@@ -77,10 +77,6 @@ refused by the deployment; see
 | Situation | Response |
 |---|---|
 | Body over 100,000,000 bytes | `413`, `body_too_large` |
-| Text over 10,000,000 bytes | `413`, `source_bytes_limit_exceeded` |
-| Binary file | `409`, `rate_class_unavailable` |
-| Other text types, invalid UTF-8, markup | `422`, `rate_class_ambiguous` |
-| Empty document | `422`, `empty_text` |
 | Balance at zero, a cap reached, billing suspended, or the project parked | `423`, `dispatch_parked:<reason>`, for ingest and every memory read; see [Spend caps](/docs/cloud/spend-controls#what-stops-when-money-or-a-cap-runs-out) |
 | Provider-cost safeguard reached | `423`, `dispatch_parked:<reason>`, or `403`, `dispatch_refused:<reason>` |
 | Safeguard service unreachable | `503`, `spend_lease_unavailable` |

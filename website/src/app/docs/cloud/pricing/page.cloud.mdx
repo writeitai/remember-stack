@@ -8,8 +8,8 @@ export const metadata = {
 <AppliesTo products={["remember.dev"]} />
 
 remember.dev is prepaid. You buy credits, and four things draw on them:
-keeping a project running, processing text you send, storing what the
-memory holds, and reading it.
+keeping a project running, processing the documents you send, storing
+what the memory holds, and reading it.
 
 ## Credits
 
@@ -69,10 +69,14 @@ takes.
 The charge is taken only after processing succeeds. A rate may set a
 minimum billable quantity per document; the rate card shows it.
 
-Text is the only kind of input with a customer price, and remember.dev
-accepts only text: UTF-8 Markdown and plain text. Other kinds of input are
-refused before anything is stored or charged; see
-[Limits](/docs/cloud/limits#ingest).
+Processing is priced by kind of input on the rate card. Every format read
+without a model (text, Markdown, code, HTML, Office files, spreadsheets,
+email, notebooks and the rest) is charged as processed text, by the
+characters of its reading. A PDF is charged by its pages instead, because
+every page is read with OCR. A file that takes the card route (a raster
+image such as PNG or JPEG, audio, video or an archive) is stored but not
+read: it has no processing charge, and its storage is charged as stored
+data. An SVG is read as text and charged as processed text. See [Limits](/docs/cloud/limits#ingest).
 
 ### Stored data
 
@@ -135,7 +139,7 @@ When the balance reaches zero or a cap is reached, reads stop; see
 
 ## Holds: how the balance moves
 
-Before remember.dev processes text, keeps a project running or stores new
+Before remember.dev processes a document, keeps a project running or stores new
 data, it places a **hold**: it takes the
 most the work can cost from your available balance. When the work is done
 it charges the exact amount, which is never more than the hold, and returns
