@@ -35,7 +35,9 @@ move:
 <Callout title="On remember.dev, send the files you have">
 
 remember.dev reads the same formats as a stock self-hosted deployment,
-PDFs included; see [Supported file types](/docs/guides/file-types).
+PDFs included, with every page read through OCR. Images, audio and video
+are stored with a file card, not read. See
+[Supported file types](/docs/guides/file-types).
 
 </Callout>
 
@@ -300,8 +302,8 @@ wrong?](/docs/guides/unknowns-and-ambiguity#why-is-my-answer-empty-or-wrong).
 
 ## Costs on remember.dev
 
-remember.dev charges for processed text, per million characters, and for
-the storage the result takes. A document that fails to process is not
+remember.dev charges for processing each document, by its characters or,
+for a PDF, by its pages, and for the storage the result takes. A document that fails to process is not
 charged, and re-sending identical bytes is free, so re-running an import
 costs only what is new. Check your balance and set a monthly cap before a
 large import; see [Pricing and credits](/docs/cloud/pricing) and [Spend

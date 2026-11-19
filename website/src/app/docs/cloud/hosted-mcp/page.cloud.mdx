@@ -223,8 +223,8 @@ Each tool is described in the [MCP tools reference](/docs/reference/mcp).
 Differences on remember.dev:
 
 - `ingest` takes `text` or `content_base64`, not `path`: the hosted server
-  has no files of yours to read. The document must still be UTF-8 Markdown
-  or plain text; see [Limits](/docs/cloud/limits#ingest).
+  has no files of yours to read. Send a PDF, an Office file or any other
+  binary file as `content_base64`; see [Limits](/docs/cloud/limits#ingest).
 - `tools/list` leaves out the tools whose permission the connection or key
   does not hold. With no `memory:` permission, it lists no memory tools.
 - The tool runs against the project's own deployment, with the same limits

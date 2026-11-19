@@ -15,17 +15,20 @@ balance and caps) are in [Spend caps and auto top-up](/docs/cloud/spend-controls
 ## Ingest
 
 remember.dev reads the same formats as a stock self-hosted engine:
-text, Markdown, code, HTML, EPUB, Word, PowerPoint, Excel, CSV, email, notebooks and PDF (every page read with OCR). Images, audio, video and archives are stored and described by a
-card; they are not read and carry no processing charge. Every file is
-stored first; processing starts once its measurement is approved against
-your balance and caps.
+text, Markdown, code, HTML, EPUB, Word, PowerPoint, Excel, CSV, email,
+notebooks and PDF, with every PDF page read through OCR. The full list is in
+[Supported file types](/docs/guides/file-types). Images, audio, video and
+archives are stored and described by a file card; they are not read and
+carry no processing charge. Every file is stored first; processing starts
+once its measurement is approved against your balance and caps.
 
 | Check | Limit | Refusal |
 |---|---|---|
 | Request body | 100,000,000 bytes | `413`, `body_too_large` |
+| One file | 5 GiB (5,368,709,120 bytes) | `413`, `upload_too_large`, when the upload starts |
 
-A larger file goes through a direct upload instead of one request body.
-Keep your originals; see
+A file larger than one request body goes through a direct multipart upload
+instead. Keep your originals; see
 [Data handling and security](/docs/cloud/data-and-security).
 
 ## Storage
@@ -34,7 +37,7 @@ Keep your originals; see
 |---|---|
 | Object storage per project (source files and derived artifacts) | 2 GiB |
 | Objects per project | 100,000 |
-| Largest single stored object | 100,000,000 bytes |
+| Largest single stored object | 5 GiB |
 
 ## Reading
 
