@@ -11,8 +11,9 @@ Before RememberStack can read a file, the `convert` worker turns it into
 Markdown. Every arriving file is first sorted into a **format family**
 (Markdown, code, image, archive and so on), and the family decides which
 converter reads it. A stock deployment handles text, code, configuration,
-logs, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`) and Jupyter
-notebooks with no API key, describes spreadsheets, CSV and data files with
+logs, HTML, EPUB, Word, PowerPoint, email (`.eml`) and Jupyter
+notebooks with no API key, reads every PDF with OCR once the Mistral OCR key
+is set (without it PDFs are stored and wait), describes spreadsheets, CSV and data files with
 a **profile** of their shape and first rows, and describes images, audio,
 video, archives and unknown files with a short **file card**. Formats that
 need LibreOffice are stored and wait when the engine runs without it; the
@@ -205,10 +206,13 @@ Cards are searchable but never used for claims.
 
 ### Size limits
 
-A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
-is not read: it gets a file card that states the size limit it exceeded,
-whether or not a converter is configured for its type. Every file is
-stored whatever its size.
+A Word or PowerPoint file over 100 MB, or a spreadsheet over 200 MB, is
+not read: it gets a file card that states the size limit it exceeded. A PDF
+over its 100 MB limit gets no card: its conversion fails with that reason.
+These limits protect the engine process, which reads the file itself. A
+converter that fetches files by a signed URL from S3 storage reads nothing
+in the engine, so these files go to that converter instead and only its own
+input limit applies. Every file is stored whatever its size.
 
 ## What a stock deployment reads
 
@@ -421,6 +425,6 @@ add a web page, download it and send the HTML.
 <Cloud>
 
 remember.dev runs this stock route table with the OCR key set, so PDFs
-are read and images get a file card; see [Limits](/docs/cloud/limits).
+are read and raster images get a file card; see [Limits](/docs/cloud/limits).
 
 </Cloud>
