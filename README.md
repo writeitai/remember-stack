@@ -215,7 +215,7 @@
 | src/rememberstack/profiles/selfhost.py                                                        |      875 |      155 |      174 |       23 |     80.9% |305, 340, 345, 349, 353, 408, 433, 562-563, 660, 677, 706, 716, 724, 732-748, 826-856, 869-879, 921, 1077-1095, 1102-1231, 1276, 1281-1283, 1458-1463, 1471-1478, 1495-1508, 1554, 1559, 1619-1622, 1682, 1918, 1936-1940, 1968-2005, 2013, 2017, 2032, 2040, 2135, 2278 |
 | src/rememberstack/profiles/selfhost\_forget.py                                                |       90 |       18 |        4 |        0 |     76.6% |79-83, 170, 181, 204, 215, 232-243, 248-249, 256, 263 |
 | src/rememberstack/profiles/selfhost\_operations.py                                            |       36 |        4 |        0 |        0 |     88.9% | 43, 68-70 |
-| src/rememberstack/profiles/storage\_capture\_batch.py                                         |      119 |       66 |       26 |        0 |     36.6% |64-93, 112-113, 156, 177-261 |
+| src/rememberstack/profiles/storage\_capture\_batch.py                                         |      132 |       29 |       28 |        3 |     76.2% |65-94, 113-114, 176, 205, 215, 227 |
 | src/rememberstack/profiles/storage\_capture\_profile.py                                       |       97 |        4 |       12 |        4 |     92.7% |267, 279, 336, 394 |
 | src/rememberstack/spine/\_\_init\_\_.py                                                       |       57 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/admission.py                                                          |        7 |        0 |        0 |        0 |    100.0% |           |
@@ -415,7 +415,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      263 |       14 |       64 |       13 |     91.7% |164, 245-246, 253, 311, 365-366, 375, 412, 417, 451-\>443, 453, 495-\>499, 641-\>652, 678-\>682, 740, 989, 1012 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **46496** | **3893** | **11910** | **1836** | **89.0%** |           |
+| **TOTAL**                                                                                     | **46509** | **3856** | **11912** | **1839** | **89.1%** |           |
 
 
 ## Setup coverage badge
