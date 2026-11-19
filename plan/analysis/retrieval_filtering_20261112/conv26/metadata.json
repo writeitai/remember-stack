@@ -1,0 +1,48 @@
+{
+  "server_version": "19rc1 (Debian 19~rc1-1.pgdg13+1)",
+  "extensions": [
+    [
+      "plpgsql",
+      "1.0"
+    ],
+    [
+      "vector",
+      "0.8.6"
+    ],
+    [
+      "pg_textsearch",
+      "1.5.1"
+    ],
+    [
+      "pgcrypto",
+      "1.4"
+    ],
+    [
+      "pg_trgm",
+      "1.6"
+    ],
+    [
+      "fuzzystrmatch",
+      "1.2"
+    ],
+    [
+      "unaccent",
+      "1.1"
+    ],
+    [
+      "btree_gist",
+      "1.9"
+    ],
+    [
+      "pg_partman",
+      "5.5.0"
+    ]
+  ],
+  "read_only": true,
+  "dimensions": 1536,
+  "vector_source_observation_id": "00a173e2-3670-55cd-8d15-0c0118b45bd9",
+  "vector_sha256": "b64aadd0a8e423caa6340c0ecc4f8b4d54c6e9d0eb848de23b29905bb24f6265",
+  "embedding_model": "qwen/qwen3-embedding-8b",
+  "provider_calls": 0,
+  "ingestion_or_schema_changes": false
+}

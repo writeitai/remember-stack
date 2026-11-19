@@ -7,6 +7,7 @@ from typing import Final
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from remember.models import DocumentSearchFilters
 from remember.retrieval import ContextRetrievalBudget
 from remember.retrieval import DEFAULT_CONTEXT_K
 from rememberstack.model import AssuredOperation
@@ -100,6 +101,8 @@ class OperationExecutor:
         query = cast(str, arguments["query"])
         entity_ids = cast(tuple[UUID, ...], arguments.get("entity_ids", ()))
         selected_time = cast(FactTime | None, arguments.get("time"))
+        # D156: the same filter reaches both children of combined_context.
+        documents = cast(DocumentSearchFilters | None, arguments.get("documents"))
         budget = ContextRetrievalBudget(
             k=cast(int, arguments.get("k", DEFAULT_CONTEXT_K)),
             candidate_k=cast(int | None, arguments.get("candidate_k")),
@@ -114,6 +117,7 @@ class OperationExecutor:
                 evaluated_at=evaluation,
                 time=selected_time,
                 layers=layers,
+                documents=documents,
             )
         if name is AssuredOperationName.FACTS_CONTEXT:
             self._engine.layer_admission(
@@ -131,6 +135,7 @@ class OperationExecutor:
                 predicate=cast(str | None, arguments.get("predicate")),
                 time=selected_time,
                 evaluated_at=evaluation,
+                documents=documents,
             )
         if name is AssuredOperationName.COMBINED_CONTEXT:
             # D143 §7.3: each child runs over its admitted channels; a child
@@ -152,6 +157,7 @@ class OperationExecutor:
                     evaluated_at=evaluation,
                     time=selected_time,
                     layers=layers,
+                    documents=documents,
                 )
                 if evidence_layers
                 else unconsulted_layer_envelope(
@@ -174,6 +180,7 @@ class OperationExecutor:
                     predicate=cast(str | None, arguments.get("predicate")),
                     time=selected_time,
                     evaluated_at=evaluation,
+                    documents=documents,
                 )
                 if admission.admits(layer=ProcessingLayer.FACTS)
                 else unconsulted_layer_envelope(

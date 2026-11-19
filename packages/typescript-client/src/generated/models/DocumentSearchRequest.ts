@@ -10,14 +10,16 @@ import type { OverlapReadTime } from './OverlapReadTime';
 /**
  * One ``search_documents`` call.
  *
- * With a ``query`` the results are ranked by name and content matches and
- * there is no cursor. Without one they are every document the filters
- * match, newest declared creation date first, paged by ``cursor``.
+ * With a ``query`` the results are ranked by name and content matches (top
+ * ``k``); there is no cursor. Without a query they are every document the
+ * filters match, newest judged-version ingest time first, paged by
+ * ``limit`` and ``cursor`` (D154).
  */
 export type DocumentSearchRequest = {
     cursor?: string | null;
     filters?: DocumentSearchFilters;
     'k'?: number;
+    limit?: number;
     query?: string | null;
     time?: ((CurrentReadTime & {
         mode: 'current';

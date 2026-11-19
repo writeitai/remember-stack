@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Disclosure that a ranked or safety cap applied (D154).
+ */
 export type Truncation = {
-    continuation?: string | null;
     estimated_total: number;
     reason?: string | null;
     returned: number;

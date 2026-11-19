@@ -183,7 +183,7 @@ def test_facade_query_sql_and_discovery(migrated: str) -> None:
     assert space.core_operation_descriptors
     assert space.function_signatures
     assert space.sql_grammar
-    assert len(space.examples) == 18
+    assert len(space.examples) == 19
     assert len(space.worked_examples) == 8
     graph_example = next(
         item
@@ -221,7 +221,7 @@ def test_facade_rejects_mismatched_sql_deployment(migrated: str) -> None:
 def test_run_saved_query_stamps_and_uses_sql_executor(migrated: str) -> None:
     facade = _facade(migrated)
     listed = facade.list_saved_queries(namespace="examples")
-    assert len(listed) == 18
+    assert len(listed) == 19
     sample = next(row for row in listed if row.name == "relation_current")
     outcome = facade.run_saved_query(
         namespace="examples",
@@ -688,7 +688,7 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
             mounts=None,
         )
     )
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "4.0.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "4.1.0"
     assert skill.content.startswith("---\n")
     # first prose after the skill title block is the bound headline
     assert TWO_LAYER_HEADLINE in skill.content
@@ -789,9 +789,9 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
         assert descriptor.answer_intent == operation.answer_intent.value
     # Pin the closed surface versions explicitly.
     assert descriptors["resolve_entity"].version == 1
-    assert descriptors["claims_and_sources_context"].version == 4
-    assert descriptors["facts_context"].version == 4
-    assert descriptors["combined_context"].version == 5
+    assert descriptors["claims_and_sources_context"].version == 5
+    assert descriptors["facts_context"].version == 5
+    assert descriptors["combined_context"].version == 6
 
 
 def _expected_input_schema(operation: object) -> dict[str, object]:
@@ -954,7 +954,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "a4d05150f3eb842169f3ed838718a87d0e5d10b7cef5e780e034578ecd421d3f"
+        == "1b5f518cf0cdaf69afc09c683d3c01bf9afd76631dcb21b45d7d53328ff1dd48"
     )
 
 
@@ -1269,7 +1269,6 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     profile = SelfHostProfile(
         settings=SelfHostSettings(
             deployment_id=_DEPLOYMENT,
-            projection_work_root=projection_work_root,
             forget_manifest_root=forget_manifest_root,
             migration_config=_ROOT / "alembic.ini",
         ),

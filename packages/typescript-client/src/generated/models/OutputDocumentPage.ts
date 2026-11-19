@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutputDocumentSummary } from './OutputDocumentSummary';
 export type OutputDocumentPage = {
-    cursor: string | null;
     documents: Array<OutputDocumentSummary>;
+    next_cursor: string | null;
 };
 

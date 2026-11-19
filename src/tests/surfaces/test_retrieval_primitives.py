@@ -841,8 +841,8 @@ def test_delta_empty_window_is_known_empty(corpus: _Corpus) -> None:
     assert answer.negative.kind is NegativeKind.KNOWN_EMPTY
 
 
-def test_delta_pagination_via_continuation_drops_nothing(corpus: _Corpus) -> None:
-    """Paging the feed one row at a time via the continuation returns exactly
+def test_delta_pagination_via_cursor_drops_nothing(corpus: _Corpus) -> None:
+    """Paging the feed one row at a time via next_cursor returns exactly
     the same set as one unpaged call — a page boundary that splits rows
     sharing a timestamp never skips the tied remainder (Codex finding)."""
     engine = _engine(corpus)
@@ -853,14 +853,13 @@ def test_delta_pagination_via_continuation_drops_nothing(corpus: _Corpus) -> Non
     cursor: str | None = None
     for _ in range(len(expected) + 5):  # a bound so a bug cannot loop forever
         page = engine.delta(
-            deployment_id=_DEPLOYMENT_ID, since=_SINCE, limit=1, continuation=cursor
+            deployment_id=_DEPLOYMENT_ID, since=_SINCE, limit=1, cursor=cursor
         )
         paged.extend((c.kind, c.change, c.id) for c in page.changes)
-        assert page.truncation is not None
-        if not page.truncation.truncated:
+        if page.next_cursor is None:
             break
-        cursor = page.truncation.continuation
-        assert cursor is not None
+        assert page.truncation is not None and page.truncation.truncated
+        cursor = page.next_cursor
     assert paged == expected  # same order, every row, no duplicates, no drops
 
 

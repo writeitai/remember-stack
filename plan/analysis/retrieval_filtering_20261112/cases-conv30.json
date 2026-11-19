@@ -1,0 +1,26 @@
+[
+  {
+    "name": "scoped-facts_context",
+    "operation": "facts_context",
+    "query": "Jon's view of what an ideal dance studio should look like; desired appearance, design, layout, and features",
+    "entity_ids": [
+      "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+    ],
+    "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+    "k": 50,
+    "candidate_k": 200,
+    "source_item_id": "conv-30/qa/0005"
+  },
+  {
+    "name": "scoped-claims_and_sources_context",
+    "operation": "claims_and_sources_context",
+    "query": "What does Jon's dance studio offer? Classes, programs, services, events, and other offerings associated with his dance studio.",
+    "entity_ids": [
+      "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+    ],
+    "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+    "k": 50,
+    "candidate_k": 200,
+    "source_item_id": "conv-30/qa/0025"
+  }
+]

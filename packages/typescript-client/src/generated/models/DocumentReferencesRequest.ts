@@ -19,8 +19,8 @@ export type DocumentReferencesRequest = {
     cursor?: string | null;
     direction?: 'outgoing' | 'incoming' | 'both';
     doc_id?: string | null;
-    'k'?: number;
     kinds?: Array<'cites' | 'links_to' | 'attaches' | 'replies_to' | 'refers_to' | 'amends' | 'implements'> | null;
+    limit?: number;
     section_key?: string | null;
     time?: ((CurrentReadTime & {
         mode: 'current';

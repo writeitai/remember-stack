@@ -279,6 +279,7 @@ class UploadIngestor:
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
         )
+        self._check_tags(deployment_id=deployment_id, doc_id=doc_id, upload=upload)
         suffix = PurePosixPath(upload.filename).suffix
         raw_uri = f"{doc_id}/{content_hash}/original{suffix}"
         try:
@@ -307,6 +308,7 @@ class UploadIngestor:
                 file_name=upload.filename,
                 declared_title=upload.title,
                 source_path=upload.source_path,
+                tags=upload.tags,
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
@@ -526,6 +528,7 @@ class UploadIngestor:
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
         )
+        self._check_tags(deployment_id=deployment_id, doc_id=doc_id, upload=upload)
         suffix = PurePosixPath(upload.filename).suffix
         raw_uri = f"{doc_id}/{content_hash}/original{suffix}"
         record = UploadRecord(
@@ -550,6 +553,7 @@ class UploadIngestor:
             version_key=upload.version_key,
             effective_from=upload.effective_from,
             effective_until=upload.effective_until,
+            tags=upload.tags,
         )
         try:
             self._raw_store.write_bytes(
@@ -595,6 +599,22 @@ class UploadIngestor:
             and isinstance(self._raw_store, ObjectPurgePort)
         ):
             self._raw_store.purge_objects(keys=(key,), prefixes=())
+
+    def _check_tags(
+        self, *, deployment_id: UUID, doc_id: UUID, upload: DocumentUpload
+    ) -> None:
+        """D156: refuse unknown tags or a tag limit before bytes or rows are stored.
+
+        The write transaction checks both again. If a tag is deleted or the
+        limit is reached in between, that refusal records no row and leaves
+        the written original unreferenced, like any other attempt refused
+        after storage: storage capture counts it as an unregistered original,
+        and a later ingest of the same bytes registers the same object.
+        """
+        if upload.tags:
+            self._catalog.check_tags(
+                deployment_id=deployment_id, doc_id=doc_id, tags=upload.tags
+            )
 
     def _detect_upload(self, *, upload: DocumentUpload) -> DocumentUpload:
         """Use byte classes first and registry hints within compatible families."""

@@ -1,0 +1,13 @@
+{
+  "sample": "conv-30",
+  "answer_state_sha256_before": "2ec70ab5d56ca66ad1b3a45760f8f490c63d78ebdfbae78939fa349a9ee8c214",
+  "source_commit": "f0ab7db79",
+  "started_at": 1794489495.1146278,
+  "provider_calls": 0,
+  "case_selection": "first scoped current-mode deadline per operation; independent of answer/judge labels",
+  "native_exit_code": 0,
+  "materialized_exit_code": 0,
+  "finished_at": 1794489545.842225,
+  "answer_state_sha256_after": "2ec70ab5d56ca66ad1b3a45760f8f490c63d78ebdfbae78939fa349a9ee8c214",
+  "postgres_restored_stopped": true
+}

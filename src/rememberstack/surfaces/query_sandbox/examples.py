@@ -235,6 +235,24 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
         " FROM graph_citation_path($1::uuid, $2::uuid, $3::uuid, 6)"
         " ORDER BY hops, crossref_ids",
     ),
+    # D156: a fact carries its documents' tags through its supporting claims.
+    "facts_by_tag": (
+        "Current facts supported by documents carrying a tag, by name",
+        "SELECT f.fact_kind, f.fact_id, f.fact_label, f.support_state,"
+        "       f.evidence_count, count(DISTINCT e.doc_id) AS tagged_documents"
+        " FROM document_tags_live AS t"
+        " JOIN fact_claim_evidence_live AS e"
+        "   ON e.deployment_id = t.deployment_id AND e.doc_id = t.doc_id"
+        "  AND e.stance = 'supports'"
+        " JOIN facts_current AS f"
+        "   ON f.deployment_id = e.deployment_id AND f.fact_kind = e.fact_kind"
+        "  AND f.fact_id = e.fact_id"
+        " WHERE lower(t.name) = lower($1::text)"
+        " GROUP BY f.fact_kind, f.fact_id, f.fact_label, f.support_state,"
+        "          f.evidence_count"
+        " ORDER BY tagged_documents DESC, f.fact_id"
+        " LIMIT 50",
+    ),
 }
 
 
@@ -252,8 +270,9 @@ class ExampleFixtureHandles:
 
     Built from the Batch A query-space corpus (or any deployment that exposes
     the same shape). Positive parameters address live content; empty addresses
-    never-present IDs; tombstone addresses deleted/merged content that must
-    not surface; cap reuses positive parameters under a tight row bound.
+    never-present IDs (or a never-registered tag name); tombstone addresses
+    deleted/merged content that must not surface (a tag only a tombstoned
+    lineage carries); cap reuses positive parameters under a tight row bound.
     """
 
     deployment_id: UUID
@@ -280,6 +299,9 @@ class ExampleFixtureHandles:
     live_since: datetime
     empty_since: datetime
     tombstone_since: datetime
+    live_tag: str
+    empty_tag: str
+    tombstone_tag: str
 
 
 def example_fixture_parameters(
@@ -437,6 +459,13 @@ def example_fixture_parameters(
             "empty": (h.deployment_id, h.empty_doc, h.live_to_doc),
             "tombstone": (h.deployment_id, h.tombstone_doc, h.live_to_doc),
             "cap": (h.deployment_id, h.live_from_doc, h.live_to_doc),
+            "cap_max_rows": 1,
+        },
+        "facts_by_tag": {
+            "positive": (h.live_tag,),
+            "empty": (h.empty_tag,),
+            "tombstone": (h.tombstone_tag,),
+            "cap": (h.live_tag,),
             "cap_max_rows": 1,
         },
     }

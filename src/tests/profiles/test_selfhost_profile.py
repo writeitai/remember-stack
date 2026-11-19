@@ -81,13 +81,23 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
         PipelineStage.RECONCILE,
         PipelineStage.LABEL_RELATION,
         PipelineStage.REVIEW_FACT_WINDOWS,
+        PipelineStage.PUBLISH_CORPUS,
+        PipelineStage.RECONCILE_CORPUS,
+        PipelineStage.HARD_FORGET,
     )
     # crossref work is per reference generation and window reviews per lineage
     # and fact (D140), so readiness never waits on either
     assert tuple(_expected_components()) == tuple(
         stage
         for stage in _SUPPORTED_WORKER_STAGES
-        if stage not in (PipelineStage.CROSSREF, PipelineStage.REVIEW_FACT_WINDOWS)
+        if stage
+        not in (
+            PipelineStage.CROSSREF,
+            PipelineStage.REVIEW_FACT_WINDOWS,
+            PipelineStage.PUBLISH_CORPUS,
+            PipelineStage.RECONCILE_CORPUS,
+            PipelineStage.HARD_FORGET,
+        )
     )
 
 
@@ -447,17 +457,14 @@ def test_routes_env_overlays_the_stock_table(monkeypatch: pytest.MonkeyPatch) ->
     assert routes["image/jpeg"] == "card"
 
 
-def test_external_mount_roots_load_from_environment(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_corpus_verification_cadence_is_configurable(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The deployed profile accepts existing provider bucket roots as settings."""
-    raw = tmp_path / "raw"
-    artifacts = tmp_path / "artifacts"
-    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT", str(raw))
-    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT", str(artifacts))
-    settings = SelfHostSettings(deployment_id=uuid4())
-    assert settings.raw_mount_root == raw
-    assert settings.artifacts_mount_root == artifacts
+    assert SelfHostSettings(deployment_id=uuid4()).corpus_verify_interval_s == 86400
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S", "172800")
+    assert SelfHostSettings(deployment_id=uuid4()).corpus_verify_interval_s == 172800
+    with pytest.raises(ValidationError):
+        SelfHostSettings(deployment_id=uuid4(), corpus_verify_interval_s=0)
 
 
 def test_model_bindings_ignore_chat_routing_transport_settings(

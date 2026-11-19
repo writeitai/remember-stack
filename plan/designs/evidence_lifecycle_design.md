@@ -97,7 +97,8 @@ ordinary supersession path.)
    watched URL, the upload event. Bytes cannot identify a lineage (they change — that is the
    premise); titles and paths cannot either (renames/moves are metadata changes over a stable
    `source_ref`). A genuinely new `source_ref` is a new lineage even if the content is
-   similar. Everything durable anchors on the lineage: P3 paths (the F6 stability contract),
+   similar. Everything durable anchors on the lineage: P3 handles (`doc_id`, resolved to a
+   movable applied folder path under D155),
    K citations, crossrefs, GCS path prefixes (`<doc_id>/<content_hash>/…` — the layout that
    always implied this design).
 3. **Document version** — one observed immutable snapshot of a lineage, pointing at one

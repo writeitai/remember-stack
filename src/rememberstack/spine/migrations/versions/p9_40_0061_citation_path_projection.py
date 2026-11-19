@@ -34,7 +34,6 @@ from collections.abc import Sequence
 from alembic import op
 
 from rememberstack.spine.migrations._helpers import apply_ddl
-from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
 from rememberstack.spine.postgres_graph_sql import _replace_exact
 
 revision: str = "p9_40_0061"
@@ -143,7 +142,6 @@ def downgrade() -> None:
     )
 
     op.execute(_replaceable(sql=graph._CITATION_PATH_HELPER))
-    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute("DROP VIEW rememberstack_graph_internal.crossrefs_live")
     apply_ddl(sql=GRAPH_CROSSREFS_SOURCE_DDL)
     op.execute(QUERY_ROLE_GRANTS)

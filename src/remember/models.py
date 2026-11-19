@@ -14,6 +14,7 @@ from typing import Final
 from typing import Literal
 from typing import Self
 from typing import TypeAlias
+import unicodedata
 from uuid import UUID
 
 from pydantic import AfterValidator
@@ -147,12 +148,14 @@ class DocumentSummary(BaseModel):
     first_seen_at: datetime
     latest: DocumentVersionSummary
     serving: bool
+    tags: tuple[str, ...] = ()
+    """The names of the registered tags assigned to the document (D156)."""
 
 
 class DocumentPage(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     documents: tuple[DocumentSummary, ...]
-    cursor: str | None = None
+    next_cursor: str | None = None
 
 
 class DocumentDeletion(BaseModel):
@@ -168,6 +171,132 @@ class DocumentDeletion(BaseModel):
     claims_retired: int = Field(ge=0)
     relations_closed: int = Field(ge=0)
     observations_closed: int = Field(ge=0)
+
+
+# ---------------------------------------------------------------------------
+# Document tags (D156)
+# ---------------------------------------------------------------------------
+
+TAG_NAME_MAX_LEN: Final = 128
+TAG_DESCRIPTION_MAX_LEN: Final = 2000
+TAGS_PER_DOCUMENT_MAX: Final = 64
+"""Most tags one document may carry (a starting point, to be measured)."""
+TAGS_PER_DEPLOYMENT_MAX: Final = 10_000
+"""Most tags one deployment may register (a starting point, to be measured)."""
+
+
+def normalize_tag_name(name: str) -> str:
+    """The NFC form of a tag name, refused unless it is a valid name (D156 §3.1).
+
+    A name is 1-128 characters with no whitespace or control characters. Its
+    spelling is kept; names compare case-insensitively.
+    """
+    normalized = unicodedata.normalize("NFC", name)
+    if not 1 <= len(normalized) <= TAG_NAME_MAX_LEN:
+        raise ValueError(f"a tag name is 1 to {TAG_NAME_MAX_LEN} characters")
+    if any(
+        character.isspace() or unicodedata.category(character) == "Cc"
+        for character in normalized
+    ):
+        raise ValueError("a tag name has no whitespace or control characters")
+    return normalized
+
+
+TAG_REF_MAX_RAW_LEN: Final = 4 * TAG_NAME_MAX_LEN
+"""A safety cap on a tag reference as sent, before NFC. The real limit,
+:data:`TAG_NAME_MAX_LEN`, applies after NFC, as it does when a tag is created."""
+
+
+def check_tag_ref(ref: str) -> str:
+    """Refuse a tag reference that cannot name a tag; return it as given.
+
+    The length limit applies after NFC, exactly as for a declared name, so
+    any spelling that registered a tag can also refer to it.
+    """
+    if len(ref) > TAG_REF_MAX_RAW_LEN or not (
+        1 <= len(unicodedata.normalize("NFC", ref)) <= TAG_NAME_MAX_LEN
+    ):
+        raise ValueError(
+            f"a tag reference is 1 to {TAG_NAME_MAX_LEN} characters after NFC"
+        )
+    return ref
+
+
+TagName: TypeAlias = Annotated[str, AfterValidator(normalize_tag_name)]
+"""A tag name as declared: NFC, 1-128 characters, no whitespace or controls."""
+
+TagRef: TypeAlias = Annotated[str, AfterValidator(check_tag_ref)]
+"""A registered tag, by name (matched case-insensitively) or ``tag_id``."""
+
+
+class Tag(BaseModel):
+    """One registered tag: a name callers and agents use, and what it means."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag_id: UUID
+    name: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TagList(BaseModel):
+    """The deployment's registered tags, by name (``list_tags``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tags: tuple[Tag, ...]
+
+
+class TagCreate(BaseModel):
+    """Register one tag. A name already registered, in any case, is refused."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: TagName
+    description: str = Field(max_length=TAG_DESCRIPTION_MAX_LEN)
+
+
+class TagUpdate(BaseModel):
+    """Rename or re-describe one tag; its assignments are unaffected."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: TagName | None = None
+    description: str | None = Field(default=None, max_length=TAG_DESCRIPTION_MAX_LEN)
+
+    @model_validator(mode="after")
+    def _changes_something(self) -> Self:
+        if self.name is None and self.description is None:
+            raise ValueError("give name, description or both")
+        return self
+
+
+class DocumentTagsUpdate(BaseModel):
+    """Change one document's tags atomically: ``add``/``remove``, or ``set``.
+
+    ``set`` replaces the whole set and excludes ``add`` and ``remove``; an
+    empty ``set`` clears the document's tags. Removing a tag the document
+    does not have is not an error.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    add: tuple[TagRef, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
+    remove: tuple[TagRef, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
+    set: tuple[TagRef, ...] | None = Field(
+        default=None, max_length=TAGS_PER_DOCUMENT_MAX
+    )
+
+    @model_validator(mode="after")
+    def _set_excludes_add_and_remove(self) -> Self:
+        if self.set is not None and (self.add or self.remove):
+            raise ValueError("set replaces the tags; it excludes add and remove")
+        return self
+
+
+class DocumentTags(BaseModel):
+    """A document's tag names after a tag write."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    tags: tuple[str, ...]
 
 
 EFFECTIVE_PERIODS_MAX: Final = 1000
@@ -326,6 +455,40 @@ class EffectiveInterval(BaseModel):
 
 DOCUMENT_SEARCH_MAX_K: Final = 200
 DOCUMENT_SEARCH_DEFAULT_K: Final = 20
+DOCUMENT_SEARCH_DEFAULT_LIMIT: Final = 50
+DOCUMENT_SEARCH_MAX_LIMIT: Final = 200
+
+
+TAG_FILTER_LIST_MAX: Final = 32
+"""Most tags one list of a ``tags`` filter may name (a starting point)."""
+
+
+class DocumentTagFilter(BaseModel):
+    """Caller tags a document must carry (D156 §4.1); every list given must hold.
+
+    ``all``: the document has every listed tag; ``any``: at least one;
+    ``none``: none of them. A tag is a registered name (matched ignoring case)
+    or a ``tag_id``; an unregistered tag fails the read with ``unknown_tag``
+    before anything is searched. Tags are the document's (lineage's) current
+    tags, also when a time scope reads an older version. An untagged document
+    matches ``none`` and fails ``all`` and ``any``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    all: tuple[TagRef, ...] = Field(default=(), max_length=TAG_FILTER_LIST_MAX)
+    any: tuple[TagRef, ...] = Field(default=(), max_length=TAG_FILTER_LIST_MAX)
+    none: tuple[TagRef, ...] = Field(default=(), max_length=TAG_FILTER_LIST_MAX)
+
+    @model_validator(mode="after")
+    def _one_list_without_duplicates(self) -> Self:
+        lists = {"all": self.all, "any": self.any, "none": self.none}
+        if not any(lists.values()):
+            raise ValueError("tags needs a non-empty all, any or none list")
+        for name, tags in lists.items():
+            keys = [unicodedata.normalize("NFC", tag).lower() for tag in tags]
+            if len(set(keys)) != len(keys):
+                raise ValueError(f"tags.{name} names a tag more than once")
+        return self
 
 
 class DocumentSearchFilters(BaseModel):
@@ -349,14 +512,16 @@ class DocumentSearchFilters(BaseModel):
     language: str | None = None
     thread_ref: str | None = None
     doc_ids: tuple[UUID, ...] = ()
+    tags: DocumentTagFilter | None = None  # D156 caller tags, on the lineage
 
 
 class DocumentSearchRequest(BaseModel):
     """One ``search_documents`` call.
 
-    With a ``query`` the results are ranked by name and content matches and
-    there is no cursor. Without one they are every document the filters
-    match, newest declared creation date first, paged by ``cursor``.
+    With a ``query`` the results are ranked by name and content matches (top
+    ``k``); there is no cursor. Without a query they are every document the
+    filters match, newest judged-version ingest time first, paged by
+    ``limit`` and ``cursor`` (D154).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -368,6 +533,11 @@ class DocumentSearchRequest(BaseModel):
     are candidates (default ``current``: the ones in force now). Documents
     without declared periods are judged as without it."""
     k: int = Field(default=DOCUMENT_SEARCH_DEFAULT_K, ge=1, le=DOCUMENT_SEARCH_MAX_K)
+    """Ranked top-k when ``query`` is set."""
+    limit: int = Field(
+        default=DOCUMENT_SEARCH_DEFAULT_LIMIT, ge=1, le=DOCUMENT_SEARCH_MAX_LIMIT
+    )
+    """Browse page size when ``query`` is omitted."""
     cursor: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
@@ -410,18 +580,25 @@ class DocumentSearchResult(BaseModel):
     version_no: int
     status: DocumentStatus
     lineage_title: str | None = None
+    tags: tuple[str, ...] = ()
+    """The names of the registered tags assigned to the document (D156)."""
     file_name: str | None = None
     title: str | None = None
     source_path: str | None = None
-    p3_path: str | None = None
-    """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
-    the corpus root; present in a published snapshot only where the
-    deployment builds the filesystem view. The path opens the lineage's
-    served version, so for a document with declared effective periods it is
-    null when the result describes another edition (``served_version``
-    false)."""
-    served_version: bool = True
-    """Whether ``version_id`` is the lineage's served (current) version."""
+    p3_path: str | None = Field(
+        default=None,
+        description=(
+            "Relative corpus folder only for the served selected version with a "
+            "matching nullable publication marker. Null for historical, raw-only, "
+            "unpublished, updating or failed publications. Type/topic/title changes "
+            "move it: re-resolve by doc_id; only the folder suffix is stable. "
+            "Retain version_id and representation_id for exact source identity."
+        ),
+    )
+    served_version: bool = Field(
+        default=True,
+        description="Whether version_id is served, independently of corpus publication.",
+    )
     representation_id: UUID | None = None
     """The judged version's current reading; with ``version_id`` it opens
     exactly the version described."""
@@ -460,7 +637,10 @@ class DocumentSearchPage(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     documents: tuple[DocumentSearchResult, ...]
-    cursor: str | None = None
+    next_cursor: str | None = None
+    """Browse mode only; null at the end. Ranked mode always leaves this null."""
+    truncated: bool = False
+    """Ranked mode: true when more than ``k`` documents matched."""
     as_of: datetime
     people_matched: tuple[DocumentPeopleMatch, ...] = ()
     scope_pending: ScopePending | None = None
@@ -496,8 +676,8 @@ class AdjacentChunksRequest(BaseModel):
     )
 
 
-SECTION_HISTORY_DEFAULT_K: Final = 50
-SECTION_HISTORY_MAX_K: Final = 200
+SECTION_HISTORY_DEFAULT_LIMIT: Final = 50
+SECTION_HISTORY_MAX_LIMIT: Final = 200
 SECTION_KEY_MAX_LEN: Final = 200
 
 
@@ -510,7 +690,9 @@ class SectionHistoryRequest(BaseModel):
         min_length=1, max_length=SECTION_KEY_MAX_LEN, pattern=r"^[A-Za-z0-9_.:/-]+$"
     )
     time: ReadTime = HistoryReadTime()
-    k: int = Field(default=SECTION_HISTORY_DEFAULT_K, ge=1, le=SECTION_HISTORY_MAX_K)
+    limit: int = Field(
+        default=SECTION_HISTORY_DEFAULT_LIMIT, ge=1, le=SECTION_HISTORY_MAX_LIMIT
+    )
     cursor: str | None = Field(default=None, min_length=1)
 
 
@@ -571,8 +753,8 @@ class SectionHistoryPage(BaseModel):
 
     Rows are ordered by effective start for a lineage with declared effective
     periods (``periodised``) and by ``version_no`` otherwise. ``amendments``
-    is filled on the first page only. ``cursor`` pins ``evaluated_at`` and
-    ``believed_at`` for the following pages.
+    is filled on the first page only. ``next_cursor`` pins ``evaluated_at``
+    and ``believed_at`` for the following pages; null exactly at the end.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -581,7 +763,7 @@ class SectionHistoryPage(BaseModel):
     periodised: bool
     rows: tuple[SectionHistoryRow, ...]
     amendments: tuple[SectionAmendment, ...] = ()
-    cursor: str | None = None
+    next_cursor: str | None = None
     evaluated_at: datetime
     believed_at: datetime
 
@@ -599,8 +781,8 @@ REFERENCE_SOURCE_LABEL_MAX_LEN: Final = 200
 REFERENCE_ERRORS_MAX: Final = 100
 """Most ``{item, field, reason}`` errors a rejected generation records."""
 
-DOCUMENT_REFERENCES_DEFAULT_K: Final = 50
-DOCUMENT_REFERENCES_MAX_K: Final = 200
+DOCUMENT_REFERENCES_DEFAULT_LIMIT: Final = 50
+DOCUMENT_REFERENCES_MAX_LIMIT: Final = 200
 DOCUMENT_REFERENCES_MAX_DESCENDANT_KEYS: Final = 1000
 """Most section keys one ``document_references`` call resolves a section to
 (the section and its descendants); beyond it the call is ``too_broad``."""
@@ -767,8 +949,10 @@ class DocumentReferencesRequest(BaseModel):
         default=None, min_length=1, max_length=7
     )
     time: ReadTime | None = None
-    k: int = Field(
-        default=DOCUMENT_REFERENCES_DEFAULT_K, ge=1, le=DOCUMENT_REFERENCES_MAX_K
+    limit: int = Field(
+        default=DOCUMENT_REFERENCES_DEFAULT_LIMIT,
+        ge=1,
+        le=DOCUMENT_REFERENCES_MAX_LIMIT,
     )
     cursor: str | None = Field(default=None, min_length=1)
 
@@ -892,15 +1076,16 @@ class DocumentReferencesPage(BaseModel):
     """A page of ``document_references`` rows.
 
     Ordered by direction (outgoing first), source document, source version,
-    reference, window start and target version. ``cursor`` pins
+    reference, window start and target version. ``next_cursor`` pins
     ``evaluated_at`` and ``believed_at``; a page may be short when the scan
-    bound was reached and still carry a cursor. ``too_broad`` is set (and
-    ``rows`` empty) when the section has too many descendant keys.
+    bound was reached and still carry a non-null ``next_cursor``. Null means
+    the end. ``too_broad`` is set (and ``rows`` empty) when the section has
+    too many descendant keys.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     rows: tuple[DocumentReference, ...]
-    cursor: str | None = None
+    next_cursor: str | None = None
     evaluated_at: datetime
     believed_at: datetime
     too_broad: DocumentReferencesTooBroad | None = None
@@ -920,9 +1105,18 @@ class CapabilityReadiness(BaseModel):
     ready: bool
     checked_at: datetime
     reason: str
-    version: str | None = None
-    built_at: datetime | None = None
-    published_at: datetime | None = None
+    version: str | None = Field(
+        default=None,
+        description="For p3, the export digest of one ready requested version; null for multiple versions or incomplete publication.",
+    )
+    built_at: datetime | None = Field(
+        default=None,
+        description="Null for p3: the live corpus has no global build time.",
+    )
+    published_at: datetime | None = Field(
+        default=None,
+        description="Null for p3: the live corpus has no global publication time.",
+    )
 
 
 class PipelineReadinessReport(BaseModel):
@@ -1207,6 +1401,10 @@ class CoMember(BaseModel):
     label: str
     evidence_count: int
     validity: Validity
+    in_documents_filter: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only (D156 §4.4)."""
 
 
 class Contradiction(BaseModel):
@@ -1215,7 +1413,6 @@ class Contradiction(BaseModel):
     co_members: tuple[CoMember, ...] = ()
     returned: int = Field(ge=0)
     total: int = Field(ge=0)
-    continuation: str | None = None
 
 
 class FactResult(BaseModel):
@@ -1297,6 +1494,11 @@ class FactEvidence(BaseModel):
     fact_id: UUID
     claim_id: UUID
     stance: Literal["supports", "contradicts"]
+    in_documents_filter: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: whether the claim's document matches
+    it (D156 §4.4)."""
 
 
 class EvidenceTotal(BaseModel):
@@ -1306,11 +1508,20 @@ class EvidenceTotal(BaseModel):
     stance: Literal["supports", "contradicts"]
     returned: int = Field(ge=0)
     total: int = Field(ge=0)
+    in_documents_filter_total: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: lineages matching it (D156 §4.4)."""
 
     @model_validator(mode="after")
     def _returned_does_not_exceed_total(self) -> Self:
         if self.returned > self.total:
             raise ValueError("returned evidence cannot exceed its exact total")
+        if (
+            self.in_documents_filter_total is not None
+            and self.in_documents_filter_total > self.total
+        ):
+            raise ValueError("matching evidence cannot exceed its exact total")
         return self
 
 
@@ -1451,12 +1662,13 @@ class ScanRow(BaseModel):
 
 
 class Truncation(BaseModel):
+    """Disclosure that a ranked or safety cap applied (D154)."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     truncated: bool
     returned: int = Field(ge=0)
     estimated_total: int = Field(ge=0)
     total_is_exact: bool = True
-    continuation: str | None = None
     reason: str | None = None
 
 
@@ -1481,6 +1693,8 @@ class Envelope(BaseModel):
     pages: tuple[PageRef, ...] = ()
     freshness: Freshness
     truncation: Truncation | None = None
+    next_cursor: str | None = None
+    """Browse / graph paging token; null exactly at the end (D154)."""
     dropped_by_hydration: int = 0
     excluded_unstamped: int = Field(default=0, ge=0)
     negative: Negative | None = None

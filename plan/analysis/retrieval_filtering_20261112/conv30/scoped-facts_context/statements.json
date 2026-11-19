@@ -1,0 +1,780 @@
+[
+  {
+    "ordinal": 0,
+    "statement": "\n    SELECT claims_enabled, facts_enabled\n    FROM deployment_processing_layers\n    WHERE deployment_id = %(deployment_id)s\n    ",
+    "parameters": {
+      "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79"
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "layer_configuration_on",
+      "layer_states_on",
+      "admit_layers_on",
+      "layer_admission",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.945626223,
+    "execute_seconds": 0.001238049939274788,
+    "driver_rowcount": 0
+  },
+  {
+    "ordinal": 1,
+    "statement": "SET TRANSACTION READ ONLY",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "snapshot",
+      "_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.947896086,
+    "execute_seconds": 0.0005593784153461456,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 2,
+    "statement": "SELECT now()",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "snapshot",
+      "_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.948900271,
+    "execute_seconds": 0.0005863010883331299,
+    "driver_rowcount": 1
+  },
+  {
+    "ordinal": 3,
+    "statement": "SET LOCAL statement_timeout = 19997",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "bound_statement_timeout",
+      "connect",
+      "_fact_connection",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.950257951,
+    "execute_seconds": 0.0005005151033401489,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 4,
+    "statement": "SET LOCAL statement_timeout = '19996ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_facts_context_connection",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.951240828,
+    "execute_seconds": 0.000423261895775795,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 5,
+    "statement": "SET LOCAL transaction_timeout = '19996ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_facts_context_connection",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.952102136,
+    "execute_seconds": 0.0003888960927724838,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 6,
+    "statement": "SET LOCAL jit = off",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_facts_context_connection",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.95288627,
+    "execute_seconds": 0.0004448704421520233,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 7,
+    "statement": "SET LOCAL max_parallel_workers_per_gather = 0",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_facts_context_connection",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.953767095,
+    "execute_seconds": 0.000501830130815506,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 8,
+    "statement": "\n    SELECT entity_id, canonical_name\n    FROM memory_v1.entities_current\n    WHERE deployment_id = %(deployment_id)s\n      AND entity_id = ANY(%(entity_ids)s)\n    ",
+    "parameters": {
+      "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+      "entity_ids": [
+        "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+      ]
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_current_context_entity_ids",
+      "_context_entities_are_current",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560238.954903113,
+    "execute_seconds": 0.9371488839387894,
+    "driver_rowcount": 1
+  },
+  {
+    "ordinal": 9,
+    "statement": "SET LOCAL statement_timeout = 19054",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "bound_statement_timeout",
+      "connect",
+      "_read_connection",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.893615792,
+    "execute_seconds": 0.0010790396481752396,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 10,
+    "statement": "SET LOCAL statement_timeout = '19052ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.895252587,
+    "execute_seconds": 0.000529048964381218,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 11,
+    "statement": "SET LOCAL transaction_timeout = '19052ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.896331469,
+    "execute_seconds": 0.0006037987768650055,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 12,
+    "statement": "\n                    SELECT EXISTS (\n                      SELECT 1 FROM p1_search_channels\n                      WHERE deployment_id = %(deployment_id)s\n                        AND target = %(target)s AND channel = %(channel)s AND ready\n                        AND (\n                          (%(channel)s = 'semantic'\n                           AND embedding_model = %(embedding_model)s\n                           AND embedding_dimension = %(dimensions)s\n                           AND embedding_input_policy_version = %(policy)s\n                           AND text_config IS NULL)\n                          OR\n                          (%(channel)s = 'bm25'\n                           AND embedding_model IS NULL\n                           AND embedding_dimension IS NULL\n                           AND embedding_input_policy_version IS NULL\n                           AND text_config = 'simple')\n                        )\n                    )\n                    ",
+    "parameters": {
+      "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+      "target": "relations",
+      "channel": "semantic",
+      "embedding_model": "qwen/qwen3-embedding-8b",
+      "dimensions": 1536,
+      "policy": "fact-label-v2:chosen-window"
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.897787772,
+    "execute_seconds": 0.0015013162046670914,
+    "driver_rowcount": 1
+  },
+  {
+    "ordinal": 13,
+    "statement": "SET LOCAL statement_timeout = 19047",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "bound_statement_timeout",
+      "connect",
+      "_read_connection",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.899870548,
+    "execute_seconds": 0.0005964357405900955,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 14,
+    "statement": "SET LOCAL statement_timeout = '19046ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.900961531,
+    "execute_seconds": 0.0005760379135608673,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 15,
+    "statement": "SET LOCAL transaction_timeout = '19046ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.902176669,
+    "execute_seconds": 0.0005819909274578094,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 16,
+    "statement": "\n                    SELECT EXISTS (\n                      SELECT 1 FROM p1_search_channels\n                      WHERE deployment_id = %(deployment_id)s\n                        AND target = %(target)s AND channel = %(channel)s AND ready\n                        AND (\n                          (%(channel)s = 'semantic'\n                           AND embedding_model = %(embedding_model)s\n                           AND embedding_dimension = %(dimensions)s\n                           AND embedding_input_policy_version = %(policy)s\n                           AND text_config IS NULL)\n                          OR\n                          (%(channel)s = 'bm25'\n                           AND embedding_model IS NULL\n                           AND embedding_dimension IS NULL\n                           AND embedding_input_policy_version IS NULL\n                           AND text_config = 'simple')\n                        )\n                    )\n                    ",
+    "parameters": {
+      "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+      "target": "observations",
+      "channel": "semantic",
+      "embedding_model": "qwen/qwen3-embedding-8b",
+      "dimensions": 1536,
+      "policy": "fact-label-v2:chosen-window"
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_require_channel",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.903509177,
+    "execute_seconds": 0.0009484738111495972,
+    "driver_rowcount": 1
+  },
+  {
+    "ordinal": 17,
+    "statement": "SET LOCAL statement_timeout = 19041",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "bound_statement_timeout",
+      "connect",
+      "_read_connection",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.9058964,
+    "execute_seconds": 0.0007253233343362808,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 18,
+    "statement": "SET LOCAL statement_timeout = '19040ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.907205967,
+    "execute_seconds": 0.0006205718964338303,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 19,
+    "statement": "SET LOCAL transaction_timeout = '19040ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.9084399,
+    "execute_seconds": 0.0006853844970464706,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 20,
+    "statement": "WITH RECURSIVE \nscoped_entities(entity_id, survivor_entity_id) AS MATERIALIZED (\n    SELECT entity_id, entity_id\n    FROM entities\n    WHERE deployment_id = %(deployment_id)s\n      AND entity_id = ANY(CAST(%(entity_ids)s AS uuid[]))\n      AND merged_into IS NULL\n    UNION ALL\n    SELECT redirect.entity_id, scoped.survivor_entity_id\n    FROM scoped_entities AS scoped\n    JOIN entities AS redirect ON redirect.merged_into = scoped.entity_id\n    WHERE redirect.deployment_id = %(deployment_id)s\n)\nSELECT count(*) AS n FROM (SELECT 1 FROM relations AS indexed WHERE indexed.deployment_id = %(deployment_id)s AND (indexed.subject_entity_id = ANY(ARRAY(SELECT entity_id FROM scoped_entities)) OR indexed.object_entity_id = ANY(ARRAY(SELECT entity_id FROM scoped_entities))) LIMIT %(entity_budget)s) AS bounded",
+    "parameters": {
+      "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+      "entity_ids": [
+        "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+      ],
+      "entity_budget": 50001
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.910085352,
+    "execute_seconds": 0.003841591998934746,
+    "driver_rowcount": 1
+  },
+  {
+    "ordinal": 21,
+    "statement": "SET LOCAL statement_timeout = 19033",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "bound_statement_timeout",
+      "connect",
+      "_read_connection",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.914831035,
+    "execute_seconds": 0.0010923650115728378,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 22,
+    "statement": "SET LOCAL statement_timeout = '19031ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.916491332,
+    "execute_seconds": 0.0007577650249004364,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 23,
+    "statement": "SET LOCAL transaction_timeout = '19031ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.917786373,
+    "execute_seconds": 0.0007596854120492935,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 24,
+    "statement": "WITH RECURSIVE \nscoped_entities(entity_id, survivor_entity_id) AS MATERIALIZED (\n    SELECT entity_id, entity_id\n    FROM entities\n    WHERE deployment_id = %(deployment_id)s\n      AND entity_id = ANY(CAST(%(entity_ids)s AS uuid[]))\n      AND merged_into IS NULL\n    UNION ALL\n    SELECT redirect.entity_id, scoped.survivor_entity_id\n    FROM scoped_entities AS scoped\n    JOIN entities AS redirect ON redirect.merged_into = scoped.entity_id\n    WHERE redirect.deployment_id = %(deployment_id)s\n)\nSELECT count(*) AS n FROM (SELECT 1 FROM observations AS indexed WHERE indexed.deployment_id = %(deployment_id)s AND (indexed.subject_entity_id = ANY(ARRAY(SELECT entity_id FROM scoped_entities))) LIMIT %(entity_budget)s) AS bounded",
+    "parameters": {
+      "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+      "entity_ids": [
+        "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+      ],
+      "entity_budget": 49993
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_engine_rows",
+      "_require_fact_scope_budget",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.919512134,
+    "execute_seconds": 0.0026443004608154297,
+    "driver_rowcount": 1
+  },
+  {
+    "ordinal": 25,
+    "statement": "SET LOCAL statement_timeout = 19024",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "bound_statement_timeout",
+      "connect",
+      "_read_connection",
+      "_engine_rows",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.922901733,
+    "execute_seconds": 0.0009878072887659073,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 26,
+    "statement": "SET LOCAL statement_timeout = '19023ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_engine_rows",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.92447103,
+    "execute_seconds": 0.0009259022772312164,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 27,
+    "statement": "SET LOCAL transaction_timeout = '19023ms'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_configure_p1_connection",
+      "_engine_rows",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.926111732,
+    "execute_seconds": 0.0008628219366073608,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 28,
+    "statement": "SET LOCAL hnsw.iterative_scan = 'strict_order'",
+    "parameters": {},
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_engine_rows",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.928001763,
+    "execute_seconds": 0.0013490933924913406,
+    "driver_rowcount": -1
+  },
+  {
+    "ordinal": 29,
+    "statement": "SELECT set_config('hnsw.max_scan_tuples', %(value)s, true)",
+    "parameters": {
+      "value": "20000"
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_engine_rows",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.930376725,
+    "execute_seconds": 0.0012302268296480179,
+    "driver_rowcount": 1
+  },
+  {
+    "ordinal": 30,
+    "statement": "\n            WITH RECURSIVE \nscoped_entities(entity_id, survivor_entity_id) AS MATERIALIZED (\n    SELECT entity_id, entity_id\n    FROM entities\n    WHERE deployment_id = %(deployment_id)s\n      AND entity_id = ANY(CAST(%(entity_ids)s AS uuid[]))\n      AND merged_into IS NULL\n    UNION ALL\n    SELECT redirect.entity_id, scoped.survivor_entity_id\n    FROM scoped_entities AS scoped\n    JOIN entities AS redirect ON redirect.merged_into = scoped.entity_id\n    WHERE redirect.deployment_id = %(deployment_id)s\n)\n, candidates AS (\n                (SELECT indexed.relation_id::text AS item_id,\n                        'relation'::text AS qualifier,\n                        \n                        (CASE\n                             WHEN subject_scope.survivor_entity_id\n                                  = ANY(CAST(%(ranking_entity_ids)s AS uuid[]))\n                             THEN 1 ELSE 0\n                           END\n                         + CASE\n                             WHEN object_scope.entity_id IS NULL\n                               OR object_scope.survivor_entity_id\n                                  = subject_scope.survivor_entity_id\n                               OR object_scope.survivor_entity_id\n                                  <> ALL(CAST(%(ranking_entity_ids)s AS uuid[]))\n                             THEN 0 ELSE 1\n                           END) AS coverage,\n                \n                        indexed.embedding <=> CAST(%(query_vector)s AS vector) AS distance\n                 FROM relations AS indexed\n                 \n                 LEFT JOIN scoped_entities AS subject_scope\n                   ON subject_scope.entity_id = indexed.subject_entity_id\n                 LEFT JOIN scoped_entities AS object_scope\n                   ON object_scope.entity_id = indexed.object_entity_id\n                \n                  JOIN memory_v1.facts_visible_history AS fact   ON fact.deployment_id = indexed.deployment_id  AND fact.fact_kind = 'relation'  AND fact.fact_id = indexed.relation_id\n                 WHERE indexed.deployment_id = %(deployment_id)s\n                   AND indexed.embedding IS NOT NULL\n                   AND vector_norm(indexed.embedding) > 0\n                   AND indexed.embedding_model = %(embedding_model)s\n                   AND indexed.embedding_input_policy_version = %(input_policy)s\n                   AND indexed.ingested_at <= %(evaluated_at)s AND indexed.invalidated_at IS NULL AND (indexed.valid_from IS NULL OR indexed.valid_from <= %(evaluated_at)s) AND (indexed.valid_until IS NULL OR indexed.valid_until > %(evaluated_at)s) AND (subject_scope.entity_id IS NOT NULL OR object_scope.entity_id IS NOT NULL)\n                   AND (EXISTS (SELECT 1 FROM public.relation_evidence gate_relation_evidence JOIN public.chunk_claims gate_relation_occurrence   ON gate_relation_occurrence.deployment_id = gate_relation_evidence.deployment_id  AND gate_relation_occurrence.claim_id = gate_relation_evidence.claim_id JOIN public.chunks gate_relation_chunk   ON gate_relation_chunk.deployment_id = gate_relation_occurrence.deployment_id  AND gate_relation_chunk.chunk_id = gate_relation_occurrence.chunk_id JOIN public.document_versions gate_relation_version   ON gate_relation_version.deployment_id = gate_relation_chunk.deployment_id  AND gate_relation_version.version_id = gate_relation_chunk.version_id  AND gate_relation_version.current_representation_id = gate_relation_chunk.representation_id JOIN public.document_version_scope gate_relation_scope   ON gate_relation_scope.deployment_id = gate_relation_chunk.deployment_id  AND gate_relation_scope.version_id = gate_relation_chunk.version_id WHERE gate_relation_evidence.deployment_id = %(deployment_id)s   AND gate_relation_evidence.relation_id = indexed.relation_id   AND gate_relation_evidence.stance = 'supports' AND (NOT gate_relation_scope.periodised OR (gate_relation_scope.selectable AND gate_relation_scope.in_force && tstzrange(CAST(%(scope_lower)s AS timestamptz), CAST(%(scope_upper)s AS timestamptz), '[]')))) OR (NOT EXISTS (SELECT 1 FROM public.relation_evidence gate_relation_any WHERE gate_relation_any.deployment_id = %(deployment_id)s AND gate_relation_any.relation_id = indexed.relation_id AND gate_relation_any.stance = 'supports') AND EXISTS (SELECT 1 FROM public.relation_evidence gate_relation_all_evidence JOIN public.chunk_claims gate_relation_all_occurrence   ON gate_relation_all_occurrence.deployment_id = gate_relation_all_evidence.deployment_id  AND gate_relation_all_occurrence.claim_id = gate_relation_all_evidence.claim_id JOIN public.chunks gate_relation_all_chunk   ON gate_relation_all_chunk.deployment_id = gate_relation_all_occurrence.deployment_id  AND gate_relation_all_chunk.chunk_id = gate_relation_all_occurrence.chunk_id JOIN public.document_versions gate_relation_all_version   ON gate_relation_all_version.deployment_id = gate_relation_all_chunk.deployment_id  AND gate_relation_all_version.version_id = gate_relation_all_chunk.version_id  AND gate_relation_all_version.current_representation_id = gate_relation_all_chunk.representation_id JOIN public.document_version_scope gate_relation_all_scope   ON gate_relation_all_scope.deployment_id = gate_relation_all_chunk.deployment_id  AND gate_relation_all_scope.version_id = gate_relation_all_chunk.version_id WHERE gate_relation_all_evidence.deployment_id = %(deployment_id)s   AND gate_relation_all_evidence.relation_id = indexed.relation_id AND (NOT gate_relation_all_scope.periodised OR (gate_relation_all_scope.selectable AND gate_relation_all_scope.in_force && tstzrange(CAST(%(scope_lower)s AS timestamptz), CAST(%(scope_upper)s AS timestamptz), '[]'))))))\n                 ORDER BY coverage DESC, indexed.embedding <=> CAST(%(query_vector)s AS vector),\n                          indexed.relation_id\n                 LIMIT %(branch_limit)s)\n                 UNION ALL \n                (SELECT indexed.observation_id::text AS item_id,\n                        'observation'::text AS qualifier,\n                        \n                        CASE\n                            WHEN subject_scope.survivor_entity_id\n                                 = ANY(CAST(%(ranking_entity_ids)s AS uuid[]))\n                            THEN 1 ELSE 0\n                        END AS coverage,\n                \n                        indexed.embedding <=> CAST(%(query_vector)s AS vector) AS distance\n                 FROM observations AS indexed\n                 \n                 JOIN scoped_entities AS subject_scope\n                   ON subject_scope.entity_id = indexed.subject_entity_id\n                \n                  JOIN memory_v1.facts_visible_history AS fact   ON fact.deployment_id = indexed.deployment_id  AND fact.fact_kind = 'observation'  AND fact.fact_id = indexed.observation_id\n                 WHERE indexed.deployment_id = %(deployment_id)s\n                   AND indexed.embedding IS NOT NULL\n                   AND vector_norm(indexed.embedding) > 0\n                   AND indexed.embedding_model = %(embedding_model)s\n                   AND indexed.embedding_input_policy_version = %(input_policy)s\n                   AND indexed.ingested_at <= %(evaluated_at)s AND indexed.invalidated_at IS NULL AND (indexed.valid_from IS NULL OR indexed.valid_from <= %(evaluated_at)s) AND (indexed.valid_until IS NULL OR indexed.valid_until > %(evaluated_at)s) \n                   AND (EXISTS (SELECT 1 FROM public.observation_evidence gate_observation_evidence JOIN public.chunk_claims gate_observation_occurrence   ON gate_observation_occurrence.deployment_id = gate_observation_evidence.deployment_id  AND gate_observation_occurrence.claim_id = gate_observation_evidence.claim_id JOIN public.chunks gate_observation_chunk   ON gate_observation_chunk.deployment_id = gate_observation_occurrence.deployment_id  AND gate_observation_chunk.chunk_id = gate_observation_occurrence.chunk_id JOIN public.document_versions gate_observation_version   ON gate_observation_version.deployment_id = gate_observation_chunk.deployment_id  AND gate_observation_version.version_id = gate_observation_chunk.version_id  AND gate_observation_version.current_representation_id = gate_observation_chunk.representation_id JOIN public.document_version_scope gate_observation_scope   ON gate_observation_scope.deployment_id = gate_observation_chunk.deployment_id  AND gate_observation_scope.version_id = gate_observation_chunk.version_id WHERE gate_observation_evidence.deployment_id = %(deployment_id)s   AND gate_observation_evidence.observation_id = indexed.observation_id   AND gate_observation_evidence.stance = 'supports' AND (NOT gate_observation_scope.periodised OR (gate_observation_scope.selectable AND gate_observation_scope.in_force && tstzrange(CAST(%(scope_lower)s AS timestamptz), CAST(%(scope_upper)s AS timestamptz), '[]')))) OR (NOT EXISTS (SELECT 1 FROM public.observation_evidence gate_observation_any WHERE gate_observation_any.deployment_id = %(deployment_id)s AND gate_observation_any.observation_id = indexed.observation_id AND gate_observation_any.stance = 'supports') AND EXISTS (SELECT 1 FROM public.observation_evidence gate_observation_all_evidence JOIN public.chunk_claims gate_observation_all_occurrence   ON gate_observation_all_occurrence.deployment_id = gate_observation_all_evidence.deployment_id  AND gate_observation_all_occurrence.claim_id = gate_observation_all_evidence.claim_id JOIN public.chunks gate_observation_all_chunk   ON gate_observation_all_chunk.deployment_id = gate_observation_all_occurrence.deployment_id  AND gate_observation_all_chunk.chunk_id = gate_observation_all_occurrence.chunk_id JOIN public.document_versions gate_observation_all_version   ON gate_observation_all_version.deployment_id = gate_observation_all_chunk.deployment_id  AND gate_observation_all_version.version_id = gate_observation_all_chunk.version_id  AND gate_observation_all_version.current_representation_id = gate_observation_all_chunk.representation_id JOIN public.document_version_scope gate_observation_all_scope   ON gate_observation_all_scope.deployment_id = gate_observation_all_chunk.deployment_id  AND gate_observation_all_scope.version_id = gate_observation_all_chunk.version_id WHERE gate_observation_all_evidence.deployment_id = %(deployment_id)s   AND gate_observation_all_evidence.observation_id = indexed.observation_id AND (NOT gate_observation_all_scope.periodised OR (gate_observation_all_scope.selectable AND gate_observation_all_scope.in_force && tstzrange(CAST(%(scope_lower)s AS timestamptz), CAST(%(scope_upper)s AS timestamptz), '[]'))))))\n                 ORDER BY coverage DESC, indexed.embedding <=> CAST(%(query_vector)s AS vector),\n                          indexed.observation_id\n                 LIMIT %(branch_limit)s)\n                )\n            SELECT item_id, qualifier, 1.0 - distance AS score\n            FROM candidates\n            ORDER BY coverage DESC, distance, qualifier, item_id LIMIT %(limit)s\n        ",
+    "parameters": {
+      "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+      "entity_ids": [
+        "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+      ],
+      "ranking_entity_ids": [
+        "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+      ],
+      "query_vector": "[VECTOR_REDACTED]",
+      "embedding_model": "qwen/qwen3-embedding-8b",
+      "input_policy": "fact-label-v2:chosen-window",
+      "evaluated_at": "2026-11-12 13:18:16.449193+00:00",
+      "scope_lower": "2026-11-12 13:18:16.449193+00:00",
+      "scope_upper": "2026-11-12 13:18:16.449193+00:00",
+      "branch_limit": 201,
+      "limit": 201
+    },
+    "server_side_cursor": false,
+    "stack": [
+      "_before",
+      "_engine_rows",
+      "nominate_facts_scored",
+      "nominate",
+      "_nominate_facts_context",
+      "_facts_context_in_operation",
+      "facts_context",
+      "wrapped",
+      "wrapped",
+      "_run_case",
+      "main",
+      "<module>"
+    ],
+    "started_monotonic": 9560239.93321949,
+    "execute_seconds": 19.024462005123496,
+    "error": {
+      "type": "InternalError",
+      "sqlstate": "25P04",
+      "message": "terminating connection due to transaction timeout"
+    }
+  }
+]

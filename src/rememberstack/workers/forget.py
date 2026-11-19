@@ -20,7 +20,6 @@ from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine import ForgetCatalog
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.knowledge_driver import KnowledgeCommitDriver
-from rememberstack.workers.p3 import CorpusFsBuilder
 from rememberstack.workers.reconcile import DeletionService
 
 
@@ -38,14 +37,6 @@ def conversion_checkpoint_prefixes(
     )
 
 
-class ForgetProjectionRebuilder(Protocol):
-    """Publish clean P3 bytes from the scrubbed authoritative spine."""
-
-    def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
-        """Build and publish clean CorpusFS idempotently."""
-        ...
-
-
 class ForgetKnowledgeRebuilder(Protocol):
     """Recompile affected machine-owned K pages after source removal."""
 
@@ -54,19 +45,6 @@ class ForgetKnowledgeRebuilder(Protocol):
     ) -> None:
         """Publish sanitized current compiled files before history erasure."""
         ...
-
-
-class CorpusForgetRebuilder:
-    """Publish clean P3 through the existing CorpusFS builder."""
-
-    def __init__(self, *, corpus: CorpusFsBuilder) -> None:
-        """Bind the production CorpusFS builder."""
-        self._corpus = corpus
-
-    def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
-        """Publish clean CorpusFS; retries may safely publish a newer version."""
-        del forget_id
-        self._corpus.build(deployment_id=deployment_id)
 
 
 class KnowledgeCycleForgetRebuilder:
@@ -176,7 +154,6 @@ class HardForgetHandler:
         deletion: DeletionService,
         profile_refresher: ProfileRefresherPort,
         object_purgers: tuple[ObjectPurgePort, ...],
-        projection_rebuilder: ForgetProjectionRebuilder,
         projection_purger: ProjectionPurgePort,
         knowledge_rebuilder: ForgetKnowledgeRebuilder,
         k_git: KGitPurgePort,
@@ -188,7 +165,6 @@ class HardForgetHandler:
         self._deletion = deletion
         self._profile_refresher = profile_refresher
         self._object_purgers = object_purgers
-        self._projection_rebuilder = projection_rebuilder
         self._projection_purger = projection_purger
         self._knowledge_rebuilder = knowledge_rebuilder
         self._k_git = k_git
@@ -206,6 +182,18 @@ class HardForgetHandler:
         self, *, manifest: ForgetManifest, meter: CostMeterPort | None = None
     ) -> None:
         """Run the shared purge path used by both the worker and readiness replay."""
+        # A duplicate queued coordinator may arrive after a completed replay.
+        # Re-arm admission for it too, before any erasure or cache acknowledgement.
+        self._catalog.materialize_portable(manifest=manifest)
+        if not self._catalog.ordinary_work_is_drained(
+            deployment_id=manifest.deployment_id
+        ):
+            raise ForgetInProgressError(
+                "hard forget is waiting for ordinary work to drain"
+            )
+        self._projection_purger.quiesce_projections(
+            deployment_id=manifest.deployment_id, forget_id=manifest.forget_id
+        )
         self._deletion.delete_lineage(
             deployment_id=manifest.deployment_id,
             doc_id=manifest.doc_id,
@@ -227,11 +215,10 @@ class HardForgetHandler:
             purger.purge_objects(
                 keys=manifest.object_keys, prefixes=checkpoint_prefixes
             )
-        self._projection_rebuilder.rebuild_without_lineage(
-            deployment_id=manifest.deployment_id, forget_id=manifest.forget_id
-        )
         self._projection_purger.purge_projections(
-            deployment_id=manifest.deployment_id, prefixes=manifest.projection_prefixes
+            deployment_id=manifest.deployment_id,
+            doc_id=manifest.doc_id,
+            forget_id=manifest.forget_id,
         )
         self._knowledge_rebuilder.recompile_without_lineage(
             deployment_id=manifest.deployment_id, artifact_ids=manifest.k_artifact_ids
@@ -246,7 +233,9 @@ class HardForgetHandler:
                 keys=manifest.object_keys, prefixes=checkpoint_prefixes
             )
         self._projection_purger.verify_projections_purged(
-            deployment_id=manifest.deployment_id, prefixes=manifest.projection_prefixes
+            deployment_id=manifest.deployment_id,
+            doc_id=manifest.doc_id,
+            forget_id=manifest.forget_id,
         )
         self._k_git.verify_artifacts_purged(
             deployment_id=manifest.deployment_id,
@@ -293,6 +282,13 @@ class HardForgetReadiness:
         manifests = self._manifest_store.manifests(deployment_id=deployment_id)
         for manifest in manifests:
             self._catalog.materialize_portable(manifest=manifest)
+        # Arm every barrier before replaying any store, including manifests
+        # whose local progress says complete. Any failed replay stays closed.
+        for manifest in manifests:
+            if not self._catalog.ordinary_work_is_drained(deployment_id=deployment_id):
+                raise ForgetInProgressError(
+                    "restore replay is waiting for ordinary work to drain"
+                )
             self._handler.honor(manifest=manifest, meter=meter)
         return tuple(manifest.forget_id for manifest in manifests)
 

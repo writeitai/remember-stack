@@ -851,10 +851,10 @@ def test_paging_walks_every_row_once_with_pinned_instants(rig: _Rig) -> None:
     cursor = None
     pages = []
     while True:
-        page = rig.read(doc_id=travel.doc_id, k=2, cursor=cursor)
+        page = rig.read(doc_id=travel.doc_id, limit=2, cursor=cursor)
         pages.append(page)
         seen.extend(row.crossref_id for row in page.rows)
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             break
     assert [len(page.rows) for page in pages] == [2, 2, 1]
@@ -862,7 +862,23 @@ def test_paging_walks_every_row_once_with_pinned_instants(rig: _Rig) -> None:
     assert len({page.evaluated_at for page in pages}) == 1
     assert len({page.believed_at for page in pages}) == 1
     with pytest.raises(ValueError, match="different"):
-        rig.read(doc_id=travel.doc_id, section_key="approvals", cursor=pages[0].cursor)
+        rig.read(
+            doc_id=travel.doc_id, section_key="approvals", cursor=pages[0].next_cursor
+        )
+
+
+def test_reference_cursor_is_null_at_exact_scan_cap_end(rig: _Rig) -> None:
+    """Ten out-of-force incoming candidates exactly fill the limit=1 scan cap."""
+    expense = rig.ingest(ref="policy/expense", body=_EXPENSE_1)
+    for index in range(10):
+        travel = rig.ingest(
+            ref=f"policy/travel-{index}", body=_TRAVEL, effective_from=_day(2100, 1)
+        )
+        rig.put(version=travel, body=_ndjson(_ref()))
+    rig.drain()
+    page = rig.read(doc_id=expense.doc_id, direction="incoming", limit=1)
+    assert page.rows == ()
+    assert page.next_cursor is None
 
 
 def test_amends_references_appear_in_section_history(rig: _Rig) -> None:

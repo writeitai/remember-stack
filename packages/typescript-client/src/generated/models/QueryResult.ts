@@ -20,8 +20,6 @@ export type QueryResult = {
     error_code?: QueryErrorCode | null;
     error_message?: string | null;
     evaluated_at?: string | null;
-    exact_total?: number | null;
-    exact_total_known?: boolean;
     execution_started_at: string;
     grade?: 'exploratory_tabular';
     graph_invocations?: Array<GraphInvocation>;

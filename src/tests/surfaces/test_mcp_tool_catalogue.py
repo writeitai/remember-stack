@@ -76,6 +76,11 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "search_documents",
         "section_history",
         "document_references",
+        "list_tags",
+        "create_tag",
+        "update_tag",
+        "delete_tag",
+        "update_document_tags",
         *OPERATION_TOOL_NAMES,
         ADJACENT_CHUNKS_TOOL_NAME,
         *OPEN_QUERY_TOOL_NAMES,
@@ -140,12 +145,12 @@ def test_rendering_never_shares_the_catalogue_schema() -> None:
 
 
 def test_annotations_follow_permission() -> None:
-    """Read tools are read-only; only delete_document is destructive."""
+    """Read tools are read-only; only delete_document and delete_tag are destructive."""
     for name, entry in _render().items():
         definition = tool(name)
         assert entry["annotations"] == {
             "readOnlyHint": definition.permission == "memory:read",
-            "destructiveHint": name == "delete_document",
+            "destructiveHint": name in {"delete_document", "delete_tag"},
         }
 
 
@@ -227,6 +232,31 @@ def test_validate_arguments_parses_every_family() -> None:
         validate_arguments("examples.top_entities", {})
 
 
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("query_sql", {"sql": "SELECT 1"}),
+        ("run_saved_query", {"namespace": "examples", "name": "safe"}),
+    ],
+)
+def test_local_mcp_enforces_sql_row_cap_at_runtime(
+    name: str, arguments: dict[str, object]
+) -> None:
+    surface = MagicMock(deployment_id=_DEPLOYMENT)
+    facade = MagicMock(deployment_id=_DEPLOYMENT)
+    execute = getattr(facade, name)
+    execute.return_value.model_dump.return_value = {"rows": []}
+    server = OperationMcpServer(surface=surface, open_query=facade)
+    accepted = server.call_tool(name=name, arguments={**arguments, "max_rows": 1000})
+    assert accepted["isError"] is False
+    assert execute.call_args.kwargs["max_rows"] == 1000
+    execute.reset_mock()
+    refused = server.call_tool(name=name, arguments={**arguments, "max_rows": 1001})
+    assert refused["isError"] is True
+    assert "max_rows" in str(refused["content"])
+    execute.assert_not_called()
+
+
 def test_engine_mcp_offers_no_path_and_refuses_it() -> None:
     """The engine does not run on the caller's machine, so `path` is unknown."""
     surface = MagicMock()
@@ -292,6 +322,7 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         document_search=MagicMock(),
         section_history=MagicMock(),
         document_references=MagicMock(),
+        tags=MagicMock(),
     )
     assert everything == {
         definition.name: definition.tool_version for definition in memory_tools()
@@ -410,13 +441,13 @@ def test_engine_mcp_offers_section_history_only_when_composed() -> None:
     assert names[0] == "section_history"
     result = server.call_tool(
         name="section_history",
-        arguments={"doc_id": str(doc_id), "section_key": "per-diem", "k": 3},
+        arguments={"doc_id": str(doc_id), "section_key": "per-diem", "limit": 3},
     )
     assert result["isError"] is False
     call = history.section_history.call_args.kwargs
     assert call["deployment_id"] == _DEPLOYMENT
     assert call["request"] == SectionHistoryRequest(
-        doc_id=doc_id, section_key="per-diem", k=3
+        doc_id=doc_id, section_key="per-diem", limit=3
     )
 
     history.section_history.side_effect = DocumentNotFoundError(doc_id)

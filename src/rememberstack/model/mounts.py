@@ -1,4 +1,4 @@
-"""Portable result of publishing the four D51 read-only mount surfaces."""
+"""Portable locations for the read-only corpus and standalone K checkout."""
 
 from typing import Annotated
 from typing import Literal
@@ -12,7 +12,7 @@ _MountLocator = Annotated[str, Field(min_length=1)]
 
 
 class PublishedMounts(BaseModel):
-    """Locations for the P3, artifact, raw and (when configured) Plane-K views.
+    """Locations for the corpus and (when configured) standalone Plane K.
 
     ``knowledge`` is absent unless a Plane-K checkout root was supplied: an
     always-empty placeholder directory would only mislead a browsing agent.
@@ -22,7 +22,5 @@ class PublishedMounts(BaseModel):
 
     deployment_id: UUID
     p3: _MountLocator
-    artifacts: _MountLocator
-    raw: _MountLocator
     knowledge: _MountLocator | None = None
     read_only: Literal[True]

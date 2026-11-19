@@ -1,0 +1,30 @@
+{
+  "statement_ordinal": 0,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Index Scan",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Scan Direction": "Forward",
+        "Index Name": "deployment_processing_layers_pkey",
+        "Relation Name": "deployment_processing_layers",
+        "Alias": "deployment_processing_layers",
+        "Startup Cost": 0.15,
+        "Total Cost": 8.17,
+        "Plan Rows": 1,
+        "Plan Width": 2,
+        "Disabled": false,
+        "Index Cond": "(deployment_id = '283ae078-9a7d-43b1-95ad-33a439ae8c79'::uuid)"
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.0014507416635751724
+}

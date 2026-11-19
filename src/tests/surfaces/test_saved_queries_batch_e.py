@@ -1563,9 +1563,9 @@ def test_validate_version_does_not_block_publish_surface_hash(
 # --- examples / seed ---------------------------------------------------------
 
 
-def test_the_shipped_examples_are_the_eighteen_the_design_maps() -> None:
+def test_the_shipped_examples_are_the_nineteen_the_design_maps() -> None:
     names = {name for name, _ in declared_examples()}
-    assert len(names) == 18
+    assert len(names) == 19
     assert names == set(EXAMPLE_QUERIES)
     assert "claims_hybrid_rrf" in names
     assert all(purpose for _, purpose in declared_examples())
@@ -1598,6 +1598,12 @@ _EXAMPLE_MAPPING_SIGNALS: dict[str, tuple[str, ...]] = {
     "graph_neighborhood": ("graph_neighborhood",),
     "graph_path": ("graph_path",),
     "graph_citation_path": ("graph_citation_path",),
+    "facts_by_tag": (
+        "document_tags_live",
+        "fact_claim_evidence_live",
+        "'supports'",
+        "facts_current",
+    ),
 }
 
 
@@ -1654,14 +1660,14 @@ def test_always_empty_substitution_fails_positive(registry_url: str) -> None:
     assert report.fixtures["cap"] is False
 
 
-def test_seed_installs_exactly_eighteen_examples_idempotently(
+def test_seed_installs_exactly_nineteen_examples_idempotently(
     registry_url: str,
 ) -> None:
     with psycopg.connect(_psycopg_url(registry_url)) as connection:
         first = seed_shipped_examples(
             connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
-        assert first == 18
+        assert first == 19
         second = seed_shipped_examples(
             connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
@@ -1672,7 +1678,7 @@ def test_seed_installs_exactly_eighteen_examples_idempotently(
             b"   AND origin = 'shipped_example'",
             (str(_DEPLOYMENT),),
         ).fetchone()
-        assert rows is not None and rows[0] == 18
+        assert rows is not None and rows[0] == 19
         active = connection.execute(
             b"SELECT count(*) FROM saved_queries AS q"
             b" JOIN saved_query_versions AS v"
@@ -1681,7 +1687,7 @@ def test_seed_installs_exactly_eighteen_examples_idempotently(
             b"   AND v.status = 'active' AND v.assurance = 'shipped_example'",
             (str(_DEPLOYMENT),),
         ).fetchone()
-        assert active is not None and active[0] == 18
+        assert active is not None and active[0] == 19
         reg = _registry(connection, actor="reader")
         for name in ("claims_about", "relation_current", "graph_path"):
             resolved = reg.resolve(namespace="examples", name=name)
@@ -1689,7 +1695,7 @@ def test_seed_installs_exactly_eighteen_examples_idempotently(
             assert resolved.assurance == "shipped_example"
             assert resolved.sql == EXAMPLE_QUERIES[name][1]
         listed = reg.list_saved_queries(namespace="examples")
-        assert len(listed) == 18
+        assert len(listed) == 19
         assert all(item.origin == "shipped_example" for item in listed)
         connection.rollback()
 
@@ -1703,7 +1709,7 @@ def test_surface_upgrade_reseeds_shipped_examples_and_suspends_customer_queries(
             seed_shipped_examples(
                 connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
             )
-            == 18
+            == 19
         )
         customer = _draft_validate_activate(
             connection, registry_url, name=_unique("surface_upgrade")
@@ -1715,14 +1721,14 @@ def test_surface_upgrade_reseeds_shipped_examples_and_suspends_customer_queries(
             manifest_hash=_OTHER_HASH,
             actor="selfhost-setup",
         )
-        assert suspended == 19
+        assert suspended == 20
         assert (
             seed_shipped_examples(
                 connection=connection,
                 deployment_id=_DEPLOYMENT,
                 manifest_hash=_OTHER_HASH,
             )
-            == 18
+            == 19
         )
 
         shipped_statuses = dict(
@@ -1738,7 +1744,7 @@ def test_surface_upgrade_reseeds_shipped_examples_and_suspends_customer_queries(
                 (str(_DEPLOYMENT),),
             ).fetchall()
         )
-        assert shipped_statuses == {"active": 18, "deprecated": 18}
+        assert shipped_statuses == {"active": 19, "deprecated": 19}
         customer_status = connection.execute(
             b"SELECT status::text FROM saved_query_versions"
             b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
@@ -1820,7 +1826,7 @@ def test_customer_cannot_disable_or_purge_shipped_examples(registry_url: str) ->
         installed = seed_shipped_examples(
             connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
         )
-        assert installed == 18
+        assert installed == 19
         query_id = connection.execute(
             b"SELECT query_id FROM saved_queries"
             b" WHERE deployment_id = %s AND namespace = 'examples'"
@@ -1868,7 +1874,7 @@ def test_describe_query_space_includes_shipped_examples_when_asked() -> None:
     bare = describe_query_space()
     assert bare.examples == ()
     full = describe_query_space(include_examples=True)
-    assert len(full.examples) == 18
+    assert len(full.examples) == 19
     assert "examples.claims_hybrid_rrf" in full.examples
 
 
@@ -2146,6 +2152,9 @@ def example_corpus(
             live_since=far_past,
             empty_since=far_future,
             tombstone_since=tombstone_since,
+            live_tag="PROJECT:CORPUS",
+            empty_tag="project:never-registered",
+            tombstone_tag="project:erased",
         )
         yield (
             registry_url,

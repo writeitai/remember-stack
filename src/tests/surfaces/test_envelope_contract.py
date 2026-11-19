@@ -5,7 +5,7 @@ rules are contract, not garnish — proved here over a seeded corpus:
 
 - **Contradiction co-members are never silently absent (S23).** A fact in a
   live contradiction group ALWAYS carries the other sides (bounded by a cap,
-  with group_id/returned/total/continuation) — even when the query returns
+  with group_id/returned/total) — even when the query returns
   just one side.
 - **A withdrawn fact is flagged, not vanished (D54).** An open
   `support_withdrawn` review marks the fact `support=withdrawn`; it is still
@@ -195,7 +195,7 @@ class _Corpus:
                 "Contoso",
                 group=self.group,
             )
-            # a 3-side group (for the cap/continuation path)
+            # a 3-side group (for the cap disclosure path)
             self._relation(
                 connection,
                 "knows_vector",
@@ -389,11 +389,11 @@ def test_a_one_sided_query_still_carries_the_contradiction(corpus: _Corpus) -> N
     assert fact.contradiction.co_members[0].fact_id == corpus.rel["for_contoso"]
 
 
-def test_the_contradiction_cap_is_disclosed_with_a_continuation(
+def test_the_contradiction_cap_is_disclosed_without_paging(
     corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S23: beyond the inline cap the block still carries group_id, returned,
-    total, and a continuation — bounded like every hub answer, never silent."""
+    """S23 / D154: beyond the inline cap the block still carries group_id,
+    returned, and total — bounded disclosure, no co-member continuation."""
     monkeypatch.setattr(query_engine_module, "CONTRADICTION_COMEMBER_CAP", 1)
     answer = _engine(corpus).lookup_relations(
         deployment_id=_DEPLOYMENT_ID,
@@ -405,7 +405,7 @@ def test_the_contradiction_cap_is_disclosed_with_a_continuation(
     assert fact.contradiction is not None
     assert fact.contradiction.total == 2  # two other sides
     assert fact.contradiction.returned == 1  # capped
-    assert fact.contradiction.continuation is not None  # paging is offered
+    assert not hasattr(fact.contradiction, "continuation")
 
 
 # --- D54: the support marker -----------------------------------------------

@@ -98,6 +98,22 @@ def _clean(database_engine: Engine) -> Iterator[None]:
             )
 
 
+def test_inventory_refuses_a_cursor_from_another_deployment(
+    database_engine: Engine,
+) -> None:
+    with database_engine.begin() as connection:
+        for index in range(2):
+            doc = _document(connection=connection, title=f"scope-{index}")
+            _version(
+                connection=connection, doc_id=doc, version_no=1, status="ready", at=_NOW
+            )
+    inventory = DocumentInventory(engine=database_engine)
+    first = inventory.list_documents(deployment_id=_DEPLOYMENT_ID, limit=1)
+    assert first.next_cursor is not None
+    with pytest.raises(ValueError, match="different listing"):
+        inventory.list_documents(deployment_id=uuid4(), cursor=first.next_cursor)
+
+
 def _document(
     *,
     connection: Connection,
@@ -277,7 +293,7 @@ def test_re_ingesting_mid_scroll_cannot_hide_an_unseen_document(
 
     first = inventory.list_documents(deployment_id=_DEPLOYMENT_ID, limit=1)
     assert len(first.documents) == 1
-    assert first.cursor is not None
+    assert first.next_cursor is not None
 
     # b.md is re-ingested between pages, which without the watermark moves it
     # above the cursor and out of the listing entirely.
@@ -298,13 +314,13 @@ def test_re_ingesting_mid_scroll_cannot_hide_an_unseen_document(
         )
 
     seen: list[str] = [d.title or "" for d in first.documents]
-    cursor = first.cursor
+    cursor = first.next_cursor
     for _ in range(5):
         page = inventory.list_documents(
             deployment_id=_DEPLOYMENT_ID, limit=1, cursor=cursor
         )
         seen.extend(d.title or "" for d in page.documents)
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             break
 
@@ -517,7 +533,7 @@ def test_tombstoning_a_version_mid_scroll_cannot_repeat_a_document(
             {"at": _NOW, "deployment": _DEPLOYMENT_ID},
         )
 
-    cursor = first.cursor
+    cursor = first.next_cursor
     for _ in range(5):
         if cursor is None:
             break
@@ -525,7 +541,7 @@ def test_tombstoning_a_version_mid_scroll_cannot_repeat_a_document(
             deployment_id=_DEPLOYMENT_ID, limit=1, cursor=cursor
         )
         seen.extend(d.title or "" for d in page.documents)
-        cursor = page.cursor
+        cursor = page.next_cursor
 
     assert sorted(seen) == ["a.md", "b.md", "c.md"], seen
     assert len(seen) == len(set(seen)), f"a document repeated: {seen}"
@@ -556,7 +572,7 @@ def test_paging_returns_every_document_exactly_once(database_engine: Engine) -> 
             deployment_id=_DEPLOYMENT_ID, limit=2, cursor=cursor
         )
         seen.extend(d.title or "" for d in page.documents)
-        cursor = page.cursor
+        cursor = page.next_cursor
         if cursor is None:
             break
 
@@ -587,7 +603,7 @@ def test_the_last_page_carries_no_cursor(database_engine: Engine) -> None:
     )
 
     assert len(page.documents) == 2
-    assert page.cursor is None
+    assert page.next_cursor is None
 
 
 def test_the_status_filter_asks_about_the_newest_version(
@@ -652,6 +668,46 @@ def test_a_cursor_we_did_not_issue_is_refused(database_engine: Engine) -> None:
     with pytest.raises(ValueError, match="cursor"):
         DocumentInventory(engine=database_engine).list_documents(
             deployment_id=_DEPLOYMENT_ID, cursor="not-a-real-cursor"
+        )
+
+
+def test_a_cursor_from_another_status_filter_is_refused(
+    database_engine: Engine,
+) -> None:
+    """A cursor only continues the listing it came from (D154 scope hash)."""
+    with database_engine.begin() as connection:
+        # Three failed + one ready so a failed page of size 1 still yields a
+        # next_cursor (look-ahead needs a second matching row).
+        for index in range(3):
+            doc_id = _document(connection=connection, title=f"scope-failed-{index}.md")
+            _version(
+                connection=connection,
+                doc_id=doc_id,
+                version_no=1,
+                status="failed",
+                at=_NOW - timedelta(minutes=index),
+                error="x",
+            )
+        ready_id = _document(connection=connection, title="scope-ready.md")
+        _version(
+            connection=connection,
+            doc_id=ready_id,
+            version_no=1,
+            status="ready",
+            at=_NOW - timedelta(minutes=10),
+        )
+    inventory = DocumentInventory(engine=database_engine)
+    failed = inventory.list_documents(
+        deployment_id=_DEPLOYMENT_ID, status="failed", limit=1
+    )
+    assert failed.next_cursor is not None
+    with pytest.raises(ValueError, match="different listing"):
+        inventory.list_documents(
+            deployment_id=_DEPLOYMENT_ID, cursor=failed.next_cursor
+        )
+    with pytest.raises(ValueError, match="different listing"):
+        inventory.list_documents(
+            deployment_id=_DEPLOYMENT_ID, status="ready", cursor=failed.next_cursor
         )
 
 

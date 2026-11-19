@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from collections.abc import Mapping
+from contextlib import contextmanager
 import copy
+from dataclasses import asdict
 from datetime import datetime
 import hashlib
 from itertools import islice
@@ -11,6 +14,7 @@ import json
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
+import re
 import stat
 from typing import cast
 from typing import Final
@@ -20,6 +24,7 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
+from benchmarks.locomo.corpus import CorpusPublication
 from remember.client import MemoryClient
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import tool
@@ -79,7 +84,7 @@ class RetrievalToolError(ValueError):
 
 
 class RetrievalInfrastructureError(RuntimeError):
-    """The public retrieval contract or its serving snapshot failed."""
+    """The public retrieval contract or its serving corpus failed."""
 
 
 class _P3ReadLimitExceeded(RuntimeError):
@@ -198,11 +203,20 @@ def dispatch_answer_tool(
 
 
 class P3Mount:
-    """Bounded list, literal-search, and text-read access to one P3 snapshot."""
+    """Bounded reads over attested live folders with a frozen byte inventory."""
 
-    def __init__(self, *, root: Path, expected_version: str) -> None:
-        """Open one published mount and pin it to its readiness version."""
+    def __init__(
+        self, *, root: Path, publications: tuple[CorpusPublication, ...]
+    ) -> None:
+        """Match ready-folder identities to exact per-version publications."""
         self._root_fd: int | None = None
+        if not publications or len({p.doc_id for p in publications}) != len(
+            publications
+        ):
+            raise RetrievalInfrastructureError(
+                "P3 requires distinct exact publications"
+            )
+        self._publications = publications
         try:
             if not root.exists() or not root.is_dir():
                 raise RetrievalInfrastructureError(
@@ -221,24 +235,110 @@ class P3Mount:
             raise RetrievalInfrastructureError(
                 "P3 root is not a readable directory"
             ) from error
-        marker = self._root / ".snapshot-version"
         try:
-            marker_text, _ = self._read_pinned_file(path=marker, max_bytes=4_096)
-            actual_version = marker_text.strip()
-        except (_P3ReadLimitExceeded, RetrievalInfrastructureError) as error:
+            self._attest_folders()
+            self._inventory = self._freeze_inventory()
+        except (
+            RetrievalToolError,
+            RetrievalInfrastructureError,
+            _P3ReadLimitExceeded,
+            ValueError,
+            KeyError,
+            TypeError,
+        ) as error:
             self.close()
             raise RetrievalInfrastructureError(
-                "P3 snapshot marker is unreadable"
+                "P3 ready folder or inventory differs from readiness"
             ) from error
-        if actual_version != expected_version:
-            self.close()
-            raise RetrievalInfrastructureError(
-                "P3 mount version differs from readiness"
+        self._inventory_sha256 = hashlib.sha256(
+            json.dumps(
+                {
+                    "publications": [asdict(p) for p in publications],
+                    "files": self._inventory,
+                },
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
+
+    def _attest_folders(self) -> None:
+        """Verify ready state, exact identity and every reader-file checksum."""
+        for publication in self._publications:
+            parts = PurePosixPath(publication.path).parts
+            first_folder = next(
+                (
+                    index
+                    for index, part in enumerate(parts)
+                    if re.fullmatch(r".+--[0-9a-f]{24}", part)
+                ),
+                None,
             )
-        self._version = actual_version
+            suffix = hashlib.sha256(publication.doc_id.bytes).hexdigest()[:24]
+            if (
+                not parts
+                or first_folder != len(parts) - 1
+                or not parts[-1].endswith("--" + suffix)
+            ):
+                raise ValueError("P3 path does not identify the document's own folder")
+            folder = self._resolve(path=publication.path, expected_kind="directory")
+            metadata, _ = self._read_pinned_file(
+                path=folder / "document.json", max_bytes=P3_READ_MAX_BYTES
+            )
+            index, _ = self._read_pinned_file(
+                path=folder / "_index.md", max_bytes=P3_READ_MAX_BYTES
+            )
+            record = json.loads(metadata)
+            expected = {
+                "doc_id": str(publication.doc_id),
+                "version_id": str(publication.version_id),
+                "representation_id": str(publication.representation_id),
+                "export_revision": publication.revision,
+            }
+            if (
+                any(record[key] != value for key, value in expected.items())
+                or "State: ready" not in index.splitlines()
+                or f"Export revision: {publication.revision}" not in index.splitlines()
+            ):
+                raise ValueError("P3 folder identity mismatch")
+            for file in record["files"]:
+                name = file["path"]
+                if (
+                    not isinstance(name, str)
+                    or PurePosixPath(name).is_absolute()
+                    or ".." in PurePosixPath(name).parts
+                ):
+                    raise ValueError("unsafe reader inventory path")
+                target = self._resolve(
+                    path=f"{publication.path}/{name}", expected_kind="file"
+                )
+                if self._hash_file(path=target) != file["sha256"]:
+                    raise ValueError("P3 reader checksum mismatch")
+
+    def _freeze_inventory(self) -> dict[str, str]:
+        files, truncated, _ = self._bounded_files(origin=self._root)
+        if truncated:
+            raise ValueError("P3 inventory exceeds bounded traversal")
+        return {
+            self._lexical_relative(path=path): self._hash_file(path=path)
+            for path in files
+        }
+
+    def verify_inventory(self) -> None:
+        """Fail if a live tree changed since this benchmark's frozen reading."""
+        try:
+            self._attest_folders()
+            if self._freeze_inventory() != self._inventory:
+                raise ValueError("P3 inventory changed")
+        except (ValueError, KeyError, TypeError, _P3ReadLimitExceeded) as error:
+            raise RetrievalInfrastructureError("P3 frozen inventory changed") from error
+
+    @property
+    def inventory(self) -> dict[str, str]:
+        """The frozen file hashes retained as run evidence."""
+        return dict(self._inventory)
 
     def close(self) -> None:
-        """Best-effort release of the descriptor that pins this snapshot root."""
+        """Best-effort release of the descriptor that pins this corpus root."""
         root_fd = self._root_fd
         self._root_fd = None
         if root_fd is not None:
@@ -252,13 +352,14 @@ class P3Mount:
         self.close()
 
     @property
-    def version(self) -> str:
-        """Return the immutable P3 snapshot version served by this adapter."""
-        return self._version
+    def inventory_sha256(self) -> str:
+        """Identity of this run's publications and frozen local inventory."""
+        return self._inventory_sha256
 
     @property
     def root(self) -> Path:
-        """Return the validated snapshot root for an audited native reader."""
+        """Return the validated corpus root for an audited native reader."""
+        self._resolve(path=".", expected_kind="directory")
         return self._root
 
     def call(self, *, name: str, arguments: Mapping[str, object]) -> dict[str, object]:
@@ -313,7 +414,7 @@ class P3Mount:
     def _list(self, *, path: str) -> dict[str, object]:
         """List one directory with a fixed entry cap."""
         directory = self._resolve(path=path, expected_kind="directory")
-        self._assert_snapshot_kind(path=directory, expected_kind="directory")
+        self._assert_corpus_kind(path=directory, expected_kind="directory")
         children: list[Path] = []
         visited = 0
         try:
@@ -327,7 +428,7 @@ class P3Mount:
         children.sort(key=lambda child: child.name)
         visible = children[:P3_LIST_LIMIT]
         return {
-            "snapshot_version": self._version,
+            "inventory_sha256": self._inventory_sha256,
             "path": self._relative(path=directory),
             "entries": [
                 {
@@ -381,7 +482,7 @@ class P3Mount:
             if len(matches) >= max_results:
                 break
         return {
-            "snapshot_version": self._version,
+            "inventory_sha256": self._inventory_sha256,
             "path": self._relative(path=origin),
             "query": query,
             "matches": matches[:max_results],
@@ -393,25 +494,25 @@ class P3Mount:
 
     def _bounded_files(self, *, origin: Path) -> tuple[list[Path], bool, int]:
         """Walk at most the pinned entry cap without following symlinks."""
-        origin_kind = self._snapshot_kind(path=origin)
+        origin_kind = self._corpus_kind(path=origin)
         if origin_kind == "file":
             return [origin], False, 1
         if origin_kind != "directory":
             raise RetrievalInfrastructureError(
-                "P3 snapshot entry changed type during traversal"
+                "P3 corpus entry changed type during traversal"
             )
         pending = [origin]
         files: list[Path] = []
         visited = 0
         while pending:
             candidate = pending.pop()
-            candidate_kind = self._snapshot_kind(path=candidate)
+            candidate_kind = self._corpus_kind(path=candidate)
             if candidate_kind == "file":
                 files.append(candidate)
                 continue
             if candidate_kind != "directory":
                 raise RetrievalInfrastructureError(
-                    "P3 snapshot entry changed type during traversal"
+                    "P3 corpus entry changed type during traversal"
                 )
             if visited >= P3_SEARCH_MAX_ENTRIES:
                 return files, True, visited
@@ -446,7 +547,7 @@ class P3Mount:
         start = min(start_line - 1, len(lines))
         selected = lines[start : start + max_lines]
         return {
-            "snapshot_version": self._version,
+            "inventory_sha256": self._inventory_sha256,
             "path": self._lexical_relative(path=target),
             "start_line": start_line,
             "end_line": start + len(selected),
@@ -474,9 +575,17 @@ class P3Mount:
             raise RetrievalInfrastructureError("P3 mount is closed")
         try:
             root_metadata = os.fstat(root_fd)
+            current_root = self._root.lstat()
+            if not stat.S_ISDIR(current_root.st_mode) or (
+                current_root.st_dev,
+                current_root.st_ino,
+            ) != (root_metadata.st_dev, root_metadata.st_ino):
+                raise RetrievalInfrastructureError(
+                    "P3 corpus root changed during access"
+                )
         except OSError as error:
             raise RetrievalInfrastructureError(
-                "P3 snapshot root is unreadable"
+                "P3 corpus root is unreadable"
             ) from error
         parent = self._root
         parent_identity = (root_metadata.st_dev, root_metadata.st_ino)
@@ -495,19 +604,19 @@ class P3Mount:
                     current_parent = parent.lstat()
                 except OSError as parent_error:
                     raise RetrievalInfrastructureError(
-                        "P3 snapshot path changed during inspection"
+                        "P3 corpus path changed during inspection"
                     ) from parent_error
                 if (
                     not stat.S_ISDIR(current_parent.st_mode)
                     or (current_parent.st_dev, current_parent.st_ino) != parent_identity
                 ):
                     raise RetrievalInfrastructureError(
-                        "P3 snapshot path changed during inspection"
+                        "P3 corpus path changed during inspection"
                     ) from error
                 raise RetrievalToolError("P3 path does not exist") from error
             except OSError as error:
                 raise RetrievalInfrastructureError(
-                    "P3 snapshot path could not be inspected"
+                    "P3 corpus path could not be inspected"
                 ) from error
             if index < len(parts) - 1:
                 parent = current
@@ -516,33 +625,31 @@ class P3Mount:
             resolved = current.resolve(strict=True)
         except (OSError, ValueError) as error:
             raise RetrievalInfrastructureError(
-                "P3 snapshot path changed during inspection"
+                "P3 corpus path changed during inspection"
             ) from error
         if not resolved.is_relative_to(self._root):
-            raise RetrievalInfrastructureError(
-                "P3 snapshot path escaped the mount root"
-            )
+            raise RetrievalInfrastructureError("P3 corpus path escaped the mount root")
         try:
-            resolved_kind = self._snapshot_kind(path=resolved)
+            resolved_kind = self._corpus_kind(path=resolved)
         except RetrievalInfrastructureError as error:
             raise RetrievalInfrastructureError(
-                "P3 snapshot path disappeared during inspection"
+                "P3 corpus path disappeared during inspection"
             ) from error
         if expected_kind != "either" and resolved_kind != expected_kind:
             raise RetrievalToolError(f"P3 path is not a {expected_kind}")
         return resolved
 
-    def _snapshot_kind(self, *, path: Path) -> Literal["file", "directory", "other"]:
-        """Read one snapshot entry type without suppressing filesystem failures."""
+    def _corpus_kind(self, *, path: Path) -> Literal["file", "directory", "other"]:
+        """Read one corpus entry type without suppressing filesystem failures."""
         try:
             if path.is_symlink():
                 raise RetrievalInfrastructureError(
-                    "P3 snapshot contains an unexpected symlink"
+                    "P3 corpus contains an unexpected symlink"
                 )
             mode = path.stat().st_mode
         except OSError as error:
             raise RetrievalInfrastructureError(
-                "P3 snapshot entry disappeared during inspection"
+                "P3 corpus entry disappeared during inspection"
             ) from error
         if stat.S_ISREG(mode):
             return "file"
@@ -550,81 +657,91 @@ class P3Mount:
             return "directory"
         return "other"
 
-    def _assert_snapshot_kind(
+    def _assert_corpus_kind(
         self, *, path: Path, expected_kind: Literal["file", "directory"]
     ) -> Path:
-        """Require an already-resolved snapshot entry to retain its type."""
-        if self._snapshot_kind(path=path) != expected_kind:
+        """Require an already-resolved corpus entry to retain its type."""
+        if self._corpus_kind(path=path) != expected_kind:
             raise RetrievalInfrastructureError(
-                "P3 snapshot entry changed type during access"
+                "P3 corpus entry changed type during access"
             )
         return path
 
-    def _read_pinned_file(self, *, path: Path, max_bytes: int) -> tuple[str, int]:
-        """Open without symlinks, fstat, and read bytes from that same descriptor."""
-        relative = self._lexical_relative(path=path)
-        parts = PurePosixPath(relative).parts
-        root_fd = self._root_fd
-        if root_fd is None:
+    @contextmanager
+    def _open_pinned_file(self, *, path: Path) -> Iterator[int]:
+        """Open relative to the pinned root, refusing symlinks at every level."""
+        parts = PurePosixPath(self._lexical_relative(path=path)).parts
+        if self._root_fd is None:
             raise RetrievalInfrastructureError("P3 mount is closed")
-        directory_fd: int | None = None
-        directory_fds: set[int] = set()
-        file_fd: int | None = None
+        owned: set[int] = set()
         try:
-            directory_fd = os.dup(root_fd)
-            directory_fds.add(directory_fd)
+            directory_fd = os.dup(self._root_fd)
+            owned.add(directory_fd)
             for part in parts[:-1]:
-                assert directory_fd is not None
                 next_fd = os.open(
                     part,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                     dir_fd=directory_fd,
                 )
-                directory_fds.add(next_fd)
+                owned.add(next_fd)
                 os.close(directory_fd)
-                directory_fds.remove(directory_fd)
+                owned.remove(directory_fd)
                 directory_fd = next_fd
-            assert directory_fd is not None
             file_fd = os.open(
                 parts[-1],
                 os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
                 dir_fd=directory_fd,
             )
-            metadata = os.fstat(file_fd)
-            if not stat.S_ISREG(metadata.st_mode):
+            owned.add(file_fd)
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
                 raise RetrievalInfrastructureError(
-                    "P3 snapshot entry changed type during access"
+                    "P3 corpus entry changed type during access"
                 )
-            if metadata.st_size > max_bytes:
-                raise _P3ReadLimitExceeded
-            with os.fdopen(file_fd, "rb", closefd=True) as stream:
-                file_fd = None
-                raw = stream.read(max_bytes + 1)
-            if len(raw) > max_bytes:
-                raise _P3ReadLimitExceeded
-            try:
-                decoded = raw.decode("utf-8")
-            except UnicodeError as error:
-                raise RetrievalInfrastructureError("P3 file is unreadable") from error
-            os.close(directory_fd)
-            directory_fds.remove(directory_fd)
-            directory_fd = None
-            return decoded, len(raw)
-        except _P3ReadLimitExceeded:
-            raise
+            yield file_fd
         except (OSError, ValueError) as error:
             raise RetrievalInfrastructureError("P3 file is unreadable") from error
         finally:
-            if file_fd is not None:
+            for descriptor in owned:
                 try:
-                    os.close(file_fd)
+                    os.close(descriptor)
                 except OSError:
                     pass
-            for owned_directory_fd in tuple(directory_fds):
-                try:
-                    os.close(owned_directory_fd)
-                except OSError:
-                    pass
+
+    def _hash_file(self, *, path: Path) -> str:
+        """Hash binary originals/media in bounded memory through the same guard."""
+        digest = hashlib.sha256()
+        with self._open_pinned_file(path=path) as descriptor:
+            while block := os.read(descriptor, 1024 * 1024):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def _read_pinned_file(self, *, path: Path, max_bytes: int) -> tuple[str, int]:
+        """Read bounded text and verify frozen bytes from the same descriptor."""
+        with self._open_pinned_file(path=path) as descriptor:
+            if os.fstat(descriptor).st_size > max_bytes:
+                raise _P3ReadLimitExceeded
+            chunks: list[bytes] = []
+            remaining = max_bytes + 1
+            while remaining:
+                block = os.read(descriptor, min(remaining, 64 * 1024))
+                if not block:
+                    break
+                chunks.append(block)
+                remaining -= len(block)
+            raw = b"".join(chunks)
+        if len(raw) > max_bytes:
+            raise _P3ReadLimitExceeded
+        frozen = getattr(self, "_inventory", None)
+        if (
+            frozen is not None
+            and frozen.get(self._lexical_relative(path=path))
+            != hashlib.sha256(raw).hexdigest()
+        ):
+            raise RetrievalInfrastructureError("P3 frozen inventory changed")
+        try:
+            return raw.decode("utf-8"), len(raw)
+        except UnicodeError as error:
+            raise RetrievalInfrastructureError("P3 file is unreadable") from error
 
     def _lexical_relative(self, *, path: Path) -> str:
         """Render an inspected path without another filesystem lookup."""
@@ -632,19 +749,19 @@ class P3Mount:
             relative = path.relative_to(self._root).as_posix()
         except ValueError as error:
             raise RetrievalInfrastructureError(
-                "P3 snapshot path escaped its root"
+                "P3 corpus path escaped its root"
             ) from error
         if relative in {"", "."}:
             raise RetrievalInfrastructureError("P3 path does not identify a file")
         return relative
 
     def _relative(self, *, path: Path) -> str:
-        """Render one resolved path relative to the pinned snapshot root."""
+        """Render one resolved path relative to the pinned corpus root."""
         try:
             relative = path.resolve(strict=True).relative_to(self._root).as_posix()
         except (OSError, ValueError) as error:
             raise RetrievalInfrastructureError(
-                "P3 snapshot path escaped its root"
+                "P3 corpus path escaped its root"
             ) from error
         return relative or "."
 
@@ -868,7 +985,7 @@ def _p3_tool_descriptors() -> tuple[ToolDescriptor, ...]:
             description=f"List one P3 corpus directory (scan at most {P3_LIST_MAX_VISITED} entries; return at most {P3_LIST_LIMIT}) for filesystem orientation.",
             properties={"path": {"type": "string", "default": "."}},
             required=(),
-            output_grain="corpus_snapshot",
+            output_grain="corpus_files",
             answer_intent="filesystem_navigation",
             runtime_limits={
                 "visited_entries": P3_LIST_MAX_VISITED,
@@ -877,7 +994,7 @@ def _p3_tool_descriptors() -> tuple[ToolDescriptor, ...]:
         ),
         _descriptor(
             name="p3_search",
-            description="Literal case-insensitive grep over the published P3 corpus snapshot; returns bounded matching paths and lines.",
+            description="Literal case-insensitive grep over the live P3 corpus; returns bounded matching paths and lines.",
             properties={
                 "query": {"type": "string"},
                 "path": {"type": "string", "default": "."},
@@ -889,7 +1006,7 @@ def _p3_tool_descriptors() -> tuple[ToolDescriptor, ...]:
                 },
             },
             required=("query",),
-            output_grain="corpus_snapshot",
+            output_grain="corpus_files",
             answer_intent="filesystem_search",
             runtime_limits={
                 "visited_entries": P3_SEARCH_MAX_ENTRIES,
@@ -912,7 +1029,7 @@ def _p3_tool_descriptors() -> tuple[ToolDescriptor, ...]:
                 },
             },
             required=("path",),
-            output_grain="corpus_snapshot",
+            output_grain="corpus_files",
             answer_intent="filesystem_read",
             runtime_limits={
                 "file_bytes": P3_READ_MAX_BYTES,
@@ -949,7 +1066,7 @@ def _descriptor(
         result_schema={"type": "object"},
         result_contract="envelope"
         if output_grain in {"fact", "evidence", "composite"}
-        else "bounded_snapshot_result",
+        else "bounded_corpus_result",
         output_grain=output_grain,
         answer_intent=answer_intent,
     )

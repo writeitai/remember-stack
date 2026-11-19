@@ -1,4 +1,3 @@
-src/tests/adapters/test_mount_provisioning.py
 src/tests/adapters/test_p1_ranked_pg.py
 src/tests/adapters/test_postgres_p1_document_filters.py
 src/tests/adapters/test_selfhost_queue.py
@@ -16,6 +15,7 @@ src/tests/spine/test_d123_context_nomination.py
 src/tests/spine/test_deployment_bootstrap.py
 src/tests/spine/test_document_inventory.py
 src/tests/spine/test_document_search.py
+src/tests/spine/test_document_tags_pg.py
 src/tests/spine/test_fact_application_writer.py
 src/tests/spine/test_fact_rejection_retry.py
 src/tests/spine/test_concise_adjudication_pg.py
@@ -36,6 +36,8 @@ src/tests/spine/test_review_queue.py
 src/tests/spine/test_supersession.py
 src/tests/spine/test_unmerge_ripple.py
 src/tests/spine/test_work_ledger.py
+src/tests/spine/test_storage_capture_guard_pg.py
+src/tests/spine/test_storage_capture_view_pg.py
 src/tests/surfaces/test_cost_export.py
 src/tests/surfaces/test_envelope_contract.py
 src/tests/surfaces/test_graph_queries.py
@@ -61,8 +63,10 @@ src/tests/workers/test_e0_chain.py
 src/tests/workers/test_e1_chain.py
 src/tests/workers/test_e2_chain.py
 src/tests/workers/test_e3_chain.py
+src/tests/workers/test_fact_label_concurrency_pg.py
 src/tests/workers/test_lifecycle_reconciliation.py
 src/tests/workers/test_p3_corpusfs.py
+src/tests/workers/test_corpus_reader_export_pg.py
 src/tests/workers/test_reuse_lifecycle.py
 src/tests/workers/test_d140_text_origin_pg.py
 src/tests/workers/test_watch_loop.py
@@ -78,9 +82,18 @@ src/tests/spine/test_d140_migration.py
 src/tests/spine/test_section_history.py
 src/tests/spine/test_document_references.py
 src/tests/surfaces/test_d140_scoped_retrieval.py
+src/tests/surfaces/test_document_tag_context_pg.py
+src/tests/surfaces/test_document_tag_filters_pg.py
 src/tests/spine/test_d140_period_adjudication_pg.py
 src/tests/workers/test_d140_period_reuse_pg.py
 src/tests/surfaces/test_processing_layers_retrieval_pg.py
 src/tests/surfaces/test_d143_default_operations_pg.py
 src/tests/workers/test_processing_layers_pg.py
 src/tests/workers/test_ingest_stored_pg.py
+src/tests/spine/test_d153_eligibility_pg.py
+src/tests/adapters/test_minio_object_operations.py
+src/tests/adapters/test_minio_corpus_lock_loss.py
+src/tests/adapters/test_minio_corpus_publication.py
+src/tests/adapters/test_minio_corpus_forget.py
+src/tests/adapters/test_minio_corpus_consumption.py
+src/tests/adapters/test_minio_storage_capture.py

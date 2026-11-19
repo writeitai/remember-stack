@@ -1,0 +1,117 @@
+[
+  {
+    "file": "conv26/scoped-claims_and_sources_context/plan-004.json.gz",
+    "uncompressed_sha256": "62c20ae31f9aad9892ef6b6e04299bed237cc841158b8f82ee658fdde120f94d",
+    "uncompressed_bytes": 125655
+  },
+  {
+    "file": "conv26/scoped-claims_and_sources_context/plan-013.json.gz",
+    "uncompressed_sha256": "fdf72693e37c559575c32e6e14c7831be012d3bc7c018f373234ed8cb065832c",
+    "uncompressed_bytes": 77895
+  },
+  {
+    "file": "conv26/scoped-claims_and_sources_context/plan-022.json.gz",
+    "uncompressed_sha256": "647a3522dc0395c442ec7d1d2016f52ca78dcb8b77576ae425465c9743d00ccd",
+    "uncompressed_bytes": 77899
+  },
+  {
+    "file": "conv26/scoped-claims_and_sources_context/plan-024.json.gz",
+    "uncompressed_sha256": "051f2539dbfd935ef8e3b0711ab21f229f4925eb6e254d5feffb26d0688ef2e2",
+    "uncompressed_bytes": 269820
+  },
+  {
+    "file": "conv26/scoped-claims_and_sources_context/statements.json.gz",
+    "uncompressed_sha256": "20b21e1d6499ecc3608a493d50f9349c061c1f7851abc5129e7734b012d4fc0b",
+    "uncompressed_bytes": 79298
+  },
+  {
+    "file": "conv26/scoped-facts_context/plan-008.json.gz",
+    "uncompressed_sha256": "0db825e4587a73d231eec09a3b6becb127a88e1da435f0fe0895c011ba3d2738",
+    "uncompressed_bytes": 125681
+  },
+  {
+    "file": "conv26/scoped-facts_context/plan-030.json.gz",
+    "uncompressed_sha256": "7c1acc1a77261ad736fd6cd3bde83e7c1d19830b57ffe1ba60fd9719e7566609",
+    "uncompressed_bytes": 1839789
+  },
+  {
+    "file": "conv26-compare/claims-materialized-1.json.gz",
+    "uncompressed_sha256": "36a0350026fa9b6225771766c9f7c79b53ae6217c47eaa9aefab20e0f4bc387b",
+    "uncompressed_bytes": 508901
+  },
+  {
+    "file": "conv26-compare/claims-materialized-16.json.gz",
+    "uncompressed_sha256": "e1b641039340a7ceaeec6b3504b404f3fbae8d0a34d6f6e5758753e1012a1e51",
+    "uncompressed_bytes": 518948
+  },
+  {
+    "file": "conv26-compare/claims-materialized-256.json.gz",
+    "uncompressed_sha256": "8bd1d74dd47bc3ea648ff2666c751df20f8bfacc64ecc08950ee32d89fbcc505",
+    "uncompressed_bytes": 541228
+  },
+  {
+    "file": "conv26-compare/claims-native-1.json.gz",
+    "uncompressed_sha256": "0d077a000abc0b7ad221bb0eb5a632ae0804d96b95bcab9137a4992e9d6821dc",
+    "uncompressed_bytes": 515810
+  },
+  {
+    "file": "conv26-compare/claims-native-16.json.gz",
+    "uncompressed_sha256": "354d5df30e86c846121e045cd8d856842b65e5823ba4717046e97811c4255add",
+    "uncompressed_bytes": 522246
+  },
+  {
+    "file": "conv26-unscoped/unscoped-claims_and_sources_context/plan-063.json.gz",
+    "uncompressed_sha256": "0415e83c72c313cad5954a6f26adf71fb102f594a0d965cb31447cefb74af4d3",
+    "uncompressed_bytes": 83095
+  },
+  {
+    "file": "conv26-unscoped/unscoped-claims_and_sources_context/plan-125.json.gz",
+    "uncompressed_sha256": "823e7a2e678036083077366e2aeaae706295390ab1b96df49e2fd9eecf15b351",
+    "uncompressed_bytes": 91166
+  },
+  {
+    "file": "conv26-unscoped/unscoped-claims_and_sources_context/statements.json.gz",
+    "uncompressed_sha256": "9c074e722a3983d159966938cc8942d14b4565ff7535dda4e3da51ededc833ff",
+    "uncompressed_bytes": 238575
+  },
+  {
+    "file": "conv30/scoped-claims_and_sources_context/plan-013.json.gz",
+    "uncompressed_sha256": "e90a742880eded5e95feebfbf136a2c7a50cc4b055627302bdf13873025a4c10",
+    "uncompressed_bytes": 78068
+  },
+  {
+    "file": "conv30/scoped-claims_and_sources_context/plan-022.json.gz",
+    "uncompressed_sha256": "d32c19f4f2118dbb1b03fb1140a5d6cf3c884232c526c5a6eb116487162fed5f",
+    "uncompressed_bytes": 78201
+  },
+  {
+    "file": "conv30/scoped-claims_and_sources_context/plan-024.json.gz",
+    "uncompressed_sha256": "f13ae3a413ef9507168c5b30ddc20ed4f8b4757a58c41a0381225ab2a9147bb5",
+    "uncompressed_bytes": 266871
+  },
+  {
+    "file": "conv30/scoped-claims_and_sources_context/statements.json.gz",
+    "uncompressed_sha256": "45a3493db63a0a734a637671a51f49233d2b6d93a0f36ec65938cd31800c42fa",
+    "uncompressed_bytes": 82052
+  },
+  {
+    "file": "conv30/scoped-facts_context/plan-030.json.gz",
+    "uncompressed_sha256": "3e3546adf8308cac41d2c4fcb2c136c63a61b35b6548d0b18626e9f9e51ffe03",
+    "uncompressed_bytes": 1859217
+  },
+  {
+    "file": "conv30-compare/claims-materialized-1.json.gz",
+    "uncompressed_sha256": "08569bf73b621df21190de35031cffa8f8c218d1ffd50982630057355da37ee9",
+    "uncompressed_bytes": 510649
+  },
+  {
+    "file": "conv30-compare/claims-materialized-256.json.gz",
+    "uncompressed_sha256": "a4bd3c5f2abfd958e899636787806e3dc6a08df73269e56e4cb77d416934210a",
+    "uncompressed_bytes": 539726
+  },
+  {
+    "file": "conv30-compare/claims-native-1.json.gz",
+    "uncompressed_sha256": "e593a8f014d0ee2b3751a8ffe7a99d0ae60c7879813ee5b713e222b944dcc0c2",
+    "uncompressed_bytes": 509771
+  }
+]

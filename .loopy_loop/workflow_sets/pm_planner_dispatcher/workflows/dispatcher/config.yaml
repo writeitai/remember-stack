@@ -1,8 +1,0 @@
-enabled: true
-priority: 10
-run_every: 1
-must_follow: planner
-not_before_iteration: 1
-description: |
-  Publish one child-session request for the planner-selected milestone outcome
-  or surface terminal child evidence for planner review.

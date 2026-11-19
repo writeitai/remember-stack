@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v38 protocol."""
+"""Typed values for the full-system LoCoMo protocol and historical artifacts."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from pydantic import model_validator
 from pydantic import RootModel
 from pydantic import SerializerFunctionWrapHandler
 
+from benchmarks.locomo.corpus import CorpusPublication
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
 from remember.retrieval import ContextRetrievalBudget
@@ -33,7 +34,7 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v39"]
+ProtocolKey = Literal["full-v47"]
 ProtocolName = NonEmpty
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = NonEmpty
@@ -132,10 +133,20 @@ class ExecutionProfile(FrozenModel):
     api_timeout_seconds: float = Field(gt=0)
 
 
+class RetainedIngestionOrigin(FrozenModel):
+    """Original paid processing behind a separately prepared serving execution."""
+
+    sample_id: NonEmpty
+    processing_revision: NonEmpty
+    protocol_fingerprint: NonEmpty
+    configuration_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    state_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v39"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v47"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -146,6 +157,7 @@ class RunConfiguration(FrozenModel):
     manifest_sha256: NonEmpty
     item_ids_sha256: NonEmpty
     documents_sha256: NonEmpty
+    image_inputs_sha256: NonEmpty | None = None
     item_count: int = Field(ge=1)
     sample_ids: Annotated[tuple[NonEmpty, ...], Field(min_length=1)]
     max_tool_calls_per_question: Literal[8] = 8
@@ -173,6 +185,9 @@ class RunConfiguration(FrozenModel):
     judge_schema_sha256: NonEmpty
     protocol_fingerprint: NonEmpty
     execution_profile: ExecutionProfile | None = None
+    retained_ingestion: RetainedIngestionOrigin | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class PreparedDocument(FrozenModel):
@@ -456,6 +471,10 @@ class RunState(BaseModel):
     protocol_fingerprint: NonEmpty
     ingests: dict[str, IngestRecord] = Field(default_factory=dict)
     preflight_usages: list[ProviderCallUsage] = Field(default_factory=list)
+    corpus_publications: dict[str, tuple[CorpusPublication, ...]] = Field(
+        default_factory=dict
+    )
+    corpus_inventories: dict[str, dict[str, str]] = Field(default_factory=dict)
     readiness: dict[str, PipelineReadinessReport] = Field(default_factory=dict)
     answers: dict[str, AnswerRecord] = Field(default_factory=dict)
     judges: dict[str, JudgeRecord] = Field(default_factory=dict)
@@ -490,7 +509,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v39"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v47"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)
@@ -513,6 +532,9 @@ class RunSummary(FrozenModel):
     ] = "deployment cost ledger; not available through benchmark SDK"
     merged_run_count: int = Field(default=1, ge=1)
     missing_sample_ids: list[NonEmpty] = Field(default_factory=list)
+    retained_ingestion_origins: tuple[RetainedIngestionOrigin, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @model_serializer(mode="wrap")
     def omit_single_run_merge_fields(

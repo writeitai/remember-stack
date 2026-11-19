@@ -1,0 +1,37 @@
+You are reviewing a proposed RememberStack design BEFORE any runtime implementation. The owner explicitly requires your Claude Opus approval before implementation, prioritizes reliability over speed, and wants general-purpose changes rather than LoCoMo-specific score hacks.
+
+Work read-only in /Users/jpuc/code/moje/remember-stack-retrieval-analysis-20261112. Do not edit files, run model/provider calls, probe live hosts/databases, open private environment files, or create agents. Read AGENTS.md/CLAUDE.md and relevant design instructions. Inspect the actual source; do not rely just on the proposal's characterization.
+
+Review target (commit 085b06869):
+- plan/proposals/shared_retrieval_eligibility.md (the concrete design)
+- plan/analysis/retrieval_filtering_reliability_20261112.md and readable measurements.json (evidence)
+- D142/D149 and relevant current designs
+- src/rememberstack/surfaces/query_engine.py
+- src/rememberstack/adapters/postgres_p1.py and p1_ranked.py
+- relevant entity/fact authority migrations, query-space definitions and tests
+
+The design keeps current scoped exact ranking and broad index continuation. It fixes repeated coverage and candidate provenance, and factors fact source membership/presentation from endpoint visibility so bounded native reads can share endpoint eligibility. No runtime code is edited yet. The active benchmark's incomplete ingestion is separately preserved; do not change it.
+
+Please check carefully:
+1. Complete preservation of deletion/version/coordinate visibility, old-version-only entity provenance, document-entity bridges, merges/latest decisions, current/history identity/belief semantics, D140 evidence windows, D54 counts and contradiction-only facts.
+2. Whether fact factoring is precisely specified and implementable without a second fact-truth query, permission expansion, duplicated count authority or forced full-project materialization. Recommend a smaller equivalent design if it is materially safer; identify any concrete contract gaps that would block implementation.
+3. Physical work and memory at millions of rows; candidate/provenance boundaries, repeated entity work, and whether SQL materialization really ensures the stated reuse.
+4. SQL snapshot/deadline/cancellation, ACL and query-space manifest/saved-query integration.
+5. No paid ingestion/reuse-key changes (D56), hidden fallback, legacy runtime path, new reranker or benchmark-specific logic.
+6. Whether equality, actual-plan, concurrency and full-native-operation gates are adequate and feasible. Distinguish strict correctness requirements from nice-to-have throughput benchmarks.
+
+Return a clear APPROVED or CHANGES REQUIRED verdict. If changes are required, number blocking findings with precise document/source locations and concrete required amendments; separate nonblocking suggestions. Do not approve with unresolved blocking caveats. If you approve, briefly explain why the proposed implementation boundary is safe. Do not implement anything.
+
+
+SECOND REVIEW: Your first review is committed at plan/analysis/retrieval_eligibility_reviews_20261112/opus-r1-review.md. Re-review the amended proposal at 085b06869 against B1-B6. No runtime implementation has started.
+
+Key amendments:
+- B1: explicitly identifies current D149 semantics versus the actual 3701 x 19 plan multiplication; fenced decision -> mention -> chunk -> version -> any-ready-reading probes, per-member indexed document bridges, latest decision across ALL unsuperseded decisions.
+- B2: names exact existing indexes; adds a chunk-coverage mentions(deployment_id,chunk_id) index with concurrent leaf builds/parent attachment and a native database-scoped SESSION migration lock across autocommit. Build/write/storage costs and correctness tests are explicit.
+- Deliberate B2 tradeoff: no new global UUID locator/routing registry or partition/reuse-key migration. UUID point probes can incur linear retained-partition overhead, explicitly measured and governed by the existing deadline. The structural guarantee is no multiplication by unrelated ROWS, not constant cost independent of partitions. Please explicitly accept or reject this scoped tradeoff; do not silently preserve the old impossible no-partition-growth claim.
+- B3: exact source-qualified helper name and eighteen columns; extend v_memory_fact_visible with four presentation columns, public facts_visible_history becomes explicit projection; audit whole-row consumers. All source/presentation arithmetic stays in the immutable helper. Runtime assembles only a small endpoint conjunction pinned against migration by parity tests. Consumers, ACL/hash registration, distinct-endpoint lookup fences and per-fact D140 gating are explicit.
+- B4: test-only pre-change authority definitions and runtime statements; dedicated pre-migration database or fully qualified test schema; retained comparisons on isolated copies; no truncated oracle equality claim.
+- B5: complete adverse case list added.
+- B6: explicit D153 adoption only on your approval, proposed-file promotion, in-entry D149 amendment and named binding section reconciliation BEFORE runtime implementation.
+
+Give APPROVED only if all blocking contract issues are resolved and the implementation boundary can safely proceed. Otherwise return precise remaining blockers and required wording. Distinguish a necessary correctness amendment from a larger optional architecture change. Do not implement or edit files.

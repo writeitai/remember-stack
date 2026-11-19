@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from benchmarks.locomo import cli
@@ -13,6 +14,7 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
+from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
@@ -22,6 +24,8 @@ from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
+from benchmarks.locomo.protocol import protocol_for_key
+from benchmarks.locomo.protocol import protocol_for_name
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.protocol import render_answer_agent_prompt
@@ -85,13 +89,19 @@ def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> N
         ),
     )
 
-    rendered = render_session(sample=sample, session=session)
+    rendered = render_session(
+        sample=sample,
+        session=session,
+        image_readings={("conv-test", "D1:1", 1): "## Visual description\nA red lamp."},
+    )
 
     assert (
         "[D1:1 | 1:00 pm on 1 May, 2023 | UTC assumed] Alpha: Look at this." in rendered
     )
     assert "Dataset-provided derived image caption" in rendered
     assert "Dataset-provided derived image search query" in rendered
+    assert "A red lamp." in rendered
+    assert "D1:1; speaker Alpha; image 1" in rendered
     assert "source timezone absent; adapter assumes UTC" in rendered
     assert "https://example.test" not in rendered
     assert rendered.endswith("\n")
@@ -134,6 +144,31 @@ def test_answer_agent_prompt_contains_only_public_tools_trace_and_question() -> 
     assert "gold answer" not in prompt.lower()
     assert '"freshness"' in prompt
     assert '"ranking"' not in prompt
+
+
+def test_reader_catalog_keeps_inputs_and_contracts_without_output_schema() -> None:
+    """Repeated response schemas leave only the displayed tool catalog."""
+    import json
+
+    tool = ToolDescriptor(
+        name="read_note",
+        description="Read an attributed note",
+        input_schema={"type": "object", "properties": {"note": {"type": "string"}}},
+        result_schema={
+            "type": "object",
+            "properties": {"private_shape": {"type": "string"}},
+        },
+        result_contract="envelope",
+        output_grain="evidence",
+        answer_intent="assertion_history",
+    )
+    prompt = render_answer_agent_prompt(question="What?", tools=(tool,), trace=())
+    catalog = prompt.split("PUBLIC TOOLS:\n", 1)[1].split("\n\nTOOL TRACE", 1)[0]
+    assert json.loads(catalog) == [
+        tool.model_dump(mode="json", exclude={"result_schema"})
+    ]
+    assert "private_shape" not in catalog
+    assert tool.result_schema["properties"] == {"private_shape": {"type": "string"}}
 
 
 def test_empty_answer_agent_trace_is_explicit_json_array() -> None:
@@ -339,15 +374,17 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_current_protocol_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v39"
-    assert DEFAULT_PROTOCOL_KEY == "full-v39"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v47"
+    assert DEFAULT_PROTOCOL_KEY == "full-v47"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
+    # Measured main8e338379a baseline; consolidation must not grow the prompt.
+    assert len(prompt) <= 18_284
     normalized_prompt = " ".join(prompt.split())
     assert (
-        "The final answer must be the shortest phrase that fully names the requested "
-        "entities/values, no explanations or reasoning." in normalized_prompt
+        "Return only a compact, direct answer to the requested attribute."
+        in normalized_prompt
     )
     rendered = render_answer_agent_prompt(question="What?", tools=(), trace=())
     assert "The final answer must contain at most" not in rendered
@@ -368,7 +405,9 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "caused, enabled, or motivated the outcome" in normalized_prompt
     assert 'answer "Likely no"' in normalized_prompt
     assert 'answer "Likely yes"' in normalized_prompt
-    assert "evidence gives no direction about that dependency" in normalized_prompt
+    assert (
+        "qualify it as likely or possible rather than abstaining" in normalized_prompt
+    )
     assert "multiple distinct values that directly satisfy the question" in (
         normalized_prompt
     )
@@ -388,7 +427,7 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
         in normalized_prompt
     )
     assert "never be used as a fallback event date" in normalized_prompt.lower()
-    assert 'what someone enjoys "most", "best"' in normalized_prompt
+    assert "explicit singular preference statement" in normalized_prompt
     assert "complete union of all distinct matching values" in normalized_prompt
     assert "shared, mutual, or collective attributes" in normalized_prompt
     assert "unanswered question or reference directly relevant" in normalized_prompt
@@ -424,6 +463,21 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     )
     assert 'time={"mode": "at", "at": "<timestamp>"}' in rendered
     assert "all_sources" not in prompt
+    assert 'Never finish with "Unknown", "not mentioned", "cannot determine"' in (
+        normalized_prompt
+    )
+    assert 'finish with "Unknown".' not in normalized_prompt
+    assert 'Use "Unknown" only when' not in normalized_prompt
+    assert (
+        "Prefer direct statements, then clear conversational implications, then the most plausible inference"
+        in normalized_prompt
+    )
+    assert 'qualify the answer with "likely" or "possibly"' in normalized_prompt
+    assert (
+        "Do not invent supporting events, quotes, personal details, or certainty"
+        in normalized_prompt
+    )
+    assert "Preserve the question's entity and time constraints" in normalized_prompt
 
 
 def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
@@ -459,10 +513,10 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v39",)
-    protocol = PROTOCOL_REGISTRY["full-v39"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v47",)
+    protocol = PROTOCOL_REGISTRY["full-v47"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v39"
+    assert protocol.name == "RS-LoCoMo-Full-v47"
     assert protocol.answer_agent_model == "openai/gpt-6-luna"
     assert protocol.answer_agent_reasoning_effort == "high"
     assert protocol.judge_reasoning_effort == "high"
@@ -470,6 +524,19 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
     assert protocol.tool_catalog_sha256 == tool_catalog_sha256()
+    for retired_key in (
+        "full-v38",
+        "full-v39",
+        "full-v40",
+        "full-v41",
+        "full-v42",
+        "full-v43",
+        "full-v44",
+    ):
+        with pytest.raises(ValueError, match="retired or unknown protocol"):
+            protocol_for_key(cast(ProtocolKey, retired_key))
+        with pytest.raises(ValueError, match="historical protocol.*read-only"):
+            protocol_for_name(f"RS-LoCoMo-Full-v{retired_key.rsplit('v', 1)[1]}")
 
 
 def test_prepare_cli_selects_protocol_only_at_prepare(
@@ -500,7 +567,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v39"]
+    assert selected == ["full-v47"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -675,7 +742,7 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v39")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v47")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 

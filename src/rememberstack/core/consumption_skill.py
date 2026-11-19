@@ -14,8 +14,8 @@ from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
-#: Bumped for the D87 four-operation clean cut and context contracts.
-CONSUMPTION_SKILL_VERSION: Final = "4.0.0"
+#: D155 document-folder navigation, nullable publication guard and exact editions.
+CONSUMPTION_SKILL_VERSION: Final = "4.1.0"
 
 
 def render_consumption_skill(
@@ -274,7 +274,7 @@ def _envelope() -> str:
         "## Read the whole response\n\n"
         "For assured operations, check Envelope `grain`, required "
         "`temporal_scope`, identity regime, per-store freshness, "
-        "truncation/continuation, and `dropped_by_hydration`. A result inside a "
+        "`truncation` / `next_cursor`, and `dropped_by_hydration`. A result inside a "
         "live contradiction group must include or point to its co-members; "
         "report the competing sides instead of silently picking one.\n\n"
         "For open SQL, every answer is `QueryResult/v1`. Inspect "
@@ -300,11 +300,7 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
             "orientation, readable artifacts, and query operations."
         )
     else:
-        views = [
-            f"- P3 corpus tree: `{mounts.p3}`",
-            f"- E0 artifacts: `{mounts.artifacts}`",
-            f"- raw originals (off the navigation path; audited): `{mounts.raw}`",
-        ]
+        views = [f"- P3 corpus tree: `{mounts.p3}`"]
         if mounts.knowledge is not None:
             views.append(f"- plane K checkout: `{mounts.knowledge}`")
         availability = "These read-only mounts are available:\n\n" + "\n".join(views)
@@ -314,9 +310,35 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
         "When mounts exist, prefer them for navigation, reading, and grep. Reserve "
         "API/CLI/MCP for operations with no filesystem equivalent: open SQL, "
         "semantic/lexical SRFs, graph traversal, temporal as-of queries, "
-        "hydration, transcripts, and deltas. Start in P3 or K, not raw. Follow an "
-        "explicit raw pointer only when the original is needed, and use the "
-        "deployment's audited raw-access mechanism."
+        "hydration, transcripts, and deltas. K is a standalone repository.\n\n"
+        "In P3 follow `llms.txt → type/topic/page _index.md → folder _index.md` "
+        "to `document.md`, `original<extension>`, `pageindex.json`, available "
+        "`source_map.json` and reader media. This sources-layer tree has the "
+        "same shape with claims/facts on or off. A pending newer upload leaves "
+        "the served reading in place. Raw-only documents have no folder.\n\n"
+        "Store `doc_id` and exact version/representation citation handles. "
+        "Resolve the current folder with MCP `search_documents` using `doc_ids`. "
+        "`p3_path` is relative to the corpus root and is non-null only for the "
+        "served selected version with a matching nullable publication marker. "
+        "`served_version` describes authority currency independently of publication. "
+        "Unpublished, updating, failed and historical results have no path. "
+        "Readiness `p3` checks the same guard for every requested version; an "
+        "unrelated successful publication proves nothing.\n\n"
+        "Type/topic/title changes move folders. Re-resolve after moves; only "
+        "the suffix is stable. Offline compute "
+        "`sha256(UUID(doc_id).bytes).hexdigest()[:24]`, then run "
+        "`find <root> -type d -name '*--<suffix>'`. This may list the whole tree. "
+        "Navigation page splits do not move folders. Check `doc_id` and displayed "
+        "version in `document.json`; an asset path component below another "
+        "document folder cannot identify a second document.\n\n"
+        "Files replace atomically, folders do not. Check the ready folder's "
+        "publication identity before and after a read; `updating` or changing "
+        "identities require a retry. The marker certifies current inputs were "
+        "published once, not a whole-tree snapshot or an independently restored "
+        "bucket. For exact historical editions, or when no edition is in force, "
+        "retain exact `version_id` / `representation_id` source handles (`source_open` in the design). No public `source_open` operation ships yet. "
+        "Suffix lookup may find the served folder even then; it never overrides "
+        "the temporal selection."
     )
 
 
@@ -331,7 +353,20 @@ def _working_rules() -> str:
         "5. For graph traversal, did I inspect the terminal work-budget status?\n"
         "6. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
         "support?\n"
-        "7. Did I hydrate to evidence or raw source when the stakes required it?"
+        "7. Did I hydrate to evidence or raw source when the stakes required it?\n"
+        "8. Does my answer retain the supplied concrete names, dates and distinct "
+        "list members, with the right owners and event times? Never replace a "
+        "known place name with a generic phrase or invent missing members.\n\n"
+        "When facts lack a required detail or complete owner/reply, read source "
+        "chunks. `adjacent_chunks` returns chunks in document order around its "
+        "center `chunk_id`. If needed context is still missing, continue from "
+        "the first or last returned `chunk_id` on that side within the existing "
+        "budget. Fewer than `window` neighbors on a side establish a document "
+        "boundary only when the center is present and there are no drops or "
+        "truncation. Otherwise do not infer a boundary. Stop at a known boundary "
+        "or once the requested parts are supported. Do not repeat identical "
+        "calls or treat a top-k result as exhaustive; retain honest negatives "
+        "and qualifications when evidence remains insufficient."
     )
 
 

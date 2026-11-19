@@ -77,6 +77,24 @@ class LayerUnavailable(MemoryApiError):
         self.layer = layer
 
 
+class UnknownTag(MemoryApiError):
+    """The call named tags the deployment has not registered (D156).
+
+    ``tags`` lists every unregistered tag as the call gave it; nothing was
+    stored. ``code`` is ``unknown_tag``. Register a tag with ``create_tag`` or
+    check the spelling with ``list_tags``.
+    """
+
+    def __init__(self, *, tags: tuple[str, ...], status_code: int = 422) -> None:
+        """Bind the unregistered tags."""
+        super().__init__(
+            status_code=status_code,
+            detail="unknown tags: " + ", ".join(tags),
+            code="unknown_tag",
+        )
+        self.tags = tags
+
+
 class ProjectResolutionError(MemoryApiError):
     """A signed key's project could not be resolved to a deployment.
 

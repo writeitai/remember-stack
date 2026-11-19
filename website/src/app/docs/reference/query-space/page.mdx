@@ -17,8 +17,8 @@ see what the memory itself would return.
 This page is the reference for the query space: [identity and
 versioning](#version-and-manifest-hash), [the grammar a statement must
 follow](#what-a-statement-may-contain), [limits](#limits), the
-[15 functions](#functions), the [27 views](#views) and the
-[18 shipped saved queries](#shipped-saved-queries). The routes that run
+[15 functions](#functions), the [29 views](#views) and the
+[19 shipped saved queries](#shipped-saved-queries). The routes that run
 statements are in [SQL queries](/docs/reference/http-api/query); a walkthrough is in
 [Explore memory with SQL](/docs/guides/sql).
 
@@ -651,7 +651,7 @@ LIMIT 50
 
 ## Views
 
-The 27 views, with every column. Descriptions are the comments in the
+The 29 views, with every column. Descriptions are the comments in the
 manifest, as `GET /query/space` returns them. Every view has a
 `deployment_id` column; a deployment only ever sees its own rows.
 
@@ -667,6 +667,7 @@ manifest, as `GET /query/space` returns them. Every view has a
 | [`contradiction_members_current`](#contradiction_members_current) | one current contradiction-group member | `contradiction_group`, `fact_kind`, `fact_id` |
 | [`document_crossrefs_live`](#document_crossrefs_live) | one live, resolved reference made by a live source version | `crossref_id` |
 | [`document_effective_periods_live`](#document_effective_periods_live) | one currently known declared effective period | `period_id` |
+| [`document_tags_live`](#document_tags_live) | one tag assignment on a live document lineage | `doc_id`, `tag_id` |
 | [`document_versions_visible`](#document_versions_visible) | one visible version of a live lineage | `version_id` |
 | [`documents_live`](#documents_live) | one live document lineage | `doc_id` |
 | [`entities_current`](#entities_current) | one externally visible survivor entity | `entity_id` |
@@ -683,6 +684,7 @@ manifest, as `GET /query/space` returns them. Every view has a
 | [`page_evidence_visible`](#page_evidence_visible) | one visible K artifact-to-target association | `artifact_id`, `role`, `target_kind`, `target_id` |
 | [`pages_live`](#pages_live) | one visible K artifact | `artifact_id` |
 | [`sections_live`](#sections_live) | one section in a current ready representation | `section_id` |
+| [`tags_current`](#tags_current) | one registered document tag | `tag_id` |
 | [`testimony_currency_events_visible`](#testimony_currency_events_visible) | one visible D54 transition | `event_id` |
 
 ### changes_visible
@@ -981,6 +983,23 @@ One row per currently known declared effective period, keyed by (deployment_id, 
 | `effective_until` | timestamp with time zone | yes | Exclusive end of the period: the declared end, else the next declared start in the lineage, null when the period is open. |
 | `until_declared` | boolean | no | True when effective_until was declared rather than derived from the next declared start. |
 | `declared_at` | timestamp with time zone | no | When the declaration became known, which is a belief-axis instant rather than a world-time clock. |
+
+### document_tags_live
+
+One row per tag assignment on a live document lineage, keyed by (deployment_id, doc_id, tag_id) and joined to documents_live on (deployment_id, doc_id) and to tags_current on (deployment_id, tag_id). Tags belong to the lineage, not to a version, so every version of the document carries them, and they are never part of what the memory extracts or believes: a chunk inherits its document's tags through doc_id, a claim through its occurrences, and a fact through its supporting claims in fact_claim_evidence_live. A deleted or forgotten lineage has no rows, and neither does a deleted tag. The view carries no counts.
+
+- **Grain:** one tag assignment on a live document lineage (`document_tag_live`)
+- **Row key:** `deployment_id`, `doc_id`, `tag_id`
+- **Clock semantics:** `registry_maintenance_instants`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `tags_current` on `deployment_id`, `tag_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the assignment. |
+| `doc_id` | uuid | no | The live lineage carrying the tag, joinable to documents_live. |
+| `tag_id` | uuid | no | The registered tag assigned to the lineage, joinable to tags_current. |
+| `name` | text | no | The tag's current name, so a renamed tag shows its new name on every lineage that carries it. |
+| `assigned_at` | timestamp with time zone | no | When the tag was first assigned to the lineage, a registry instant rather than a world-time clock. |
 
 ### document_versions_visible
 
@@ -1400,6 +1419,23 @@ One row per section of the current ready representation of a live lineage, keyed
 | `own_content_hash` | text | yes | Hash of the section's own ordered block hashes with its children excluded, null until the section has been indexed. |
 | `subtree_content_hash` | text | yes | Hash of every block hash in the section span including its children, null until the section has been indexed. |
 
+### tags_current
+
+One row per registered document tag, keyed by (deployment_id, tag_id). A tag is a caller-declared label with a description, created before any document carries it; its name is unique within the deployment ignoring letter case and is matched that way, so compare names with lower() on both sides. A renamed tag shows only its current name, because there are no aliases, and a deleted tag is absent. Tags are the deployment's vocabulary rather than content from any source, so forgetting a document does not change this relation. The view carries no counts: join document_tags_live to count the live documents that carry a tag.
+
+- **Grain:** one registered document tag (`tag_registered`)
+- **Row key:** `deployment_id`, `tag_id`
+- **Clock semantics:** `registry_maintenance_instants`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that registered the tag. |
+| `tag_id` | uuid | no | Stable identity of the tag; assignments point at it, so a rename changes no assignment. |
+| `name` | text | no | The tag's current name with the spelling it was declared with, unique within the deployment ignoring letter case. |
+| `description` | text | no | What the tag means and when to apply it, written by the caller for agents. |
+| `created_at` | timestamp with time zone | no | When the tag was registered, a registry instant rather than a world-time clock. |
+| `updated_at` | timestamp with time zone | no | When the tag's name or description last changed, a registry instant rather than a world-time clock. |
+
 ### testimony_currency_events_visible
 
 One row per visible D54 testimony-currency transition, keyed by (deployment_id, event_id) and joined to claims_visible_history on (deployment_id, claim_id) and to documents_live on (deployment_id, doc_id). A currency transition is BOOKKEEPING and never validity: nothing about the claim changes and no fact is adjudicated by it. Transitions of forgotten lineages and of claims whose source version is tombstoned are absent, and from_version_id is null rather than dangling whenever the superseded version is itself no longer visible, so this relation cannot be read as a tombstone side channel. The occurrence instant is transaction time; the view carries no counts and no world-validity clocks.
@@ -1424,7 +1460,7 @@ One row per visible D54 testimony-currency transition, keyed by (deployment_id, 
 
 ## Shipped saved queries
 
-Every deployment is seeded with 18 saved queries in the `examples`
+Every deployment is seeded with 19 saved queries in the `examples`
 namespace, status `active`, origin and assurance `shipped_example`. They are
 starting points, not guarantees: RememberStack wrote them and they pass the
 same validation as your statements, but what they compute is plain SQL you can
@@ -1454,6 +1490,7 @@ placeholders in the SQL, listed here. Run one with
 | `graph_neighborhood` | Relations within N hops of an entity (2 hops) | `$1` deployment id, `$2` entity id | none |
 | `graph_path` | Routes between two entities, each returned whole (up to 4 hops) | `$1` deployment id, `$2` from entity id, `$3` to entity id | none |
 | `graph_citation_path` | Directed citation routes between two live documents (up to 6 hops) | `$1` deployment id, `$2` from document id, `$3` to document id | none |
+| `facts_by_tag` | Current facts supported by documents carrying a tag, by name: each fact with its `support_state`, `evidence_count` and how many of its supporting documents carry the tag (`tagged_documents`) | `$1` tag name, matched ignoring letter case | 50 |
 
 The `examples` namespace belongs to the platform: seeding refuses to
 overwrite a query of yours with the same name, and never re-enables a shipped

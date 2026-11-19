@@ -17,11 +17,8 @@ from rememberstack.ports import ObjectPurgePort
 from rememberstack.ports import ProjectionPurgePort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine import ForgetCatalog
-from rememberstack.workers import CorpusForgetRebuilder
-from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import DeletionService
 from rememberstack.workers import ForgetKnowledgeRebuilder
-from rememberstack.workers import ForgetProjectionRebuilder
 from rememberstack.workers import HardForgetHandler
 from rememberstack.workers import HardForgetReadiness
 from rememberstack.workers import HardForgetService
@@ -42,12 +39,17 @@ def _manifest() -> ForgetManifest:
         doc_id=_DOC_ID,
         requested_at=_NOW,
         object_keys=(ObjectKey("raw/forgotten"),),
-        projection_prefixes=(ObjectKey("snapshots/forgotten"),),
         k_artifact_ids=(_ARTIFACT_ID,),
     )
 
 
 class _Catalog:
+    def materialize_portable(self, *, manifest: ForgetManifest) -> None:
+        self.events.append("arm-barrier")
+
+    def ordinary_work_is_drained(self, *, deployment_id: UUID) -> bool:
+        return True
+
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
@@ -96,14 +98,6 @@ class _Objects:
         self.events.append(f"verify-objects-{self.name}")
 
 
-class _ProjectionRebuilder:
-    def __init__(self, *, events: list[str]) -> None:
-        self.events = events
-
-    def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
-        self.events.append("projection-rebuild")
-
-
 class _ProfileRefresher:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
@@ -116,14 +110,17 @@ class _ProjectionPurger:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
+    def quiesce_projections(self, *, deployment_id: UUID, forget_id: UUID) -> None:
+        self.events.append("quiesce-projections")
+
     def purge_projections(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
     ) -> None:
-        assert prefixes == (ObjectKey("snapshots/forgotten"),)
+        assert doc_id == _DOC_ID
         self.events.append("projection-purge")
 
     def verify_projections_purged(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
     ) -> None:
         self.events.append("verify-projections")
 
@@ -170,9 +167,6 @@ def _handler(*, events: list[str], fail_objects: bool = False) -> HardForgetHand
             ),
             cast(ObjectPurgePort, _Objects(events=events, name="transcripts")),
         ),
-        projection_rebuilder=cast(
-            ForgetProjectionRebuilder, _ProjectionRebuilder(events=events)
-        ),
         projection_purger=cast(ProjectionPurgePort, _ProjectionPurger(events=events)),
         knowledge_rebuilder=cast(
             ForgetKnowledgeRebuilder, _KnowledgeRebuilder(events=events)
@@ -187,12 +181,13 @@ def test_handler_runs_the_single_all_store_sequence_before_reopening() -> None:
     _handler(events=events).honor(manifest=_manifest())
 
     assert events == [
+        "arm-barrier",
+        "quiesce-projections",
         "delete-lineage",
         "scrub-postgres",
         "profile-refresh",
         "objects-raw",
         "objects-transcripts",
-        "projection-rebuild",
         "projection-purge",
         "knowledge-rebuild",
         "k-purge",
@@ -212,22 +207,13 @@ def test_handler_failure_leaves_admission_closed_and_preserves_exception() -> No
         _handler(events=events, fail_objects=True).honor(manifest=_manifest())
 
     assert events == [
+        "arm-barrier",
+        "quiesce-projections",
         "delete-lineage",
         "scrub-postgres",
         "profile-refresh",
         "objects-raw",
     ]
-
-
-class _Corpus:
-    def __init__(self, *, events: list[str]) -> None:
-        self.events = events
-
-    def build(
-        self, *, deployment_id: UUID, version: str | None = None
-    ) -> dict[str, object]:
-        self.events.append("corpus")
-        return {}
 
 
 class _KnowledgeDriver:
@@ -244,9 +230,6 @@ class _KnowledgeDriver:
 def test_rebuilders_delegate_to_existing_production_cycles() -> None:
     """Hard-forget introduces no second P3 or K compilation implementation."""
     events: list[str] = []
-    CorpusForgetRebuilder(
-        corpus=cast(CorpusFsBuilder, _Corpus(events=events))
-    ).rebuild_without_lineage(deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID)
     knowledge = KnowledgeCycleForgetRebuilder(
         driver=cast(KnowledgeCommitDriver, _KnowledgeDriver(events=events))
     )
@@ -255,10 +238,13 @@ def test_rebuilders_delegate_to_existing_production_cycles() -> None:
     )
     knowledge.recompile_without_lineage(deployment_id=_DEPLOYMENT_ID, artifact_ids=())
 
-    assert events == ["corpus", "knowledge-cycle"]
+    assert events == ["knowledge-cycle"]
 
 
 class _ReadinessCatalog:
+    def ordinary_work_is_drained(self, *, deployment_id: UUID) -> bool:
+        return True
+
     def __init__(
         self, *, events: list[str], pending: ForgetManifestRecord | None = None
     ) -> None:

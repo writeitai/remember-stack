@@ -29,6 +29,7 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from benchmarks.locomo.corpus import capture_publications
 from benchmarks.locomo.dataset import DATASET_COMMIT
 from benchmarks.locomo.dataset import DATASET_SHA256
 from benchmarks.locomo.dataset import item_ids_hash
@@ -36,6 +37,11 @@ from benchmarks.locomo.dataset import load_dataset
 from benchmarks.locomo.dataset import load_manifest
 from benchmarks.locomo.dataset import manifest_bytes_hash
 from benchmarks.locomo.dataset import validate_manifest
+from benchmarks.locomo.images import copy_image_inputs
+from benchmarks.locomo.images import IMAGE_DIRECTORY
+from benchmarks.locomo.images import load_image_inputs
+from benchmarks.locomo.images import LoadedImageInputs
+from benchmarks.locomo.images import source_images
 from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
@@ -54,6 +60,7 @@ from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
+from benchmarks.locomo.model import RetainedIngestionOrigin
 from benchmarks.locomo.model import RetrievedClaim
 from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import RunState
@@ -175,6 +182,8 @@ def prepare_run(
     output: Path,
     protocol: ProtocolKey = DEFAULT_PROTOCOL_KEY,
     retrieval_budget: ContextRetrievalBudget | None = None,
+    images: Path | None = None,
+    retained_ingestion: RetainedIngestionOrigin | None = None,
 ) -> RunConfiguration:
     """Validate, fingerprint, and render a local run without remote calls."""
     selected_protocol = protocol_for_key(protocol)
@@ -184,14 +193,32 @@ def prepare_run(
     questions = validate_manifest(dataset=dataset, manifest=manifest)
     if output.exists() and any(output.iterdir()):
         raise BenchmarkRunError(f"output directory is not empty: {output}")
-    output.mkdir(parents=True, exist_ok=True)
     sample_ids = tuple(
         sample.sample_id
         for sample in dataset.samples
         if any(question.sample_id == sample.sample_id for question in questions)
     )
+    if images is None and source_images(dataset=dataset, sample_ids=sample_ids):
+        raise BenchmarkRunError(
+            "source images require --images with a complete frozen OCR/Luna bundle; "
+            "run prepare-images first"
+        )
+    if images is not None:
+        # Validate before creating the run, then re-validate its independent copy.
+        load_image_inputs(root=images, dataset=dataset, sample_ids=sample_ids)
+    output.mkdir(parents=True, exist_ok=True)
+    image_inputs = (
+        copy_image_inputs(
+            source=images, run_dir=output, dataset=dataset, sample_ids=sample_ids
+        )
+        if images is not None
+        else None
+    )
     documents = _prepare_documents(
-        run_dir=output, dataset=dataset, sample_ids=sample_ids
+        run_dir=output,
+        dataset=dataset,
+        sample_ids=sample_ids,
+        image_inputs=image_inputs,
     )
     revision = _repository_revision()
     base = {
@@ -204,6 +231,9 @@ def prepare_run(
         "manifest_sha256": manifest_bytes_hash(manifest=manifest),
         "item_ids_sha256": manifest.item_ids_sha256,
         "documents_sha256": _models_hash(values=documents),
+        "image_inputs_sha256": image_inputs.sha256
+        if image_inputs is not None
+        else None,
         "item_count": len(manifest.item_ids),
         "sample_ids": sample_ids,
         "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
@@ -239,6 +269,8 @@ def prepare_run(
     base["execution_profile"] = selected_protocol.execution_profile.model_dump(
         mode="json"
     )
+    if retained_ingestion is not None:
+        base["retained_ingestion"] = retained_ingestion.model_dump(mode="json")
     configuration = RunConfiguration(
         **base,
         prepared_at=datetime.now(timezone.utc),
@@ -290,9 +322,8 @@ def _readiness_matches_protocol(
             capability.required and capability.ready
             for capability in readiness.capabilities.values()
         )
-        and bool(readiness.capabilities["p3"].version)
-        and readiness.capabilities["p3"].built_at is not None
-        and readiness.capabilities["p3"].published_at is not None
+        and readiness.capabilities["p3"].built_at is None
+        and readiness.capabilities["p3"].published_at is None
     )
     return bool(
         readiness.ready
@@ -416,6 +447,10 @@ def ingest_sample(
 ) -> tuple[IngestRecord, ...]:
     """Upload one conversation's sessions through the public SDK."""
     context = _load_run(run_dir=run_dir)
+    if context.configuration.retained_ingestion is not None:
+        raise ExecutionGuardError(
+            "retained-ingestion runs are read-only; use the original processing run"
+        )
     _guard_remote(
         context=context,
         execute=execute,
@@ -630,7 +665,6 @@ def answer_sample(
         )
     context.state.readiness[sample_id] = readiness
     _save_state(run_dir=run_dir, state=context.state)
-    p3_capability = readiness.capabilities["p3"]
     tools = _require_current_query_surface(context=context, client=client)
     _require_exact_live_ingests(
         client=client,
@@ -671,13 +705,44 @@ def answer_sample(
     tracer = _configured_langfuse_tracer(context=context)
     p3: P3Mount | None = None
     p3_error: str | None = None
-    if p3_capability.version is None:
-        p3_error = "P3 readiness did not identify a snapshot version"
-    else:
-        try:
-            p3 = P3Mount(root=p3_root, expected_version=p3_capability.version)
-        except (RetrievalToolError, RetrievalInfrastructureError) as error:
-            p3_error = str(error)
+    try:
+        publications = capture_publications(
+            client=client,
+            versions={
+                record.doc_id: record.version_id
+                for record in context.state.ingests.values()
+                if record.sample_id == sample_id
+            },
+        )
+        p3 = P3Mount(root=p3_root, publications=publications)
+        if (
+            capture_publications(
+                client=client,
+                versions={
+                    record.doc_id: record.version_id
+                    for record in context.state.ingests.values()
+                    if record.sample_id == sample_id
+                },
+            )
+            != publications
+        ):
+            raise RetrievalInfrastructureError(
+                "P3 publication changed during local attestation"
+            )
+        prior_publications = context.state.corpus_publications.get(sample_id)
+        prior_inventory = context.state.corpus_inventories.get(sample_id)
+        if (prior_publications is not None and prior_publications != publications) or (
+            prior_inventory is not None and prior_inventory != p3.inventory
+        ):
+            raise RetrievalInfrastructureError("P3 frozen run inventory changed")
+        context.state.corpus_publications[sample_id] = publications
+        context.state.corpus_inventories[sample_id] = p3.inventory
+        _save_state(run_dir=run_dir, state=context.state)
+    except (ValueError, RetrievalToolError, RetrievalInfrastructureError) as error:
+        if p3 is not None:
+            p3.close()
+        p3 = None
+        p3_error = str(error)
     try:
         for question in remaining:
             if tracer is None:
@@ -764,7 +829,24 @@ def answer_sample(
         raise
     finally:
         if p3 is not None:
-            p3.close()
+            try:
+                p3.verify_inventory()
+                if (
+                    capture_publications(
+                        client=client,
+                        versions={
+                            record.doc_id: record.version_id
+                            for record in context.state.ingests.values()
+                            if record.sample_id == sample_id
+                        },
+                    )
+                    != context.state.corpus_publications[sample_id]
+                ):
+                    raise RetrievalInfrastructureError(
+                        "P3 publication changed during answering"
+                    )
+            finally:
+                p3.close()
         if tracer is not None:
             tracer.flush()
     return tuple(context.state.answers[question.item_id] for question in questions)
@@ -1051,6 +1133,11 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
             combined_run / "documents",
             copy_function=_link_or_copy,
         )
+        if contexts[0].configuration.retained_ingestion is not None:
+            shutil.copytree(
+                first_run / "provenance/retained-ingestion",
+                combined_run / "provenance/retained-ingestion",
+            )
         _atomic_model(path=combined_run / _STATE_FILE, value=combined_state)
         summary = summarize_run(run_dir=combined_run)
     missing_sample_ids = [
@@ -1062,6 +1149,11 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
         update={
             "merged_run_count": len(run_dirs),
             "missing_sample_ids": missing_sample_ids,
+            "retained_ingestion_origins": tuple(
+                context.configuration.retained_ingestion
+                for context in contexts
+                if context.configuration.retained_ingestion is not None
+            ),
         }
     )
     if contexts[0].configuration.protocol_name == PROTOCOL_NAME:
@@ -1082,8 +1174,34 @@ def _require_merge_identity(
         "item_ids_sha256",
     )
     reference = contexts[0].configuration
+    origin = reference.retained_ingestion
     for run_dir, context in zip(run_dirs[1:], contexts[1:], strict=True):
+        actual_origin = context.configuration.retained_ingestion
+        if (origin is None) != (actual_origin is None):
+            raise BenchmarkRunError("cannot merge retained and ordinary runs")
+        if origin is not None and actual_origin is not None:
+            if (origin.processing_revision, origin.protocol_fingerprint) != (
+                actual_origin.processing_revision,
+                actual_origin.protocol_fingerprint,
+            ):
+                raise BenchmarkRunError(
+                    "cannot merge different retained processing origins"
+                )
+            excluded = {
+                "retained_ingestion",
+                "protocol_fingerprint",
+                "prepared_at",
+                "dataset_path",
+            }
+            if reference.model_dump(
+                exclude=excluded
+            ) != context.configuration.model_dump(exclude=excluded):
+                raise BenchmarkRunError(
+                    "cannot merge different retained serving identities"
+                )
         for field in fields:
+            if field == "protocol_fingerprint" and origin is not None:
+                continue
             expected = getattr(reference, field)
             actual = getattr(context.configuration, field)
             if actual != expected:
@@ -1155,7 +1273,11 @@ class _RunContext:
 
 
 def _prepare_documents(
-    *, run_dir: Path, dataset: LoCoMoDataset, sample_ids: tuple[str, ...]
+    *,
+    run_dir: Path,
+    dataset: LoCoMoDataset,
+    sample_ids: tuple[str, ...],
+    image_inputs: LoadedImageInputs | None = None,
 ) -> tuple[PreparedDocument, ...]:
     """Render and atomically persist every selected sample's sessions."""
     documents: list[PreparedDocument] = []
@@ -1163,7 +1285,13 @@ def _prepare_documents(
     for sample_id in sample_ids:
         sample = samples[sample_id]
         for session in sample.sessions:
-            content = render_session(sample=sample, session=session).encode()
+            content = render_session(
+                sample=sample,
+                session=session,
+                image_readings=image_inputs.readings
+                if image_inputs is not None
+                else None,
+            ).encode()
             relative = (
                 Path("documents") / sample_id / f"{session.session_id.lower()}.md"
             )
@@ -1213,7 +1341,7 @@ def load_recorded_run(*, run_dir: Path) -> _RunContext:
 
     Every check of :func:`_load_run` that compares the run with itself — the
     recomputed protocol fingerprint, manifest, item, document and dataset
-    hashes, the rendered documents and the full state/identity
+    hashes, the saved source documents and the full state/identity
     correspondence — runs; only the comparison with the *current* code's
     protocol pins and adapter version is skipped, so a baseline produced by
     another revision stays comparable (D142 LoCoMo gate).
@@ -1274,7 +1402,7 @@ def _validate_run(
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v38")
+        raise BenchmarkRunError(f"run dataset hash is not {PROTOCOL_NAME}")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1284,7 +1412,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v38")
+        raise BenchmarkRunError(f"run dataset commit is not {PROTOCOL_NAME}")
     if current_pins and configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1335,10 +1463,19 @@ def _validate_run(
         base["retrieval_budget"] = configuration.retrieval_budget.model_dump(
             mode="json"
         )
+    if "image_inputs_sha256" in configuration.model_fields_set:
+        base["image_inputs_sha256"] = configuration.image_inputs_sha256
     if configuration.execution_profile is not None:
         base["execution_profile"] = configuration.execution_profile.model_dump(
             mode="json"
         )
+    if configuration.retained_ingestion is not None:
+        base["retained_ingestion"] = configuration.retained_ingestion.model_dump(
+            mode="json"
+        )
+        from benchmarks.locomo.reuse import validate_origin
+
+        validate_origin(run_dir=run_dir, configuration=configuration)
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
     if current_pins:
@@ -1386,6 +1523,7 @@ def _validate_run(
         configuration=configuration,
         dataset=dataset,
         documents=documents,
+        current_pins=current_pins,
     )
 
 
@@ -1395,16 +1533,41 @@ def _validate_documents(
     configuration: RunConfiguration,
     dataset: LoCoMoDataset,
     documents: tuple[PreparedDocument, ...],
+    current_pins: bool,
 ) -> None:
-    """Require the exact current deterministic session rendering."""
+    """Verify saved inputs; re-render only the current executable protocol."""
+    image_inputs = None
+    if configuration.image_inputs_sha256 is not None:
+        image_inputs = load_image_inputs(
+            root=run_dir / IMAGE_DIRECTORY,
+            dataset=dataset,
+            sample_ids=configuration.sample_ids,
+        )
+        if image_inputs.sha256 != configuration.image_inputs_sha256:
+            raise BenchmarkRunError("prepared image input index changed")
+    elif current_pins and source_images(
+        dataset=dataset, sample_ids=configuration.sample_ids
+    ):
+        raise BenchmarkRunError("current protocol requires frozen image inputs")
     expected: list[PreparedDocument] = []
     samples = dataset.sample_map()
     for sample_id in configuration.sample_ids:
         sample = samples[sample_id]
         for session in sample.sessions:
-            content = render_session(sample=sample, session=session).encode()
             relative = (
                 Path("documents") / sample_id / f"{session.session_id.lower()}.md"
+            )
+            saved = (run_dir / relative).read_bytes()
+            content = (
+                render_session(
+                    sample=sample,
+                    session=session,
+                    image_readings=image_inputs.readings
+                    if image_inputs is not None
+                    else None,
+                ).encode()
+                if current_pins
+                else saved
             )
             expected.append(
                 PreparedDocument(

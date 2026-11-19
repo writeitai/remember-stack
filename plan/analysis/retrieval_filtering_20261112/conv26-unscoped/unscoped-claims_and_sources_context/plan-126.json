@@ -1,0 +1,44 @@
+{
+  "statement_ordinal": 126,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Sort",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 60.08,
+        "Total Cost": 62.58,
+        "Plan Rows": 1000,
+        "Plan Width": 33,
+        "Disabled": false,
+        "Sort Key": [
+          "version_id",
+          "effective_from"
+        ],
+        "Plans": [
+          {
+            "Node Type": "Function Scan",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Function Name": "effective_intervals",
+            "Alias": "i",
+            "Startup Cost": 0.25,
+            "Total Cost": 10.25,
+            "Plan Rows": 1000,
+            "Plan Width": 33,
+            "Disabled": false
+          }
+        ]
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.0016317665576934814
+}

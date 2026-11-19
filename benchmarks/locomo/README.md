@@ -1,11 +1,138 @@
-# RS-LoCoMo-Full-v39 setup
+# RS-LoCoMo-Full-v47 setup
 
 One current execution profile uses Luna 6 for ingestion and vision at low
 reasoning, Luna 6 for answering and judging at high reasoning, and Jev
 for adjudication. All Luna seats prefer OpenAI Flex and allow normal OpenAI
 Luna as the only fallback; actual provider usage records the higher price when
 standard processing serves a call. Historical protocols are retained in saved run artifacts
-and Git, not as runnable branches. No new benchmark score is claimed.
+and Git, not as runnable branches.
+
+Full-v47 keeps Full-v46's models, processing generations and bounded visual-label
+readings. It changes only corpus attestation: per-version nullable publication
+markers replace global snapshot state. Ready `document.json` / folder indexes
+must match exact ingests, and the run freezes streamed file hashes (including
+binary originals/media and navigation). Reads and resumes reject changed bytes.
+The run stores publication identities and inventories; ablations require that
+same evidence. A multi-version readiness response has no global version or
+publication timestamp. No Full-v47 benchmark has been run by this change.
+Old evidence stays pinned to its original protocol and source revision.
+
+Full-v46 introduced the bounded visual-label description prompt. Old image bundles
+are not relabelled: preparing this profile requires matching new visual readings,
+while independent OCR checkpoints may be reused. For a reader-only comparison
+on retained v45 stores, use the PR593 reader revision before adopting this
+profile; v46 retires the executable v45 name. The published results below reuse
+v45 ingestion and frozen image inputs; they measure fresh answering and judging
+on that saved data.
+
+## Published results
+
+**94.09% LLM-judge accuracy: 1,449 / 1,540 correct** with the Mem0-style judge,
+completed November 16, 2026. Both grading passes cover the same saved answers
+to all category 1–4 questions in ten conversations:
+
+| Grading policy | Correct answers | Accuracy |
+| --- | ---: | ---: |
+| Native semantic judge | 1,390 / 1,540 | 90.26% |
+| Mem0-style judge | 1,449 / 1,540 | 94.09% |
+
+The answerer and both judges used `openai/gpt-6-luna-pro` with high reasoning
+and temperature zero. The retained ingestion used Luna at low reasoning for
+ingestion and vision, Jev for fact adjudication, and frozen OCR/Luna image
+inputs. Fresh answering used `k=50`, `candidate_k=200` per search channel, eight
+simultaneous questions per conversation and up to three conversations. The
+separate Mem0-style pass then graded the completed answers without ingestion
+or answer regeneration. All answers, tool traces, grades and ingested stores
+were saved and their GCS backups verified.
+
+Serving/native-evaluator revision: `78a83408011fddbd1d62ed8957b799f456b23bbd`;
+ingestion revision: `13ce4a5224709b3e3cda65c429d5915d47e95e89`;
+answer-prompt revision: `79e80a7e4ef0f4d4cfdcf7662786da7ee07eeace`;
+Mem0-style scorer revision: `17c1e7e0ace092b7c1596ad832699c73566d2d9b`.
+
+### How the two judges differ
+
+The [native judge](protocol.py) evaluates whether the answer conveys the
+reference's core fact, entity, date or event. It accepts paraphrases, equivalent
+calendar/relative dates and extra context that preserves that meaning; a
+contradictory or fundamentally different fact, entity or time is wrong.
+
+The separate [`mem0_style_judge`](mem0_style_judge.py) uses a Mem0-inspired
+acceptance policy with explicit allowances for partial lists, approximate
+times and broader descriptions:
+
+| Case | Native semantic judge | Mem0-style judge |
+| --- | --- | --- |
+| Reference lists several items | Applies the core-fact semantic rule; no blanket one-item exception. | One correct reference item is sufficient. |
+| Dates | Accepts expressions identifying the same date/event; no fixed error tolerance. | Accepts dates within fourteen days of the reference. |
+| Durations | Applies the core-fact semantic rule; no fixed percentage tolerance. | Accepts durations within fifty percent of the reference. |
+| Emotions | Checks the reference's essential meaning about the event. | Accepts words in the same positive/negative family about the same event. |
+| Descriptive details | Extra context is accepted when the essential reference truth is conveyed. | Identifying the same referent can suffice even when descriptive details differ. |
+| Category 3 reference text | Uses the full reference answer. | Uses the reference text before the first semicolon. |
+
+The Mem0-style pass accepted 64 answers rejected by the native judge and
+rejected five native successes, for a net increase of 59. Every question keeps
+both labels. These are LLM-judged accuracy scores; the harness also records
+official token-overlap F1 separately.
+
+### Running the separate judge on saved answers
+
+The separate scorer writes its own identities, per-question grades and usage;
+the original answers and native grades remain unchanged. For a saved
+`retrieval-ablation` answer execution, explicitly supply `--answers`:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo.mem0_style_judge \
+  --run /private/source-run \
+  --answers /private/generated-answers \
+  --output /private/mem0-style-grades \
+  --judge-model openai/gpt-6-luna-pro \
+  --max-calls 1700 --max-cost-usd 4
+```
+
+This plans grading without making model calls; add `--execute` to run it.
+Omit `--answers` only when the answers to grade are in the source run's own
+`state.json`. Output must be separate from both input directories. The scorer
+checks frozen input hashes and preserves completed grades on resume; uncertain
+billed attempts require reconciliation before replay. The published comparison
+used the default question/reference/answer inputs, without `--with-evidence`.
+
+## Reader protocol
+
+Since Full-v45, the reader uses stronger conversational context instructions: when a relevant
+reply lacks its initiating question, the answerer reads adjacent chunks even
+if another candidate looks plausible. It checks which turn owns an attached
+description and answers questions about a work's content with its supported
+subject or premise. These remain prompt instructions within the existing
+eight-tool/nine-model-call budget. Those reader changes left models, judge and
+ingestion generations unchanged; prompt changes require a new immutable identity.
+Full-v46 inherits that reader, including PR593, and adds new `desc-prompt-v2`
+visual readings, so its ingested image representations can differ.
+
+The Full-v45 reader additionally preserves source-qualified restrictions under informal
+question wording, checks object kind/medium and unnamed references, and combines
+concrete subjects from owned images with source text. It prefers compact requested
+values with affirmative qualifiers. These instructions contain no named answers
+or source labels; the draft's targeted and full regression results are separate
+from the protocol's offline checks.
+
+For emotional recall it includes attitudes conveyed by a person's own clauses
+and distinguishes the time of the attitude from a future event it concerns,
+while preserving identity, subject and time scope. No expected state names are
+provided. The broader failed completeness candidate is not retained.
+
+Since Full-v45, the reader omits repeated output JSON Schemas from the reader's displayed
+tool catalog while retaining full inputs and result contracts. Public schemas,
+runtime validation and retrieved evidence remain complete. This is a prompt-size
+change, with no score or latency improvement established by offline checks.
+
+The reader-only PR593 checkpoint consolidates completeness reminders, preserves
+concrete requested values and continues bounded adjacency only when needed.
+That checkpoint retains the v45 family and identical processing/image profile for retained
+store comparisons; each prompt has a distinct saved hash/fingerprint. Quote that
+fingerprint in results. Prior-prompt runs remain inspectable/summarizable, but
+cannot resume under a different prompt. Prepare a separate reuse-ingestion fork;
+never edit a finished run's identity. No new score is established by this change.
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -17,21 +144,86 @@ Install the repository plus deterministic scorer dependencies:
 uv sync --extra benchmark
 ```
 
-The safe first command is local and makes no API or model call:
+Plan source-image preparation first. Without `--execute` this creates no files
+and makes no source HTTP or provider call; the limits below are admission
+ceilings, not a cost estimate:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo prepare-images \
+  --dataset /absolute/path/locomo10.json --tier smoke \
+  --cache /private/locomo-image-cache --output /private/locomo-image-inputs \
+  --max-conversions 1000 --max-cost-usd 10
+```
+
+To execute, add `--execute` and configure `REMEMBERSTACK_MISTRAL_OCR_API_KEY`
+and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`. The shared converter sends
+original JPEG/PNG bytes to Mistral OCR and Luna vision (low reasoning,
+Flex then standard OpenAI). It receives no question or reference answer.
+`--workers` defaults to two images, each with its two native conversion lanes.
+Successful independent lanes are cached by original image hash and native
+settings, so retrying a failed vision lane does not repeat successful OCR.
+The cache-absolute attempt/cost ceilings include failures and prior invocations;
+already admitted calls finish and may exceed the reported-cost admission stop.
+OCR uses its configured page-price meter, while vision records returned usage.
+An unresolved interrupted attempt stops automatic paid replay for inspection.
+
+Inaccessible remote originals fail by default. Explicit `--allow-unavailable`
+records typed fetch/format failures and visible coverage markers. It never
+allows a provider failure or missing conversion file to become a silent
+caption-only result. The summary reports converted/unavailable counts. Keep
+the private immutable bundle: it includes original pixels, native conversion
+provenance, binary assets, and accounting. A reusable input bundle must cover
+the same dataset and selected samples; the development and publication tiers
+both select all ten conversations.
+
+Once a bundle exists, preparation is local and makes no API or model call:
 
 ```bash
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v39 \
+  --protocol full-v47 \
+  --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v39` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v47` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
+
+The run contains its own `image-inputs/` copy. Its index and every original and
+converted reading are hash-checked; changes to an ambient cache cannot alter
+prepared input. Every source image requires a frozen reading or an explicitly
+recorded unavailable-original marker. OCR/vision text retains its sample,
+session, turn, speaker and image ordinal beside the source dialogue. Derived
+image text is labeled, including observations versus interpretations. Session
+documents remain ordinary E0 Markdown inputs; the archived native image source
+maps are audit records, not Markdown's native source-origin labels. Standard
+run-directory GCS backups include this complete input and accounting snapshot.
+Changed image input requires a new run and fresh ingestion. The answer
+template remains the selected baseline plus calendar clarification.
+The primary judge retains the historical branch's explicit core-fact semantic policy:
+an answer is correct when it identifies or encompasses the reference's core
+fact, entity, date or event. Synonyms and additional context do not invalidate
+that match. A contradiction, fundamentally different fact/entity/time or
+missing/Unknown answer is wrong. Equivalent calendar and relative dates are
+accepted without a fixed date-error tolerance. Luna high still judges; old
+Sol grades are not relabeled. This is a new protocol identity, not a new score.
+
+Full-v47 asks the answerer to give its best-supported answer to every scored
+question, including a qualified inference when evidence is indirect. It forbids
+terminal abstentions such as `Unknown`; uncertainty belongs in `likely` or
+`possibly` attached to an actual answer. The prompt still forbids invented source
+details, preserves entity/time constraints, and exposes no reference answers.
+This is benchmark answer-agent policy, not a change to engine evidence or typed
+negatives. Relative-date answers name an explicit calendar date, range, or period
+using the source timestamp at supported precision. Models, retrieval depths,
+and call/cost guards are unchanged. Noncompliant model outputs and infrastructure failures remain visible;
+the harness never fabricates an answer to replace them. Prepare a new run for
+this protocol; preserve old answers and fingerprints. This prompt change adds
+no cross-revision ingestion-adoption command or compatibility contract.
 
 V17 must ingest into a fresh store built from the repository revision recorded
 in `run.json`. Store backups protect interrupted work and allow restoration of
@@ -157,31 +349,68 @@ attempts in `reader_attempts` and pre-tool additional calls in
 `first_step_retries`; the summary sums both signals separately. Plain provider
 outages and judge failures are not retried.
 
-The protocol pins Luna's reasoning effort to `none` for both answer and judge
+The protocol pins Luna's reasoning effort to `high` for both answer and judge
 calls and verifies the provider-reported model identity for both seats. Ambient
 OpenRouter settings or model aliases therefore cannot silently change the
 prepared protocol.
 
-P3 is built, freshness-checked, and published through the ordinary self-host
-mount adapter before answering:
+Corpus publication follows served versions automatically. Wait for each source's
+`p3` readiness, then mount or copy the corpus bucket read-only as described in
+[Filesystem views](../../website/src/app/docs/self-hosting/filesystem-views/page.mdx).
+The normal operations command verifies/repairs the same live tree:
 
 ```bash
-mkdir -p "$PWD/.benchmark-mounts"
-docker compose --profile operations run --rm \
-  --user "$(id -u):$(id -g)" \
-  -v "$PWD/.benchmark-mounts:$PWD/.benchmark-mounts" \
-  projections mounts --root "$PWD/.benchmark-mounts"
+docker compose --profile operations run --rm projections
 ```
 
-Pass the resulting
-`.benchmark-mounts/$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID/p3` path to `answer`
-with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
-from readiness.
+Pass its readable local directory to `answer --p3-root`. The runner resolves
+`p3_path` through document search, obtains each exact version's marker, verifies
+ready folder identities and streamed reader hashes, and stores a frozen inventory.
+It rejects an unrelated publication or a changed/incomplete reading. There is no
+global P3 snapshot version or pointer. The root starts at `llms.txt`; type/topic
+indexes lead to copied originals and derivatives. Only the document suffix is
+stable after type/topic/title moves.
+
+### Scoring retained ingestion after a serving-only upgrade
+
+Use `reuse-ingestion` to prepare a new current-code run over an already processed
+conversation. First migrate its existing database with the normal setup command
+and publish/verify its current projections. Do not rerun ingestion. Then run:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo reuse-ingestion \
+  --source-run /private/original-run --sample conv-42 \
+  --output /private/current-serving-run --execute
+```
+
+This command makes readiness and query-surface requests, but no model call and no
+upload. It requires identical document bytes, dataset selection, processing
+generations, model bindings and per-version processing rows. Changed extraction
+or embedding generations require a fresh ingestion instead. Current code/build,
+public query-surface and exact live-document guards still apply.
+
+The new run records the current serving revision and surface fingerprint. Its
+`retained_ingestion` origin records the original processing revision/fingerprint
+and hashes of the original configuration and state; their exact bytes are saved
+under `provenance/retained-ingestion/`. Original files and results stay unchanged.
+New answer/judge state starts empty. Ingestion is refused for the derived run.
+Always derive from the original processing run, rather than another scoring fork.
+Normal `summarize --run ... --run ...` can combine disjoint retained forks only
+when their serving identities and original processing revision/fingerprint match.
+Its summary retains all per-sample origins; mixing ordinary and retained runs fails.
+
+Keep the matching P3 mount root and frozen dataset available to the new run;
+this command does not republish or copy the mount. Use normal answer/judge or
+`retrieval-ablation --profile full` with that run. Native store backups then name
+the actual serving revision for restoration, while retaining the paid processing
+origin. A partially prepared output is inspected and removed explicitly before
+retrying; the command refuses a nonempty output. No automatic paid retry occurs.
+
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v39 sample and
-compares four answer routes without re-ingesting it:
+The additive D124 runner reuses one completely processed Full-v47 sample and
+compares answer routes or full-surface prompt variants without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
 | --- | --- | --- |
@@ -189,19 +418,35 @@ compares four answer routes without re-ingesting it:
 | `codex-p3-mcp` | native Codex subscription | local P3 plus read-only OSS MCP |
 | `mcp` | OpenRouter Luna | read-only OSS MCP only |
 | `mcp-p3` | OpenRouter Luna | read-only OSS MCP plus bounded P3-like tools |
+| `full` | source-pinned canonical Luna | all 22 SDK/P3 tools, optional frozen `--answer-prompt` template |
+
+The `full` profile keeps source models, retrieval budgets, judge and call limits
+unless an explicit evaluation override is recorded;
+it saves exact prompt bytes plus independent answers/traces/grades. Use a new
+output for each template; identical inputs resume missing work. Provider routing
+uses the canonical Flex-to-normal OpenAI allowlist, and HTTP timeout comes from
+the saved source. Keep all trials and report them as development results.
+
+For a retained source with older judge wording, explicitly pass
+`--use-current-judge-prompt` to grade with the current canonical prompt. The
+choice and effective prompt hash are frozen in the new identity; changing it
+rejects resume. The source, golds, prior grades, ingestion contracts and all
+other readiness/schema/provider guards remain unchanged. Without this option,
+judge-wording drift remains an error. This is evaluation-only and requires no
+re-ingestion. `--judge-model` separately selects the grader model.
 
 This starts with OSS artifacts only. P3 is already an ordinary published
 directory, so copy it from the benchmark host or restore it with the existing
 OSS backup workflow; no UMC, RememberFS, FUSE mount, or new download service is
-involved. For example, a normal copy preserves the required marker:
+involved. For example, copy the live corpus and retain the matching run evidence:
 
 ```bash
 rsync -a bench-host:/absolute/published/mount/p3/ /local/conv-42-p3/
-test -s /local/conv-42-p3/.snapshot-version
+test -s /local/conv-42-p3/llms.txt
 ```
 
 Run one profile into its own empty output directory. The P3 argument is required
-only for profile names containing `p3`:
+for `full` and profile names containing `p3`:
 
 ```bash
 uv run --extra benchmark python -m benchmarks.locomo retrieval-ablation \
@@ -251,7 +496,7 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v39 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v47 protocol and
 its source state are never modified by this command.
 
 ## Sharded runs

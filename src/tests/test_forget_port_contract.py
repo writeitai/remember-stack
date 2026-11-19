@@ -1,5 +1,7 @@
 """Structural contracts for D74 portable intent and erasure capabilities."""
 
+from collections.abc import Callable
+from collections.abc import Iterator
 from uuid import UUID
 
 from rememberstack.model import ForgetManifest
@@ -41,8 +43,15 @@ class RecordingForgetStore:
 class RecordingPurgeAdapter:
     """One structural fake implementing all four narrow store capabilities."""
 
+    def iter_purge_keys(self) -> Iterator[ObjectKey]:
+        return iter(())
+
     def purge_objects(
-        self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
+        self,
+        *,
+        keys: tuple[ObjectKey, ...],
+        prefixes: tuple[ObjectKey, ...],
+        before_write: Callable[[], None] | None = None,
     ) -> None:
         pass
 
@@ -51,13 +60,16 @@ class RecordingPurgeAdapter:
     ) -> None:
         pass
 
+    def quiesce_projections(self, *, deployment_id: UUID, forget_id: UUID) -> None:
+        pass
+
     def purge_projections(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
     ) -> None:
         pass
 
     def verify_projections_purged(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
     ) -> None:
         pass
 
@@ -92,10 +104,12 @@ def test_d74_protocols_are_runtime_checkable_and_capability_sized() -> None:
 
     assert _public_operations(ForgetManifestPort) == {"append", "manifests"}
     assert _public_operations(ObjectPurgePort) == {
+        "iter_purge_keys",
         "purge_objects",
         "verify_objects_purged",
     }
     assert _public_operations(ProjectionPurgePort) == {
+        "quiesce_projections",
         "purge_projections",
         "verify_projections_purged",
     }

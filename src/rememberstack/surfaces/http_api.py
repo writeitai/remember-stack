@@ -77,9 +77,13 @@ from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
+from remember.mcp_tools import TAG_READ_TOOL_NAMES
+from remember.mcp_tools import TAG_WRITE_TOOL_NAMES
 from remember.mcp_tools import tool
 from remember.models import DocumentReferencesPage
 from remember.models import DocumentReferencesRequest
+from remember.models import DocumentTags
+from remember.models import DocumentTagsUpdate
 from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
@@ -87,6 +91,13 @@ from remember.models import EffectiveTimeCleared
 from remember.models import ReferenceGenerations
 from remember.models import REFERENCES_BODY_MAX_BYTES
 from remember.models import ReferencesSet
+from remember.models import Tag
+from remember.models import TAG_REF_MAX_RAW_LEN
+from remember.models import TagCreate
+from remember.models import TagList
+from remember.models import TagRef
+from remember.models import TAGS_PER_DOCUMENT_MAX
+from remember.models import TagUpdate
 from remember.models import VERSION_KEY_MAX_LEN
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
@@ -123,16 +134,19 @@ from rememberstack.model import ReferenceBodyError
 from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
+from rememberstack.model import TagConflictError
+from rememberstack.model import TagLimitError
 from rememberstack.model import ToolDescriptor
 from rememberstack.model import track_read_embedding_cost
+from rememberstack.model import UnknownTagError
 from rememberstack.model import VersionKeyConflictError
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import ProcessingLayer
 from rememberstack.model.client import ProcessingLayerStates
-from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
-from rememberstack.model.client import SECTION_HISTORY_MAX_K
+from rememberstack.model.client import SECTION_HISTORY_DEFAULT_LIMIT
+from rememberstack.model.client import SECTION_HISTORY_MAX_LIMIT
 from rememberstack.model.client import SectionHistoryPage
 from rememberstack.model.client import SectionHistoryRequest
 from rememberstack.model.processing_layers import LayerAdmission
@@ -175,6 +189,8 @@ SavedQueryStatus = Literal[
 """The saved-query version states `GET /query/saved?status=` may filter on."""
 
 LOOKUP_K_MAX: Final = 400
+LOOKUP_BROWSE_LIMIT_DEFAULT: Final = 50
+LOOKUP_BROWSE_LIMIT_MAX: Final = 200
 """Largest `k` a fact lookup returns in one call; more is reported as truncated."""
 
 
@@ -373,6 +389,34 @@ class EffectiveTimePort(Protocol):
         ...
 
 
+class TagPort(Protocol):
+    """The deployment's tag registry and document tag writes (D156)."""
+
+    def list_tags(
+        self, *, deployment_id: UUID, query: str | None = None, name: str | None = None
+    ) -> TagList:
+        """Every registered tag, optionally narrowed by a substring or exact name."""
+        ...
+
+    def create_tag(self, *, deployment_id: UUID, request: TagCreate) -> Tag:
+        """Register one tag, or raise ``TagConflictError``."""
+        ...
+
+    def update_tag(self, *, deployment_id: UUID, tag: str, request: TagUpdate) -> Tag:
+        """Rename or re-describe one tag, or raise ``UnknownTagError``."""
+        ...
+
+    def delete_tag(self, *, deployment_id: UUID, tag: str) -> Tag:
+        """Remove one tag and all its assignments."""
+        ...
+
+    def update_document_tags(
+        self, *, deployment_id: UUID, doc_id: UUID, request: DocumentTagsUpdate
+    ) -> DocumentTags:
+        """Change one live document's tags atomically."""
+        ...
+
+
 class BuildInfoPort(Protocol):
     """Report the code and model bindings currently serving."""
 
@@ -392,8 +436,8 @@ class GraphQueryPort(Protocol):
         predicates: tuple[str, ...] = (),
         valid_at: datetime | None = None,
         believed_at: datetime | None = None,
-        limit: int = 500,
-        continuation: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
         include_paths: bool = False,
     ) -> Envelope: ...
 
@@ -434,8 +478,8 @@ class GraphNeighborhoodRequest(BaseModel):
     predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
     valid_at: UTCInstant | None = None
     believed_at: UTCInstant | None = None
-    limit: int = Field(default=500, ge=1, le=500)
-    continuation: str | None = Field(default=None, max_length=200)
+    limit: int = Field(default=100, ge=1, le=500)
+    cursor: str | None = Field(default=None, max_length=2048)
     include_paths: bool = False
 
     @model_validator(mode="after")
@@ -483,7 +527,7 @@ class SqlQueryRequest(BaseModel):
 
     sql: str
     parameters: list[Any] = Field(default_factory=list)
-    max_rows: int | None = Field(default=None, ge=0)
+    max_rows: int | None = Field(default=None, ge=0, le=1000)
 
 
 class SqlExplainRequest(BaseModel):
@@ -502,7 +546,7 @@ class RunSavedQueryRequest(BaseModel):
 
     version: int | None = Field(default=None, ge=1)
     parameters: list[Any] = Field(default_factory=list)
-    max_rows: int | None = Field(default=None, ge=0)
+    max_rows: int | None = Field(default=None, ge=0, le=1000)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -533,6 +577,7 @@ class ApiDeployment:
     document_references: DocumentReferencesPort | None = None
     deletion: DocumentDeletionPort | None = None
     effective_time: EffectiveTimePort | None = None
+    tags: TagPort | None = None
     graph: GraphQueryPort | None = None
     build_info: BuildInfoPort | None = None
     processing_layers: ProcessingLayersPort | None = None
@@ -637,6 +682,7 @@ def build_api(
     document_references: DocumentReferencesPort | None = None,
     deletion: DocumentDeletionPort | None = None,
     effective_time: EffectiveTimePort | None = None,
+    tags: TagPort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
     processing_layers: ProcessingLayersPort | None = None,
@@ -653,7 +699,9 @@ def build_api(
     deployment-side connector configuration; `deletion` adds
     `DELETE /documents/{doc_id}` (D135); `effective_time` adds
     `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` and
-    `DELETE /documents/{doc_id}/effective-periods` (D140); `document_search` adds
+    `DELETE /documents/{doc_id}/effective-periods` (D140); `tags` adds
+    `GET|POST /tags`, `PATCH|DELETE /tags/{tag_id}` and
+    `POST /documents/{doc_id}/tags` (D156); `document_search` adds
     `POST /documents/search` (D134); `section_history` adds
     `GET /documents/{doc_id}/sections/{section_key}/history` (D140);
     `references` adds `PUT|GET /documents/{doc_id}/versions/{version_id}/references`
@@ -703,6 +751,7 @@ def build_api(
         document_references=document_references,
         deletion=deletion,
         effective_time=effective_time,
+        tags=tags,
         graph=graph,
         build_info=build_info,
         processing_layers=processing_layers,
@@ -796,17 +845,24 @@ def build_api(
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: UTCInstant | None = None,
-        k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 50,
+        limit: Annotated[
+            int, Query(ge=1, le=LOOKUP_BROWSE_LIMIT_MAX)
+        ] = LOOKUP_BROWSE_LIMIT_DEFAULT,
+        cursor: Annotated[str | None, Query()] = None,
     ) -> Envelope:
-        """Relations matching an (s, p, o) pattern — current, or as-of (S9)."""
-        return deployment.engine.lookup_relations(
-            deployment_id=deployment.deployment_id,
-            subject_entity_id=subject_entity_id,
-            predicate=predicate,
-            object_entity_id=object_entity_id,
-            valid_at=valid_at,
-            k=k,
-        )
+        """Browse relations matching an (s, p, o) pattern — current, or as-of (S9)."""
+        try:
+            return deployment.engine.lookup_relations(
+                deployment_id=deployment.deployment_id,
+                subject_entity_id=subject_entity_id,
+                predicate=predicate,
+                object_entity_id=object_entity_id,
+                valid_at=valid_at,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/transcript/relation/{relation_id}", response_model=Envelope)
     def transcript_relation(deployment: _Deployment, relation_id: UUID) -> Envelope:
@@ -821,14 +877,23 @@ def build_api(
         entity_id: UUID,
         property_query: str | None = None,
         k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 10,
+        limit: Annotated[
+            int, Query(ge=1, le=LOOKUP_BROWSE_LIMIT_MAX)
+        ] = LOOKUP_BROWSE_LIMIT_DEFAULT,
+        cursor: Annotated[str | None, Query()] = None,
     ) -> Envelope:
-        """Live observations on one entity, semantic over statements (S2)."""
-        return deployment.engine.lookup_observations(
-            deployment_id=deployment.deployment_id,
-            entity_id=entity_id,
-            property_query=property_query,
-            k=k,
-        )
+        """Live observations on one entity (browse or ranked property match)."""
+        try:
+            return deployment.engine.lookup_observations(
+                deployment_id=deployment.deployment_id,
+                entity_id=entity_id,
+                property_query=property_query,
+                k=k,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/search/claims", response_model=Envelope)
     def search_claims(
@@ -871,13 +936,16 @@ def build_api(
         declared effective periods through their occurrences in the versions
         in force for the scope, and returns those occurrences.
         """
-        return deployment.engine.search_claims(
-            deployment_id=deployment.deployment_id,
-            query=body.query,
-            k=body.k,
-            channel=body.channel,
-            **_documents_scope(body),
-        )
+        try:
+            return deployment.engine.search_claims(
+                deployment_id=deployment.deployment_id,
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
+            )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
 
     @app.post("/search/chunks", response_model=Envelope)
     def post_search_chunks(
@@ -888,13 +956,16 @@ def build_api(
         ``documents`` keeps chunks whose document version matches (D134);
         ``time`` keeps chunks of versions in force for the scope (D140).
         """
-        return deployment.engine.search_chunks(
-            deployment_id=deployment.deployment_id,
-            query=body.query,
-            k=body.k,
-            channel=body.channel,
-            **_documents_scope(body),
-        )
+        try:
+            return deployment.engine.search_chunks(
+                deployment_id=deployment.deployment_id,
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
+            )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
     def adjacent_chunks(
@@ -959,6 +1030,8 @@ def build_api(
         _mount_document_deletion(app=app)
     if effective_time is not None:
         _mount_effective_time(app=app)
+    if tags is not None:
+        _mount_tags(app=app)
     if graph is not None:
         _mount_graph(app=app)
     if build_info is not None:
@@ -1120,6 +1193,7 @@ def _served_tools(
     document_search: bool,
     section_history: bool,
     document_references: bool = False,
+    tags: bool = False,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
@@ -1140,6 +1214,8 @@ def _served_tools(
         names.append(SECTION_HISTORY_TOOL_NAME)
     if document_references:
         names.append(DOCUMENT_REFERENCES_TOOL_NAME)
+    if tags:
+        names.extend((*TAG_READ_TOOL_NAMES, *TAG_WRITE_TOOL_NAMES))
     if operations:
         names.extend(OPERATION_TOOL_NAMES)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
@@ -1159,6 +1235,7 @@ def _deployment_tools(deployment: ApiDeployment) -> dict[str, int]:
         document_search=deployment.document_search is not None,
         section_history=deployment.section_history is not None,
         document_references=deployment.document_references is not None,
+        tags=deployment.tags is not None,
     )
 
 
@@ -1288,7 +1365,7 @@ def _mount_graph(*, app: FastAPI) -> None:
                 valid_at=body.valid_at,
                 believed_at=body.believed_at,
                 limit=body.limit,
-                continuation=body.continuation,
+                cursor=body.cursor,
                 include_paths=body.include_paths,
             )
         # D143 §7.3: an empty answer while facts backfill is a boundary.
@@ -1631,10 +1708,13 @@ def _mount_document_search(*, app: FastAPI) -> None:
         filters only they are ordered by declared creation date and paged by
         ``cursor``, which pins the first call's as-of instant.
         """
+        # D156: ``filters.tags`` naming an unregistered tag is 422 unknown_tag.
         try:
             return _served(deployment.document_search).search_documents(
                 deployment_id=deployment.deployment_id, request=body
             )
+        except UnknownTagError as error:
+            raise _tag_errors(error) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1659,9 +1739,9 @@ def _mount_section_history(*, app: FastAPI) -> None:
         at: datetime | None = None,
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to: datetime | None = None,
-        k: Annotated[
-            int, Query(ge=1, le=SECTION_HISTORY_MAX_K)
-        ] = SECTION_HISTORY_DEFAULT_K,
+        limit: Annotated[
+            int, Query(ge=1, le=SECTION_HISTORY_MAX_LIMIT)
+        ] = SECTION_HISTORY_DEFAULT_LIMIT,
         cursor: Annotated[str | None, Query(min_length=1)] = None,
     ) -> SectionHistoryPage:
         """One section key across the document's versions.
@@ -1672,8 +1752,8 @@ def _mount_section_history(*, app: FastAPI) -> None:
         section it holds under the key with ``changed``/``own_changed``
         against the previous row that held it — or ``absent``,
         ``not_indexed`` or ``processing``. Ordered by effective start for a
-        periodised document, else by version number; ``cursor`` pages and
-        pins the evaluation and belief instants.
+        periodised document, else by version number; ``limit`` / ``cursor``
+        page and pin the evaluation and belief instants (``next_cursor`` out).
         """
         time: dict[str, object] = {"mode": mode}
         if mode == "at":
@@ -1687,7 +1767,7 @@ def _mount_section_history(*, app: FastAPI) -> None:
                     "doc_id": doc_id,
                     "section_key": section_key,
                     "time": time,
-                    "k": k,
+                    "limit": limit,
                     "cursor": cursor,
                 }
             )
@@ -1996,6 +2076,151 @@ def _mount_effective_time(*, app: FastAPI) -> None:
             raise _effective_time_errors(error) from error
 
 
+def _tag_errors(error: Exception) -> HTTPException:
+    """Map one D156 refusal to its status and structured detail."""
+    if isinstance(error, UnknownTagError):
+        return HTTPException(
+            status_code=error.status_code,
+            detail={
+                "code": error.code,
+                "message": str(error),
+                "tags": list(error.tags),
+            },
+        )
+    if isinstance(error, TagConflictError | TagLimitError):
+        return HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": str(error)},
+        )
+    if isinstance(error, DocumentNotFoundError):
+        return HTTPException(status_code=404, detail="document_not_found")
+    raise error
+
+
+_TAG_ERRORS: Final = (
+    UnknownTagError,
+    TagConflictError,
+    TagLimitError,
+    DocumentNotFoundError,
+)
+
+
+def _mount_tags(*, app: FastAPI) -> None:
+    """Expose the D156 tag registry and document tag writes.
+
+    `GET /tags` is a read; every other route requires write scope. Routes
+    that address one tag take its ``tag_id``, because names may contain
+    ``/``; the SDK, CLI and MCP tools accept a name and resolve it first.
+    """
+
+    @app.get("/tags", response_model=TagList)
+    def list_tags(
+        deployment: _Deployment,
+        query: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+        name: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                max_length=TAG_REF_MAX_RAW_LEN,
+                description=(
+                    "Keep only the tag with exactly this name, matched as the"
+                    " registry matches names (NFC, ignoring letter case)."
+                ),
+            ),
+        ] = None,
+    ) -> TagList:
+        """Every registered tag with its id, name and description, by name.
+
+        ``query`` keeps the tags whose name or description contains it,
+        ignoring case; ``name`` keeps the one tag with exactly that name, so a
+        client resolves a name to its ``tag_id`` the way the engine does. No
+        document counts are returned.
+        """
+        return _served(deployment.tags).list_tags(
+            deployment_id=deployment.deployment_id, query=query, name=name
+        )
+
+    @app.post(
+        "/tags",
+        response_model=Tag,
+        responses={409: {"description": "conflict | tag_limit_exceeded"}},
+    )
+    def create_tag(deployment: _Deployment, body: TagCreate) -> Tag:
+        """Register a tag before it is used.
+
+        The name keeps the spelling it is declared with and is unique ignoring
+        case: declaring ``Project:A`` when ``project:a`` exists is 409
+        ``conflict``.
+        """
+        try:
+            return _served(deployment.tags).create_tag(
+                deployment_id=deployment.deployment_id, request=body
+            )
+        except _TAG_ERRORS as error:
+            raise _tag_errors(error) from error
+
+    @app.patch(
+        "/tags/{tag_id}",
+        response_model=Tag,
+        responses={
+            404: {"description": "unknown_tag"},
+            409: {"description": "conflict"},
+        },
+    )
+    def update_tag(deployment: _Deployment, tag_id: UUID, body: TagUpdate) -> Tag:
+        """Rename or re-describe a tag; the documents carrying it keep it.
+
+        The old name stops resolving at once: there are no aliases, so a
+        caller still using it gets ``unknown_tag``.
+        """
+        try:
+            return _served(deployment.tags).update_tag(
+                deployment_id=deployment.deployment_id, tag=str(tag_id), request=body
+            )
+        except _TAG_ERRORS as error:
+            raise _tag_errors(error) from error
+
+    @app.delete(
+        "/tags/{tag_id}",
+        response_model=Tag,
+        responses={404: {"description": "unknown_tag"}},
+    )
+    def delete_tag(deployment: _Deployment, tag_id: UUID) -> Tag:
+        """Remove a tag and every assignment of it, in one write."""
+        try:
+            return _served(deployment.tags).delete_tag(
+                deployment_id=deployment.deployment_id, tag=str(tag_id)
+            )
+        except _TAG_ERRORS as error:
+            raise _tag_errors(error) from error
+
+    @app.post(
+        "/documents/{doc_id}/tags",
+        response_model=DocumentTags,
+        responses={
+            404: {"description": "document_not_found"},
+            409: {"description": "tag_limit_exceeded"},
+            422: {"description": "unknown_tag"},
+        },
+    )
+    def update_document_tags(
+        deployment: _Deployment, doc_id: UUID, body: DocumentTagsUpdate
+    ) -> DocumentTags:
+        """Add and remove a document's tags, or replace them with ``set``.
+
+        One atomic write. ``set`` excludes ``add`` and ``remove``; an empty
+        ``set`` clears the tags. Removing a tag the document does not have is
+        not an error. Any unregistered tag refuses the whole request with 422
+        ``unknown_tag`` naming every one. Tags never cause processing.
+        """
+        try:
+            return _served(deployment.tags).update_document_tags(
+                deployment_id=deployment.deployment_id, doc_id=doc_id, request=body
+            )
+        except _TAG_ERRORS as error:
+            raise _tag_errors(error) from error
+
+
 def _mount_processing_layers(*, app: FastAPI) -> None:
     """Mount ``GET /processing-layers`` (D143 §7.4)."""
 
@@ -2059,6 +2284,9 @@ def _mount_operations(*, app: FastAPI) -> None:
             return surface.run(
                 name=name, arguments=arguments, layers=_layer_selection(layers)
             )
+        except UnknownTagError as error:
+            # D156: a documents filter naming an unregistered tag, before retrieval.
+            raise _tag_errors(error) from error
         except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (MissingArgumentError, InvalidArgumentError) as error:
@@ -2230,6 +2458,19 @@ def _mount_ingest(
                 )
             ),
         ] = None,
+        tags: Annotated[
+            list[TagRef] | None,
+            Query(
+                max_length=TAGS_PER_DOCUMENT_MAX,
+                description=(
+                    "Registered tags (name or tag_id; repeat the parameter)"
+                    " added to the document's tags. Ingest never removes a"
+                    " tag, and tags never decide whether a version is"
+                    " created. Any unregistered tag refuses the ingest with"
+                    " 422 unknown_tag before anything is stored."
+                ),
+            ),
+        ] = None,
         principal_kind: Annotated[
             str | None,
             Header(
@@ -2338,6 +2579,7 @@ def _mount_ingest(
             version_key=version_key,
             effective_from=effective_from,
             effective_until=effective_until,
+            tags=tuple(tags or ()),
         )
         if source_kind is None or source_ref is None:
             if (
@@ -2362,6 +2604,8 @@ def _mount_ingest(
                 raise HTTPException(status_code=422, detail=error.code) from error
             except ForgottenSourceError as error:
                 raise _forgotten_source_http_error() from error
+            except (UnknownTagError, TagLimitError) as error:
+                raise _tag_errors(error) from error
         try:
             return ingest.ingest_observed(
                 deployment_id=deployment_id,
@@ -2384,6 +2628,8 @@ def _mount_ingest(
             EffectiveTimeNotSupportedError,
         ) as error:
             raise _effective_time_errors(error) from error
+        except (UnknownTagError, TagLimitError) as error:
+            raise _tag_errors(error) from error
 
 
 def _mount_connectors(*, app: FastAPI) -> None:

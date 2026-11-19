@@ -9,7 +9,7 @@ x-app: &app
       # Empty when the caller does not supply it; released images get the tag's
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
-  image: ghcr.io/writeitai/remember-stack:0.19.0
+  image: ghcr.io/writeitai/remember-stack:0.21.0
   # Every variable in .env reaches the engine, so any engine setting can be
   # set there. The environment list below adds defaults and the values
   # Compose fixes itself (database URL, object-store endpoint, container port);
@@ -38,6 +38,7 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG}
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME}
     REMEMBERSTACK_SELFHOST_API_PORT: "8000"
+    REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S: ${REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S:-86400}
     # Processing layers (D143). Both default to true; facts requires claims.
     # Switching one off stops new work for that layer and hides it from
     # retrieval; switching it back on backfills it oldest version first.
@@ -121,6 +122,7 @@ x-app: &app
     REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_MULTIPLIER: ${REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_MULTIPLIER:-2}
     REMEMBERSTACK_OPENAI_DECISIONS_PRICING_MULTIPLIER: ${REMEMBERSTACK_OPENAI_DECISIONS_PRICING_MULTIPLIER:-auto}
     REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL: ${REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL:-openai/gpt-6-luna}
+    REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL: ${REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL:-high}
     REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT: ${REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT:-}
     REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY: ${REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY:-null}
     REMEMBERSTACK_TYPESAFE_BASE_URL: ${REMEMBERSTACK_TYPESAFE_BASE_URL:-https://api.typesafe.ai/v1}
@@ -138,7 +140,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: ghcr.io/writeitai/remember-stack-postgres:19rc1-0.19.0
+    image: ghcr.io/writeitai/remember-stack-postgres:18-0.21.0
     command:
       - postgres
       - -c

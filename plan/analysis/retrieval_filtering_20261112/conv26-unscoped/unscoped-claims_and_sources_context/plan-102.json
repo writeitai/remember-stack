@@ -1,0 +1,43 @@
+{
+  "statement_ordinal": 102,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Aggregate",
+        "Strategy": "Plain",
+        "Partial Mode": "Simple",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 16.08,
+        "Total Cost": 16.09,
+        "Plan Rows": 1,
+        "Plan Width": 8,
+        "Disabled": false,
+        "Plans": [
+          {
+            "Node Type": "Function Scan",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Function Name": "ts_debug",
+            "Alias": "ts_debug",
+            "Startup Cost": 0.25,
+            "Total Cost": 15.25,
+            "Plan Rows": 333,
+            "Plan Width": 0,
+            "Disabled": false,
+            "Filter": "(array_length(lexemes, 1) > 0)"
+          }
+        ]
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.0014619231224060059
+}

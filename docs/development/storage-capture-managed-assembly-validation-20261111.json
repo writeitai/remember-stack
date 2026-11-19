@@ -1,0 +1,93 @@
+{
+  "architecture_import_contracts_kept": 5,
+  "completed_at": "2026-11-11T20:10:09.929673+00:00",
+  "configured_scopes": 2,
+  "cut_at_unix_us": "1794427809000000",
+  "distinct_original_native_backends": 4,
+  "earlier_attempts": [
+    {
+      "result": "actual nonempty S3 refused because owned fixture volume capacity was exhausted; provider corrected only the owned volume path",
+      "stage": "object preparation before any guard/T"
+    },
+    {
+      "result": "unavailable42501; manual fixture omitted existing runtime-owner public-schema USAGE/CREATE; normal existing bootstrap grant restored and a NEW forward cut used",
+      "stage": "first originalT1794427538000000"
+    }
+  ],
+  "elapsed_seconds": 30.86,
+  "engine_native_queries_verify_full_tls": true,
+  "errors": [],
+  "existing_original_view_native_cases_passed": 5,
+  "independent_control_plane_wire_check": "PASS: exact canonical page/manifest/request/set/native/provider framing matched closed receiver models",
+  "independent_control_plane_wire_check_sha256": "5cc5cc28e594f6005f5ed9f4032dbd30b09be61eefcb1630fb4bd25d883cadd5",
+  "ingestion_reuse_keys_changed": false,
+  "limits": [
+    "Functional declared local profiles; no production UTC/image/cost/batch-capacity enablement.",
+    "Two scopes with retained raw origins and failed/succeeded terminal rows; K/P3 native and provider origins explicitly empty in this dataset.",
+    "This composed run does not qualify production SSH or GCS, or prove every writer representation branch."
+  ],
+  "operational_evidence_store": "explicit immutable fsync filesystem outside customer set; production GCS adapter separately tested in UMC",
+  "optional_permissions_exercise_executed": false,
+  "ordinary_collector_login": true,
+  "ordinary_sessions_remaining": 0,
+  "owned_engine_container_removed": true,
+  "owned_postgres_cgroup_memory_peak_bytes_since_start": 302522368,
+  "postgres_image": "sha256:e97ef047169b272734e95f660cca3a4de74c637d0b7c3a7c633122a8f04af43e",
+  "private_engine_credential_state_removed": true,
+  "production_resources_changed": false,
+  "provider_collector_sha256": "4dab1c8eec04799634b0a69786112faa919cb808a590bb3510d860f36fdaf766",
+  "provider_invocations": 1,
+  "provider_source_head": "af5d39c486541a94e22aeff918508d1498b058f8",
+  "provider_transport": "owned fixedhost Docker-exec; production SSH adapter separately tested in UMC",
+  "pure_cases_passed": 41,
+  "qualified_production_profile": false,
+  "replay_without_new_native_provider": true,
+  "results": [
+    {
+      "all_physical_fork_bytes": "10420224",
+      "capture_id": "846cde21a831067e4440315bd0c6c103fd4e3f391124101c5efc1c7bf5cd7d83",
+      "components": {
+        "canonical_object": "0",
+        "k_repository": "0",
+        "p3_origin": "0",
+        "postgres_allocated": "9297920"
+      },
+      "excluded_physical_fork_bytes": "1122304",
+      "independent_profile_mapped_fork_sum": "9297920",
+      "manifest_digest": "ecd3018f071cac9a19194d3315edc26f58083fdeb39d2bd02a5d2ff0c2f56d19",
+      "native_acquisition_us": 58029,
+      "native_allocation_record_count": 1900,
+      "page_count": "2",
+      "provider_manifest_digest": "52c11c308daba13fa2a24df720441332c88ddd274d1d4f3007ab1bb0e79e3fd6",
+      "reference_count": "1",
+      "terminal_count": "1"
+    },
+    {
+      "all_physical_fork_bytes": "10452992",
+      "capture_id": "545b7bae2cd614c70eb4d656cf8bf207abe36e558e6ac2e92880de1ff18f25bc",
+      "components": {
+        "canonical_object": "18",
+        "k_repository": "0",
+        "p3_origin": "0",
+        "postgres_allocated": "9297920"
+      },
+      "excluded_physical_fork_bytes": "1155072",
+      "independent_profile_mapped_fork_sum": "9297920",
+      "manifest_digest": "09d71d6e49f9200611310f2decae92ebd34b6dae79cc24568060997a3bc153c6",
+      "native_acquisition_us": 10290,
+      "native_allocation_record_count": 1900,
+      "page_count": "2",
+      "provider_manifest_digest": "6e832d0c2ff7c1f8c75c26569d550eb844f79ba12cba9654631ed7b1938fa122",
+      "reference_count": "1",
+      "terminal_count": "1"
+    }
+  ],
+  "same_actual_s3_provider": true,
+  "schema_head": "p9_46_0067",
+  "scope": "actual owned2scope FSIT S3/fixedhost + engine PG19 directverify-fullTLS; functional declaredprofiles, NOT production UTC/cost/enablement",
+  "source_head": "52d6c2767733d9c7bf66ce650f0f16f6a259edaa",
+  "started_at": "2026-11-11T20:09:38.526915+00:00",
+  "status": "PASS",
+  "validation_date": "2026-11-11",
+  "verified_direct_tls": true
+}

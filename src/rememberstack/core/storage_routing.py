@@ -32,11 +32,6 @@ def storage_class_for_internal() -> str:
     return COLD
 
 
-def storage_class_for_snapshot() -> str:
-    """Keep the published corpus tree and its manifest cheap to browse."""
-    return HOT
-
-
 def storage_class_for(*, mime: str) -> str:
     """Route one original's storage class by mime (per-deployment policy)."""
     return HOT if mime.startswith(HOT_MIME_PREFIXES) else COLD

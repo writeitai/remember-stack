@@ -132,6 +132,7 @@ EXPECTED_TABLES: Final = (
     "document_skeleton_checks",
     "document_sections",
     "document_structure_generations",
+    "document_tags",
     "document_version_scope",
     "document_versions",
     "documents",
@@ -190,6 +191,7 @@ EXPECTED_TABLES: Final = (
     "selection_results",
     "surface_cost_ledger",
     "surface_cost_meter_state",
+    "tags",
     "testimony_currency_events",
 )
 EXPECTED_INDEXES: Final = (
@@ -232,6 +234,7 @@ EXPECTED_INDEXES: Final = (
     "ix_document_names_trgm",
     "ix_document_people_address",
     "ix_document_people_name",
+    "ix_document_tags_tag",
     "ix_documents_entity",
     "ix_documents_live",
     "ix_docversions_doc",
@@ -262,6 +265,7 @@ EXPECTED_INDEXES: Final = (
     "ix_krule_keys_lookup",
     "ix_kwatch_watched",
     "ix_mentions_claim",
+    "ix_mentions_deployment_chunk",
     "ix_mentions_doc",
     "ix_merge_absorbed",
     "ix_merge_survivor",
@@ -309,6 +313,7 @@ EXPECTED_INDEXES: Final = (
     "ux_reference_generations_active",
     "ux_sections_key",
     "ux_snapshot_latest",
+    "ux_tags_name",
 )
 EXPECTED_RANGE_PARENTS: Final = {
     "chunk_claims": "created_at",
@@ -332,6 +337,8 @@ UNLANED_STAGES: Final = frozenset(
         "lint_knowledge",
         "dispatch_knowledge",
         "hard_forget",
+        "publish_corpus",
+        "reconcile_corpus",
     }
 )
 """Scheduled aggregate and deployment-orchestration stages whose route is unlaned.
@@ -357,6 +364,8 @@ EXPECTED_VIEWS: Final = (
     "v_memory_entity_survivor",
     "v_memory_evidence_lineage_live",
     "v_memory_fact_claim_live",
+    "v_memory_claim_carried_periodised",
+    "v_memory_fact_source_qualified",
     "v_memory_fact_visible",
     "v_memory_mention_current_content",
     "v_memory_page_citation_visible",
@@ -370,14 +379,14 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # Includes saved_query_registry_state and saved_query_audit (Batch E governance).
 # Counts are measured against a fresh head inventory; update when the registry
 # migration gains or loses constraints.
-# PostgreSQL 19 represents NOT NULL declarations as first-class `n` rows in
+# PostgreSQL 18 represents NOT NULL declarations as first-class `n` rows in
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 119,
-    "f": 148,
-    "n": 643,
-    "p": 85,
+    "c": 121,
+    "f": 150,
+    "n": 653,
+    "p": 87,
     "t": 7,
     "u": 41,
 }
@@ -441,6 +450,7 @@ DECISION_OBJECTS: Final = {
         "ix_chunks_reuse_identity",
         "fact_window_review_attempts",
     ),
+    "D156": ("tags", "document_tags", "ux_tags_name", "ix_document_tags_tag"),
 }
 
 
@@ -495,6 +505,50 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         ),
         names=EXPECTED_INDEXES,
     )
+    mention_lookup_ready = connection.execute(
+        text("""
+        SELECT coalesce((SELECT parent.indisvalid AND NOT EXISTS (
+            SELECT 1 FROM pg_inherits part
+            WHERE part.inhparent='public.mentions'::regclass
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_inherits attached
+                JOIN pg_index leaf ON leaf.indexrelid=attached.inhrelid
+                WHERE attached.inhparent=parent.indexrelid
+                  AND leaf.indrelid=part.inhrelid AND leaf.indisvalid
+              )
+        ) FROM pg_index parent
+          WHERE parent.indexrelid=to_regclass('public.ix_mentions_deployment_chunk')),false)
+    """)
+    ).scalar_one()
+    if not mention_lookup_ready:
+        problems.append(
+            "mention chunk index must be valid with every partition attached"
+        )
+    document_bridge_ready = connection.execute(
+        text("""
+        SELECT coalesce((SELECT idx.indisvalid AND idx.indisready AND idx.indislive
+          AND idx.indrelid='public.documents'::regclass
+          AND pg_get_indexdef(idx.indexrelid)=
+            'CREATE INDEX ix_documents_entity ON public.documents USING btree (document_entity_id, deployment_id, ((doc_id)::text) COLLATE "C") WHERE (document_entity_id IS NOT NULL)'
+          AND ARRAY(SELECT ns.nspname||'.'||opclass.opcname
+              FROM unnest(idx.indclass::oid[]) WITH ORDINALITY key(class_oid,n)
+              JOIN pg_opclass opclass ON opclass.oid=key.class_oid
+              JOIN pg_namespace ns ON ns.oid=opclass.opcnamespace ORDER BY key.n)
+            = ARRAY['pg_catalog.uuid_ops','pg_catalog.uuid_ops','pg_catalog.text_ops']
+          AND ARRAY(SELECT CASE WHEN key.collation_oid=0 THEN ''
+              ELSE ns.nspname||'.'||coll.collname END
+              FROM unnest(idx.indcollation::oid[]) WITH ORDINALITY key(collation_oid,n)
+              LEFT JOIN pg_collation coll ON coll.oid=key.collation_oid
+              LEFT JOIN pg_namespace ns ON ns.oid=coll.collnamespace ORDER BY key.n)
+            = ARRAY['','','pg_catalog.C']
+          FROM pg_index idx WHERE idx.indexrelid=to_regclass('public.ix_documents_entity')),false)
+          AND to_regclass('public.ix_documents_entity_d153') IS NULL
+    """)
+    ).scalar_one()
+    if not document_bridge_ready:
+        problems.append(
+            "document bridge index must have the valid D153 ordered shape with no staging object"
+        )
     views = _named_relations(connection=connection, names=EXPECTED_VIEWS, kinds=("v",))
     query_space_views = _string_values(
         connection=connection,

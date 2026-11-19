@@ -37,6 +37,7 @@ from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
+from remember.errors import UnknownTag
 from remember.http_routes import is_read_route
 from remember.issuer import fetch_issuer_metadata
 from remember.issuer import IssuerError
@@ -51,7 +52,9 @@ from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DeploymentBuildInfo
-from remember.models import DOCUMENT_REFERENCES_DEFAULT_K
+from remember.models import DOCUMENT_REFERENCES_DEFAULT_LIMIT
+from remember.models import DOCUMENT_SEARCH_DEFAULT_K
+from remember.models import DOCUMENT_SEARCH_DEFAULT_LIMIT
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
 from remember.models import DocumentReferencesPage
@@ -60,6 +63,8 @@ from remember.models import DocumentSearchFilters
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
+from remember.models import DocumentTags
+from remember.models import DocumentTagsUpdate
 from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
@@ -77,13 +82,20 @@ from remember.models import ReferenceInput
 from remember.models import ReferenceKind
 from remember.models import ReferencesSet
 from remember.models import SearchRequest
-from remember.models import SECTION_HISTORY_DEFAULT_K
+from remember.models import SECTION_HISTORY_DEFAULT_LIMIT
 from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
+from remember.models import Tag
+from remember.models import TagCreate
+from remember.models import TagList
+from remember.models import TagUpdate
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+#: D156 refusals that keep their code: a duplicate name and a tag limit.
+_TAG_ERROR_CODES: Final = frozenset({"conflict", "tag_limit_exceeded"})
 
 _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "saved_query_not_found": 404,
@@ -286,8 +298,16 @@ class MemoryClient:
         hops: int | None = None,
         predicate: str | None = None,
         entity_ids: Sequence[str | UUID] | None = None,
+        documents: DocumentSearchFilters | Mapping[str, object] | None = None,
     ) -> Envelope:
-        """Run the assured facts_context operation."""
+        """Run the assured facts_context operation.
+
+        ``documents`` (D134/D156), e.g. ``{"tags": {"all": ["project:x"]}}``,
+        keeps facts supported by matching documents; contradicting evidence
+        and competing facts from other documents stay in the answer, marked
+        ``in_documents_filter=False``. An unregistered tag raises
+        ``UnknownTag``.
+        """
         args: dict[str, object] = {"query": query}
         if k is not None:
             args["k"] = k
@@ -301,6 +321,8 @@ class MemoryClient:
             args["predicate"] = predicate
         if entity_ids is not None:
             args["entity_ids"] = [str(e) for e in entity_ids]
+        if documents is not None:
+            args["documents"] = _documents_argument(documents)
         res = self.run_operation(name="facts_context", arguments=args)
         assert isinstance(res, Envelope)
         return res
@@ -313,11 +335,13 @@ class MemoryClient:
         candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
         layers: Sequence[str] | None = None,
+        documents: DocumentSearchFilters | Mapping[str, object] | None = None,
     ) -> ContextBundleV2:
         """Run the assured combined_context operation.
 
         ``layers`` (D143) narrows the layers it reads; a side with none of its
         layers admitted comes back empty with a ``boundary`` negative.
+        ``documents`` (D134/D156) reaches both sides unchanged.
         """
         args: dict[str, object] = {"query": query}
         if k is not None:
@@ -326,6 +350,8 @@ class MemoryClient:
             args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
+        if documents is not None:
+            args["documents"] = _documents_argument(documents)
         res = self.run_operation(name="combined_context", arguments=args, layers=layers)
         assert isinstance(res, ContextBundleV2)
         return res
@@ -338,13 +364,15 @@ class MemoryClient:
         candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
         layers: Sequence[str] | None = None,
+        documents: DocumentSearchFilters | Mapping[str, object] | None = None,
     ) -> Envelope:
         """Run the assured claims_and_sources_context operation.
 
         ``time`` (D140) reads the text in force for the scope (default
         current), e.g. ``{"mode": "at", "at": "2026-02-01T00:00:00Z"}``.
         ``layers`` (D143) narrows the channels: ``["sources"]`` answers from
-        source passages only.
+        source passages only. ``documents`` (D134/D156) returns only what
+        matching documents say.
         """
         args: dict[str, object] = {"query": query}
         if k is not None:
@@ -353,6 +381,8 @@ class MemoryClient:
             args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
+        if documents is not None:
+            args["documents"] = _documents_argument(documents)
         res = self.run_operation(
             name="claims_and_sources_context", arguments=args, layers=layers
         )
@@ -561,10 +591,14 @@ class MemoryClient:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
-        k: int = 50,
+        limit: int = 50,
+        cursor: str | None = None,
     ) -> Envelope:
-        """Read current or valid-time relations matching an optional pattern."""
-        params: dict[str, str | int] = {"k": k}
+        """Page current or valid-time relations matching an optional pattern.
+
+        Browse list (D154): ``limit`` / ``cursor`` in, ``next_cursor`` out.
+        """
+        params: dict[str, str | int] = {"limit": limit}
         if subject_entity_id is not None:
             params["subject_entity_id"] = str(subject_entity_id)
         if predicate is not None:
@@ -573,6 +607,8 @@ class MemoryClient:
             params["object_entity_id"] = str(object_entity_id)
         if valid_at is not None:
             params["valid_at"] = valid_at.isoformat()
+        if cursor is not None:
+            params["cursor"] = cursor
         return _validated(
             Envelope,
             self._json("GET", "/lookup/relations", params=params),
@@ -588,12 +624,32 @@ class MemoryClient:
         )
 
     def lookup_observations(
-        self, *, entity_id: UUID, property_query: str | None = None, k: int = 10
+        self,
+        *,
+        entity_id: UUID,
+        property_query: str | None = None,
+        k: int = 10,
+        limit: int = 50,
+        cursor: str | None = None,
     ) -> Envelope:
-        """Read live observations for one entity, optionally by property text."""
-        params: dict[str, str | int] = {"entity_id": str(entity_id), "k": k}
+        """Read live observations for one entity (D154).
+
+        Without ``property_query`` this is a browse list (``limit`` /
+        ``cursor`` → ``next_cursor``). With ``property_query`` it is ranked
+        top-``k`` and must not take a cursor.
+        """
+        if property_query is not None and cursor is not None:
+            raise ValueError(
+                "cursor pages filter-only observation lookups; drop property_query or cursor"
+            )
+        params: dict[str, str | int] = {"entity_id": str(entity_id)}
         if property_query is not None:
             params["property_query"] = property_query
+            params["k"] = k
+        else:
+            params["limit"] = limit
+            if cursor is not None:
+                params["cursor"] = cursor
         return _validated(
             Envelope,
             self._json("GET", "/lookup/observations", params=params),
@@ -717,11 +773,15 @@ class MemoryClient:
         predicates: tuple[str, ...] = (),
         valid_at: datetime | None = None,
         believed_at: datetime | None = None,
-        limit: int = 500,
-        continuation: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
         include_paths: bool = False,
     ) -> Envelope:
-        """Return a typed bounded current or bitemporal neighborhood."""
+        """Return a typed bounded current or bitemporal neighborhood.
+
+        Page with ``cursor`` / ``next_cursor`` (D154). The cursor pins the
+        request clocks and the neighborhood scope.
+        """
         return _validated(
             Envelope,
             self._json(
@@ -736,7 +796,7 @@ class MemoryClient:
                         believed_at.isoformat() if believed_at is not None else None
                     ),
                     "limit": limit,
-                    "continuation": continuation,
+                    "cursor": cursor,
                     "include_paths": include_paths,
                 },
             ),
@@ -893,6 +953,7 @@ class MemoryClient:
         version_key: str | None = None,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
+        tags: Sequence[str] | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
@@ -910,6 +971,11 @@ class MemoryClient:
         version's text is in force (UTC, half-open); without an end it lasts
         until the next declared start. Both need ``source_kind``/``source_ref``
         and periods need ``versioning_mode="snapshot"``.
+
+        ``tags`` adds registered tags (names or ids) to the document's tags
+        (D156); an ingest never removes a tag and tags never decide whether a
+        version is created. Any unregistered tag raises :class:`UnknownTag`
+        and nothing is stored.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -966,11 +1032,11 @@ class MemoryClient:
         if not filename:
             raise ValueError("filename is required when ingesting bytes")
         mime = mime or infer_upload_mime(filename) or "application/octet-stream"
-        params: dict[str, str] = {
-            "filename": filename,
-            "mime": mime,
-            "versioning_mode": versioning_mode,
-        }
+        params: list[tuple[str, str]] = [
+            ("filename", filename),
+            ("mime", mime),
+            ("versioning_mode", versioning_mode),
+        ]
         for key, value in (
             ("title", title),
             ("source_kind", source_kind),
@@ -989,13 +1055,16 @@ class MemoryClient:
             ),
         ):
             if value is not None:
-                params[key] = value
+                params.append((key, value))
+        if isinstance(tags, str):
+            raise ValueError("tags is a sequence of tag names or ids, not one string")
+        params.extend(("tags", str(tag)) for tag in tags or ())
         return _validated(
             IngestedVersion,
             self._json(
                 "POST",
                 "/ingest",
-                params=params,
+                params=tuple(params),
                 content=payload_bytes,
                 headers={"Content-Type": "application/octet-stream"},
             ),
@@ -1011,8 +1080,8 @@ class MemoryClient:
     ) -> DocumentPage:
         """One page of the deployment's documents, newest lineage first.
 
-        Pass the returned ``cursor`` back to read the next page; ``None``
-        means there are no more. ``status`` filters on each document's newest
+        Pass the returned ``next_cursor`` back as ``cursor`` to read the next
+        page; ``None`` means there are no more. ``status`` filters on each document's newest
         version, for example ``"failed"``.
         """
         params: dict[str, str | int] = {"limit": limit}
@@ -1032,18 +1101,20 @@ class MemoryClient:
         *,
         filters: DocumentSearchFilters | None = None,
         versions: Literal["current", "all"] = "current",
-        k: int = 20,
+        k: int = DOCUMENT_SEARCH_DEFAULT_K,
+        limit: int = DOCUMENT_SEARCH_DEFAULT_LIMIT,
         cursor: str | None = None,
         time: ReadTime | None = None,
     ) -> DocumentSearchPage:
-        """Find documents by name, general metadata and content (D134).
+        """Find documents by name, general metadata and content (D134 / D154).
 
         ``query`` matches every name a document was stored under (file name,
         title, source path, old names after a rename; partial and misspelled
         names too) and its text. ``filters`` narrow by family, authors,
         recipients, date ranges, language, thread and doc ids. Without a
-        ``query`` results are newest first and ``cursor`` pages them; with one
-        they are ranked and not paged. ``time`` (D140) picks which editions of
+        ``query`` results are newest first and ``limit`` / ``cursor`` page
+        them (``next_cursor`` out); with one they are ranked by ``k`` and
+        ``truncated`` discloses a cap. ``time`` (D140) picks which editions of
         a document with declared effective periods are candidates (default
         current). Invalid combinations raise
         ``pydantic.ValidationError`` before any request is sent.
@@ -1055,6 +1126,7 @@ class MemoryClient:
                 versions=versions,
                 time=time,
                 k=k,
+                limit=limit,
                 cursor=cursor,
             )
         )
@@ -1079,7 +1151,7 @@ class MemoryClient:
         doc_id: UUID | str,
         section_key: str,
         time: ReadTime | None = None,
-        k: int = SECTION_HISTORY_DEFAULT_K,
+        limit: int = SECTION_HISTORY_DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> SectionHistoryPage:
         """Follow one keyed section across a document's versions (D140 §6.2).
@@ -1095,7 +1167,7 @@ class MemoryClient:
                 doc_id=UUID(str(doc_id)),
                 section_key=section_key,
                 time=time if time is not None else HistoryReadTime(),
-                k=k,
+                limit=limit,
                 cursor=cursor,
             )
         )
@@ -1105,7 +1177,7 @@ class MemoryClient:
     ) -> SectionHistoryPage:
         """Send one prepared :class:`SectionHistoryRequest`."""
         time = request.time
-        params: dict[str, str | int] = {"mode": time.mode, "k": request.k}
+        params: dict[str, str | int] = {"mode": time.mode, "limit": request.limit}
         if time.mode == "at":
             params["at"] = time.at.isoformat()
         elif time.mode == "overlap":
@@ -1181,7 +1253,7 @@ class MemoryClient:
         direction: Literal["outgoing", "incoming", "both"] = "both",
         kinds: Sequence[ReferenceKind] | None = None,
         time: ReadTime | None = None,
-        k: int = DOCUMENT_REFERENCES_DEFAULT_K,
+        limit: int = DOCUMENT_REFERENCES_DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> DocumentReferencesPage:
         """What a passage, section or document references, and what references it.
@@ -1199,7 +1271,7 @@ class MemoryClient:
                 direction=direction,
                 kinds=None if kinds is None else tuple(kinds),
                 time=time,
-                k=k,
+                limit=limit,
                 cursor=cursor,
             )
         )
@@ -1278,6 +1350,119 @@ class MemoryClient:
             self._json("DELETE", f"/documents/{document}/effective-periods"),
             endpoint="DELETE /documents/{doc_id}/effective-periods",
         )
+
+    def list_tags(self, *, query: str | None = None) -> TagList:
+        """The deployment's registered tags with their id, name and description (D156).
+
+        ``query`` keeps the tags whose name or description contains it,
+        ignoring case.
+        """
+        return _validated(
+            TagList,
+            self._json(
+                "GET", "/tags", params=None if query is None else {"query": query}
+            ),
+            endpoint="GET /tags",
+        )
+
+    def create_tag(self, *, name: str, description: str) -> Tag:
+        """Register a tag before documents carry it (D156).
+
+        A name already registered, in any letter case, raises
+        ``MemoryApiError`` 409 with ``code`` ``conflict``.
+        """
+        body = TagCreate(name=name, description=description)
+        return _validated(
+            Tag,
+            self._json("POST", "/tags", json_body=body.model_dump(mode="json")),
+            endpoint="POST /tags",
+        )
+
+    def update_tag(
+        self,
+        *,
+        tag: UUID | str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Tag:
+        """Rename or re-describe a tag, given by name or ``tag_id`` (D156).
+
+        Documents keep the tag; the old name stops resolving at once. An
+        unregistered tag raises :class:`UnknownTag`.
+        """
+        body = TagUpdate(name=name, description=description)
+        tag_id = self._tag_id(tag=tag)
+        return _validated(
+            Tag,
+            self._json(
+                "PATCH",
+                f"/tags/{tag_id}",
+                json_body=body.model_dump(mode="json", exclude_none=True),
+            ),
+            endpoint="PATCH /tags/{tag_id}",
+        )
+
+    def delete_tag(self, *, tag: UUID | str) -> Tag:
+        """Delete a tag, given by name or ``tag_id``, and all its assignments (D156)."""
+        tag_id = self._tag_id(tag=tag)
+        return _validated(
+            Tag,
+            self._json("DELETE", f"/tags/{tag_id}"),
+            endpoint="DELETE /tags/{tag_id}",
+        )
+
+    def update_document_tags(
+        self,
+        *,
+        doc_id: UUID | str,
+        add: Sequence[str] | None = None,
+        remove: Sequence[str] | None = None,
+        set: Sequence[str] | None = None,  # noqa: A002 -- the documented argument name
+    ) -> DocumentTags:
+        """Change one document's tags atomically and return them (D156).
+
+        Give ``add`` and/or ``remove``, or ``set`` to replace the whole set (an
+        empty ``set`` clears it). Tags are names or ids. Any unregistered tag
+        raises :class:`UnknownTag` and nothing changes; an unknown or deleted
+        document raises ``MemoryApiError`` 404.
+        """
+        document = UUID(str(doc_id))
+        for argument in (add, remove, set):
+            if isinstance(argument, str):
+                raise ValueError("tags are a sequence of names or ids, not a string")
+        body = DocumentTagsUpdate(
+            add=tuple(add or ()),
+            remove=tuple(remove or ()),
+            set=None if set is None else tuple(set),
+        )
+        return _validated(
+            DocumentTags,
+            self._json(
+                "POST",
+                f"/documents/{document}/tags",
+                json_body=body.model_dump(mode="json", exclude_defaults=True),
+            ),
+            endpoint="POST /documents/{doc_id}/tags",
+        )
+
+    def _tag_id(self, *, tag: UUID | str) -> UUID:
+        """A tag's id: the id itself, or the registered tag with this name."""
+        if isinstance(tag, UUID):
+            return tag
+        try:
+            return UUID(tag)
+        except ValueError:
+            pass
+        # The engine matches the name exactly as the registry does (NFC,
+        # ignoring case); comparing case here could disagree with it.
+        matches = _validated(
+            TagList,
+            self._json("GET", "/tags", params={"name": tag}),
+            endpoint="GET /tags",
+        ).tags
+        if len(matches) != 1:
+            raise UnknownTag(tags=(tag,), status_code=404)
+        return matches[0].tag_id
 
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
         """List deployment-side connectors without executing any client-side."""
@@ -1428,6 +1613,18 @@ class MemoryClient:
                             detail=str(public_detail.get("message") or ""),
                             layer=str(public_detail.get("layer") or ""),
                         )
+                    elif public_detail.get("code") == "unknown_tag" and isinstance(
+                        public_detail.get("tags"), list
+                    ):
+                        raise UnknownTag(
+                            tags=tuple(str(tag) for tag in public_detail["tags"]),
+                            status_code=response.status_code,
+                        )
+                    elif public_detail.get("code") in _TAG_ERROR_CODES and (
+                        isinstance(public_detail.get("message"), str)
+                    ):
+                        code = str(public_detail["code"])
+                        detail = str(public_detail["message"])
                     elif public_detail.get("code") == "invalid_parameter" and (
                         isinstance(public_detail.get("message"), str)
                     ):
@@ -1455,6 +1652,18 @@ class MemoryClient:
                 status_code=response.status_code,
                 detail=f"{method} {path} returned invalid JSON",
             ) from error
+
+
+def _documents_argument(
+    documents: DocumentSearchFilters | Mapping[str, object],
+) -> dict[str, object]:
+    """The JSON ``documents`` operation argument, validated locally first (D156)."""
+    filters = (
+        documents
+        if isinstance(documents, DocumentSearchFilters)
+        else DocumentSearchFilters.model_validate(documents)
+    )
+    return filters.model_dump(mode="json", exclude_defaults=True)
 
 
 def _layer_params(layers: Sequence[str] | None) -> tuple[tuple[str, str], ...] | None:
@@ -1607,6 +1816,7 @@ class Client(MemoryClient):
         version_key: str | None = None,
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
+        tags: Sequence[str] | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1623,6 +1833,7 @@ class Client(MemoryClient):
             version_key=version_key,
             effective_from=effective_from,
             effective_until=effective_until,
+            tags=tags,
         )
 
     def __enter__(self) -> Self:

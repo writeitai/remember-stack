@@ -11,8 +11,11 @@ tier (D20). D102's sole narrow exception replays a validated T4 match for an
 exact canonical lemma inside the same document lineage.
 """
 
+from collections.abc import Iterator
 from collections.abc import Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 from typing import Final
 from uuid import UUID
@@ -44,6 +47,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine.document_bindings import DOCUMENT_BINDING_GENERATION
 from rememberstack.spine.entity_eligibility import surface_appears_in_claim
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.fact_applications import application_fence
 from rememberstack.spine.profile_refresher import load_entity_profile_evidence_many
 from rememberstack.spine.profile_refresher import (
     profile_summary as build_profile_summary,
@@ -55,11 +59,14 @@ class ResolverVersionConflictError(Exception):
 
 
 class ResolutionContendedError(RuntimeError):
-    """Candidate authority changed through every bounded resolver attempt."""
+    """Identity membership or target liveness changed through bounded attempts."""
 
 
-RESOLVER_VERSION: Final = "resolver-2026.08h"
+RESOLVER_VERSION: Final = "resolver-2026.11a"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
+11a commits matches against their audited input snapshot after checking the
+current canonical target. Only structural candidate/document membership
+changes repeat a new-entity decision; profile/alias enrichment does not.
 08h states T4's existing four-field JSON object in the prompt so the decoder
 emits decision, candidate_id, confidence, and rationale, including nulls.
 That is the existing T4Selection contract, not a threshold or identity-policy
@@ -116,7 +123,7 @@ class _CandidateState:
 
 @dataclass(frozen=True)
 class _CandidateSnapshot:
-    """The bounded candidate authority revalidated around provider calls."""
+    """The bounded identity evidence supplied to one inference attempt."""
 
     states: tuple[_CandidateState, ...]
     search_complete: bool
@@ -154,7 +161,7 @@ class _DocumentBindingSnapshot:
 
 @dataclass(frozen=True)
 class _ResolutionSnapshot:
-    """All mutable database authority checked around provider calls."""
+    """The decision's candidate evidence and document membership at preparation."""
 
     candidates: _CandidateSnapshot
     document_binding: _DocumentBindingSnapshot
@@ -212,19 +219,19 @@ class CascadeResolver:
         meter: CostMeterPort | None = None,
         call_key: str = "resolve",
     ) -> ResolvedEntity:
-        """Resolve against a revalidated snapshot, minting when needed.
+        """Resolve from snapshot evidence with operation-specific commit checks.
 
-        The lemma lock protects each short snapshot/commit transaction. T3 and
-        T4 run between them, so provider latency never extends the database
-        lock. A changed snapshot discards the stale result and retries.
+        Matches retain their decision while profiles evolve. New decisions
+        retry only if bounded identity membership changed. Source, forget,
+        merge and lemma guards apply only in short transactions, never during
+        provider inference.
         """
         self._ensure_registered(deployment_id=deployment_id)
         lemma = normalized_lemma(surface=reference.name)
         for attempt in range(1, RESOLUTION_MAX_ATTEMPTS + 1):
-            with self._engine.begin() as connection:
-                connection.execute(
-                    _LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"}
-                )
+            with self._resolution_transaction(
+                deployment_id=deployment_id, doc_id=claim.doc_id, lemma=lemma
+            ) as connection:
                 binding = self._document_binding_snapshot(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -265,26 +272,26 @@ class CascadeResolver:
                 meter=meter,
                 call_key=f"{call_key}:optimistic:{attempt}",
             )
-            with self._engine.begin() as connection:
-                connection.execute(
-                    _LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"}
-                )
-                current = _ResolutionSnapshot(
-                    candidates=self._candidate_snapshot(
-                        connection=connection, deployment_id=deployment_id, lemma=lemma
-                    ),
-                    document_binding=self._document_binding_snapshot(
-                        connection=connection,
-                        deployment_id=deployment_id,
-                        doc_id=claim.doc_id,
-                        lemma=lemma,
-                    ),
-                )
-                if current != snapshot:
-                    continue
+            with self._resolution_transaction(
+                deployment_id=deployment_id, doc_id=claim.doc_id, lemma=lemma
+            ) as connection:
+                decision_features = {
+                    **outcome.decision_features,
+                    "commit_policy": "snapshot-match-membership-mint-v1",
+                    "input_snapshot_sha256": _snapshot_digest(snapshot=snapshot),
+                }
                 decision_id = uuid4()
                 if outcome.accepted is not None:
                     candidate, method, confidence, features = outcome.accepted
+                    canonical_id = connection.execute(
+                        _ACTIVE_CANONICAL_ENTITY,
+                        {
+                            "deployment_id": deployment_id,
+                            "entity_id": candidate.entity_id,
+                        },
+                    ).scalar_one_or_none()
+                    if canonical_id is None:
+                        continue
                     resolved = self._record(
                         connection=connection,
                         decision_id=decision_id,
@@ -292,20 +299,33 @@ class CascadeResolver:
                         reference=reference,
                         claim=claim,
                         lemma=lemma,
-                        entity_id=candidate.entity_id,
+                        entity_id=canonical_id,
                         method=method,
                         confidence=confidence,
-                        features={**outcome.decision_features, **features},
+                        features={
+                            **decision_features,
+                            **features,
+                            "selected_entity_id": str(candidate.entity_id),
+                            "committed_entity_id": str(canonical_id),
+                        },
                         created=False,
                     )
                     self._record_exclusions(
                         connection=connection,
                         deployment_id=deployment_id,
-                        anchor_entity_id=candidate.entity_id,
+                        anchor_entity_id=canonical_id,
                         excluded_entity_ids=outcome.different_entity_ids,
                         source_decision_id=decision_id,
                     )
                     return resolved
+                if not self._creation_membership_unchanged(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    doc_id=claim.doc_id,
+                    lemma=lemma,
+                    snapshot=snapshot,
+                ):
+                    continue
                 return self._mint(
                     connection=connection,
                     decision_id=decision_id,
@@ -316,12 +336,70 @@ class CascadeResolver:
                     considered=snapshot.candidates.candidates,
                     different_entity_ids=outcome.different_entity_ids,
                     adjudication=outcome.last_adjudication,
-                    decision_features=outcome.decision_features,
+                    decision_features=decision_features,
                 )
         raise ResolutionContendedError(
-            f"identity candidates for {lemma!r} changed during "
+            f"identity membership or target for {lemma!r} changed during "
             f"{RESOLUTION_MAX_ATTEMPTS} resolver attempts"
         )
+
+    @contextmanager
+    def _resolution_transaction(
+        self, *, deployment_id: UUID, doc_id: UUID, lemma: str
+    ) -> Iterator[Connection]:
+        """Fence source deletion/forget and identity changes in global lock order."""
+        with (
+            self._engine.begin() as connection,
+            application_fence(connection=connection, deployment_id=deployment_id),
+        ):
+            present = connection.execute(
+                _LIVE_SOURCE, {"deployment_id": deployment_id, "doc_id": doc_id}
+            ).scalar_one_or_none()
+            if present is None:
+                raise LookupError("resolution source is deleted or missing")
+            connection.execute(
+                _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
+            )
+            connection.execute(_LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"})
+            yield connection
+
+    def _creation_membership_unchanged(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        doc_id: UUID,
+        lemma: str,
+        snapshot: _ResolutionSnapshot,
+    ) -> bool:
+        """Recheck only bounded candidate IDs and local identity memberships."""
+        parameters = {
+            "deployment_id": deployment_id,
+            "lemma": lemma,
+            "floor": self._config.trigram_floor,
+            "limit": self._config.blocking_limit + 1,
+        }
+        rows = connection.execute(_T0_CANDIDATES, parameters).mappings().all()
+        if not rows:
+            rows = connection.execute(_T1_T2_BLOCK, parameters).mappings().all()
+        current_ids = frozenset(
+            row["entity_id"] for row in rows[: self._config.blocking_limit]
+        )
+        previous_ids = frozenset(
+            candidate.entity_id for candidate in snapshot.candidates.candidates
+        )
+        if current_ids != previous_ids:
+            return False
+        current = self._document_binding_snapshot(
+            connection=connection,
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            lemma=lemma,
+        )
+        previous = snapshot.document_binding
+        return current.generation == previous.generation and frozenset(
+            state.entity_id for state in current.states
+        ) == frozenset(state.entity_id for state in previous.states)
 
     def _document_binding_snapshot(
         self, *, connection: Connection, deployment_id: UUID, doc_id: UUID, lemma: str
@@ -1188,6 +1266,37 @@ def _format_t4_candidates(*, scored: tuple[_T3Score, ...]) -> str:
     )
 
 
+def _snapshot_digest(*, snapshot: _ResolutionSnapshot) -> str:
+    """Attest bounded decision inputs without duplicating erasable profile prose."""
+    payload = {
+        "search_complete": snapshot.candidates.search_complete,
+        "candidates": [
+            {
+                **state.candidate.model_dump(mode="json"),
+                "profile_gate": state.profile_gate,
+            }
+            for state in snapshot.candidates.states
+        ],
+        "document_binding_generation": snapshot.document_binding.generation,
+        "document_memberships": [
+            {
+                "entity_id": str(state.entity_id),
+                "anchor_decision_id": (
+                    str(state.anchor_decision_id)
+                    if state.anchor_decision_id is not None
+                    else None
+                ),
+                "anchor_confidence": state.anchor_confidence,
+                "anchor_valid": state.anchor_valid,
+            }
+            for state in snapshot.document_binding.states
+        ],
+    }
+    return sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _vector_literal(vector: tuple[float, ...]) -> str:
     """Serialize the fixed D94 vector for PostgreSQL's vector input type."""
     if len(vector) != P1_VECTOR_DIMENSIONS:
@@ -1198,6 +1307,36 @@ def _vector_literal(vector: tuple[float, ...]) -> str:
 
 
 _LOCK_LEMMA = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
+
+_LOCK_IDENTITY_SHARED = text(
+    "SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"
+)
+
+_LIVE_SOURCE = text(
+    """
+    SELECT doc_id FROM documents
+    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+      AND deleted_at IS NULL
+    FOR SHARE
+    """
+)
+
+_ACTIVE_CANONICAL_ENTITY = text(
+    """
+    WITH RECURSIVE chain AS (
+      SELECT entity_id, merged_into, status, ARRAY[entity_id] AS path
+      FROM entities
+      WHERE deployment_id = :deployment_id AND entity_id = :entity_id
+      UNION ALL
+      SELECT entity.entity_id, entity.merged_into, entity.status,
+             chain.path || entity.entity_id
+      FROM entities entity JOIN chain ON entity.entity_id = chain.merged_into
+      WHERE entity.deployment_id = :deployment_id
+        AND chain.status = 'merged' AND NOT entity.entity_id = ANY(chain.path)
+    )
+    SELECT entity_id FROM chain WHERE status = 'active' AND merged_into IS NULL
+    """
+)
 
 _DOCUMENT_BINDING_ROWS = text(
     """

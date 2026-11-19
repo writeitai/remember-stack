@@ -184,7 +184,7 @@ def test_statuses_and_changed_flags_compare_with_the_last_row_holding_the_key() 
 
 def test_cursor_pins_instants_and_refuses_other_calls() -> None:
     request = SectionHistoryRequest(doc_id=_DOC, section_key="per-diem")
-    scope = _scope_hash(request=request)
+    scope = _scope_hash(deployment_id=_DOC, request=request)
     cursor = _encode_cursor(
         scope_hash=scope,
         evaluated_at=_NOW,
@@ -195,10 +195,14 @@ def test_cursor_pins_instants_and_refuses_other_calls() -> None:
     assert decoded is not None
     assert (decoded.evaluated_at, decoded.believed_at) == (_NOW, _JAN_2026)
     other = _scope_hash(
-        request=SectionHistoryRequest(doc_id=_DOC, section_key="approvals")
+        deployment_id=_DOC,
+        request=SectionHistoryRequest(doc_id=_DOC, section_key="approvals"),
     )
     with pytest.raises(ValueError, match="different"):
         _decode_cursor(cursor=cursor, scope_hash=other)
+    foreign = _scope_hash(deployment_id=UUID(int=99), request=request)
+    with pytest.raises(ValueError, match="different"):
+        _decode_cursor(cursor=cursor, scope_hash=foreign)
     with pytest.raises(ValueError, match="malformed"):
         _decode_cursor(cursor="not-a-cursor", scope_hash=scope)
 

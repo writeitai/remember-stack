@@ -36,7 +36,7 @@ export default {
         "returns": "Self"
       },
       "ingest_file": {
-        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
+        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None",
         "property": false,
         "returns": "IngestedVersion"
       }
@@ -64,7 +64,7 @@ export default {
         "returns": "object"
       },
       "claims_and_sources_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None, documents: DocumentSearchFilters | Mapping[str, object] | None=None",
         "property": false,
         "returns": "Envelope"
       },
@@ -79,7 +79,7 @@ export default {
         "returns": "None"
       },
       "combined_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None, documents: DocumentSearchFilters | Mapping[str, object] | None=None",
         "property": false,
         "returns": "ContextBundleV2"
       },
@@ -93,10 +93,20 @@ export default {
         "property": false,
         "returns": "tuple[ConnectorDescriptor, ...]"
       },
+      "create_tag": {
+        "arguments": "self, *, name: str, description: str",
+        "property": false,
+        "returns": "Tag"
+      },
       "delete_document": {
         "arguments": "self, *, doc_id: UUID | str",
         "property": false,
         "returns": "DocumentDeletion"
+      },
+      "delete_tag": {
+        "arguments": "self, *, tag: UUID | str",
+        "property": false,
+        "returns": "Tag"
       },
       "deployment_build_info": {
         "arguments": "self",
@@ -114,7 +124,7 @@ export default {
         "returns": "dict[str, object]"
       },
       "document_references": {
-        "arguments": "self, *, chunk_id: UUID | str | None=None, doc_id: UUID | str | None=None, section_key: str | None=None, direction: Literal['outgoing', 'incoming', 'both']='both', kinds: Sequence[ReferenceKind] | None=None, time: ReadTime | None=None, k: int=DOCUMENT_REFERENCES_DEFAULT_K, cursor: str | None=None",
+        "arguments": "self, *, chunk_id: UUID | str | None=None, doc_id: UUID | str | None=None, section_key: str | None=None, direction: Literal['outgoing', 'incoming', 'both']='both', kinds: Sequence[ReferenceKind] | None=None, time: ReadTime | None=None, limit: int=DOCUMENT_REFERENCES_DEFAULT_LIMIT, cursor: str | None=None",
         "property": false,
         "returns": "DocumentReferencesPage"
       },
@@ -134,7 +144,7 @@ export default {
         "returns": "dict[str, object]"
       },
       "facts_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None, documents: DocumentSearchFilters | Mapping[str, object] | None=None",
         "property": false,
         "returns": "Envelope"
       },
@@ -144,7 +154,7 @@ export default {
         "returns": "Envelope"
       },
       "graph_neighborhood": {
-        "arguments": "self, *, entity_id: UUID, hops: int=2, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None, limit: int=500, continuation: str | None=None, include_paths: bool=False",
+        "arguments": "self, *, entity_id: UUID, hops: int=2, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None, limit: int=100, cursor: str | None=None, include_paths: bool=False",
         "property": false,
         "returns": "Envelope"
       },
@@ -159,7 +169,7 @@ export default {
         "returns": "Envelope"
       },
       "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None",
         "property": false,
         "returns": "IngestedVersion"
       },
@@ -178,13 +188,18 @@ export default {
         "property": false,
         "returns": "list[dict[str, object]]"
       },
+      "list_tags": {
+        "arguments": "self, *, query: str | None=None",
+        "property": false,
+        "returns": "TagList"
+      },
       "lookup_observations": {
-        "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10",
+        "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10, limit: int=50, cursor: str | None=None",
         "property": false,
         "returns": "Envelope"
       },
       "lookup_relations": {
-        "arguments": "self, *, subject_entity_id: UUID | None=None, predicate: str | None=None, object_entity_id: UUID | None=None, valid_at: datetime | None=None, k: int=50",
+        "arguments": "self, *, subject_entity_id: UUID | None=None, predicate: str | None=None, object_entity_id: UUID | None=None, valid_at: datetime | None=None, limit: int=50, cursor: str | None=None",
         "property": false,
         "returns": "Envelope"
       },
@@ -249,7 +264,7 @@ export default {
         "returns": "Envelope"
       },
       "search_documents": {
-        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=20, cursor: str | None=None, time: ReadTime | None=None",
+        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=DOCUMENT_SEARCH_DEFAULT_K, limit: int=DOCUMENT_SEARCH_DEFAULT_LIMIT, cursor: str | None=None, time: ReadTime | None=None",
         "property": false,
         "returns": "DocumentSearchPage"
       },
@@ -264,7 +279,7 @@ export default {
         "returns": "list[dict[str, object]]"
       },
       "section_history": {
-        "arguments": "self, *, doc_id: UUID | str, section_key: str, time: ReadTime | None=None, k: int=SECTION_HISTORY_DEFAULT_K, cursor: str | None=None",
+        "arguments": "self, *, doc_id: UUID | str, section_key: str, time: ReadTime | None=None, limit: int=SECTION_HISTORY_DEFAULT_LIMIT, cursor: str | None=None",
         "property": false,
         "returns": "SectionHistoryPage"
       },
@@ -287,6 +302,16 @@ export default {
         "arguments": "self, *, relation_id: UUID",
         "property": false,
         "returns": "Envelope"
+      },
+      "update_document_tags": {
+        "arguments": "self, *, doc_id: UUID | str, add: Sequence[str] | None=None, remove: Sequence[str] | None=None, set: Sequence[str] | None=None",
+        "property": false,
+        "returns": "DocumentTags"
+      },
+      "update_tag": {
+        "arguments": "self, *, tag: UUID | str, name: str | None=None, description: str | None=None",
+        "property": false,
+        "returns": "Tag"
       },
       "wait_for_readiness": {
         "arguments": "self, version_ids: Sequence[str | UUID], *, timeout: float=1800.0, poll_interval: float=15.0, require_p3: bool=False",
@@ -321,6 +346,8 @@ export default {
     "DocumentSearchRequest",
     "DocumentSearchResult",
     "DocumentSummary",
+    "DocumentTagFilter",
+    "DocumentTags",
     "DocumentVersionSummary",
     "EffectiveInterval",
     "EffectivePeriodInput",
@@ -359,8 +386,11 @@ export default {
     "SectionHistoryRow",
     "SectionHistorySection",
     "StoredKeyRefused",
+    "Tag",
+    "TagList",
     "TemporalMatch",
     "ToolDescriptor",
+    "UnknownTag",
     "VersionPipelineReadiness",
     "__version__",
     "resolve_connection"
@@ -581,6 +611,21 @@ export default {
         "SectionHistoryBackend": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
+        "TAG_READ_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "TAG_READ_TOOL_NAMES"
+        },
+        "TAG_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "TAG_TOOL_NAMES"
+        },
+        "TAG_WRITE_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "TAG_WRITE_TOOL_NAMES"
+        },
+        "TagBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
         "ToolArgumentError": {
           "disposition": "public client support export",
           "typescript": "ToolArgumentError"
@@ -610,6 +655,9 @@ export default {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_section_history_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_tag_tool": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "invalid_arguments": {

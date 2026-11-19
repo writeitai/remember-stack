@@ -5,7 +5,6 @@
 import type { CoMember } from './CoMember';
 export type Contradiction = {
     co_members?: Array<CoMember>;
-    continuation?: string | null;
     group_id: string;
     returned: number;
     total: number;

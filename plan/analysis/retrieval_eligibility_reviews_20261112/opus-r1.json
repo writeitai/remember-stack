@@ -1,0 +1,28 @@
+{
+  "reviewed_commit": "32b2a5d2d",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "command": [
+    "claude",
+    "--dangerously-skip-permissions",
+    "--model",
+    "claude-opus-5-5",
+    "--effort",
+    "high",
+    "-p",
+    "<prompt file contents>"
+  ],
+  "exit_code": 0,
+  "verdict": "CHANGES REQUIRED",
+  "runtime_implementation_started": false,
+  "blocking_findings": [
+    "B1 entity provenance physical plan and membership invariants",
+    "B2 index paths and partition costs",
+    "B3 concrete fact authority and consumers",
+    "B4 independent pre-change oracle",
+    "B5 complete adverse visibility matrix",
+    "B6 binding-corpus adoption"
+  ],
+  "opus-r1-prompt.txt_sha256": "4af071068633e55594c241cb360bf5d8aac371cd4ceb9a81048b7b23ef91b781",
+  "opus-r1-review.md_sha256": "af9d03b9da9233359eec76aa0b7480c916533d664b6e673fea21021092980497"
+}

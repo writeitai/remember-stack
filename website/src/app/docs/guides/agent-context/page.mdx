@@ -23,7 +23,7 @@ explicit guarantees about time, truncation and absence.
 
 | The question | Operation | Returns |
 |---|---|---|
-| "Who is Ravi?" "Which 'billing' do you mean?" Any name you will use as an anchor. | `resolve_entity` | Ranked entity candidates. Never a silent guess. |
+| "Who is John?" "Which 'billing' do you mean?" Any name you will use as an anchor. | `resolve_entity` | Ranked entity candidates. Never a silent guess. |
 | "Is the migration still planned for October?" "Who owns the invoice exporter?" What is true now, or at a given time. | `facts_context` | Adjudicated facts (relations and observations) with their validity and supporting evidence. |
 | "What did the team say about the exporter?" "Quote the spec." What sources said, word for word. | `claims_and_sources_context` | Current claims and source passages. Testimony, not verdicts. |
 | A general question where you want both what is held true and what was said. | `combined_context` | Both results side by side, each complete and labelled. |
@@ -31,6 +31,17 @@ explicit guarantees about time, truncation and absence.
 Default to `facts_context` for "is it true" questions and fall back to
 claims only when facts are missing or you need a verbatim quote. Use
 `combined_context` when you cannot tell in advance which the model needs.
+
+## Finish the source read when a detail is missing
+
+Keep supplied place names, dates and distinct list members in the answer, with
+the correct person and event. When facts leave a required detail or dialogue
+reply unresolved, inspect source chunks. `adjacent_chunks` returns chunks in
+document order around its supplied `chunk_id`; continue from the first or last
+returned ID only when that side still lacks needed context. A short side is a
+document boundary only if the center is present and no drops or truncation hide
+rows. Stop once the question is supported, at a known boundary or at the agent's
+call budget. Preserve uncertainty and never treat a top-k list as exhaustive.
 
 ## Parameters and limits
 
@@ -73,7 +84,7 @@ import remember
 
 client = remember.Client.from_env()
 
-candidates = client.resolve_entity("Ravi")
+candidates = client.resolve_entity("John")
 facts = client.facts_context("Who owns the invoice exporter?")
 said = client.claims_and_sources_context("invoice exporter rewrite")
 both = client.combined_context("What changed in the billing migration plan?")
@@ -93,7 +104,7 @@ facts = client.run_operation(
         "query": "invoice exporter owner",
         "k": 10,
         "evidence_per_fact": 2,
-        "entity_ids": [str(ravi_id)],
+        "entity_ids": [str(john_id)],
     },
 )
 ```
@@ -105,14 +116,14 @@ facts = client.run_operation(
 
 Resolve the names in the question first, then pass the chosen entity IDs
 as `entity_ids`. Facts are then searched in the anchors and their graph
-neighbours (one hop by default), which keeps "the exporter Ravi owns" from
+neighbours (one hop by default), which keeps "the exporter John owns" from
 matching every exporter in the memory.
 
 ```python
-resolved = client.resolve_entity("Ravi")
+resolved = client.resolve_entity("John")
 if resolved.negative is None and len(resolved.entities) == 1:
-    ravi_id = resolved.entities[0].entity_id
-    facts = client.facts_context("What does Ravi own?", entity_ids=[ravi_id])
+    john_id = resolved.entities[0].entity_id
+    facts = client.facts_context("What does John own?", entity_ids=[john_id])
 ```
 
 When a name resolves to more than one candidate, decide which one you mean
@@ -130,7 +141,7 @@ remember operations run facts_context \
   --arg query="invoice exporter owner" --arg k=10 --arg evidence_per_fact=2
 remember operations run claims_and_sources_context \
   --arg query="invoice exporter rewrite" --arg k=20
-remember operations run resolve_entity --arg name=Ravi
+remember operations run resolve_entity --arg name=John
 ```
 
 Each `--arg` value is parsed as JSON when it can be, so `k=10` is a number

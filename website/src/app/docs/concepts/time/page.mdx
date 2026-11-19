@@ -8,7 +8,7 @@ export const metadata = {
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 Ask a vector store "who works on the billing migration?" and it returns the
-passages that sound most like the question. The January note that says Ravi
+passages that sound most like the question. The January note that says John
 joined, and the June retro that says he left, both sound like the question.
 The store has no idea that one replaced the other. Your agent gets both,
 with nothing to tell them apart, and answers with whichever the model
@@ -39,11 +39,11 @@ A worked example makes the difference concrete. The team's notes contain
 two documents:
 
 - **Kickoff notes**, ingested with `source_modified_at` 2026-01-15 10:00 UTC:
-  "Ravi has been on the billing migration since yesterday."
+  "John has been on the billing migration since yesterday."
 - **Retro notes**, ingested with `source_modified_at` 2026-06-12 14:00 UTC:
-  "Ravi moved from the billing migration to the search team on 1 June."
+  "John moved from the billing migration to the search team on 1 June."
 
-For the fact "Ravi works on billing migration", the three clocks read:
+For the fact "John works on billing migration", the three clocks read:
 
 | Clock | Value | Where it came from |
 |---|---|---|
@@ -67,8 +67,8 @@ as four fields:
 
 | Kind | Meaning | Example |
 |---|---|---|
-| `event_time` | When something happened. | "Ravi merged the schema change on 2026-03-03." |
-| `effective_period` | When a state or arrangement applied. | "Ravi worked on the billing migration from January to May." |
+| `event_time` | When something happened. | "John merged the schema change on 2026-03-03." |
+| `effective_period` | When a state or arrangement applied. | "John worked on the billing migration from January to May." |
 | `measurement_period` | The period a figure covers. | "Q1 billing errors fell to 12." |
 | `proposition_validity` | When a proposition holds. | "Dana has led product since 2024." |
 
@@ -108,8 +108,8 @@ arrives:
 - A later claim can correct the dates ("the cutover was 9 June, not 8
   June"). The fact keeps its identity; its window is replaced, and the
   decision names the claims that justify it.
-- A successor closes its predecessor. Ravi's move to the search team caps
-  "Ravi works on billing migration" at 2026-06-01, the successor's start in
+- A successor closes its predecessor. John's move to the search team caps
+  "John works on billing migration" at 2026-06-01, the successor's start in
   the world.
 
 Each change is written to the fact's decision transcript with the window
@@ -128,7 +128,7 @@ Precision says how exact a window is. It is never faked: a claim that says
 | `quarter` | A calendar quarter. | "in Q2 2026" |
 | `year` | A calendar year. | "in 2025" |
 | `open` | A known start, still ongoing. | "since 2026-01-14" |
-| `unknown` | No usable date. | "Ravi is the on-call engineer" |
+| `unknown` | No usable date. | "John is the on-call engineer" |
 
 <Callout type="note" title="Claim ends are inclusive; fact ends are exclusive">
 
@@ -201,10 +201,10 @@ question is about time.
 
 ### The worked example, queried
 
-Add a third fact with no date, "Ravi is the on-call engineer for billing
+Add a third fact with no date, "John is the on-call engineer for billing
 incidents". Evaluated on 2026-09-23, the modes return:
 
-| Query | Ravi works on billing migration (2026-01-14 to 2026-06-01) | Ravi works on search team (since 2026-06-01, open) | Ravi is on-call (no date) |
+| Query | John works on billing migration (2026-01-14 to 2026-06-01) | John works on search team (since 2026-06-01, open) | John is on-call (no date) |
 |---|---|---|---|
 | `current` | not returned (ended) | `confirmed` | `possible` |
 | `at` 2026-03-01 | `confirmed` | not returned (not started) | `possible` |
@@ -232,9 +232,9 @@ from datetime import datetime, UTC
 import remember
 
 with remember.Client() as memory:
-    ravi = memory.resolve_entity("Ravi").entities[0]
+    john = memory.resolve_entity("John").entities[0]
     before_the_retro = memory.graph_neighborhood(
-        entity_id=ravi.entity_id,
+        entity_id=john.entity_id,
         valid_at=datetime(2026, 5, 1, tzinfo=UTC),
         believed_at=datetime(2026, 6, 1, tzinfo=UTC),
     )

@@ -139,6 +139,9 @@ from rememberstack.model.documents import StoredObjectRefusedError
 from rememberstack.model.documents import StructureSource
 from rememberstack.model.documents import SyncCycleSummary
 from rememberstack.model.documents import SyntheticRootRecord
+from rememberstack.model.documents import TagConflictError
+from rememberstack.model.documents import TagLimitError
+from rememberstack.model.documents import UnknownTagError
 from rememberstack.model.documents import UploadRecord
 from rememberstack.model.documents import VersionKeyConflictError
 from rememberstack.model.envelope import AggregateBucket
@@ -311,6 +314,7 @@ from rememberstack.model.mounts import PublishedMounts
 from rememberstack.model.object_store import ObjectAlreadyExistsError
 from rememberstack.model.object_store import ObjectKey
 from rememberstack.model.object_store import ObjectKeyEscapesRootError
+from rememberstack.model.object_store import ObjectPurgeEvidence
 from rememberstack.model.operational_scale import OperationalScaleMeasurement
 from rememberstack.model.operational_scale import OperationalScaleReport
 from rememberstack.model.operations import CurrencyLedgerAudit
@@ -559,6 +563,7 @@ __all__ = (
     "ObjectAlreadyExistsError",
     "ObjectKey",
     "ObjectKeyEscapesRootError",
+    "ObjectPurgeEvidence",
     "ObservationAssertion",
     "ObservationCandidate",
     "ObservationForEmbedding",
@@ -767,6 +772,9 @@ __all__ = (
     "UploadRecord",
     "StoredObjectRefusedError",
     "VersionKeyConflictError",
+    "TagConflictError",
+    "TagLimitError",
+    "UnknownTagError",
     "Validity",
     "VersionPipelineReadiness",
     "WorkLedgerError",

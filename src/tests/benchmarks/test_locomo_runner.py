@@ -84,6 +84,8 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
+from tests.benchmarks.corpus_support import publications
+from tests.benchmarks.corpus_support import write_corpus
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
@@ -481,7 +483,7 @@ def test_p3_io_failure_is_a_checkpointed_terminal_answer(
         }
 
     root = _published_p3(root=tmp_path)
-    mount = P3Mount(root=root, expected_version="test-v1")
+    mount = P3Mount(root=root, publications=publications("test-v1"))
     original_iterdir = Path.iterdir
 
     def unreadable(path: Path):  # noqa: ANN202
@@ -1125,7 +1127,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v39", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
+    (("full-v47", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -2008,7 +2010,7 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v39","protocol_fingerprint":'
+        '{"protocol_name":"RS-LoCoMo-Full-v47","protocol_fingerprint":'
         f'"{prepared.protocol_fingerprint}",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
@@ -2228,7 +2230,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v39"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v47"
     assert prepared.answer_agent_model == "openai/gpt-6-luna"
     assert prepared.answer_agent_reasoning_effort == "high"
     assert prepared.answer_reader_retry_budget == 2
@@ -2796,6 +2798,26 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
                 "versioning_mode": "snapshot",
             },
         )
+    if request.method == "POST" and request.url.path == "/documents/search":
+        publication = publications("test-v1")[0]
+        return httpx.Response(
+            200,
+            json={
+                "documents": [
+                    {
+                        "doc_id": str(publication.doc_id),
+                        "version_id": str(publication.version_id),
+                        "representation_id": str(publication.representation_id),
+                        "version_no": 1,
+                        "status": "ready",
+                        "family": "markdown",
+                        "p3_path": publication.path,
+                        "served_version": True,
+                    }
+                ],
+                "as_of": "2026-07-23T12:00:00Z",
+            },
+        )
     if request.method == "POST" and request.url.path == "/readiness":
         return httpx.Response(200, json=_complete_readiness_payload())
     if request.method == "GET" and request.url.path == "/processing-layers":
@@ -2854,11 +2876,7 @@ def _complete_readiness_payload() -> dict[str, object]:
                 "checked_at": timestamp,
                 "reason": "ready",
                 **(
-                    {
-                        "version": "test-v1",
-                        "built_at": timestamp,
-                        "published_at": timestamp,
-                    }
+                    {"version": "test-v1", "built_at": None, "published_at": None}
                     if capability == "p3"
                     else {}
                 ),
@@ -2881,7 +2899,7 @@ def _published_p3(*, root: Path) -> Path:
     """Create the smallest mount matching the synthetic readiness payload."""
     p3 = root / "p3"
     p3.mkdir(exist_ok=True)
-    (p3 / ".snapshot-version").write_text("test-v1", encoding="utf-8")
+    write_corpus(p3, "test-v1")
     (p3 / "llms.txt").write_text("# Synthetic P3\n", encoding="utf-8")
     return p3
 
@@ -3546,7 +3564,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v39"]
+    protocol = PROTOCOL_REGISTRY["full-v47"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",
@@ -3707,8 +3725,15 @@ def test_configured_retrieval_depth_reaches_the_api_and_saved_trace() -> None:
     assert requests[0] == {"query": "Where?", "k": 50, "candidate_k": 200}
 
 
+@pytest.mark.parametrize(
+    ("historical_name", "keep_profile"),
+    (("RS-LoCoMo-Full-v38", False), ("RS-LoCoMo-Full-v39", True)),
+)
 def test_historical_protocol_is_read_only_without_an_executable_definition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    historical_name: str,
+    keep_profile: bool,
 ) -> None:
     """Inspect old recorded identities without retaining their execution branches."""
     _patch_prepared_inputs(monkeypatch=monkeypatch)
@@ -3716,15 +3741,17 @@ def test_historical_protocol_is_read_only_without_an_executable_definition(
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
     configuration_path = run_dir / "run.json"
     configuration = json.loads(configuration_path.read_text())
-    configuration.pop("execution_profile")
+    if not keep_profile:
+        configuration.pop("execution_profile")
+        configuration.update(
+            answer_agent_model="openai/gpt-5.6-luna",
+            judge_model="openai/gpt-5.6-luna",
+            answer_agent_reasoning_effort="none",
+            judge_reasoning_effort="none",
+            api_timeout_seconds=60.0,
+        )
     configuration.update(
-        protocol_name="RS-LoCoMo-Full-v38",
-        adapter_version="historical-adapter",
-        answer_agent_model="openai/gpt-5.6-luna",
-        judge_model="openai/gpt-5.6-luna",
-        answer_agent_reasoning_effort="none",
-        judge_reasoning_effort="none",
-        api_timeout_seconds=60.0,
+        protocol_name=historical_name, adapter_version="historical-adapter"
     )
     base = {
         key: value
@@ -3742,9 +3769,11 @@ def test_historical_protocol_is_read_only_without_an_executable_definition(
     state_path.write_text(json.dumps(state))
     before = {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
     recorded = runner.load_recorded_run(run_dir=run_dir)
-    assert recorded.configuration.answer_agent_model == "openai/gpt-5.6-luna"
-    assert recorded.configuration.execution_profile is None
-    assert summarize_run(run_dir=run_dir).protocol_name == "RS-LoCoMo-Full-v38"
+    assert (
+        recorded.configuration.answer_agent_model == configuration["answer_agent_model"]
+    )
+    assert (recorded.configuration.execution_profile is not None) == keep_profile
+    assert summarize_run(run_dir=run_dir).protocol_name == historical_name
     with pytest.raises(ValueError, match="historical protocol.*read-only"):
         run_protocol(run_dir=run_dir)
     assert before == {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
@@ -3846,3 +3875,284 @@ def test_capacity_stop_retries_rejected_item_and_preserves_prior_work(
             assert state.judges[first_question.item_id].model_dump_json() == before
     finally:
         raw_client.close()
+
+
+def test_retained_ingestion_fork_keeps_paid_origin_and_current_serving_guards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A serving upgrade reuses exact paid rows without uploading or calling models."""
+    from benchmarks.locomo import reuse
+
+    from rememberstack.model import PipelineReadinessReport
+
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    source = tmp_path / "original"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=source)
+    requests: list[tuple[str, str]] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        """Serve old ingestion, then an upgraded native readiness report."""
+        requests.append((request.method, request.url.path))
+        if request.method == "POST" and request.url.path == "/readiness":
+            payload = _complete_readiness_payload()
+            payload["build_revision"] = runner._repository_revision()
+            return httpx.Response(200, json=payload)
+        return _run_transport(request)
+
+    with httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(transport)
+    ) as raw:
+        client = MemoryClient(client=raw)
+        ingest_sample(
+            run_dir=source,
+            sample_id="conv-test",
+            max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        context = runner.load_recorded_run(run_dir=source)
+        context.state.readiness["conv-test"] = PipelineReadinessReport.model_validate(
+            _complete_readiness_payload()
+        )
+        runner._save_state(run_dir=source, state=context.state)
+        original = {
+            name: (source / name).read_bytes() for name in ("run.json", "state.json")
+        }
+        requests.clear()
+        monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+        derived = tmp_path / "upgraded"
+        config = reuse.prepare_reused_run(
+            source_run=source,
+            output=derived,
+            sample_id="conv-test",
+            execute=True,
+            client=client,
+        )
+        assert config.repository_revision == "b" * 40
+        assert config.retained_ingestion is not None
+        assert config.retained_ingestion.processing_revision == "a" * 40
+        assert config.protocol_fingerprint != context.configuration.protocol_fingerprint
+        result = runner._load_run(run_dir=derived)
+        assert result.state.ingests == context.state.ingests
+        assert result.state.readiness["conv-test"].build_revision == "b" * 40
+        assert not result.state.answers and not result.state.judges
+        assert all(path != "/ingest" for _, path in requests)
+        assert {name: (source / name).read_bytes() for name in original} == original
+        for name, data in original.items():
+            assert (
+                derived / "provenance/retained-ingestion" / name
+            ).read_bytes() == data
+        with pytest.raises(ExecutionGuardError, match="read-only"):
+            ingest_sample(
+                run_dir=derived,
+                sample_id="conv-test",
+                max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=client,
+                provider=_PreflightProvider(),
+            )
+        with pytest.raises(ExecutionGuardError, match="original processing run"):
+            reuse.prepare_reused_run(
+                source_run=derived,
+                output=tmp_path / "again",
+                sample_id="conv-test",
+                execute=True,
+                client=client,
+            )
+        (derived / "provenance/retained-ingestion/state.json").write_text("{}")
+        with pytest.raises(BenchmarkRunError, match="provenance"):
+            runner._load_run(run_dir=derived)
+
+
+@pytest.mark.parametrize(
+    "drift", ("not-ready", "model", "processing-clock", "serving-revision", "surface")
+)
+def test_retained_fork_rejects_incompatible_live_data_before_upload(
+    drift: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reuse never accepts changed processing, models, builds or query surfaces."""
+    from benchmarks.locomo import reuse
+
+    from rememberstack.model import PipelineReadinessReport
+
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    source = tmp_path / "original"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=source)
+    mode = "ingest"
+    uploads = 0
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        """Vary one real wire contract after creating the original ingestion."""
+        nonlocal uploads
+        if request.url.path == "/ingest":
+            uploads += 1
+        if mode == "reuse" and request.url.path == "/readiness":
+            payload = _complete_readiness_payload()
+            if drift == "not-ready":
+                payload["ready"] = False
+            elif drift == "model":
+                payload["model_bindings"] = {
+                    **EXPECTED_INGEST_MODEL_BINDINGS,
+                    "structurer_model": "other",
+                }
+            elif drift == "processing-clock":
+                version = PipelineReadinessReport.model_validate(payload).versions[0]
+                stages = [stage.model_dump(mode="json") for stage in version.stages]
+                stages[0]["finished_at"] = "2026-07-24T12:00:00Z"
+                payload["versions"] = [
+                    {**version.model_dump(mode="json"), "stages": stages}
+                ]
+            payload["build_revision"] = (
+                "c" * 40 if drift == "serving-revision" else "b" * 40
+            )
+            return httpx.Response(200, json=payload)
+        if (
+            mode == "reuse"
+            and drift == "surface"
+            and request.url.path == "/query/space"
+        ):
+            return httpx.Response(200, json={"surface_manifest_hash": "wrong"})
+        return _run_transport(request)
+
+    with httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(transport)
+    ) as raw:
+        client = MemoryClient(client=raw)
+        ingest_sample(
+            run_dir=source,
+            sample_id="conv-test",
+            max_documents=1,
+            max_evaluator_cost_usd=Decimal("1"),
+            execute=True,
+            isolated_deployment_confirmation="conv-test",
+            client=client,
+            provider=_PreflightProvider(),
+        )
+        context = runner.load_recorded_run(run_dir=source)
+        context.state.readiness["conv-test"] = PipelineReadinessReport.model_validate(
+            _complete_readiness_payload()
+        )
+        runner._save_state(run_dir=source, state=context.state)
+        before = (source / "state.json").read_bytes()
+        mode = "reuse"
+        monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+        with pytest.raises(ExecutionGuardError):
+            reuse.prepare_reused_run(
+                source_run=source,
+                output=tmp_path / "new",
+                sample_id="conv-test",
+                execute=True,
+                client=client,
+            )
+        assert uploads == 1
+        assert (source / "state.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("variant", ("same", "different-origin", "ordinary"))
+def test_retained_summary_merges_only_common_processing_and_serving_identity(
+    variant: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-sample retained provenance survives a validated whole-manifest merge."""
+    from benchmarks.locomo.model import RetainedIngestionOrigin
+
+    from rememberstack.model import PipelineReadinessReport
+
+    questions = _patch_two_sample_inputs(monkeypatch=monkeypatch)
+    original = tmp_path / "original"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=original)
+    context = runner.load_recorded_run(run_dir=original)
+    context.state.readiness = {
+        sample: PipelineReadinessReport.model_validate(_complete_readiness_payload())
+        for sample in ("conv-a", "conv-b")
+    }
+    runner._save_state(run_dir=original, state=context.state)
+    original_files = {
+        name: (original / name).read_bytes() for name in ("run.json", "state.json")
+    }
+    monkeypatch.setattr(runner, "_repository_revision", lambda: "b" * 40)
+    outputs = []
+    for index, question in enumerate(questions):
+        output = tmp_path / str(index)
+        origin = RetainedIngestionOrigin(
+            sample_id=question.sample_id,
+            processing_revision="c" * 40
+            if index and variant == "different-origin"
+            else "a" * 40,
+            protocol_fingerprint=context.configuration.protocol_fingerprint,
+            configuration_sha256=hashlib.sha256(original_files["run.json"]).hexdigest(),
+            state_sha256=hashlib.sha256(original_files["state.json"]).hexdigest(),
+        )
+        # Different origin is represented by another fully valid original configuration.
+        files = original_files.copy()
+        if index and variant == "different-origin":
+            config = json.loads(files["run.json"])
+            config["repository_revision"] = "c" * 40
+            files["run.json"] = json.dumps(config).encode()
+            origin = origin.model_copy(
+                update={
+                    "configuration_sha256": hashlib.sha256(
+                        files["run.json"]
+                    ).hexdigest()
+                }
+            )
+        prepare_run(
+            dataset_path=tmp_path / "synthetic.json",
+            tier="smoke",
+            output=output,
+            retained_ingestion=None if index and variant == "ordinary" else origin,
+        )
+        provenance = output / "provenance/retained-ingestion"
+        provenance.mkdir(parents=True)
+        for name, data in files.items():
+            (provenance / name).write_bytes(data)
+        _write_terminal_records(run_dir=output, questions=(question,))
+        outputs.append(output)
+    if variant == "same":
+        summary = summarize_runs(run_dirs=tuple(outputs))
+        assert summary.questions == 2 and summary.judge_correct == 1
+        assert summary.missing_sample_ids == []
+        assert {row.sample_id for row in summary.retained_ingestion_origins} == {
+            "conv-a",
+            "conv-b",
+        }
+    else:
+        with pytest.raises(BenchmarkRunError, match="retained"):
+            summarize_runs(run_dirs=tuple(outputs))
+
+
+def test_prior_reader_prompt_stays_inspectable_but_cannot_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same-family prompt changes preserve recorded results and refuse mixing."""
+    from dataclasses import replace
+    from types import MappingProxyType
+
+    from benchmarks.locomo import protocol
+
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "prior-reader"
+    previous = replace(
+        protocol.PROTOCOL_REGISTRY[protocol.DEFAULT_PROTOCOL_KEY],
+        answer_prompt_template="A previous generic reader prompt.",
+    )
+    with monkeypatch.context() as old:
+        old.setattr(
+            protocol, "PROTOCOL_REGISTRY", MappingProxyType({previous.key: previous})
+        )
+        prepared = prepare_run(
+            dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+        )
+    before = {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
+    assert runner.load_recorded_run(run_dir=run_dir).configuration == prepared
+    assert (
+        summarize_run(run_dir=run_dir).protocol_fingerprint
+        == prepared.protocol_fingerprint
+    )
+    with pytest.raises(BenchmarkRunError, match="answer_prompt_sha256"):
+        runner._load_run(run_dir=run_dir)
+    assert before == {name: (run_dir / name).read_bytes() for name in before}

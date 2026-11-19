@@ -57,7 +57,6 @@ from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
-from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
@@ -1291,12 +1290,16 @@ def test_full_structure_route_persists_summaries_and_root_placement(
     assert all(section["summary"] for section in sidecar["sections"])
     assert all(section["summary_cache_key"] for section in sidecar["sections"])
     assert len(sidecar["sections"]) == 4
-    # This is the exact current-generation query consumed by CorpusFsBuilder.
-    p3_document = ProjectionCatalog(engine=rig.engine).corpus_documents(
+    # The live corpus selector reads this active generation's persisted facts.
+    from rememberstack.spine.corpus_export import CorpusReaderCatalog
+
+    with CorpusReaderCatalog(engine=rig.engine).documents(
         deployment_id=_DEPLOYMENT_ID
-    )[0]
-    assert p3_document["root_summary"] == "A field report about erosion."
-    assert p3_document["placement_path"] == "/field-research/erosion/"
+    ) as documents:
+        selected = list(documents)
+    assert len(selected) == 1 and selected[0].doc_id == ingested.doc_id
+    assert selected[0].root_summary == "A field report about erosion."
+    assert selected[0].placement_path == "/field-research/erosion/"
 
 
 def test_failed_checker_is_explicit_and_fail_open_on_the_parser(rig: _E0Rig) -> None:

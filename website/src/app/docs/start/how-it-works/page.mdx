@@ -9,7 +9,7 @@ export const metadata = {
 
 This page follows one document through RememberStack. The team in the
 example is working on a billing migration. Dana is the product lead and
-Ravi is an engineer. The document is the notes from Thursday's stand-up.
+John is an engineer. The document is the notes from Thursday's stand-up.
 
 ## 1. You send the document
 
@@ -49,7 +49,7 @@ background.
 4. **Select and extract claims.** RememberStack picks out the statements
    worth keeping and drops opinions, advice and hypotheticals. It records
    why each dropped statement was dropped. Each kept statement becomes a
-   *claim*, rewritten to stand on its own ("Ravi said the migration moves to
+   *claim*, rewritten to stand on its own ("John said the migration moves to
    October" rather than "he said it moves"), and tied to the exact
    characters it came from.
 5. **Check grounding.** A deterministic check rejects any claim that uses
@@ -60,11 +60,11 @@ background.
 
 ## 3. RememberStack connects it
 
-1. **Resolve entities.** Names become *entities*. "Ravi", "Ravi K." and
+1. **Resolve entities.** Names become *entities*. "John", "John K." and
    "the backend engineer on billing" can resolve to one person. A merge can
    be undone.
 2. **Form facts.** Claims become *facts*: relations between two entities
-   ("Ravi owns the invoice exporter") or observations about one ("the
+   ("John owns the invoice exporter") or observations about one ("the
    billing migration targets October").
 3. **Adjudicate.** Each new claim is weighed against what the memory
    already holds. It either confirms an existing fact, adjusts the period in

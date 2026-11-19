@@ -18,11 +18,111 @@ need action from you are marked **Action needed**.
 
 <Cloud>
 
-remember.dev may run an earlier engine than the newest release. Which one it
-runs today, and what that means for you, is on
+remember.dev runs the latest release and upgrades deployments with each
+release. What it serves is on
 [What remember.dev serves](/docs/cloud/compatibility).
 
 </Cloud>
+
+## 0.21.0 (November 2026)
+
+**Action needed (self-hosted): PostgreSQL 18.** PostgreSQL 18 is now the
+reference server (it replaces the PostgreSQL 19 release candidate). Compose
+uses `ghcr.io/writeitai/remember-stack-postgres:18-0.21.0`. A PostgreSQL 19
+data directory cannot be opened by 18: start from fresh PostgreSQL 18 storage
+and re-ingest. See [PostgreSQL server versions](/docs/self-hosting/upgrades#postgresql-server-versions).
+
+**Document tags.** Register tags, assign them at ingest or later, rename and
+delete them, find them in document lists, search results and SQL, and filter
+`search` and `search_documents` by tag, and the three context operations
+(`facts_context`, `claims_and_sources_context`, `combined_context`) through
+their `documents` filter. See
+[Tag documents](/docs/guides/tag-documents).
+
+**Corpus folders.** Served document versions are published as type/topic/title
+folders through ordinary processing work, with a verifying reconcile and
+durable deletion. Setup migrates to `p9_53_0074`.
+
+### Corpus consumption
+
+Document search's `p3_path` resolves a type/topic/title folder only when the
+selected version is served and its nullable publication marker matches current
+export inputs. Readiness uses the same guard per requested version. Pending,
+raw-only, updating, failed and historical results have no browse path.
+Only the suffix remains stable across folder moves; the consumption skill and
+MCP descriptions teach re-resolution and offline `find`. Corpus originals and
+reader derivatives remain independent of claims/facts switches, and K stays a
+separate repository.
+
+The benchmark harness's fresh Full-v47 protocol attests publication markers,
+ready-folder identities and frozen file inventories. This change establishes
+no new benchmark result and does not reinterpret stored evidence.
+
+## 0.20.0 (November 2026)
+
+### Retrieval SQL and online schema upgrade
+
+Native fact and entity-scoped claim/chunk retrieval share visibility work inside
+each database statement. Source, version, deletion, identity and time rules still
+apply before a result counts toward top-k. Existing stored content and vectors
+are reused; this upgrade does not run ingestion or change model settings.
+
+**Action needed (operators).** Run the native online migration to
+`p9_48_0069`. Its preceding revision, `p9_47_0068`, adds a mention-to-chunk
+B-tree on existing data: it builds partition indexes concurrently, then attaches
+them. It also replaces the existing document-entity index online with a
+deployment-aware ordered shape, preventing absent-member bridge checks from
+scanning unrelated documents under skew. Allow disk space and I/O/WAL for the
+new mention index and temporary coexistence of both document-index shapes.
+An interrupted own index
+build is checked and completed on rerun; a colliding index with a different
+definition causes setup to fail. Offline `alembic upgrade --sql` is unsupported
+for this catalog-driven revision.
+
+Concurrent migration processes wait on one database-scoped session lock before
+reading revision state. It survives concurrent-index commits; ordinary reads and
+ingestion do not acquire it. Each revision commits separately, so index-attachment
+locks are released before the view update. A later migration failure leaves
+earlier revisions committed; returning to an earlier release requires its
+pre-upgrade backup. The acquisition wait defaults to
+60 seconds and is configurable through `migration_lock_timeout_seconds` in
+`alembic.ini`; an expired wait fails setup explicitly. The new view definitions
+also change the query-space manifest identity, so saved-query revalidation uses
+that new identity.
+
+## 0.19.1 (November 2026)
+
+Database migrations and the processing receipt contract stay at 0.19.0.
+
+**Native storage evidence for operators.** The engine provides a read-only
+capture integration with an original PostgreSQL view, in-guard allocated
+relation/index/TOAST/fork records, exact provider-origin matching, classified
+component amounts, and complete committed terminal membership. Operators
+supply qualified source/store/clock profiles, dedicated ordinary collector
+connections, provider transport and durable evidence storage. One bounded
+batch captures Projects at the same cut; immutable canonical pages support
+exact replay. See the repository's
+[storage-capture development documentation](https://github.com/writeitai/remember-stack/blob/main/docs/development/storage-capture-managed-assembly.md)
+for the callable boundary and functional validation limits.
+
+**Processing and concurrency.**
+
+- Entity resolution preserves valid matches from its original snapshot while
+  guarding concurrent creation. Fact projection reserves bounded pending
+  batches, allowing unrelated work to proceed concurrently.
+- Image descriptions request explicit visual detail, defaulting to `high`.
+  Existing description checkpoints refresh once under the changed fingerprint;
+  matching OCR checkpoints remain reusable. Set
+  `REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL` to an explicitly supported provider
+  value when choosing another observation resolution.
+- Explicit provider-unavailable rejection envelopes follow the existing
+  bounded OpenRouter retry policy.
+
+**LoCoMo development harness.** Answer-model and prompt trials have explicit
+provider policies and bounded parallel question budgets. Development subsets
+and judge models are pinned in run identities. Evidence reads preserve
+complete constraints, initiating dialogue and attachment context; historical
+semantic grading and grounded negative answers are restored.
 
 ## 0.19.0 (November 2026)
 
@@ -171,7 +271,7 @@ existing deployment. A 0.17 deployment upgrades in place: its data is kept and
   2. Dump the database and restore it into a new RC 1 volume.
 
   The order matters: a dump taken before step 1 holds definitions RC 1 cannot
-  restore. [Upgrades](/docs/self-hosting/upgrades#postgresql-prerelease-versions)
+  restore. [Upgrades](/docs/self-hosting/upgrades#postgresql-server-versions)
   has the commands.
 - The graph no longer uses SQL/PGQ, which RC 1 removed. One-hop neighbourhoods
   are plain joins over the same views, and they return the same results.

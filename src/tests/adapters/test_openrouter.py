@@ -2248,6 +2248,113 @@ def test_generic_error_with_generation_id_is_not_assumed_unbilled() -> None:
 
 
 @pytest.mark.parametrize("routed", [False, True])
+def test_explicit_provider_unavailable_with_id_recovers_without_usage_lookup(
+    monkeypatch: pytest.MonkeyPatch, routed: bool
+) -> None:
+    """An uncharged unavailable attempt can retry; only the answer has usage."""
+    recorder = _FakeRecorder()
+    completion = _completion(content='{"answer":"Prague"}')
+    completion["model"] = "openai/gpt-6-luna"
+    completion["provider"] = "openai"
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="offline",
+            chat_provider_only=["openai/flex", "openai"] if routed else None,
+            chat_provider_order=["openai/flex", "openai"] if routed else None,
+        ),
+        responses=[
+            httpx.Response(
+                200,
+                json={
+                    "id": "gen-unavailable-attempt",
+                    "error": {
+                        "code": 502,
+                        "message": "The provider could not process this request.",
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                },
+            ),
+            httpx.Response(200, json=completion),
+        ],
+        recorder=recorder,
+    )
+    lookups: list[str] = []
+
+    def metadata(*, generation_id: str) -> dict[str, object]:
+        """A rejected request has no completed-generation accounting to fetch."""
+        lookups.append(generation_id)
+        raise AssertionError("Do not reconcile an explicitly unbilled rejection.")
+
+    monkeypatch.setattr(provider, "_get_generation", metadata)
+    try:
+        result = provider.generate(
+            request=ModelRequest(model="openai/gpt-6-luna", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+    assert result.output.answer == "Prague"
+    assert len(seen) == 2 and not lookups
+    assert recorder.records[-1].usage == result.usage
+    if routed:
+        assert [record.outcome for record in recorder.records] == [
+            "transport_error",
+            "succeeded",
+        ]
+        assert recorder.records[0].usage is None
+        initial_provider = seen[0]["provider"]
+        surviving_provider = seen[1]["provider"]
+        assert isinstance(initial_provider, dict)
+        assert isinstance(surviving_provider, dict)
+        assert initial_provider["order"] == ["openai/flex", "openai"]
+        assert surviving_provider["order"] == ["openai"]
+
+
+@pytest.mark.parametrize(
+    "evidence", [{"usage": {}}, {"usage": None}, {"choices": []}, {"choices": None}]
+)
+def test_provider_unavailable_never_overrides_possible_paid_output(
+    evidence: dict[str, object],
+) -> None:
+    """Explicit unavailability cannot erase any choices or usage field."""
+    from rememberstack.adapters.openrouter import _retryable_upstream_error
+    from rememberstack.adapters.openrouter import unbilled_capacity_rejection
+
+    response = httpx.Response(
+        200,
+        json={
+            "id": "gen-possibly-billable",
+            "error": {"code": 502, "metadata": {"error_type": "provider_unavailable"}},
+            **evidence,
+        },
+    )
+    assert not _retryable_upstream_error(response=response)
+    assert not unbilled_capacity_rejection(response=response)
+
+
+@pytest.mark.parametrize(
+    "status,code", [(401, 502), (403, 502), (200, 401), (200, 403)]
+)
+def test_provider_unavailable_does_not_override_authentication_failure(
+    status: int, code: int
+) -> None:
+    """Contradictory availability metadata cannot make an auth error retryable."""
+    from rememberstack.adapters.openrouter import _retryable_upstream_error
+    from rememberstack.adapters.openrouter import unbilled_capacity_rejection
+
+    response = httpx.Response(
+        status,
+        json={
+            "id": "gen-rejected-credentials",
+            "error": {"code": code, "metadata": {"error_type": "provider_unavailable"}},
+        },
+    )
+    assert not _retryable_upstream_error(response=response)
+    assert not unbilled_capacity_rejection(response=response)
+
+
+@pytest.mark.parametrize("routed", [False, True])
 @pytest.mark.parametrize("capture", [False, True])
 def test_accounting_failure_retains_identifiers_without_provider_content(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, routed: bool, capture: bool
@@ -2375,3 +2482,232 @@ def test_accounting_diagnostic_does_not_echo_invalid_generation_id() -> None:
     assert "generation_id=None" in str(error)
     assert "inline_reason=other" in str(error)
     assert "private" not in str(error)
+
+
+# A success status whose body is not a JSON object. Each body carries a private
+# marker so the tests can prove the error never echoes body text.
+_MALFORMED_SUCCESS_BODIES = [
+    pytest.param(b"", "body=empty", id="empty"),
+    pytest.param(b"\n" * 26 + b"   \t\r\n", "body=whitespace_only", id="whitespace"),
+    pytest.param(b"<html>private-gateway</html>", "body=not_json", id="html"),
+    pytest.param(
+        b'\n\n{"choices":[{"message":{"content":"private-Prague',
+        "body=not_json",
+        id="truncated-object",
+    ),
+    pytest.param(b"\xc3\x28private", "invalid text encoding", id="bad-encoding"),
+    pytest.param(b'["private-item"]', "json_type=array", id="array"),
+    pytest.param(b'"private-string"', "json_type=string", id="string"),
+    pytest.param(b"null", "json_type=null", id="null"),
+    pytest.param(b"42", "json_type=number", id="number"),
+]
+
+
+def _assert_safe_typed_success_body_error(
+    *, error: OpenRouterProviderError, path: str, expected: str
+) -> None:
+    """The broken success reply is a plain typed error with safe facts only.
+
+    Privacy here covers the message and the exception chain: no decoder
+    exception (whose ``doc`` holds the raw body) is attached as cause or
+    context, so a printed traceback cannot show one. It does not claim the
+    response object is gone from memory.
+    """
+    from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
+
+    message = str(error)
+    assert type(error) is OpenRouterProviderError
+    assert not isinstance(error, OpenRouterInvalidResponseError)
+    assert f"OpenRouter {path} returned 200" in message
+    assert expected in message
+    assert "body_bytes=" in message
+    assert "private" not in message
+    assert "test-key" not in message
+    assert error.usage is None
+    assert error.retryable_unbilled is False
+    assert error.status_code == 200
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+@pytest.mark.parametrize(("content", "expected"), _MALFORMED_SUCCESS_BODIES)
+def test_unrotated_chat_malformed_success_body_is_one_typed_transport_error(
+    monkeypatch: pytest.MonkeyPatch, content: bytes, expected: str
+) -> None:
+    """Shared ``_post``: no retry, no unbilled flag, one transport record."""
+    recorder = _FakeRecorder()
+    provider, seen, sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(api_key="test-key"),
+        responses=[httpx.Response(200, content=content)],
+        recorder=recorder,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError) as raised:
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    _assert_safe_typed_success_body_error(
+        error=raised.value, path="/chat/completions", expected=expected
+    )
+    assert raised.value.provider_host is None
+    assert len(seen) == 1
+    assert sleeps == []
+    assert len(recorder.records) == 1
+    record = recorder.records[0]
+    assert record.outcome == "transport_error"
+    assert record.error == str(raised.value)
+    assert record.usage is None
+    assert record.raw_content is None
+    assert record.provider_host is None
+
+
+@pytest.mark.parametrize(("content", "expected"), _MALFORMED_SUCCESS_BODIES)
+def test_rotated_chat_malformed_success_body_keeps_targeted_host_without_rotating(
+    monkeypatch: pytest.MonkeyPatch, content: bytes, expected: str
+) -> None:
+    """Rotation: the reply may be billed, so it never advances to another slug."""
+    recorder = _FakeRecorder()
+    provider, seen, sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra", "relace"]
+        ),
+        responses=[httpx.Response(200, content=content)],
+        recorder=recorder,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError) as raised:
+            provider.generate(
+                request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="x"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    _assert_safe_typed_success_body_error(
+        error=raised.value, path="/chat/completions", expected=expected
+    )
+    assert raised.value.provider_host == "deepinfra"
+    assert len(seen) == 1
+    assert sleeps == []
+    assert [(r.outcome, r.provider_host, r.usage) for r in recorder.records] == [
+        ("transport_error", "deepinfra", None)
+    ]
+
+
+@pytest.mark.parametrize(("content", "expected"), _MALFORMED_SUCCESS_BODIES)
+def test_embedding_malformed_success_body_is_typed_transport_not_poison(
+    monkeypatch: pytest.MonkeyPatch, content: bytes, expected: str
+) -> None:
+    """Embeddings share ``_post``: a typed outage error, never a poison verdict."""
+    provider, seen, sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(api_key="test-key"),
+        responses=[httpx.Response(200, content=content)],
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError) as raised:
+            provider.embed(
+                request=EmbeddingRequest(
+                    model="qwen/qwen3-embedding-8b", texts=("memory",)
+                )
+            )
+    finally:
+        provider._client.close()
+
+    _assert_safe_typed_success_body_error(
+        error=raised.value, path="/embeddings", expected=expected
+    )
+    assert len(seen) == 1
+    assert sleeps == []
+
+
+def test_whitespace_decode_error_reports_offset_like_the_bare_decoder() -> None:
+    """The decoder's fixed reason and offset survive; the body text does not."""
+    from rememberstack.adapters.openrouter import _success_body
+
+    content = b" \n" * 26 + b" " * 91
+    with pytest.raises(OpenRouterProviderError) as raised:
+        _success_body(
+            response=httpx.Response(200, content=content),
+            path="/chat/completions",
+            provider_host="deepinfra",
+        )
+
+    message = str(raised.value)
+    assert "body=whitespace_only" in message
+    assert f"body_bytes={len(content)}" in message
+    assert f"decode_error='Expecting value', decode_pos={len(content)}" in message
+    assert raised.value.provider_host == "deepinfra"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("rotated", [False, True], ids=["unrotated", "rotated"])
+@pytest.mark.parametrize("padding", [b"", b"\n\n \n"], ids=["plain", "padded"])
+def test_valid_chat_success_body_still_parses_on_both_routes(
+    monkeypatch: pytest.MonkeyPatch, rotated: bool, padding: bytes
+) -> None:
+    """Valid objects, including whitespace-padded ones, are unchanged controls."""
+    recorder = _FakeRecorder()
+    body = padding + json.dumps(_completion(content='{"answer":"Prague"}')).encode()
+    provider, seen, sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            chat_provider_order=["deepinfra", "relace"] if rotated else None,
+        ),
+        responses=[httpx.Response(200, content=body)],
+        recorder=recorder,
+    )
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="openai/gpt-4o-mini", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert response.output.answer == "Prague"
+    assert response.usage.cost_usd == Decimal("0.0001")
+    assert len(seen) == 1
+    assert sleeps == []
+    assert [r.outcome for r in recorder.records] == ["succeeded"]
+
+
+def test_valid_embedding_success_body_still_parses() -> None:
+    """The shared ``_post`` path still returns a valid embedding object."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"\n "
+            + json.dumps(
+                {
+                    "model": "qwen/qwen3-embedding-8b",
+                    "usage": {"prompt_tokens": 4, "cost": "0.000004"},
+                    "data": [{"index": 0, "embedding": [0.25, 0.5]}],
+                }
+            ).encode(),
+        )
+
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    try:
+        response = provider.embed(
+            request=EmbeddingRequest(model="qwen/qwen3-embedding-8b", texts=("memory",))
+        )
+    finally:
+        provider._client.close()
+
+    assert response.vectors == ((0.25, 0.5),)
+    assert response.usage.tokens_in == 4

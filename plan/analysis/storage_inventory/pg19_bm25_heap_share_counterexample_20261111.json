@@ -1,0 +1,19 @@
+{
+  "image": "sha256:e97ef047169b272734e95f660cca3a4de74c637d0b7c3a7c633122a8f04af43e",
+  "scope": "disposable native primitive only; not a full capture/profile or ordinary LOGIN proof",
+  "server_version": "19rc1 (Debian 19~rc1-1.pgdg13+1)",
+  "extension_version": "1.5.1",
+  "sql_lock_index_share_exit": 3,
+  "sql_lock_index_share_state": "42809",
+  "functions": [
+    "bm25_compact(regclass)",
+    "bm25_compact_step(regclass)",
+    "bm25_spill_index(text)"
+  ],
+  "heap_share_confirmed_before": true,
+  "index_bytes_before": 401408,
+  "spill_while_heap_share_exit": 0,
+  "spill_while_heap_share_state": null,
+  "index_bytes_after": 729088,
+  "heap_share_confirmed_after": true
+}

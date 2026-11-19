@@ -1,0 +1,44 @@
+{
+  "statement_ordinal": 53,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 0.01,
+        "Total Cost": 3950.55,
+        "Plan Rows": 711,
+        "Plan Width": 48,
+        "Disabled": false,
+        "Plans": [
+          {
+            "Node Type": "Index Scan",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Scan Direction": "Forward",
+            "Index Name": "ix_claims_current_bm25",
+            "Relation Name": "claims",
+            "Alias": "claims",
+            "Startup Cost": 0.01,
+            "Total Cost": 3950.55,
+            "Plan Rows": 711,
+            "Plan Width": 48,
+            "Disabled": false,
+            "Order By": "(claim_text <@> 'ix_claims_current_bm25:What pet does Caroline have? Identify Caroline''s pet or pets.'::bm25query)",
+            "Filter": "(deployment_id = '01712365-15ca-444c-96a1-860665b04673'::uuid)"
+          }
+        ]
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.0015923511236906052
+}

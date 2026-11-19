@@ -7,7 +7,7 @@
 [postgres_p1_search_projection_analysis.md](../analysis/postgres_p1_search_projection_analysis.md)
 **Supersedes:** D8's LanceDB placement, D93, and the removed D93 maintenance design
 **Amends:** D9, D23, D37, D48, D61, D63, and D80 as recorded in D94;
-PostgreSQL version/runtime amended by D98; ranked-query execution (§8–§9),
+PostgreSQL version/runtime amended by D98 and D157; ranked-query execution (§8–§9),
 the `pg_textsearch` pin (§6) and the benchmark scope (§3) amended by
 [D142](../../decisions.md#d142-ranked-search-nominates-from-the-index-and-confirms-in-one-snapshot)
 ([analysis](../analysis/index_driven_ranked_search.md))
@@ -27,7 +27,7 @@ and functional proof that the existing retrieval contracts still hold.
 
 ## 2. Decision
 
-P1 SHALL be implemented in PostgreSQL 19 using:
+P1 SHALL be implemented in PostgreSQL 18 using:
 
 - `pgvector` for semantic vectors and HNSW indexes;
 - `pg_textsearch` for the admitted BM25 channels;
@@ -74,6 +74,13 @@ It does not:
   remain the security perimeter.
 
 ## 4. Storage topology
+
+[D152's capture contract](storage_capture_consumer_design.md) includes each
+qualified physical search index/fork once through its owning relation. Native
+maintenance and extension/background allocation must obey the qualified
+boundary; MVCC alone does not freeze physical bytes. Rebuild/serving replicas
+stay separately classified. This observation contract changes no search,
+embedding/reuse, graph correctness or readiness semantics.
 
 | Target | Canonical searchable text | Derived semantic state | Lexical state |
 | --- | --- | --- | --- |
@@ -161,20 +168,18 @@ normalized searchable copy per live chunk, not another full source document.
 
 ## 6. Extensions and supported PostgreSQL
 
-Reference and self-host images SHALL run PostgreSQL 19. Before GA, they pin the
-latest proven beta/RC image digest and replay from disposable storage; after
-GA, they track the current patched 19.x minor. The image carries pinned and
-tested builds of:
+Reference and self-host images SHALL run only PostgreSQL 18 (D157). Pin an
+official 18.x image by digest, selecting the newest minor and image at least
+two weeks old. The image carries pinned and tested builds of:
 
 - `vector` (0.8 or later, for iterative index scans; the image pins 0.8.6); and
 - `pg_textsearch`, including its required preload configuration, at **1.5.1
-  or later** (D142). 1.5.0 added upstream PostgreSQL 19 beta support, so the
-  D98 compatibility patch is retired; it also made post-filtered BM25 index
+  or later** (D142; the image pins 1.5.1). No local compatibility patch or
+  forced-header compiler workaround is carried. 1.5.0 made post-filtered BM25 index
   scans grow their internal batch until the `LIMIT` is filled or matches are
   exhausted and fixed silent truncation in deep scans. Releases before 1.4.0
   return the index's top-k *before* filtering, which §8 must never rely on.
-  Upstream describes PostgreSQL 19 support as best-effort with non-blocking
-  CI, so compatibility on the pinned PostgreSQL 19 image is a **local gate**:
+  Compatibility on the pinned PostgreSQL 18 image remains a **local gate**:
   the image build runs the extension's upstream SQL tests and the §8.3
   cursor/scoring-generation tests on that exact image.
   1.5.1 scores unspilled (memtable) rows with raw document length while
@@ -224,6 +229,52 @@ does not flip global readiness, while an incompatible maintenance operation
 does.
 
 No request path writes, repairs, builds indexes, or calls an LLM.
+
+### 7.1 Concurrent fact labeling and embedding
+
+Fact projection coordinates by the facts being changed, not by one mutex for
+the entire project. Different document/application jobs can share a fact, so
+conditional writes alone are insufficient to avoid paying for duplicate
+embedding calls. The handler first discovers only facts still needing a label
+or the configured vector, using its existing evidence/document, application
+receipt or single-fact scope. Already current shared facts are not reserved.
+
+It deduplicates and orders `(kind, fact_id)` and processes batches no larger
+than `P1Settings.embed_batch_size`. Each batch acquires session advisory locks
+keyed by project, kind and fact ID in a consistent order. Unrelated batches
+can call the provider concurrently. A waiter re-reads label/vector eligibility
+after acquisition and skips a fact another job already completed. It processes
+only those reserved IDs; a fact application arriving after discovery owns its
+own receipt-scoped repair wake, rather than expanding the current locked set.
+
+The bounded reservation covers both label stamping and embedding publication,
+including the provider wait. Its dedicated connection has no SQL transaction
+open during provider I/O; authority rows are not held locked for that wait.
+The label is conditionally checkpointed first. Each vector and its model,
+policy and input hash are then written together on the natural fact row,
+only while its label text and validity still match. Changed or deleted facts
+reject the stale output without recreating a forgotten row. A job releases
+its batch before reserving the next one. Partial acquisition and provider
+failure release all attempted keys; disconnect releases server session locks.
+
+This preserves incremental checkpoints: a retry selects missing work and
+reuses completed vectors. It does not promise exactly-once provider billing
+across crashes or uncertain responses. No text/model/input-policy/reuse
+generation changes, vector rebuild or document re-ingestion follows from
+changing coordination. Replace label workers together when changing lock
+namespaces; no old project-lock execution mode or rollout coordinator is
+retained. Existing completed work remains reusable.
+
+Entity-profile refresh still runs after fact reservations are released, for
+the original work scope even if no fact vector remains to embed. It keeps
+its own optimistic input/identity checks. This change does not remove that
+separate source of contention or guarantee linear speedup with worker count.
+
+Real PostgreSQL acceptance covers concurrent provider entry for disjoint facts
+in one project, one paid embedding for an overlap, stable lock ordering,
+failure cleanup, unchanged generation/reuse behavior and rejection of stale
+or deleted inputs. Source reasoning and alternatives are in the
+[fact-concurrency analysis](../analysis/fact_label_concurrency_20261111.md).
 
 ## 8. Query and filtering contract
 
@@ -377,18 +428,19 @@ the index is used and eligibility stays exact. For each target and channel:
    filtered alike. Above 20,000 eligible rows the plain loop runs. Claim
    searches with a document filter use the plain loop (their filter is per
    occurrence).
-3. **Confirm the batch.** A confirmation query applies the target's complete
-   eligibility predicates — the same predicate builders the adapter already
-   uses for every filter, scope and gate — to each candidate of the batch. It
-   is a primary-key probe per candidate: the batch is unnested and each ID is
-   checked by a `LATERAL` existence subquery. (A set predicate
-   `item_id = ANY(:batch_ids)` lets the planner start from the eligibility
-   joins instead, so confirmation grows with the corpus; the scaling sweep
-   measured 17 s for one 4,000-ID batch at 30k chunks, against 0.13 s for
-   the same batch probed per candidate.) It should return, per rejected ID,
-   the first failed rule class (authority, scope, entity, document, fact
-   time, evidence gate) for the counters; the first implementation counts
-   rejections without the class.
+3. **Confirm the batch.** Apply the complete target eligibility rules before
+   a candidate counts toward top-k. D153 constrains source/coordinate lookups
+   to the materialized candidate IDs, while sharing entity visibility across
+   distinct endpoints within the statement. Facts use the canonical private
+   source-qualified helper plus the endpoint conjunction proven equivalent to
+   the public full authority; testimony uses the canonical mention relation.
+   Do not execute full entity provenance anew for each candidate sharing an
+   endpoint. Candidate source lookups remain correlated primary-key probes;
+   a free set join that starts from unrestricted eligibility views is forbidden.
+   The same predicate builders preserve model, scope, document, time and
+   per-fact evidence gates. Rejections remain counted; first-failed-rule-class
+   diagnostics do not permit dropping a guard. See
+   [D153 §4](shared_retrieval_eligibility_design.md#4-one-maintained-source-of-eligibility).
 4. **Stop** under exactly one termination reason (§8.6):
    - `k_filled` — `k` rows are confirmed **and** the stream has moved past the
      `k`-th confirmed score (the next fetched score is strictly worse), so a
@@ -494,8 +546,15 @@ defined per target:
   graph-expanded neighbourhood) and the ranking anchors stay distinct, as
   today.
 
-No text index produces this order, but mentions and fact endpoints are
-indexed by entity:
+No text index produces this order. D153's entity-driven testimony relation
+starts from visible requested survivors and reverse members, uses indexed live
+resolution decisions, checks the latest decision across all mention decisions,
+and probes only those mentions' current-content coordinates. Budget counting
+and coverage consume that same relation, before grouping; a deployment-wide
+resolved-ID filter is not an indexed scope. Candidate-driven claim/chunk
+hydration uses the same semantics in reverse, with one visible-entity set and
+set-based coverage per statement. Chunk lookup uses the D153 mention index.
+Fact endpoint scope and distinct ranking anchors retain their existing meanings:
 
 1. Coverage for every scoped item is computed from those tables (counts, no
    scoring) within an **entity work budget** on the number of mention or
@@ -526,9 +585,11 @@ gate counts as a failure (rising truncation).
 ### 8.5 Facts
 
 Fact search runs one §8.3 loop per fact table (relations, observations), each
-on its own HNSW index, in the operation's context, with the fact authority
-view, fact-time and entity predicates and the D140 evidence gate in
-confirmation. Without entity anchors the branches merge by
+on its own HNSW index, in the operation's context, with complete fact authority,
+fact-time and entity predicates and the per-fact D140 evidence gate in
+confirmation. D153 composes that authority from one canonical source-qualified
+projection and a shared, distinct-endpoint visibility relation; it must match
+the public fact view in every returned row and count. Without entity anchors the branches merge by
 `(distance, fact_kind, fact_id)`. With anchors, the whole result — both
 branches — is ordered by `(coverage DESC, distance, fact_kind, fact_id)`
 using the §8.4 fact coverage, and any per-branch depth is applied only after
@@ -605,6 +666,25 @@ nominations:
 - The D140 `scope_pending` probe reports `complete: false` when any replayed
   nomination did not end `k_filled` or `exhausted`; its `count` is then a
   lower bound.
+
+### 8.7 Shared eligibility and constrained provenance (D153)
+
+[D153](shared_retrieval_eligibility_design.md) is the complete contract for
+statement-local entity sharing, both directions of testimony scope, fact
+source/endpoint factoring, private-helper ACLs and independent qualification.
+It does not change the index cursor, scoring generation, canonical ranks,
+thresholds or early-stop reasons above. All reads retain the same snapshot,
+evaluation instant and absolute deadline. An incomplete physical search remains
+an explicit boundary, never proof of absence.
+
+Entity provenance follows actual recorded decision/mention/chunk/version/
+ready-reading coordinates; any ready historical reading may establish entity
+visibility even with zero current mention counts. UUID-only monthly-partition
+probes retain explicit linear partition fanout. No guessed time bound, global
+visibility cache, persisted activity flag or unbounded exact fallback is used.
+Private facts retain the actual D140 carried-claim evidence and D54 lineage
+counts. Source/presentation authority is authored once; the runtime endpoint
+conjunction is pinned against the migrated independent reference.
 
 ## 9. Index and planner contract
 

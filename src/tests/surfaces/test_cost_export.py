@@ -3,7 +3,6 @@
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import timedelta
-from datetime import timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -45,6 +44,12 @@ def database_engine() -> Iterator[Engine]:
         yield engine
     finally:
         engine.dispose()
+
+
+def _database_now(engine: Engine) -> datetime:
+    """Use the reader's clock; a remote database can lead this test host."""
+    with engine.connect() as connection:
+        return connection.execute(text("SELECT clock_timestamp()")).scalar_one()
 
 
 def _bootstrap(engine: Engine) -> None:
@@ -168,7 +173,7 @@ def test_empty_page_then_forward_cursor_sees_row_after_lag(
     frozen = decode_cost_export_cursor(cursor=nc1)
     assert frozen is not None
     _insert_surface(
-        database_engine, cost_id=uuid4(), occurred_at=datetime.now(timezone.utc)
+        database_engine, cost_id=uuid4(), occurred_at=_database_now(database_engine)
     )
     import time
 
@@ -188,7 +193,7 @@ def test_same_cursor_replay_ignores_insert_between(database_engine: Engine) -> N
     reader = SqlCostExportReader(
         engine=database_engine, safety_lag=timedelta(milliseconds=40)
     )
-    aged = datetime.now(timezone.utc) - timedelta(seconds=1)
+    aged = _database_now(database_engine) - timedelta(seconds=1)
     first_id = uuid4()
     _insert_surface(database_engine, cost_id=first_id, occurred_at=aged)
     start = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=None, limit=10)
@@ -196,7 +201,7 @@ def test_same_cursor_replay_ignores_insert_between(database_engine: Engine) -> N
     first = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
     assert [row.cost_id for row in first.receipts] == [first_id]
     _insert_surface(
-        database_engine, cost_id=uuid4(), occurred_at=datetime.now(timezone.utc)
+        database_engine, cost_id=uuid4(), occurred_at=_database_now(database_engine)
     )
     replay = reader.read_page(deployment_id=_DEPLOYMENT_ID, cursor=cursor, limit=10)
     assert [row.cost_id for row in replay.receipts] == [first_id]
@@ -232,7 +237,7 @@ def test_tiny_surface_cost_and_null_worker_cost_round_trip(
     _bootstrap(database_engine)
     surface_id = uuid4()
     worker_id = uuid4()
-    stamp = datetime.now(timezone.utc) - timedelta(seconds=1)
+    stamp = _database_now(database_engine) - timedelta(seconds=1)
     _insert_surface(
         database_engine,
         cost_id=surface_id,
@@ -260,7 +265,7 @@ def test_idle_after_insert_aborts_and_is_not_exported(database_engine: Engine) -
     _bootstrap(database_engine)
     cost_id = uuid4()
     request_id = uuid4()
-    stamp = datetime.now(timezone.utc) - timedelta(seconds=90)
+    stamp = _database_now(database_engine) - timedelta(seconds=90)
     url = database_engine.url.render_as_string(hide_password=False).replace(
         "postgresql+psycopg://", "postgresql://"
     )
@@ -313,7 +318,7 @@ def test_cli_cost_export_prints_one_page(
         "REMEMBERSTACK_DATABASE_URL",
         database_engine.url.render_as_string(hide_password=False),
     )
-    stamp = datetime.now(timezone.utc) - timedelta(seconds=90)
+    stamp = _database_now(database_engine) - timedelta(seconds=90)
     cost_id = uuid4()
     _insert_surface(database_engine, cost_id=cost_id, occurred_at=stamp)
     assert (

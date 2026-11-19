@@ -1,0 +1,39 @@
+{
+  "case": {
+    "name": "scoped-claims_and_sources_context",
+    "operation": "claims_and_sources_context",
+    "query": "What does Jon's dance studio offer? Classes, programs, services, events, and other offerings associated with his dance studio.",
+    "entity_ids": [
+      "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+    ],
+    "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+    "k": 50,
+    "candidate_k": 200,
+    "source_item_id": "conv-30/qa/0025",
+    "embedding_model": "qwen/qwen3-embedding-8b"
+  },
+  "observed_at": "2026-11-12T13:18:36.910228+00:00",
+  "operation_budget_seconds": 20.0,
+  "embedding_mode": "stored vector; NOT question embedding; no provider calls",
+  "continuation_calls": [],
+  "result": {
+    "facts": 0,
+    "evidence": 0,
+    "chunks": 0,
+    "sources": 0,
+    "negative": {
+      "kind": "boundary",
+      "explanation": "the operation could not finish inside its database budget",
+      "workaround": "narrow the query or add filters, then retry"
+    },
+    "truncation": {
+      "truncated": true,
+      "returned": 0,
+      "estimated_total": 0,
+      "total_is_exact": false,
+      "continuation": null,
+      "reason": "p1_deadline"
+    }
+  },
+  "elapsed_seconds": 20.022943444550037
+}

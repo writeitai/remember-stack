@@ -27,7 +27,16 @@ from remember.models import DocumentReferencesRequest
 logger = logging.getLogger(__name__)
 
 _KEYS = frozenset(
-    {"chunk_id", "doc_id", "section_key", "direction", "kinds", "time", "k", "cursor"}
+    {
+        "chunk_id",
+        "doc_id",
+        "section_key",
+        "direction",
+        "kinds",
+        "time",
+        "limit",
+        "cursor",
+    }
 )
 
 

@@ -137,6 +137,7 @@ class _Corpus:
         self.fact: dict[str, UUID] = {}
         self.crossref: dict[str, UUID] = {}
         self.period: dict[str, UUID] = {}
+        self.tag: dict[str, UUID] = {}
         self.artifact: dict[str, UUID] = {}
         self.currency_event: dict[str, UUID] = {}
         self.adjudication: dict[str, UUID] = {}
@@ -311,6 +312,50 @@ class _Corpus:
                     "retracted": _MID if retracted else None,
                 },
             )
+        # D156: a tag on live lineages and the forgotten one, a tag only the
+        # tombstoned lineage carries, and a registered-then-deleted tag. Older
+        # heads (proofs that seed this corpus before D156) have no tag tables.
+        if connection.execute(
+            text("SELECT to_regclass('public.tags') IS NOT NULL")
+        ).scalar_one():
+            self._seed_tags(connection=connection)
+
+    def _seed_tags(self, *, connection: Connection) -> None:
+        """Seed D156 tags and their assignments."""
+        for key, lineages in (
+            ("corpus", ("primary", "second", "forgotten")),
+            ("erased", ("erased",)),
+            ("retired", ("primary",)),
+        ):
+            tag_id = uuid4()
+            self.tag[key] = tag_id
+            connection.execute(
+                text(
+                    "INSERT INTO tags (deployment_id, tag_id, name, description)"
+                    " VALUES (:deployment, :tag, :name, :description)"
+                ),
+                {
+                    "deployment": _DEPLOYMENT_ID,
+                    "tag": tag_id,
+                    "name": f"project:{key}",
+                    "description": f"Fixture tag {key}.",
+                },
+            )
+            for lineage in lineages:
+                connection.execute(
+                    text(
+                        "INSERT INTO document_tags (deployment_id, doc_id, tag_id)"
+                        " VALUES (:deployment, :doc, :tag)"
+                    ),
+                    {
+                        "deployment": _DEPLOYMENT_ID,
+                        "doc": self.doc[lineage],
+                        "tag": tag_id,
+                    },
+                )
+        connection.execute(
+            text("DELETE FROM tags WHERE tag_id = :tag"), {"tag": self.tag["retired"]}
+        )
 
     def _lineage(
         self,
@@ -1269,6 +1314,26 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             f" {schema}.document_effective_periods_live WHERE period_id = :period)",
             {"period": corpus.period["second.retracted"]},
         ),
+        "tags_current.registered_tag_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.tags_current"
+            " WHERE tag_id = :tag AND name = 'project:corpus')",
+            {"tag": corpus.tag["corpus"]},
+        ),
+        "tags_current.deleted_tag_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.tags_current"
+            " WHERE tag_id = :tag)",
+            {"tag": corpus.tag["retired"]},
+        ),
+        "document_tags_live.live_lineage_tag_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.document_tags_live"
+            " WHERE doc_id = :doc AND tag_id = :tag AND name = 'project:corpus')",
+            {"doc": corpus.doc["primary"], "tag": corpus.tag["corpus"]},
+        ),
+        "document_tags_live.tombstoned_lineage_tag_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.document_tags_live"
+            " WHERE doc_id = :doc OR tag_id = :tag)",
+            {"doc": corpus.doc["erased"], "tag": corpus.tag["erased"]},
+        ),
         "claims_visible_history.superseded_testimony_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_visible_history"
             " WHERE claim_id = :claim AND NOT is_current_testimony)",
@@ -1951,6 +2016,64 @@ def _matrix_cells() -> Mapping[tuple[str, str], Mapping[str, Any]]:
     return indexed
 
 
+def _seed_carried_matrix_claim(*, connection: Connection, corpus: _Corpus) -> None:
+    """Make D140 carried-source deletion a non-vacuous lineage matrix cell."""
+    representation, origin_chunk, claim = uuid4(), uuid4(), uuid4()
+    parameters = {
+        "representation": representation,
+        "origin_chunk": origin_chunk,
+        "claim": claim,
+        "version": corpus.version["forgotten.v1"],
+        "chunk": corpus.chunk["forgotten.v1"],
+        "template_claim": corpus.claim["forgotten"],
+        "deployment": _DEPLOYMENT_ID,
+    }
+    connection.execute(
+        text(
+            "INSERT INTO document_effective_time_events(deployment_id,doc_id,event_at,event)"
+            " VALUES (:deployment,:doc,:at,'declared')"
+        ),
+        {"deployment": _DEPLOYMENT_ID, "doc": corpus.doc["forgotten"], "at": _PAST},
+    )
+    connection.execute(
+        text("SELECT refresh_document_version_scope(:deployment,:doc)"),
+        {"deployment": _DEPLOYMENT_ID, "doc": corpus.doc["forgotten"]},
+    )
+    connection.execute(
+        text(
+            "INSERT INTO document_representations(representation_id,deployment_id,version_id,route,status)"
+            " VALUES (:representation,:deployment,:version,'passthrough','failed')"
+        ),
+        parameters,
+    )
+    connection.execute(
+        text(
+            "INSERT INTO chunks SELECT copy.* FROM chunks original CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::chunks,to_jsonb(original)||jsonb_build_object("
+            " 'chunk_id',CAST(:origin_chunk AS uuid),'representation_id',CAST(:representation AS uuid),"
+            " 'section_id',NULL)) copy WHERE original.chunk_id=:chunk"
+        ),
+        parameters,
+    )
+    connection.execute(
+        text(
+            "INSERT INTO claims SELECT copy.* FROM claims original CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::claims,to_jsonb(original)||jsonb_build_object("
+            " 'claim_id',CAST(:claim AS uuid),'chunk_id',CAST(:origin_chunk AS uuid))) copy"
+            " WHERE original.claim_id=:template_claim"
+        ),
+        parameters,
+    )
+    connection.execute(
+        text(
+            "INSERT INTO chunk_claims SELECT copy.* FROM chunk_claims original CROSS JOIN LATERAL"
+            " jsonb_populate_record(NULL::chunk_claims,to_jsonb(original)||jsonb_build_object("
+            " 'claim_id',CAST(:claim AS uuid))) copy WHERE original.claim_id=:template_claim"
+        ),
+        parameters,
+    )
+
+
 def test_d48_deletion_matrix_proves_every_executed_cell(corpus: _Corpus) -> None:
     """Every executed cell proves its own status: no target, no cell, is vacuous.
 
@@ -1967,6 +2090,8 @@ def test_d48_deletion_matrix_proves_every_executed_cell(corpus: _Corpus) -> None
         forbidden = _forbidden_identifiers(corpus=corpus, target_id=target.target_id)
         assert forbidden, target.target_id
         with corpus.engine.begin() as connection:
+            if target.target_id == "lineage":
+                _seed_carried_matrix_claim(connection=connection, corpus=corpus)
             before = {
                 surface.name: _reachable_values(
                     connection=connection, relation=surface.name, forbidden=forbidden

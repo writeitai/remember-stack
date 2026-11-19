@@ -1,0 +1,15 @@
+{
+  "kind": "analysis_only_not_shipped",
+  "implemented_revision": "3ca16ea0fbde2cedcf14169a7c4b334c254be757",
+  "source": "synthetic actual p9_46_0067 clone migrated to proposed p9_48_0069; million extra bridge documents in rolled-back transaction",
+  "provider_calls": 0,
+  "documents": 1000000,
+  "implemented_tuple_work": 1000013,
+  "prototype_tuple_work": 1,
+  "implemented_execution_ms": 75.607,
+  "prototype_execution_ms": 1.161,
+  "existing_index_bytes": 6504448,
+  "prototype_index_bytes": 49758208,
+  "artifact_sha256": "22bb93bee02d6e93e249c0625982eda3bca648842e4b2a7076dc1ce5b63eedfb",
+  "uncompressed_sha256": "35b27904a00ceaf590d38ca4ff3b76ce2d3c65926289a92dc5286ac906fbeb5f"
+}

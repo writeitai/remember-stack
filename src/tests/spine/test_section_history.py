@@ -290,18 +290,18 @@ def test_paging_pins_instants_and_resumes_in_order(rig: _Rig) -> None:
     rig.ingest(body=_EDITION_2)
     rig.ingest(body=_EDITION_3)
 
-    page_one = rig.read(doc_id=first.doc_id, key="per-diem", k=2)
+    page_one = rig.read(doc_id=first.doc_id, key="per-diem", limit=2)
     assert [row.version_no for row in page_one.rows] == [1, 2]
-    assert page_one.cursor is not None
+    assert page_one.next_cursor is not None
     page_two = rig.read(
-        doc_id=first.doc_id, key="per-diem", k=2, cursor=page_one.cursor
+        doc_id=first.doc_id, key="per-diem", limit=2, cursor=page_one.next_cursor
     )
     assert [row.version_no for row in page_two.rows] == [3]
-    assert page_two.cursor is None
+    assert page_two.next_cursor is None
     assert page_two.evaluated_at == page_one.evaluated_at
     assert page_two.believed_at == page_one.believed_at
     with pytest.raises(ValueError, match="different"):
-        rig.read(doc_id=first.doc_id, key="meals", cursor=page_one.cursor)
+        rig.read(doc_id=first.doc_id, key="meals", cursor=page_one.next_cursor)
 
 
 def test_unindexed_version_is_not_indexed_until_backfilled(rig: _Rig) -> None:

@@ -1,0 +1,57 @@
+{
+  "statement_ordinal": 24,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 136.5,
+        "Total Cost": 138.12,
+        "Plan Rows": 647,
+        "Plan Width": 40,
+        "Disabled": false,
+        "Plans": [
+          {
+            "Node Type": "Sort",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 136.5,
+            "Total Cost": 138.12,
+            "Plan Rows": 647,
+            "Plan Width": 40,
+            "Disabled": false,
+            "Sort Key": [
+              "((embedding <=> '[VECTOR_REDACTED]'::vector))"
+            ],
+            "Plans": [
+              {
+                "Node Type": "Seq Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Relation Name": "claims",
+                "Alias": "claims",
+                "Startup Cost": 0.0,
+                "Total Cost": 106.3,
+                "Plan Rows": 647,
+                "Plan Width": 40,
+                "Disabled": false,
+                "Filter": "((embedding IS NOT NULL) AND is_current_testimony AND (deployment_id = '01712365-15ca-444c-96a1-860665b04673'::uuid) AND (embedding_model = 'qwen/qwen3-embedding-8b'::text) AND (embedding_input_policy_version = 'claim-text-v1'::text))"
+              }
+            ]
+          }
+        ]
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.0022899098694324493
+}

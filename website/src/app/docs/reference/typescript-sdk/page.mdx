@@ -5,6 +5,8 @@ export const metadata = {
 
 # TypeScript SDK
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 `@rememberdev/client` is the asynchronous Node.js memory client. It stores
@@ -146,6 +148,9 @@ objects and arrays, with validated defaults.
 | `setEffectivePeriods` | `EffectivePeriodsSet` |
 | `clearEffectiveTime` | `EffectiveTimeCleared` |
 | `deleteDocument` | `DocumentDeletion` |
+| `listTags` | `TagList` |
+| `createTag`, `updateTag`, `deleteTag` | `Tag` |
+| `updateDocumentTags` | `DocumentTags` |
 | `connectors` | `tuple[ConnectorDescriptor, ...]` |
 | `addConnector` | `ConnectorDescriptor` |
 | `pauseConnector` | `ConnectorDescriptor` |
@@ -157,7 +162,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -177,9 +182,41 @@ periods while retaining the document's declared effective-time mode.
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
+When requested, `p3` checks the nullable publication marker of each served
+version. An unrelated successful publication cannot satisfy it. A ready
+single-version request exposes its export digest as `version`; aggregate
+version and publication timestamps are null.
+
+Document search's `p3_path` is relative to the corpus root and non-null only
+for a served selected version with a matching marker. Raw-only, unpublished,
+updating, failed and historical results carry `null`; `served_version` describes
+currency independently. Re-resolve with `filters.doc_ids` after type/topic/title
+moves. Only the suffix is stable; [offline lookup](/docs/self-hosting/filesystem-views#layout)
+also works.
 A `failed` stage has a retry pending; polling continues. A `dead_letter` stage
 stops with PipelineDeadLettered and the full report. The readiness deadline
 covers routing, HTTP and polling waits, retaining the last validated report.
+
+### Tags
+
+`listTags({ query })` lists the registered tags, ordered by name ignoring
+letter case. `createTag({ name, description })` registers one; the name is
+NFC-normalized and checked before sending (1 to 128 characters, no
+whitespace or control characters). `updateTag({ tag, name, description })`
+and `deleteTag({ tag })` take a tag name or `tag_id`; a name is first looked
+up with `listTags`, and one that is not registered raises `UnknownTag` with
+status 404. `updateDocumentTags({ docId, add, remove })` or
+`updateDocumentTags({ docId, set })` changes one document's tags in one step
+(`set: []` removes every tag) and returns its tags afterwards. `ingest`
+takes `tags`, an array of tag names or ids added to the document.
+`searchDocuments` takes `filters.tags`, and `searchClaims`, `searchChunks`,
+`factsContext`, `claimsAndSourcesContext` and `combinedContext` take
+`documents.tags`: `{ all: [...], any: [...], none: [...] }` of tag
+names or ids; a tag that is not registered is refused with `unknown_tag`.
+On `factsContext`, contradicting evidence from non-matching documents stays
+in the answer, marked `in_documents_filter: false`; see
+[The documents filter](/docs/reference/assured-operations#the-documents-filter).
+What tags are: [Tag documents](/docs/guides/tag-documents).
 
 ### Version history and references
 
@@ -279,7 +316,10 @@ seconds. Hints are carried for callers; the client does not interpret them as
 permission to retry writes. ProjectResolutionError, StoredKeyRefused,
 AccountApiUnavailable, IssuerError, NumericPrecisionError and RequestTimeoutError
 extend MemoryApiError, as does LayerUnavailable (status 409, code
-`layer_unavailable`, with the missing `layer`). InputValidationError and CredentialError are TypeErrors.
+`layer_unavailable`, with the missing `layer`), and UnknownTag (code
+`unknown_tag`, status 422 or 404, with every unregistered tag in `tags`). The
+tag refusals `conflict` and `tag_limit_exceeded` keep their code on
+MemoryApiError. InputValidationError and CredentialError are TypeErrors.
 PipelineDeadLettered, TimeoutError, ConnectorNotFoundError and AbortError are
 outside MemoryApiError.
 
@@ -295,7 +335,8 @@ Definitions carry routes, versions, permissions, schemas and annotations.
 `OPEN_QUERY_TOOL_NAMES`, `OPERATION_TOOL_NAMES` and `MEMORY_WRITE_TOOL_NAMES`
 identify the source-defined groups. Individual constants include
 INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, DELETE_DOCUMENT_TOOL_NAME,
-SEARCH_DOCUMENTS_TOOL_NAME and ADJACENT_CHUNKS_TOOL_NAME.
+SEARCH_DOCUMENTS_TOOL_NAME and ADJACENT_CHUNKS_TOOL_NAME. `TAG_READ_TOOL_NAMES`,
+`TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools.
 
 `validateArguments` checks every memory tool and returns parsed arguments.
 `validateSavedQueryIdentifier` checks saved-query names. `ToolError`,

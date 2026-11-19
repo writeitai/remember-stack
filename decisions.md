@@ -142,8 +142,10 @@ answering current-fact — so validity-as-current-fact still has exactly one hom
 
 ## D7. Rebuild-first sync; immutable GCS snapshots; read-only readers
 
-**Status:** superseded by D98 for graph data. P3 keeps its independently
-specified rebuild/publish lifecycle; there is no P2 generation.
+**Status:** superseded by D98 for graph data and by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders) for P3.
+P3 uses incremental mutable document folders; full repair remains, with no
+snapshot or pointer-swap contract. This entry's old lifecycle is historical.
+Persisting/replaying nondeterministic outputs remains required.
 
 **Decision.** The L6 worker periodically rebuilds the entire graph from a Postgres → Parquet
 export (`COPY FROM` bulk load), validates, and publishes an immutable versioned snapshot to
@@ -603,6 +605,14 @@ claim-verifiability golden set (D25 — junk-control moved to in-call Selection,
 
 ## D23. Registry scale & schema
 
+**D153 amendment (2026-11-12).** UUIDs are opaque read coordinates; current
+writers mint UUIDv4 and supply no ID-derived partition timestamp. The UUIDv7
+pruning promise in PostgreSQL schema §12 is replaced by explicit linear
+partition probing unless an exact recorded partition coordinate is available.
+No ID/key migration, guessed time bound or routing registry is introduced.
+Partition families, keys and their remaining policies below survive.
+See [D153](#d153-shared-eligibility-and-candidate-constrained-provenance).
+
 **Decision.** D94 amends the partition estate to exactly eight parents. Six large append-only tables use
 monthly RANGE partitions managed by `pg_partman`: `mentions(created_at)`,
 `resolution_decisions(decided_at)`, `chunks(created_at)`, `chunk_claims(created_at)`,
@@ -930,6 +940,10 @@ for E1). Operational complexity is handled by decomposition, not numbering.
 
 ## D37. E0 storage split — GCS holds bodies, Postgres holds the index; ID-addressed; mount-ready
 
+> **Amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** The immutable raw/artifact authority split and
+> ID-addressed E0 keys remain. Customers mount P3 copies of originals and reader
+> derivatives; separate raw/artifact mounts are no longer the consumption contract.
+
 > **Refined by D51.** The raw bucket's "never mounted" arm is reversed: raw is now mounted
 > read-only but **off the navigation path** (explicit pointers only), with mandatory data-access
 > audit logging and mime-routed storage classes (so "cold" is no longer blanket). The storage
@@ -1004,6 +1018,12 @@ derived_assets[], manifest }`. `plan/designs/media_design.md` §2/§4.
 
 ## D39. PageIndex provides per-document structure — sidecar + PG index, structure-only, summaries kept, placement-hint-extended
 
+> **Amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Root placement is an optional topic path or
+> explicit `null`, not a full type/filename path. A successful no-topic result is
+> persisted with a placement generation, distinct from degradation. P3 types are
+> deterministic; there are no section leaves or corpus-wide model reconciliation.
+> Structure, summaries, sidecar and PostgreSQL section indexing remain binding.
+
 **Decision.** PageIndex builds a per-document hierarchical tree (`node_id`, `title`, `summary`,
 nested nodes, spans). It is used as **structure, not a retrieval engine** (we keep chunk + embed +
 graph, D8/D9). Stored **both** as a `pageindex.json` sidecar (artifact) **and** a Postgres
@@ -1025,6 +1045,16 @@ partition; sections never cut through a block; blocks are never derived from sec
 tool, roles, summaries, and placement hints are unchanged. `e1_chunks_design.md` §3.
 
 ## D40. P3 — the corpus filesystem: a mountable, rebuildable projection
+
+> **D157 reference-server amendment (2026-11-14).** P3 rebuilds from
+> PostgreSQL 18 plus immutable artifacts. Its projection/publication contract
+> is unchanged; see [D157](#d157-postgresql-18-is-the-reference-server).
+
+**Status:** superseded for layout, inputs, publication and K composition by
+[D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders). P3 remains a read-only, derived, rebuildable consumption surface.
+Its current contract is actual per-document original/derivative folders in a
+mutable S3-compatible tree, with incremental work and full repair. The snapshot,
+stub/facet/entity and K-cross-link rules below are historical.
 
 **Decision.** The system builds a **canonical corpus filesystem** (a published navigable view, no source-of-truth): a materialized **GCS bucket
 laid out as a directory tree** organizing the whole corpus for agent navigation, **mounted read-only**
@@ -1495,6 +1525,10 @@ bodies deliberately do not live in Postgres.
 
 ## D49. The response envelope: grain type-discipline, inline contradictions, typed negatives, freshness stamps
 
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** K freshness/open-flag disclosure
+> remains in existing K provenance/retrieval contracts; P3 no longer links K
+> or mirrors its per-page status. Other retrieval/envelope contracts remain.
+
 > **D98 amendment (2026-08-27).** P2 snapshot freshness and generation
 > provenance are removed. The envelope's grain, contradiction, negative,
 > truncation, and per-source honesty rules survive; graph freshness is the
@@ -1624,6 +1658,13 @@ access-isolation arm; `retrieval_design.md` §9.)
 > `project` argument never reaches the engine.
 
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Customer filesystem consumption
+> is one read-only P3 mount containing original copies and reader derivatives;
+> raw/artifact mounts, original-pointer-only access, and rejection of duplicate
+> originals are replaced. K remains a standalone git repo. Filesystem-first
+> preference, unmounted API parity, the consumption skill, audit logging and raw
+> MIME-class routing remain; every P3 copy is hot.
 
 **Refined by D132.** The original MIME class is decided from bytes before this
 raw routing rule runs. D132 also requires explicit classes on derived, snapshot,
@@ -1809,6 +1850,12 @@ coordinate is persisted on occurrence records and currency transitions.
 `evidence_lifecycle_design.md` §1/§3; `plan/designs/media_design.md` §6.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Lineages remain stable source
+> identities and P3 serves the completed current version. A P3 folder path may
+> move on type/topic/title or shard changes: store `doc_id` and resolve its applied
+> publication path. The F6 stable-folder-path clause is withdrawn. K citations,
+> immutable versions, testimony currency and paid-work reuse are unchanged.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** A `snapshot` lineage's versions may carry declared
 > **effective periods** (when the text is in force). An identical-byte observation that
@@ -2131,6 +2178,25 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
 
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
+> **Amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders) for corpus storage/mounts.** The existing S3
+> adapter serves mountable.io, AWS S3, GCS XML/HMAC and MinIO; local FS is the dev
+> adapter. The port adds only streamed whole-object replacement, paginated prefix
+> listing and idempotent deletion for mutable P3. No native GCS adapter or separate
+> raw/artifact customer mounts; managed mounting is the remember.dev-ticket CLI
+> contract. Immutable E0 writes and other provider boundaries remain.
+
+> **D152 measurement extension.** Retained-resource evidence is a narrow
+> substrate capability. Its engine-owned classification/native capture and
+> exact ACK contract are defined in
+> [storage capture](plan/designs/storage_capture_consumer_design.md).
+> Provider facts do not author memory truth or customer charges.
+
 > **D98 amendment (2026-08-27).** D61's no-engine-abstraction principle
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
@@ -2150,6 +2216,7 @@ and the **reference adapter** (which is also what the cloud offering runs):
 | Telemetry export | OTLP / stdout | managed collection |
 | Auth perimeter | API keys (the D50 trust model) | swappable middleware (SSO lives outside the library) |
 | Hard-forget manifest + store purge capabilities (D74/D94) | dedicated append-only manifest root + LocalFS/local-Git erasure; PostgreSQL transaction scrubs P1 state | separately durable manifest store + reference object/mount/K erasure; PostgreSQL transaction scrubs P1 state |
+| Retained-resource evidence (D152; measurement only) | qualified native local/store capture capability | authenticated scoped native-provider capture capability |
 
 **Anti-goal — the engine is not abstracted.** PostgreSQL 19 with
 pgvector/pg_textsearch and the live relational/bounded-frontier graph (SQL/PGQ until the D98 RC 1 amendment), the E/K/P data model,
@@ -2369,6 +2436,12 @@ the person holding the role).
 > measured (CLAUDE.md).
 
 ## D65. Media is an E0 input modality — bound routes, typed source locators, derivation disclosure, and direct media search
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Binding (8)'s stubs/previews-only
+> and no-original-copy rule, and (1)'s raw-mount-only original access are replaced
+> by actual P3 folders containing a copied original and reader derivatives.
+> `media/` still means derived assets; canonical Markdown, immutable source and
+> representation identity, locators, disclosure and unmounted source access remain.
 
 **Refined by D133.** The locator union gains `sheet_range`, `table_region`,
 `json_pointer` and `line_range`; `evidence_mode` gains `computed`. The media
@@ -2881,6 +2954,13 @@ D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
+> **P3 stage amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Under the same portable intent and
+> fail-closed/drain barrier, erase only the document's deterministic-suffix folders
+> and controlled serving copies, then regenerate indexes from scrubbed DB authority.
+> Replay this after independent restores even for locally complete manifests.
+> This replaces clean-snapshot publication plus old-prefix purge; manifests need
+> no historic friendly paths. All non-P3 erasure/restore rules remain.
+
 **Refined by D134** (document metadata, people and observed-name rows are deleted with their
 lineage). An earlier D133 container rule here is withdrawn by D138: containers are not expanded.
 
@@ -3074,7 +3154,23 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D106 amendment.** The current protocol is `RS-LoCoMo-Full-v21`. It retains
+> **P3 attestation amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Runs using document-folder P3
+> verify selected publication markers and mounted folder inventories,
+> not a global build timestamp or snapshot marker. This is a benchmark protocol
+> change; existing source-pinned results keep their original evidence unchanged.
+
+> **Current protocol amendment, 2026-11-11.** Execution uses only
+> `RS-LoCoMo-Full-v43` (`full-v43`): the Luna/Flex and Jev profile with native
+> OCR/Luna image inputs, the restored historical semantic judge, and the
+> best-supported-answer policy. Relevant replies with missing initiating
+> context require an adjacent-chunk read even when another candidate seems
+> plausible; attachment ownership and concrete subject matter are checked.
+> Existing models, ingestion generations and eight-tool/nine-model-call budgets
+> remain. This is a new evaluation identity, not a claim of improved accuracy.
+> See the [current benchmark design](plan/designs/locomo_benchmark_design.md)
+> and [branch audit](plan/analysis/locomo_unpublished_branch_audit_20261111.md).
+
+> **Historical D106 amendment.** The D106 protocol was `RS-LoCoMo-Full-v21`. It retains
 > v20's dataset, rendered documents, models, tools, budgets, prompts, and
 > scoring and pins the D106 observation adjudicator generation.
 
@@ -3299,6 +3395,11 @@ fingerprint. Any changed tool inventory, call budget, model, prompt, schema, jud
 ingestion mapping, or K mode is a separately named protocol.
 
 ## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and orientation-only
+
+> **Placement/P3 clauses amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Successful root placement
+> may be null and remains cacheable; only its output/schema generation changes.
+> Committed structure changes enqueue incremental corpus work. The skeleton,
+> summary reuse and orientation-only rules remain; an explicit P3 build is repair.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The deterministic heading parser also reads a
 > trailing heading attribute block (`## Title {#key}`): the identifier becomes the
@@ -3684,6 +3785,12 @@ that bypass `processing_state` (D67); making normalize chunk-scoped in the
 same change; automatic skip of dead-lettered chunks for the barrier in v1.
 
 ## D85. The full-system LoCoMo answer seat gets the complete shipped read plane
+
+> **P3 consumption/attestation clauses amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** New folder
+> publications contain original copies as well as derivatives and have per-document
+> receipts, not `.snapshot-version`. Bounded answer tools still use the ordinary
+> filesystem. Historical pinned protocols/results retain their old evidence;
+> changing the P3 surface requires a fresh protocol identity.
 
 > **Refined by D98.** The current successor is v14 with four assured, seven
 > primitive, seven open-query, and three P3 tools (21 total). P2/Cypher and its
@@ -4157,6 +4264,26 @@ projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
 
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
+> **P3 registry clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Mutable P3 publication
+> receipts replace immutable snapshot rows. D94's PostgreSQL-native P1 and other
+> storage/search contracts remain unchanged.
+
+> **Fact-writer concurrency amendment (2026-11-11).** Labeling and embedding
+> reserve only bounded batches of pending fact IDs, ordered consistently,
+> through provider I/O without an open database transaction. Overlapping jobs
+> recheck durable checkpoints after waiting; unrelated facts in one project
+> proceed concurrently. Conditional natural-row writes still reject changed
+> or deleted inputs. The project-wide label mutex is removed, with no reuse
+> generation or embedding rebuild. Contract and cutover:
+> [PostgreSQL P1 §7.1](plan/designs/postgres_p1_search_projection_design.md#71-concurrent-fact-labeling-and-embedding);
+> [analysis](plan/analysis/fact_label_concurrency_20261111.md).
+>
 > **D142 refinement (2026-10-21, proposed).** Ranking and authority
 > confirmation stay in PostgreSQL but run as index-cursor nomination plus
 > primary-key confirmation, continued until `k` eligible rows or a disclosed
@@ -4330,6 +4457,10 @@ D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
+> **P3 entity-path clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 has no entity
+> directories or entity-index publication. Entity identity, canonical types,
+> profiles and retrieval contracts remain binding outside P3.
+
 **Refined by D134.** When Claimify replaced a self-reference with the document's own name, the
 one reference at that recorded span is not minted or resolved; the claim keeps the name as text. No entity type is introduced.
 
@@ -4418,8 +4549,15 @@ query path, envelope grain, or hydration (D48–D49).
 
 ## D98. The graph is live PostgreSQL 19 SQL/PGQ plus work-bounded frontier traversal
 
-**Status:** amended 2026-11-06 — SQL/PGQ was removed upstream; the one-hop
-read is relational SQL over the same views (see the RC 1 amendment below).
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
+**Status:** amended by D157 (2026-11-14): PostgreSQL 18 is the reference
+server. The 2026-11-06 RC 1 amendment had already replaced SQL/PGQ with
+relational joins over the same live views; that query contract survives.
 
 > **D142 amendment (2026-10-21, proposed).** The `pg_textsearch` 1.3.1 pin
 > and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
@@ -4544,6 +4682,14 @@ bounded and truncation-honest results, and PostgreSQL-native P1. D82's default-d
 query principle remains; only its public Cypher surface is removed.
 
 ## D99. Identity uncertainty is provisional and converges after profile publication
+
+> **D151 partial supersession (2026-11-10).** Resolver matches now commit
+> against their recorded evidence after source/canonical-target checks;
+> new-entity decisions recheck bounded identity memberships separately.
+> Whole-profile and peer-anchor equality no longer invalidate completed matches.
+> T0's initial anchor validation, binary T4, completeness audit, provider work
+> outside transactions and exact profile-vector revalidation remain in force.
+
 
 > **D100 amendment (2026-08-31).** D100 supersedes D99's tri-state T4,
 > pairwise small→frontier ladder, provisional mint authority, and
@@ -4697,6 +4843,14 @@ Preserves D20 registry self-containment, D95's no exact-name auto-merge rule,
 D97's explicit ambiguity and zero-LLM engine query path, and D98's live graph.
 
 ## D100. T4 is one binary, match-biased candidate-selection call
+
+> **D151 partial supersession (2026-11-10).** Resolver matches now commit
+> against their recorded evidence after source/canonical-target checks;
+> new-entity decisions recheck bounded identity memberships separately.
+> Whole-profile and peer-anchor equality no longer invalidate completed matches.
+> T0's initial anchor validation, binary T4, completeness audit, provider work
+> outside transactions and exact profile-vector revalidation remain in force.
+
 
 **Contract enforcement, 2026-11-06:** the provider response schema enumerates
 the exact supplied candidate IDs plus null, and local parsing validates the
@@ -4869,6 +5023,14 @@ authorization. Does not change D55 versioning, D74 forget, D95/D99/D100
 identity, or any retrieval contract.
 
 ## D102. Exact T0 may replay a T4 match inside one document
+
+> **D151 partial supersession (2026-11-10).** Resolver matches now commit
+> against their recorded evidence after source/canonical-target checks;
+> new-entity decisions recheck bounded identity memberships separately.
+> Whole-profile and peer-anchor equality no longer invalidate completed matches.
+> T0's initial anchor validation, binary T4, completeness audit, provider work
+> outside transactions and exact profile-vector revalidation remain in force.
+
 
 **Decision (2026-08-31).** Keep T0 candidate-only across the entity registry,
 but add one narrow exact-name verdict. After a current, non-superseded
@@ -5084,6 +5246,27 @@ incremental re-decision, `merge_events`, `merged_into`, `resolution_exclusions`)
 is unchanged. Does not change D95, D99, or D100.
 
 ## D104. Counterfactual answers may follow retrieved causal evidence
+
+**Calendar-output clarification, 2026-11-09.** Full-v40 retains the baseline
+answer policy and instruction placement, adding only explicit calendar values
+for relative-date answers at source-supported precision. It supplies no example
+answers or week convention. Prompt/adapter bytes create a new evaluation
+identity; models, judge, tools, retrieval and ingestion are unchanged. Rationale:
+[calendar analysis](plan/analysis/locomo_calendar_answer_prompt_20261109.md).
+
+**Partial supersession, owner amendment 2026-11-09.** Full-v40 replaces this
+entry's `Unknown` fallback and blanket prohibition on outside knowledge with
+best-supported answers: direct source statements, then conversational
+implications, then plausible contextual inference using ordinary general
+knowledge. Incomplete evidence calls for `likely` or `possibly` attached to an
+actual answer, not abstention. Source/entity/date fidelity and the prohibition
+on invented supporting details remain binding. Causal reasoning, prompt-only
+execution, unchanged judge/budgets, no category/item hints, and D99's objective
+content-before-answer guard survive. This amendment changes no engine or
+ingestion reuse identity. Rationale:
+[answer-policy analysis](plan/analysis/locomo_best_supported_answers_20261109.md);
+current contract: [benchmark design §7](plan/designs/locomo_benchmark_design.md#7-answer-loop).
+The original decision below is historical where these clauses are replaced.
 
 **Decision (2026-09-01).** Advance the current benchmark protocol to
 `RS-LoCoMo-Full-v19`. Its answer prompt explicitly permits hypothetical and
@@ -5483,6 +5666,12 @@ D32, D43's untyped statement, D98, D100–D105.
 
 ## D108. Single canonical PyPI distribution (`remember`), container-first engine (`remember-stack`), and platform CLI
 
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
 > **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
 > In item 4, the *Authentication & Project Context* host (`https://api.remember.dev`
 > was never a live host; login now uses the issuer's metadata, default issuer
@@ -5499,7 +5688,7 @@ D32, D43's untyped statement, D98, D100–D105.
 3. Early D24 review-queue tooling (`remember review`) and spend inspection (`remember budget`) remained in the CLI entry point despite the production engine evolving to fully autonomous bitemporal adjudication (D3/D43/D107), with zero human review queues in managed cloud or public documentation.
 
 **Decision.**
-1. **Single PyPI Distribution (`remember`)**: PyPI publishes exclusively **`remember`**. `remember` contains the Python client SDK (`RememberClient`), the AI coding agent bootstrapper (`remember setup`), the Model Context Protocol server (`remember mcp`), and the unified platform CLI. It carries zero database or server dependencies (`httpx>=0.28.1`, `pydantic>=2.11`, `pydantic-settings>=2.10` only) and installs no `rememberstack` executable.
+1. **Single PyPI Distribution (`remember`)**: PyPI publishes exclusively **`remember`**. `remember` contains the Python client SDK (`RememberClient`), the AI coding agent bootstrapper (`remember setup`), the Model Context Protocol server (`remember mcp`), and the unified platform CLI. It carries zero database or server dependencies (`httpx>=0.28.1`, `pydantic>=2.12`, `pydantic-settings>=2.10` only) and installs no `rememberstack` executable.
 2. **Container-First Engine (`remember-stack`)**: The server engine, workers (E0–E3), Alembic migrations, and database spine are distributed exclusively via pre-built Docker images (`ghcr.io/writeitai/remember-stack:<version>`) and official Docker Compose manifests. Standalone distribution of `rememberstack` on PyPI is retired: `0.17.0` is published once as an inactive transition forwarder, is not attached to the GitHub release, and the PyPI project is then archived without deletion or further versions.
 3. **Repository and History Preservation**: The git repository retains its canonical name `writeitai/remember-stack`, housing the engine, client package, documentation website, and benchmarks in one repository. Existing tags and releases remain unchanged historical records; new releases retain `v<version>` tags but are titled `remember <version>` and attach only canonical `remember` Python artifacts plus engine deployment inputs.
 4. **Binary Ownership & Platform CLI**: The `remember` executable is owned exclusively by the `remember` package. It unifies:
@@ -5518,6 +5707,12 @@ D32, D43's untyped statement, D98, D100–D105.
 **Amends.** D43 (CLI entry point owned by `remember`, not `rememberstack`); D62 (replaces dual-distribution on PyPI with single client package + GHCR Docker engine); D24 (retires `review` from public surfaces; autonomous bitemporal adjudication is sole authority); D92 (structures CLI credentials into control-plane session and per-project data-plane tokens with strict audience isolation). Preserves D66, D98, D107.
 
 ## D109. Unified documentation architecture (the Qdrant model) and full cloud query space parity
+
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
 
 **Context.** Prior to D109, documentation was divided across two repositories: `remember-stack` (`website/` deployed to `docs.remember.dev`) and `ultimate-memory-cloud` (`fe/src/app/(public)/docs` deployed to `remember.dev/docs`). This caused continuous maintenance drift between engine features and cloud documentation, fragmented brand SEO, and confused developers and AI agents. Concurrently, early cloud compatibility matrices marked `open_query_execute` (`POST /query/sql`, `GET /query/space`, and open-query MCP tools) as unsupported on Remember Cloud out of initial conservative scoping, creating an artificial divide where agents lost relational and graph query tools when moving from local Docker to Cloud.
 
@@ -5763,6 +5958,15 @@ D98's live-PostgreSQL graph behavior.
 
 ## D115. Agent-visible source access — `source_open` serves perception, and images always run dedicated OCR and visual description
 
+**Partial refinement (2026-11-13, bounded visual identity labels).** The description
+lane may quote short legible identity labels as untrusted model observations,
+without transcribing running text or correcting/replacing dedicated OCR. Both
+independent required lanes, provenance and D54's one-source counting survive.
+The exact limits, checkpoint and downstream reprocessing boundaries are in
+[media design §2](plan/designs/media_design.md#2-converter-routes-extends-the-d38-router-table),
+with [analysis](plan/analysis/visual_identity_text_20261113.md). Source-opening and
+perception contracts below are unchanged.
+
 **Decision (2026-09-03).** D65 bound how a media source is *derived* and *pointed at*. It left
 the last step — an unmounted agent actually perceiving the source — unbuilt: `media_design.md`
 §4 named "a `source_open` primitive" once as an alternative, while §8 and
@@ -5877,6 +6081,12 @@ lives in `plan/plans/`.
 
 ## D116. Originals sit on the navigation path, alongside their representation
 
+**Status:** navigation intent retained; original placement and mount mechanism
+superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders). The original remains authoritative in raw; every
+published document folder contains a derived byte-identical copy beside its
+reader derivatives. No per-family exclusion or archive-class browse copy.
+Backend auditing and unmounted/locator-scoped `source_open` remain binding.
+
 **Decision (2026-09-03).** Every document's byte-identical original is reachable by browsing,
 at `<doc_id>/<content_hash>/original.<ext>` — one level *above* the representation directory,
 so it is shared by every representation of the same bytes and a re-conversion never duplicates
@@ -5920,6 +6130,13 @@ ten seconds of a recording rather than the file. Any managed-offering claim abou
 are accessed is a D5 claim-governance matter in the cloud repository, not settled here.
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
+
+> **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 shows the served completed
+> version's original and derivatives together, not the latest stored original
+> alongside older text. A raw-only lineage has no folder; its original remains
+> available by version through raw APIs. Explicit snapshot/mount publication is
+> replaced by incremental work. Store-and-park, resume, admission and connector
+> completeness, raw availability and no promotion on upload remain binding.
 
 **Refined by D133 and D138.** Parking applies to recognized families whose converter needs
 an unconfigured provider or is not yet built. Unrecognized bytes are stored and get a card
@@ -6156,6 +6373,20 @@ an [unchosen proposal](design/proposals/grouped_fact_adjudication.md).
 
 ## D124. Compare local P3 and the OSS MCP surface without reprocessing
 
+> **P3 identity clauses amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** A frozen local benchmark
+> input is attested by its source protocol: D155 uses per-document publication and
+> file-inventory evidence, not a new engine snapshot generation. Historical runs
+> retain their original marker evidence; no result is silently reinterpreted.
+
+**Answer-prompt amendment, 2026-11-09:** extend the same independent runner
+with a `full` profile over the exact source-pinned SDK/P3 surface. Freeze an
+optional answer template in each output and keep the source models, budgets,
+judge and original artifacts unchanged. This replaces the four-profile-only
+scope; the existing access comparisons retain their contracts. Live readiness
+comparison ignores probe timestamps, not serving identity. See the updated
+[design](plan/designs/locomo_retrieval_ablation_design.md#61-full-surface-answer-prompt-trials)
+and [analysis](plan/analysis/locomo_answer_prompt_trials.md).
+
 **Status:** accepted 2026-09-14, binding when merged. Add an explicitly
 experimental, resumable answer-and-judge runner over one already-processed
 LoCoMo sample. Its four profiles are native Codex with local P3, native Codex
@@ -6274,8 +6505,8 @@ R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
 
 ## D128. GLM ingest variant of the v38 LoCoMo protocol
 
-**Execution selection superseded, 2026-10-23:** current LoCoMo execution uses
-one `full-v39` profile. The historical GLM benchmark branch is removed; its saved
+**Execution selection superseded, updated 2026-11-09:** current LoCoMo execution uses
+one `full-v40` profile. The historical GLM benchmark branch is removed; its saved
 artifacts remain read-only. The general D127 provider-rotation contract survives.
 See [current benchmark design](plan/designs/locomo_benchmark_design.md).
 
@@ -6364,6 +6595,10 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 [analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
 
 ## D132. Decide ingest class from bytes and label every object write
+
+> **P3 class wording amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** All mutable corpus copies and
+> indexes, including original copies, are hot. Raw's MIME routing, byte-authoritative
+> admission and explicit class on every write remain unchanged.
 
 **Refined by D133 and D138.** The registry chooses a text format family
 from the filename and declaration only after bytes establish that the input
@@ -6501,6 +6736,14 @@ event digest is a documented alternative with an adoption trigger.
 > gains the shared time scope: for lineages with declared effective periods the scope
 > chooses which versions are judged. Lineages without periods keep the
 > `versions: current | all` behaviour described here.
+
+> **Refined by [D156](#d156-caller-tags-on-documents-filter-every-grain-through-their-documents) (2026-11-13).**
+> Item 3's document filters gain caller `tags` and reach the context
+> operations. Its rule that a filtered fact's returned evidence is limited to
+> matching claims is replaced: supporting evidence stays limited to matching
+> documents, while contradicting evidence and contradiction co-members are
+> disclosed from every document, marked in or out of the filter. Items 1, 2,
+> 4 and 5 are unchanged.
 
 **Status:** accepted. **Date:** 2026-09-24.
 
@@ -7026,6 +7269,12 @@ only through D118 adjudication.
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
+> **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
+> PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
+> this entry, including prerelease upgrade policy and the RC-only compiler
+> workaround. Relational live graph, search and other contracts survive.
+> References to PostgreSQL 19 below record historical decisions or measurements.
+
 **Status:** accepted (design approved by review round 3, 2026-10-21;
 implementation approved by review round 5 pending the latency decision, which
 the owner took on 2026-10-22 — amendment below); binding on merge of PR #505. Issue
@@ -7246,6 +7495,12 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 
 ## D143. Processing layers can be switched off per deployment and per request
 
+> **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
+> sources-only document tree with no entities, fact metadata or K links, identical
+> across claims/facts settings. No facts-setting snapshot rebuild or filtering is
+> required. Completion still follows enabled-layer currency; K gating and all
+> other processing/retrieval-layer rules remain binding.
+
 **Status:** accepted (design approved by GPT-6.1 Sol review round 9, 2026-10-23); binding on
 merge of PR #515; implementation is not implied.
 **Date:** 2026-10-23.
@@ -7342,6 +7597,11 @@ fact child).
 ---
 
 ## D147. A deployment's engine is built from explicit settings and can run beside others in one process
+
+> **Extended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Corpus publication is engine-owned work
+> invoked through the same explicit context, `run_task` and delivery collector.
+> D74's per-document corpus erasure/replay uses the separately durable manifest store.
+> No hosted scheduler or correctness authority is added to this repository.
 
 **Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c). Merged
 as D144 in #531 and renumbered the same day to avoid colliding with decisions being written
@@ -7633,6 +7893,14 @@ lists the attributes; the observability docs describe them.
 
 ## D149. Reuse query embeddings within a request; prune unrequested fact statistics
 
+**D153 amendment (2026-11-12).** Shared statement-local coverage/endpoint
+eligibility and constrained decision/mention/chunk provenance replace repeated
+per-candidate entity-authority expansion. D153 specifies both entity-driven
+nomination and candidate-driven hydration, canonical fact-source factoring,
+and actual-plan qualification. This amends physical execution; request embedding
+reuse, one snapshot/deadline, source/time eligibility, demand-pruned counts
+and paid-product reuse remain unchanged.
+
 **Status:** accepted. **Date:** 2026-11-06.
 
 Entity membership starts from candidate IDs and indexed provenance; scoped
@@ -7681,7 +7949,8 @@ will read the file is known.
   datasets) is `doc-text`: the whitespace-normalized character count of the
   `document.md` it produced. These routes call no model provider, so counting their
   output still comes before every paid stage (structure models, embeddings,
-  extraction). `card` reads nothing and is free: no measurement. Any other route has no
+  extraction). `card` reads nothing and has no processing measurement or processing
+  charge; retained resources still follow D152 independently. Any other route has no
   managed cost class, and a metered deployment fails the version
   (`rate_class_unavailable`) rather than run provider work it cannot bill.
 - *Parking.* After recording the measurement the convert work parks with the defer
@@ -7720,3 +7989,470 @@ and gains `cost_class`, `unit` and `format_family` (`p9_46_0067`, which refuses 
 while staged originals remain undrained). Unmetered deployments are unaffected. The
 control plane must accept the v3 receipt before a deployment runs this release.
 
+
+
+## D151. Parallel identity matches survive ordinary profile enrichment
+
+**Decision (2026-11-10, owner authorized).** Separate the commit rules for an
+existing identity match and for creating a new entity. A model match is a
+verdict against its supplied evidence snapshot. Under short hard-forget,
+live-lineage, shared identity and lemma guards, follow the selected entity's
+redirects to an active root and record the decision. Ordinary profile/alias
+updates, candidate ordering or a peer anchor do not repeat inference. A missing
+or retired target still requires another attempt.
+
+A new-entity decision separately reloads the bounded candidate IDs and local
+document identity memberships under the lemma lock. A membership change retries
+against the new identities; unchanged profiles are not a prerequisite. Keep
+same-name distinct referents possible. No provider call holds a database lock,
+no global serial worker requirement is introduced, and no retry/DLQ failure is
+hidden. Hard forget's ordinary-work drain and active barrier remain mandatory.
+
+**Rationale and tradeoff.** Broad snapshot equality made normal enrichment
+invalidate paid decisions and caused observed retries/DLQ under parallel
+normalization. The new policy removes this artificial dependency. It deliberately
+accepts a match based on earlier evidence even if a new candidate or fact arrives
+before commit. Selected/canonical IDs, the existing bounded decision audit,
+commit policy and an input digest retain provenance; this is not a claim that
+the latest evidence would produce an identical model answer.
+
+**Scope and cost.** New resolver generation, unchanged model prompts, thresholds,
+normalizer outputs and chunk/extraction/embedding reuse keys. No migration,
+second registry, raw profile audit copies, automatic re-ingestion or automatic
+replay path. Profile vectors still require exact input hashes. Same-lemma
+creation races are protected; different-name identity recall stays bounded by
+the existing candidate generator. Real PostgreSQL parallelism tests prove
+commit behavior and provider counts; benchmark accuracy and production
+throughput require separate measurements.
+
+**Design:** [entity identity §3.3.2](plan/designs/entity_identity_and_retrieval_design.md#332-parallel-resolution-commits-a-match-against-its-decision-snapshot-d151).
+**Analysis:** [parallel identity resolution](plan/analysis/parallel_identity_resolution.md).
+**Amends:** D99 whole-snapshot equality and D102 in-flight binding invalidation;
+retains D95/D100 identity decisions, D21 reversible merges and D74/D135 deletion.
+
+## D152. Engine-owned storage capture consumes complete provider evidence
+
+**Status:** accepted on this PR's coordinated merge; not implemented.
+**Date:** 2026-11-11. **Extends:** D61's substrate evidence boundary.
+**Design:** [retained-storage consumer](plan/designs/storage_capture_consumer_design.md).
+**Analysis:** [source and scope](plan/analysis/storage_capture_consumer_20261111.md).
+
+**Context.** A provider's complete entry inventory does not know E/K/P purpose;
+a processing receipt does not describe every retained copy or actual native
+commit. A maximum processing sequence and four provider counters are therefore
+insufficient storage evidence. A read-only recovery observation must remain
+available when ordinary customer growth is parked.
+
+**Decision.** The complete OSS engine owns native allocation/reference capture,
+resource purpose, matching to qualified scoped provider evidence and exact
+immutable evidence/ACK membership. Adapter facts remain separate from customer
+funding and from memory truth. One bounded original native engine view and
+matching provider witness cover the requested instant; complete paged extraction
+follows release of the short guard. No live-listing or watermark fallback is
+retained. The provider boundary and closed content-free engine records are
+specified in the design, including native filesystem identity distinctions.
+The provider captures a nonempty exact same-organisation/cell filesystem set;
+the managed adapter independently keeps its four distinct role binding.
+
+**Alternatives.** Counter sums conflate canonical, staged and replicated data;
+processing sequence prefixes admit uncommitted holes; row-byte estimates change
+the allocated quantity; a cloud-side classifier moves memory correctness outside
+D60. Making this observation depend on a new all-writer financial permission
+system adds a different unchosen contract. That broader proposal remains explicit.
+
+**Consequences.** Current prices, usable-time quantity, no-debt/held-only
+settlement, processing terms and the operator's real 48-hour rule are unchanged.
+The managed adapter requires the matching accepted UMC measurement/eligibility
+amendment and genuine native/profile qualification. This accepts no new quota,
+waiver, public capability or running implementation. D56 source/reuse identities
+and D74 privacy authority survive unchanged; capture metadata never enters paid
+processing keys. Provider/native capability, classification and cost evidence
+must qualify before advertising chargeable evidence.
+
+
+## D153. Shared eligibility and candidate-constrained provenance
+
+**Status:** accepted design on this PR's merge; implementation not yet qualified.
+**Date:** 2026-11-12. **Authority:** owner requested Claude Opus approval before
+implementation; Opus 5.5 HIGH approved revision `431900b1d` after three reviews.
+[Approval](plan/analysis/retrieval_eligibility_reviews_20261112/opus-r3-review.md).
+
+**Decision.** Retain D142's scoped exact/broad indexed ranking. Evaluate shared
+entity visibility once per distinct endpoint within a statement, using materialized
+ID sets under the existing repeatable-read snapshot. Constrain entity provenance
+in its actual decision → mention → chunk → version → any-ready-reading order;
+keep document bridges indexed per member and deployment using a fixed C-collated
+UUID-text order that avoids competing UUID-key scans under skew. Opus approved
+this measured physical amendment at `68e156154` ([review](https://github.com/writeitai/remember-stack/pull/587#issuecomment-6830637190)). Claim/chunk scope uses the same
+canonical mention relation in entity-driven and candidate-driven directions.
+A private source-qualified fact helper owns actual D140 carried-claim membership
+and presentation/counts; the only runtime-composed fact authority is the tested
+subject/object visibility conjunction. Full eligibility precedes each cut.
+
+**Tradeoffs and consequences.** Add a mention chunk-lookup B-tree with native
+concurrent leaf construction and a session-scoped migration lock. UUIDs remain
+opaque, with measured linear partition-point-probe overhead and no guessed time
+filter. Correct stale/missing D140 manifest dependencies and roll actual schema,
+catalog, saved-query and D152 guard pins through their normal contracts.
+No ranking thresholds, public row shapes, ingestion generations, ID minting,
+model calls or paid reuse keys change. No cache, persisted visibility flag,
+legacy fallback, reranker or automatic DLQ repair is introduced.
+
+**Qualification.** The pre-change oracle is a real `p9_46_0067` database, not
+hand-picked old DDL. Complete row/count, deletion/merge/time, 120-partition,
+large unrelated-data, concurrency/cancellation, manifest/ACL and native completion
+gates are mandatory before merging runtime changes. Single-reader prototypes
+are evidence for the design, not proof of a shipped speedup.
+
+**Design:** [shared retrieval eligibility](plan/designs/shared_retrieval_eligibility_design.md).
+**Analysis:** [measured SQL amplification](plan/analysis/retrieval_filtering_reliability_20261112.md).
+**Delivery:** [implementation and qualification](plan/plans/shared_retrieval_eligibility.md).
+**Amends:** D142/D149 physical read execution and D23 UUID-derived pruning;
+retains D54, D56, D67, D74, D140 and D152 correctness boundaries.
+
+
+## D154. One pagination contract: browse lists page, ranked results disclose, SQL caps refuse silence
+
+**Status:** accepted; implementation on this PR.
+**Date:** 2026-11-13. **Authority:** owner request for sensible, consistent
+pagination across listing views, propagated to CLI / MCP / SDK and documented.
+No users yet: rename directly; no shims, aliases, deprecations or migrations.
+
+**Decision.** Listing surfaces share one contract with three shapes.
+
+**A. Browse lists** (filter-only, exhaustive). Request `limit` (default 50,
+max 200) and opaque `cursor`; response `next_cursor` (null exactly at the end —
+the only "more exists" signal; a short or empty page with a non-null
+`next_cursor` is legal, e.g. when a document-search browse page hits its
+lineage scan cap before finding another match). Keyset order on an immutable
+key plus id tiebreak. Every cursor carries a short hash of the request's
+listing scope (deployment identity and the filters that define the result set); a cursor whose scope
+hash does not match the request is rejected with the existing typed
+invalid-cursor 400 (or the route's existing typed error). Invalid cursor → 400
+(or the existing typed error). No totals, no offsets, no `has_more`. Applies
+to: `GET /documents`, `POST /documents/search` (browse mode), section history,
+document references, and `GET /lookup/relations` plus
+`GET /lookup/observations` without `property_query` (keyset browse ordered by
+`(ingested_at DESC, id)`).
+
+**Cost export is outside these list rules.** `GET /ops/cost-export/v1` is a
+resumable feed consumed by the remember.dev billing pipeline. It keeps its own
+contract from
+[request_path_metering_and_cost_export_design.md](plan/designs/request_path_metering_and_cost_export_design.md):
+limits 1–500 (default 100), an issued zero-key replay `cursor` on the first
+page and echoed request `cursor` thereafter, `next_cursor` carrying a fresh
+horizon even on an empty batch, and the existing cursor encoding without a
+listing-scope hash so
+already-stored engine cursors stay valid across deploys. D154 does not rename
+or reshape that feed.
+
+**Pinned read instant.** Where the source can honour an as-of read cheaply,
+the cursor also pins that instant and later pages reuse it: document search
+browse, section history, document references, graph neighborhood clocks, and
+lookup browse. Lookup browse uses **one** as-of belief/ingest predicate on
+every page (page one acquires the existing commit-visible belief watermark
+before opening its snapshot and is continuation with no
+position; there is no first-page-only `invalidated_at IS NULL` branch). Where
+it cannot — `GET /documents` always reads the current newest live version and
+serving flag — the cursor carries no instant. The guarantee there is keyset
+stability only: unchanged rows are never repeated or skipped; a row whose
+filtered attribute (e.g. status) changes between pages may enter or leave the
+listing.
+
+**B. Ranked results** (any `query` / `property_query` / `name`). Request `k`
+(top-k), no cursor; a request with both a query and a cursor is a validation
+error. The response always discloses the cap: Envelope routes set
+`truncation.truncated` (fetch k+1) whenever more than k matched, including
+search/claims, search/chunks and observations with `property_query`;
+`DocumentSearchPage` in ranked mode gains `truncated: bool` and `next_cursor`
+stays null.
+
+**C. SQL** keeps `max_rows` plus `truncated` / `truncation_reason` as a safety
+cap; `max_rows > 1000` → 422 instead of a silent clamp; delete
+`exact_total` / `exact_total_known`. Larger scans use the statement's own
+`WHERE … LIMIT` (documented under guides/sql).
+
+**D. Envelope paging.** Envelope gains top-level `next_cursor` (graph
+neighborhood and browse-mode lookups). `Truncation` keeps disclosure fields
+only (drop `continuation`). Drop `Contradiction.continuation` and the dead
+continuation merge in `combine_evidence`. Graph neighborhood: request
+`continuation` → `cursor`; the cursor pins `valid_at` / `believed_at` and the last
+`(hops, relation_ids, node_ids)` ordering tuple, so deleting a returned edge
+does not shift surviving paths past the next page. Default
+`limit` 100. For hops>1 the internal 500-row fetch ceiling stays as a
+computational bound: page within those bounded rows, then disclose the ceiling
+via `truncation.reason` and leave `next_cursor` null. The
+[review analysis](plan/analysis/pagination_review_20261113.md) explains why
+these corrections reuse the existing guards and bounded reads.
+
+**Names kept.** `limit`, request `cursor`, `k` / `candidate_k` for ranked,
+`truncation` / `truncated`, `max_rows`. Browse routes that used `k` rename to
+`limit`. Response page field `cursor` → `next_cursor` everywhere. Request
+`continuation` → `cursor`.
+
+**Propagate.** Same names on the Python SDK, TypeScript client (regenerated
+from OpenAPI), CLI (`--limit` / `--cursor`, print `next_cursor`), MCP tool
+schemas and handlers, `openapi.json`, and the docs site. Canonical docs:
+`reference/http-api` "Pagination and truncation", linked from each affected
+page; regenerate `llms.txt` / `llms-full.txt`.
+
+**Tradeoffs.** Lookups without a property query change order from
+evidence-strength ranking to ingest-time keyset so paging is stable and
+exhaustive. Ranked lookups keep `k` and must always say when the cap applied.
+Graph deep neighborhoods may stop before a full page with an explicit reason
+rather than offering an unbounded fetch.
+
+**Amends:** listing and truncation naming on the HTTP / SDK / CLI / MCP
+surfaces; Envelope / Truncation / Contradiction wire shapes; SQL request
+validation for `max_rows`. Does **not** amend the cost-export feed contract
+(D91 / `request_path_metering_and_cost_export_design.md`).
+
+---
+
+## D155. The corpus filesystem is a mutable tree of document folders
+
+**Status:** accepted design (owner direction and reviewer dispositions 2026-11-13);
+implementation is separate. **Date:** 2026-11-13. D154 is reserved for pagination PR #589.
+
+**Scaling amendment (Claude, design owner, 2026-11-13):** the original ordinary
+publication suffix scan and no-stored-path clause are superseded by the recorded
+folder set below. Full scans remain for reconcile and forget/restore; the accepted
+digest-verifying repair of late in-flight requests is unchanged.
+
+**Context.** The customer mount must be a browsable corpus, with one real folder
+per document holding its original and every reader-useful derivative. Snapshot
+stubs and separate raw/artifact mounts cannot provide that interface. Originals
+remain authoritative in raw; the extra corpus copy is an accepted storage cost.
+There are no users requiring migration, aliases or a transition layout.
+
+**Decision.**
+
+- **Publish copies, not stubs.** One folder contains `original<suffix>`, exact
+  `document.md`, the active `pageindex.json`, optional `source_map.json`, every
+  reader-classified media/transcript asset, and generated `document.json` and
+  `_index.md`. Exclude blocks, full conversion/meta manifests, provider-response
+  JSON, checkpoints, references NDJSON, work/extraction state and old readings.
+  Export by inventory/kind allowlist, never by copying an artifact prefix.
+- **Type first, topic optional.** Fixed types: `email`, `chat`, `image`, `audio`,
+  `video`, `pdf`, `spreadsheet`, `presentation`, `document`, `data`, `other`.
+  Match stored source kind/byte-decided MIME/family/route in the design's order;
+  `other` is the fallback. Root placement may deliberately return `null`, otherwise
+  only a bounded topic beneath the type. No corpus-organizing model call.
+  `<title-slug>--<suffix>` uses `sha256(doc_id.bytes).hexdigest()[:24]`: 96 bits,
+  with collision probability below 6.4 × 10^-14 at 100 million lineages. No suffix
+  reservation or collision-extension protocol; erasure can recompute it from the
+  UUID alone, including after metadata scrub or independent restore.
+- **One completed reading.** Original and derivatives use the served completed
+  version/representation and active structure. A newer upload stays accessible
+  through raw APIs but leaves the previous folder intact until completion. No
+  processed version means no folder. D117 storage/parking is retained; its
+  latest-stored-original P3 view is replaced.
+- **Idempotent publication through existing work.** `publish_corpus(doc_id)` reads
+  current DB authority for the desired folder/files. Nullable
+  `documents.corpus_paths text[]` records the small set of possibly written folders;
+  commit the union with the desired path before any object write. List only these
+  prefixes, write desired files first, delete the other recorded folders, then
+  regenerate affected ancestor `_index.md` and root `llms.txt` **from the DB**.
+  Never patch old index contents. One deployment advisory lock serializes these
+  operations. Before every write/delete (including multipart requests), verify
+  ownership on that same session and the live claim; use bounded connect/read
+  timeouts without automatic write retries. Session loss can still let one issued
+  request land after a newer publisher: transient stale bytes are accepted and
+  repaired by digest-verifying reconcile, without coordination machinery. Keep
+  old paths recorded through ancestor-index repair, including after their last
+  object is gone, then reduce the set to `[desired]` (or null after removal). A
+  crash therefore leaves every possibly written path and affected ancestor known.
+  Each committed trigger has a fresh event target in existing `processing_state`,
+  carrying only `doc_id`; retries reuse the same row. No request table, lineage revision counter, pending-path
+  journal, publication-receipt table or persistent directory-membership cache.
+  Self-host classes and managed pushed `run_task` use the same engine handler,
+  leases, retries and announcements.
+- **One nullable success marker.** `documents.corpus_published_revision` stores
+  the deterministic digest of DB-selected export inputs, desired path and builder
+  policy only after files, cleanup and index regeneration succeed and inputs still
+  match. Clear it on relevant changes and before writes. MCP `p3_path` computes
+  the current relative path only behind a matching marker for the served selected
+  version; otherwise null. Readiness `p3` uses that same per-document guard, never
+  a global recent-build timestamp. It means the current inputs were published
+  once, not that a late request from a dead publisher cannot change the bytes.
+  There is no whole-tree snapshot guarantee.
+- **Repair and navigation stay simple.** Full reconcile uses one full-store
+  listing with the same selectors/renderer, removes orphans, repairs `corpus_paths`
+  and regenerates all indexes. Ordinary publication renders/HEAD-checks only the
+  old/new ancestor chain and its radix pages plus root `llms.txt`, from current DB
+  membership. Reserved `~/` page subtrees make obsolete pages listable without
+  visiting unrelated document folders. A fresh tree initializes the fixed type
+  indexes once. Every corpus object carries
+  its expected SHA-256 in metadata; verify mode compares it with the desired digest
+  and rewrites mismatches/missing metadata even behind a matching marker. Periodic
+  verification repairs the bounded, rare DB-session-loss/in-flight-request race.
+  Deterministic bounded member
+  tables, root `llms.txt` and navigation radix pages remain; page splits/merges
+  never move document folders or recopy survivors. No Tier-1 `documents/`,
+  facets, entities, K links or `_paths/` id index. Store `doc_id` and exact-version
+  handles; resolve via MCP `p3_path` or compute the suffix and use
+  `find <root> -type d -name '*--<suffix>'`. P3 is sources-only under D143; K stays standalone.
+- **S3 and one customer mount.** Reuse the S3 adapter for mountable.io (bucket =
+  filesystem id), AWS S3, GCS XML API/HMAC and MinIO. Keep E0 writes immutable;
+  add only streamed replacement, paged listing and idempotent deletion for P3.
+  Repair/forget lists and aborts abandoned uploads where supported. An upload-listing
+  `NotImplemented`/501 delegates unfinished-part cleanup to the qualified provider
+  and reports `provider_managed` coverage plus a warning; published-object absence
+  is still verified. This does not attest immediate erasure of unfinished parts.
+  [Provider source audit](plan/analysis/corpus_document_folders.md#mountable-upload-listing-compatibility-pr-603).
+  All corpus copies are hot and customers mount read-only. `remember mount DIR`
+  obtains a one-time remember.dev ticket and invokes
+  `mountable mount --ticket-stdin --json DIR`, ticket only on stdin; `remember
+  unmount DIR` delegates unmount. Session provisioning belongs to the cloud repo.
+  Self-host may use any read-only S3 FUSE mount.
+- **Forget erases one document.** Keep D74 portable intent, barrier, external-write
+  drain, verification and restore replay. Page through keys for the document's
+  suffix, erase every matching folder/upload and controlled serving/cache copy,
+  then regenerate/prune indexes from scrubbed DB authority, including index-only
+  remnants, and clear `corpus_paths`. An empty set never skips the full scan. Never wipe the corpus or recopy surviving originals/media. The existing
+  `doc_id` suffices in immutable intent; no historic friendly paths are needed.
+  Re-honor even completed manifests on independent restores; object-version purge
+  requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-hard-forget-and-restore-erase-the-document-regenerate-indexes).
+
+**Rationale and alternatives.** A copied original makes each folder self-contained;
+a single completed reading avoids pairing v2 bytes with v1 text. Recomputing from
+authority plus a small committed folder set replaces revision/journal/receipt
+coordination. Per-document suffix scans would make N ingests quadratic in listed
+objects; recorded paths bound ordinary object IO to that document and its ancestors.
+The 96-bit suffix makes accidental collision negligible without reservation state;
+its unkeyed derivation survives restore without a secret. Rare repair/forget scans
+recover unrecorded copies, while per-document erasure leaves other bytes in place.
+MCP and suffix search meet addressing needs without a second id index. Shared
+indexes always regenerate from DB authority, so neither event ordering nor old
+index contents determine truth. S3 interoperability uses the existing adapter.
+
+**Reuse boundary.** No converter, blockizer, chunker, extraction, Claimify,
+embedding-policy/model or text-origin generation changes. Nullable topic changes
+only placement output/schema generation and reuses stored summaries. Publication
+markers, suffixes and reader metadata never enter paid-work identities (Rule 4/D56).
+
+**Amends/supersedes.** P3 lifecycle/layout and path guarantees in D7/D39/D40/D55;
+customer mounts/original-copy rules in D37/D51/D61/D65/D116; D117 browse version
+selection; D74 purge targets; D94 snapshot registry; D96 entity folders; D49 K
+status mirroring, D79 placement completion, D132 corpus classes and D143 P3
+served-set snapshots; D78/D85/D124 benchmark attestation follows publication
+markers and folder inventories without reinterpreting old protocol evidence.
+Their other authority, reuse, retrieval, media and privacy contracts remain as
+identified inside those entries. D147's context/work/portable-store seams are reused.
+
+**Authority:** [E0 §§5–7](plan/designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem).
+**Analysis:** [choices and provider evidence](plan/analysis/corpus_document_folders.md).
+**Delivery:** [ordered slices and tests](plan/plans/corpus_document_folders.md).
+
+---
+
+## D156. Caller tags on documents; filter every grain through their documents
+
+**Status:** accepted design (owner direction and GPT 6.1 sol review
+dispositions 2026-11-13); implementation is separate. **Date:** 2026-11-13.
+
+**Context.** One deployment often holds several bodies of work, such as the
+decision logs, designs and ticket outcomes of several products, kept together
+so the memory can connect them. Agents still need narrower reads ("only this
+product", "only decisions", "everything except the smoke tests"). D134
+metadata says what a source declares about itself, not how the caller
+organizes it; `source_ref` is identity and cannot double as a label; and the
+context operations agents use most accept no document filter at all.
+
+**Decision.**
+1. **A tag registry.** Each tag is created before use (`create_tag(name,
+   description)`), with a name unique case-insensitively (a `key:value`
+   convention is documented, never parsed) and a description written for
+   agents. `list_tags` makes the vocabulary discoverable; renames and
+   deletes happen in one place. There are no tag groups.
+2. **Assignments on the lineage only.** Registered tags are assigned to a
+   document lineage, stored once in `document_tags`, and not versioned. Every version, including
+   versions selected by a D140 time scope, carries the lineage's current
+   tags. `ingest` adds tags and never removes them (one lineage can be
+   reached by several callers); `update_document_tags` adds, removes or
+   replaces them atomically. Tags never decide whether an ingest creates a
+   version. Any unregistered tag in a write or filter fails with
+   `unknown_tag`.
+3. **Tags never reach processing.** They enter no reuse key, header,
+   embedding input or extraction window; a tag write causes no model call and
+   no version (D56).
+4. **One filter, every grain.** D134's `documents` filter gains
+   `tags: {all, any, none}` and is accepted by `search_documents`, `search`,
+   `claims_and_sources_context`, `facts_context` and `combined_context`.
+   Chunks inherit through their document, claims through their live
+   occurrences, facts through at least one live supporting claim; with a
+   D140 time scope, filter and scope hold on the same occurrence. Eligibility
+   precedes ranking (D142/D153). `resolve_entity` stays unfiltered: the
+   entity space is shared.
+5. **Filtered facts disclose disagreement.** Supporting evidence comes from
+   matching documents only; contradicting evidence and contradiction
+   co-members come from every document, marked in or out of the filter, with
+   exact two-sided totals. A filter selects facts; it never re-adjudicates
+   them. This applies to every `documents` filter and replaces D134 item 3's
+   evidence limit for facts.
+6. **Honest empties.** A completed empty filtered read's `known_empty`
+   explanation says whether no live document matched the filter or the
+   matching documents say nothing about the question. Incomplete reads keep
+   their `boundary`; ordinary responses carry no extra filter block.
+
+**Alternatives and consequences.** Free-text tags created by use, creation on
+first use, tag groups, copying tags onto claims, chunks or facts, tags on
+versions or entities, structured key/value tags, prefix matching, rename
+aliases, per-filter re-adjudication, a `source_ref` prefix filter and bulk
+retag were rejected (analysis §4–§7, §12). Automatic tagging is kept as the
+unchosen [classification rules proposal](plan/proposals/tag_classification_rules.md). Operation versions advance
+(`claims_and_sources_context@5`, `facts_context@5`, `combined_context@6`), MCP
+tools `ingest`, `search_documents` and the three context tools raise their
+`tool_version`, `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
+`update_document_tags` join the catalogue, and `memory_v1.tags_current` and
+`memory_v1.document_tags_live` join the view catalog. Hard forget deletes a
+lineage's assignments and leaves the registry; normal deletion keeps
+assignments for audit. Tags organize one memory; bodies
+of work that must never share entities or facts still use separate
+deployments.
+
+**Design:** [document tags](plan/designs/document_tags_design.md).
+**Analysis:** [document tags](plan/analysis/document_tags_analysis.md).
+**Delivery:** [document tags plan](plan/plans/document_tags.md).
+**Refines:** D134 (filters and fact evidence). **Amends:** the open query
+space §3.1/§3.2 contract and the D136 MCP catalogue. **Retains:** D54, D56,
+D80, D135, D140, D142, D153 and D74.
+
+
+## D157. PostgreSQL 18 is the reference server
+
+**Decision (2026-11-14, owner).** PostgreSQL 18 is the only reference and
+self-host server major. Pin an official Debian trixie 18.x image by immutable
+multi-platform digest, selecting the newest minor and image at least two
+weeks old. The initial pin is 18.6 from 2026-10-28: 18.7 was released only
+2026-11-12 and does not meet that age floor. Keep the existing pinned
+pgvector 0.8.6, pg_partman 5.5.0 and pg_textsearch 1.5.1 sources/packages,
+and the bundled pg_trgm, pgcrypto, btree_gist, unaccent, fuzzystrmatch and
+plpgsql extensions. Remove the RC-only forced `<limits.h>` include.
+
+**Why.** D98 adopted PostgreSQL 19 only for SQL/PGQ. Beta 4 reverted it,
+and the owner's 2026-11-06 RC 1 amendment replaced graph patterns with plain
+joins. No remaining capability requires 19. A prerelease server and compiler
+workaround therefore add operational risk without a feature benefit.
+
+**Consequences.** Image builds, Compose, CI, release foundation tags
+(`remember-stack-postgres:18-<engine-version>`), query-space manifests,
+graph readiness and native storage-capture guards use 18. Migrations must
+run from empty on 18; no Beta 3 cleanup or dual-major path remains. Recreate
+and replay development storage. Physical PG19 storage is not PG18-compatible;
+any managed data transfer needs a separately qualified operator plan.
+Both architectures retain upstream extension regression and engine gates.
+No paid-work reuse identity or generation changes; moving servers does not
+require re-embedding or re-extraction.
+
+**Amends.** D98 and its RC 1 amendment, D40's projection rebuild substrate,
+and the server/version clauses of D61, D94, D108, D109 and D142. Their
+non-version contracts remain binding. Historical measurements stay dated
+and do not become PostgreSQL 18 qualification evidence.
+
+**Analysis.** [PostgreSQL 18 reference server](plan/analysis/postgres18_reference_server.md).
+**Current designs.** [Graph](plan/designs/p2_graph_design.md#9-postgresql-18-and-extension-posture),
+[P1 search](plan/designs/postgres_p1_search_projection_design.md#6-extensions-and-supported-postgresql).
+
+**Rejected.** Remaining on 19 for a removed feature, supporting two server
+majors, adding compatibility shims, or opening a PG19 data directory on 18.

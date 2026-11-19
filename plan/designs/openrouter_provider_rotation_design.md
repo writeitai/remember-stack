@@ -2,14 +2,15 @@
 
 Binding design for D127. Analysis:
 `plan/analysis/openrouter_inference_capacity_20260916.md`.
-Status: accepted pending review; implementation follows in a stacked PR.
+Status: accepted and implemented.
 
 ## Problem
 
-The chat seat pins providers with `allow_fallbacks: false` and never rotates: when the
+Before ordered rotation, the chat seat pinned providers with `allow_fallbacks: false`: when the
 routed provider overloads, the adapter retry and the work-ledger retries all hit the same
 engine, converting transient 429s into dead letters (R14: 45/997 from DeepInfra 429s).
-Embeddings declare an ordered shortlist with OpenRouter-side fallbacks, but neither path rotates client-side on overload today.
+Embeddings already declared an ordered shortlist with OpenRouter-side fallbacks;
+neither path rotated client-side on overload.
 
 ## Decision
 
@@ -68,6 +69,17 @@ rotation, a split throttle budget, and per-call host recording.
   retry. Standard-price fallback requires that endpoint in the explicit approved
   routing policy; Flex exhaustion alone never widens the allowlist. Actual usage
   is recorded at the serving endpoint's rate, not an assumed Flex rate.
+- The explicit transient envelope `error.metadata.error_type = provider_unavailable`
+  is another recognized unbilled rejection, subject to the same HTTP/error-code
+  checks and strict absence of both `choices` and `usage`. An allocated ID is
+  allowed for this specific rejection. It uses the existing throttle budget,
+  approved provider set and transport-event recording, without fabricating usage
+  or first attempting to reconcile a nonexistent completed generation. Generic
+  ID-bearing errors still require accounting recovery. This distinction follows
+  [OpenRouter's failed-attempt billing contract](https://openrouter.ai/pricing)
+  (retrieved2026-11-09); the adapter does not request separately billable auxiliary
+  services. Incident evidence and alternatives are in the
+  [unavailability analysis](../analysis/openrouter_provider_unavailable_20261109.md).
 - Successful responses require usable token/cost accounting. If inline
   accounting is unusable, poll only the existing generation's metadata with
   the bounded 0/1/2/3/5-second waits. Exhaustion remains a nonretryable
@@ -80,6 +92,43 @@ rotation, a split throttle budget, and per-call host recording.
   disabled by default, and does not authorize automatic paid replay. See the
   [accounting-failure analysis](../analysis/openrouter-accounting-failure-525-20261106.md)
   for the November 6 evidence and upstream contracts.
+- A success-status reply whose body is not a JSON object is a broken provider
+  reply. It is neither a capacity rejection nor an invalid model answer.
+  Examples are an empty body, whitespace only, non-JSON text such as an HTML
+  page, a cut-off object, bytes that are not valid text, or a JSON array,
+  string, number, boolean or null. Every `OpenRouterModelProvider` POST path
+  (chat with or without rotation, and embeddings) reads the body through one
+  shared check. That check raises the ordinary typed `OpenRouterProviderError`
+  after the capacity checks above have already declined the reply. On the
+  rotation path the error carries the targeted slug. The image-description
+  converter (`adapters/converters/image_ocr_description.py`) also POSTs to
+  OpenRouter but does not use this check. It has its own equivalent guard: a
+  success reply that is not a JSON object becomes a typed `ProviderCallError`
+  with no usage events.
+  - **Safe diagnostics.** The message holds only the endpoint, the status, the
+    body size in bytes, a body class, and the JSON decoder's fixed reason and
+    character offset. It never includes body text, headers or credentials,
+    because a partial reply can repeat user content. The error is raised with
+    no decoder exception attached as cause or context, because that exception
+    holds the raw body and would print its own message in a traceback. This
+    covers the message and the exception chain, not memory: the response
+    object still exists in the callers' frames.
+  - **Billing.** A success status does not prove the request was free. Usage
+    stays unknown (`None`), never zero. The error is never classified as an
+    unbilled rejection. The adapter does not retry it, rotate to another slug,
+    or open a new retry budget. `generate()` records it once with
+    `outcome = transport_error`. Callers handle it as an ordinary provider
+    error under their existing policy: stages that fail closed leave any
+    retry to the work ledger, and fail-open steps (such as E0 section
+    summaries) continue without the answer.
+  - **Not an invalid response.** For embeddings, an invalid-response error
+    marks a chunk as poison (content that can never embed). A broken reply
+    says nothing about the chunk, so it is treated as a provider outage.
+  - **Unchanged.** Valid replies, including a valid object preceded by
+    whitespace, decode as before.
+  - See the
+    [malformed-success analysis](../analysis/openrouter_malformed_success_body_20261113.md)
+    for how this gap was found and what it does not explain.
 - Exact settings on `OpenRouterSettings`, alongside the existing
   `_IN_FLIGHT_BUDGET_RETRIES` so operators can reason about worst-case latency (R14 showed
   ~13 s per failed call; the design must keep worst-case bounded and visible):

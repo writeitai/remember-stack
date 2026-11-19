@@ -133,8 +133,8 @@ barrier locks of the completing stage → the D135 lineage lock (`documents` row
    else is written; switching off needs no other action (§6).
 3. After committing it **seeds** every enabled layer that has open gaps (§5.4). It does this on
    every run, so an interrupted seed resumes on the next start.
-4. When the facts setting changed, it builds and publishes a P3 snapshot for the new served set
-   (§7.6) before the mounts are served.
+4. A facts-setting change does not rebuild P3: D155 makes it a sources-only
+   document tree. K mount publication still follows the served facts setting (§7.6).
 
 No engine API changes layers: it is deployment configuration with a cost, not a caller action
 (D60).
@@ -569,16 +569,15 @@ Plane K compiles pages about entities and predicates from facts, so it runs only
 served; the page views are facts views (§7.5), and the knowledge mount is not published while facts
 are not served.
 
-The P3 corpus filesystem is an immutable published snapshot behind an atomically swapped pointer.
-Each P3 snapshot records whether it was built with facts (with `entities/` and the entity indexes)
-or without them; a snapshot built without facts omits `entities/` and every index or orientation
-line that links to it, so the tree it exposes is self-consistent. The mount publisher activates the
-**latest published snapshot built for the currently served set**, never an incompatible one; until
-one exists it serves the empty-corpus placeholder. `setup` builds and publishes a matching snapshot
-when the facts setting changes (§3.4), and a build that started under the old configuration and
-finishes later is recorded for that configuration, so it is never activated for the new one. The
-retained data is untouched. Without a configuration row every snapshot is built and served exactly
-as today.
+P3 is the sources-only mutable document tree defined by [D155 in E0 §6](e0_files_design.md#6-the-corpus-filesystem--a-mutable-p3-tree-d155).
+It has no `entities/`, fact metadata or K links under any layer configuration, so
+switching claims/facts does not require a new P3 shape, snapshot, matching served-set
+filter or mount swap. The transaction serving a completed version/representation
+under this document's enabled-layer rules clears its nullable publication marker
+and enqueues ordinary `publish_corpus(doc_id)` work. P3 readiness compares that
+marker with the current computed export digest; processing completion does not
+wait for P3. Deletion and hard forget remain unconditional, and their per-document
+corpus erasure/index regeneration cannot be disabled with a layer.
 
 ## 8. Compatibility
 
@@ -687,9 +686,10 @@ database-level, with recorded or fake model providers:
     complete even if claims are switched on meanwhile; default receipts are unchanged.
 12. **Deletion.** Deleting a document while facts are off closes its facts, rebuilds its document
     bindings and deletes its gaps, without switching facts on.
-13. **Mounts.** An all-on P3 publication followed by switching facts off serves a snapshot without
-    `entities/` (and no index line pointing to it) and no knowledge mount; a build that started before
-    the switch and publishes after it is not activated.
+13. **Mounts.** Switching facts off leaves P3's source folders/indexes unchanged
+    (no entities or K links under either setting) and removes the knowledge mount.
+    Both configurations enqueue publications when their served reading changes;
+    no facts-setting snapshot filter is involved (D155).
 14. **Off/on cost.** Provider-call fixtures for facts off record the profile-refresh exception only
     when facts exist.
 

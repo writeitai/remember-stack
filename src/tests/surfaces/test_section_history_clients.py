@@ -90,7 +90,7 @@ class _History:
                     status="absent",
                 ),
             ),
-            cursor="next-page",
+            next_cursor="next-page",
             evaluated_at=_AT,
             believed_at=_AT,
         )
@@ -118,7 +118,7 @@ def test_sdk_sends_key_time_and_paging(surface: tuple[MemoryClient, _History]) -
         doc_id=_DOC,
         section_key="part/4:per-diem",
         time=OverlapReadTime.model_validate({"from": _AT, "to": _AT}),
-        k=5,
+        limit=5,
         cursor="abc",
     )
 
@@ -129,7 +129,7 @@ def test_sdk_sends_key_time_and_paging(surface: tuple[MemoryClient, _History]) -
             doc_id=_DOC,
             section_key="part/4:per-diem",
             time=OverlapReadTime.model_validate({"from": _AT, "to": _AT}),
-            k=5,
+            limit=5,
             cursor="abc",
         )
     ]
@@ -217,12 +217,12 @@ def test_tool_definition_and_argument_validation() -> None:
     )
     request = cast(SectionHistoryRequest, parsed["request"])
     assert request.time == HistoryReadTime()
-    assert request.k == 50
+    assert request.limit == 50
     for bad in (
         {"doc_id": str(_DOC)},
         {"doc_id": str(_DOC), "section_key": "has space"},
         {"doc_id": str(_DOC), "section_key": "k", "project": "x"},
-        {"doc_id": str(_DOC), "section_key": "k", "k": 201},
+        {"doc_id": str(_DOC), "section_key": "k", "limit": 201},
     ):
         with pytest.raises(ToolArgumentError):
             validate_arguments("section_history", bad)

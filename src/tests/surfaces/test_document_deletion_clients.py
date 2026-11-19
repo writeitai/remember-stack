@@ -102,7 +102,7 @@ class _Inventory:
                     serving=True,
                 ),
             ),
-            cursor="next-page",
+            next_cursor="next-page",
         )
 
 
@@ -175,7 +175,7 @@ def test_sdk_lists_documents_with_filters(
 
     page = client.list_documents(limit=7, cursor="abc", status="failed")
 
-    assert page.cursor == "next-page"
+    assert page.next_cursor == "next-page"
     assert page.documents[0].doc_id == _DOC
     assert inventory.calls == [{"limit": 7, "cursor": "abc", "status": "failed"}]
 

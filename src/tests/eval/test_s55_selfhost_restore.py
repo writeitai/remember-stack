@@ -24,13 +24,14 @@ from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import ObjectKey
 from rememberstack.spine import ForgetCatalog
-from rememberstack.spine import ProjectionCatalog
 from rememberstack.workers import DeletionService
 from rememberstack.workers import ForgetKnowledgeRebuilder
-from rememberstack.workers import ForgetProjectionRebuilder
 from rememberstack.workers import HardForgetHandler
 from rememberstack.workers import HardForgetReadiness
 from rememberstack.workers import HardForgetService
+from tests.corpus_export_support import document
+from tests.corpus_purge_support import scrubbed_publisher
+from tests.corpus_purge_support import ScrubbedAuthority
 
 _DEPLOYMENT_ID = UUID("55500000-0000-0000-0000-000000000001")
 _DOC_ID = UUID("55500000-0000-0000-0000-000000000002")
@@ -45,11 +46,15 @@ _TOKEN = "S55_REAL_UNIQUE_FORGOTTEN_TOKEN"
 _CONTROL = "S55_REAL_INDEPENDENT_CONTROL"
 _OBJECT_KEY = ObjectKey("raw/forgotten.txt")
 _CONTROL_KEY = ObjectKey("raw/control.txt")
-_PROJECTION_PREFIX = ObjectKey("snapshots/forgotten-v1")
-_CONTROL_PREFIX = ObjectKey("snapshots/control-v1")
+_PROJECTION_PREFIX = ObjectKey(document(doc_id=_DOC_ID, title=_TOKEN).path)
+_CONTROL_DOCUMENT = document(2, deployment_id=_DEPLOYMENT_ID, title=_CONTROL)
+_CONTROL_PREFIX = ObjectKey(_CONTROL_DOCUMENT.path)
 
 
 class _Catalog:
+    def ordinary_work_is_drained(self, *, deployment_id: UUID) -> bool:
+        return True
+
     def __init__(self) -> None:
         self.complete = False
 
@@ -57,7 +62,7 @@ class _Catalog:
         return None
 
     def materialize_portable(self, *, manifest: ForgetManifest) -> None:
-        return None
+        self.complete = False
 
     def profile_repair_batches(
         self, *, manifest: ForgetManifest
@@ -75,21 +80,22 @@ class _Catalog:
         self.complete = True
 
 
-class _ProjectionCatalog:
-    def __init__(self) -> None:
-        self.prefixes = {_PROJECTION_PREFIX.root, _CONTROL_PREFIX.root}
+class _Caches:
+    def __init__(self, *, root: Path) -> None:
+        self.root = root
+        self.stopped = False
 
-    def purge_snapshot_prefixes(
-        self, *, deployment_id: UUID, prefixes: tuple[str, ...]
-    ) -> int:
-        before = len(self.prefixes)
-        self.prefixes.difference_update(prefixes)
-        return before - len(self.prefixes)
+    def quiesce(self, **_: object) -> None:
+        self.stopped = True
 
-    def snapshot_prefixes_exist(
-        self, *, deployment_id: UUID, prefixes: tuple[str, ...]
-    ) -> bool:
-        return bool(self.prefixes.intersection(prefixes))
+    def purge(self, *, doc_id: UUID, **_: object) -> None:
+        assert self.stopped
+        import shutil
+
+        shutil.rmtree(self.root / str(doc_id), ignore_errors=True)
+
+    def verify(self, *, doc_id: UUID, **_: object) -> None:
+        assert self.stopped and not (self.root / str(doc_id)).exists()
 
 
 class _Paths:
@@ -104,11 +110,6 @@ class _Paths:
 
 class _Deletion:
     def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID, **_: object) -> None:
-        return None
-
-
-class _ProjectionRebuilder:
-    def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
         return None
 
 
@@ -135,7 +136,6 @@ def _manifest() -> ForgetManifest:
         fact_ids=(_FORGOTTEN_IDS[2],),
         entity_ids=(_FORGOTTEN_IDS[3],),
         object_keys=(_OBJECT_KEY,),
-        projection_prefixes=(_PROJECTION_PREFIX,),
         k_artifact_ids=(_ARTIFACT_ID,),
     )
 
@@ -167,13 +167,8 @@ def _seed_projections(*, snapshot_store: LocalFSObjectStore, mount_root: Path) -
             )
         except ObjectAlreadyExistsError:
             pass
-    forgotten_version = Path(_PROJECTION_PREFIX.root).name
-    control_version = Path(_CONTROL_PREFIX.root).name
-    for root, version, content in (
-        (mount_root / str(_DEPLOYMENT_ID), f"p3-{forgotten_version}", _TOKEN),
-        (mount_root / str(_DEPLOYMENT_ID), f"p3-{control_version}", _CONTROL),
-    ):
-        path = root / version / "data"
+    for doc_id, content in ((_DOC_ID, _TOKEN), (_CONTROL_DOCUMENT.doc_id, _CONTROL)):
+        path = mount_root / str(doc_id) / "cached"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
@@ -210,7 +205,7 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         key=_CONTROL_KEY, content=_CONTROL.encode(), storage_class="cold"
     )
     _seed_projections(snapshot_store=snapshots, mount_root=mount_root)
-    projection_catalog = _ProjectionCatalog()
+    authority = ScrubbedAuthority(survivors=(_CONTROL_DOCUMENT,))
     git = LocalGitRepository(
         repository=repository,
         path_catalog=_Paths(),
@@ -223,11 +218,10 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         deletion=cast(DeletionService, _Deletion()),
         profile_refresher=RecordingProfileRefresher(),
         object_purgers=(objects,),
-        projection_rebuilder=cast(ForgetProjectionRebuilder, _ProjectionRebuilder()),
         projection_purger=SelfHostProjectionPurger(
             object_purger=snapshots,
-            catalog=cast(ProjectionCatalog, projection_catalog),
-            mount_root=mount_root,
+            publisher=scrubbed_publisher(store=snapshots, authority=authority),
+            caches=_Caches(root=mount_root),
         ),
         knowledge_rebuilder=cast(ForgetKnowledgeRebuilder, _KnowledgeRebuilder()),
         k_git=git,
@@ -266,7 +260,6 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         )
 
     def restore_projections() -> None:
-        projection_catalog.prefixes.add(_PROJECTION_PREFIX.root)
         _seed_projections(snapshot_store=snapshots, mount_root=mount_root)
 
     def restore_git() -> None:

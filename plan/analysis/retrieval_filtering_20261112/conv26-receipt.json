@@ -1,0 +1,13 @@
+{
+  "sample": "conv-26",
+  "answer_state_sha256_before": "8ecff74bbbbc66d5d5e1c85411bcf85ddbe632593a164f530e26adca4e84e113",
+  "provider_calls": 0,
+  "case_source": "saved tool arguments; no gold labels used",
+  "diagnostic_source_commit": "31f6b6765",
+  "runtime_source": "e8c1b0468dc8ad7d07298bc391d5539dd748ac00",
+  "started_at": 1794488890.5512397,
+  "exit_code": 0,
+  "answer_state_sha256_after": "8ecff74bbbbc66d5d5e1c85411bcf85ddbe632593a164f530e26adca4e84e113",
+  "finished_at": 1794488936.1376166,
+  "postgres_restored_stopped": true
+}

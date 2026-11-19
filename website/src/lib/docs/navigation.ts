@@ -52,6 +52,7 @@ export const docsNavigation: NavItem[] = [
       { title: "Ingest files", href: "/docs/guides/ingest-files" },
       { title: "Ingest conversations and transcripts", href: "/docs/guides/ingest-conversations" },
       { title: "Keep a source up to date", href: "/docs/guides/keep-sources-current" },
+      { title: "Tag documents", href: "/docs/guides/tag-documents" },
       { title: "Wait until a document is queryable", href: "/docs/guides/wait-for-readiness" },
       { title: "Give an agent context", href: "/docs/guides/agent-context" },
       { title: "Ask about the past", href: "/docs/guides/ask-about-the-past" },

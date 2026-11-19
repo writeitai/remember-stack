@@ -27,6 +27,9 @@ from remember.mcp_tools._definitions import PROJECT_ARGUMENT
 from remember.mcp_tools._definitions import render_tools_list
 from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools._definitions import SECTION_HISTORY_TOOL_NAME
+from remember.mcp_tools._definitions import TAG_READ_TOOL_NAMES
+from remember.mcp_tools._definitions import TAG_TOOL_NAMES
+from remember.mcp_tools._definitions import TAG_WRITE_TOOL_NAMES
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._definitions import ToolDefinition
 from remember.mcp_tools._documents import DocumentSearchBackend
@@ -47,6 +50,8 @@ from remember.mcp_tools._references import DocumentReferencesBackend
 from remember.mcp_tools._references import handle_document_references_tool
 from remember.mcp_tools._sections import handle_section_history_tool
 from remember.mcp_tools._sections import SectionHistoryBackend
+from remember.mcp_tools._tags import handle_tag_tool
+from remember.mcp_tools._tags import TagBackend
 from remember.mcp_tools._validate import validate_arguments
 
 __all__ = (
@@ -63,6 +68,10 @@ __all__ = (
     "SEARCH_DOCUMENTS_TOOL_NAME",
     "SECTION_HISTORY_TOOL_NAME",
     "SectionHistoryBackend",
+    "TAG_READ_TOOL_NAMES",
+    "TAG_TOOL_NAMES",
+    "TAG_WRITE_TOOL_NAMES",
+    "TagBackend",
     "DocumentDeleteBackend",
     "DocumentSearchBackend",
     "McpMemorySettings",
@@ -79,6 +88,7 @@ __all__ = (
     "handle_memory_write_tool",
     "handle_search_documents_tool",
     "handle_section_history_tool",
+    "handle_tag_tool",
     "map_error",
     "memory_tools",
     "render_tools_list",

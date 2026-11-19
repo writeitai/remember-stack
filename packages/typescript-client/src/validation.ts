@@ -18,6 +18,7 @@ interface Schema {
   default?: unknown;
   'x-extra'?: string;
   'x-exclude'?: boolean;
+  'x-exclude-if-none'?: boolean;
   'x-field-order'?: string[];
   discriminator?: {propertyName:string};
   format?:string;
@@ -42,6 +43,8 @@ const semanticValidators = {
   OverlapReadTime: ['_ordered'], ReferenceInput: ['_consistent'], DocumentReferencesRequest: ['_one_source'],
   OverlapTemporalScope: ['_ordered'], EvidenceSpan: ['_end_after_start'],
   EvidenceTotal: ['_returned_does_not_exceed_total'], ContextBundleV2: ['_child_grains_are_exact'],
+  TagUpdate: ['_changes_something'], DocumentTagsUpdate: ['_set_excludes_add_and_remove'],
+  DocumentTagFilter: ['_one_list_without_duplicates'],
 };
 for (const [name, validators] of Object.entries(constants.modelValidators)) {
   if (JSON.stringify(semanticValidators[name as keyof typeof semanticValidators]) !== JSON.stringify(validators)) {
@@ -96,7 +99,8 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
       .map(([key, item]) => [key, normalize({ value: item, schema: fields[key]
         ?? (typeof schema.additionalProperties === 'object' ? schema.additionalProperties : {}) })]));
     for (const [key, field] of Object.entries(fields)) {
-      if (!(key in result) && 'default' in field) Object.defineProperty(result, key, {
+      // Python omits an exclude-if-None field rather than serializing its null default.
+      if (!(key in result) && 'default' in field && !(field['x-exclude-if-none'] && field.default === null)) Object.defineProperty(result, key, {
         value: normalize({ value: structuredClone(field.default), schema: field }),
         enumerable: true, writable: true, configurable: true,
       });
@@ -115,9 +119,26 @@ function utcMicroseconds({value}:{value:unknown}):bigint|null {
   if(!Number.isFinite(base))return null;
   return BigInt(base)*1000n+BigInt((fraction?.[1]??'').slice(0,6).padEnd(6,'0'));
 }
+/** Python's tag-reference rule: at most 512 characters as sent and 1-128 after NFC. */
+export function isTagRef(value:string):boolean {
+  const length=Array.from(value.normalize('NFC')).length;
+  return Array.from(value).length<=512&&length>=1&&length<=128;
+}
 /** Reject the cross-field invariants which JSON Schema alone cannot express. */
 function semanticInvariant({ name, value }: { name?: string; value: Record<string, unknown> }): void {
   if (name === 'DocumentSearchRequest' && value.query != null && value.cursor != null) fail({ detail: 'query and cursor cannot be combined' });
+  if(name==='TagUpdate'&&value.name==null&&value.description==null)fail({detail:'give name, description or both'});
+  if(name==='DocumentTagFilter'){
+    // Shapes are checked first, so a malformed list is the schema's refusal, not a TypeError.
+    const lists=(['all','any','none'] as const).map(key=>[key,value[key]??[]] as const);
+    if(lists.every(([,list])=>Array.isArray(list)&&list.every(tag=>typeof tag==='string'))){
+      const strings=lists as unknown as (readonly [string,string[]])[];
+      if(strings.some(([,list])=>!list.every(isTagRef)))fail({detail:'a tag reference is 1 to 128 characters after NFC'});
+      if(strings.every(([,list])=>list.length===0))fail({detail:'tags needs a non-empty all, any or none list'});
+      for(const [key,list] of strings){const keys=list.map(tag=>tag.normalize('NFC').toLowerCase());if(new Set(keys).size!==keys.length)fail({detail:`tags.${key} names a tag more than once`});}
+    }
+  }
+  if(name==='DocumentTagsUpdate'&&value.set!=null&&(((value.add??[]) as unknown[]).length>0||((value.remove??[]) as unknown[]).length>0))fail({detail:'set replaces the tags; it excludes add and remove'});
   if(name==='OverlapTemporalScope'||name==='OverlapReadTime'){const end=utcMicroseconds({value:value.to}),start=utcMicroseconds({value:value.from});if(end!==null&&start!==null&&end<start)fail({detail:'temporal scope ends before it starts'});}
   if(name==='EffectivePeriodInput') {const start=utcMicroseconds({value:value.effective_from}),end=utcMicroseconds({value:value.effective_until});if(start!==null&&end!==null&&end<=start)fail({detail:'effective_until must be later than effective_from'});}
   if(name==='EffectivePeriodsRequest') {
@@ -141,6 +162,8 @@ function semanticInvariant({ name, value }: { name?: string; value: Record<strin
     && value.char_end <= value.char_start) fail({ detail: 'evidence span end must be after start' });
   if (name === 'EvidenceTotal' && typeof value.returned === 'number' && typeof value.total === 'number'
     && value.returned > value.total) fail({ detail: 'returned evidence exceeds total' });
+  if (name === 'EvidenceTotal' && typeof value.in_documents_filter_total === 'number' && typeof value.total === 'number'
+    && value.in_documents_filter_total > value.total) fail({ detail: 'matching evidence exceeds total' });
   if (name === 'ContextBundleV2') {
     const claims = value.claims_and_sources as Record<string, unknown> | undefined;
     const facts = value.facts as Record<string, unknown> | undefined;
@@ -219,6 +242,7 @@ function dump({value,schema,excludeNone,excludeDefaults}:{value:unknown;schema:S
       const item=fields[key];
       const field=schema.properties?.[key]??{};
       if(field['x-exclude'])continue;
+      if(field['x-exclude-if-none']&&item===null)continue;
       if(excludeNone&&item===null)continue;
       if(excludeDefaults&&'default'in field&&equalJson({left:item,right:normalize({value:field.default,schema:field})}))continue;
       Object.defineProperty(result,key,{value:dump({value:item,schema:field,excludeNone,excludeDefaults}),enumerable:true});

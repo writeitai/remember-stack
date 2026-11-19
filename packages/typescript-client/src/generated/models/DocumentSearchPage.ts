@@ -10,9 +10,10 @@ import type { ScopePending } from './ScopePending';
  */
 export type DocumentSearchPage = {
     as_of: string;
-    cursor?: string | null;
     documents: Array<DocumentSearchResult>;
+    next_cursor?: string | null;
     people_matched?: Array<DocumentPeopleMatch>;
     scope_pending?: ScopePending | null;
+    truncated?: boolean;
 };
 

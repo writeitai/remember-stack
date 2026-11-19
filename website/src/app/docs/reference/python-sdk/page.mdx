@@ -5,6 +5,8 @@ export const metadata = {
 
 # Python SDK
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 The `remember` package is the Python client for RememberStack. You use it to
@@ -47,6 +49,7 @@ The client is synchronous. There is no async client yet
 | `StoredKeyRefused` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `LayerUnavailable` | exception | [Errors](#errors) |
+| `UnknownTag` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
 | `ClaimOccurrence` | model | [Models](#models) |
@@ -69,6 +72,8 @@ The client is synchronous. There is no async client yet
 | `DocumentSearchRequest` | model | [Models](#models) |
 | `DocumentSearchResult` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
+| `DocumentTagFilter` | model | [Models](#models) |
+| `DocumentTags` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `EffectiveInterval` | model | [Models](#models) |
 | `EffectivePeriodInput` | model | [Models](#models) |
@@ -99,6 +104,8 @@ The client is synchronous. There is no async client yet
 | `SectionHistoryRequest` | model | [Models](#models) |
 | `SectionHistoryRow` | model | [Models](#models) |
 | `SectionHistorySection` | model | [Models](#models) |
+| `Tag` | model | [Models](#models) |
+| `TagList` | model | [Models](#models) |
 | `TemporalMatch` | enum | [Models](#models) |
 | `ToolDescriptor` | model | [Models](#models) |
 | `VersionPipelineReadiness` | model | [Models](#models) |
@@ -291,6 +298,7 @@ Client.ingest_file(
     version_key: str | None = None,
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
+    tags: Sequence[str] | None = None,
 ) -> IngestedVersion
 ```
 
@@ -335,6 +343,11 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
+| [`list_tags`](#list_tags) | `GET /tags` | `TagList` |
+| [`create_tag`](#create_tag) | `POST /tags` | `Tag` |
+| [`update_tag`](#update_tag) | `PATCH /tags/{tag_id}` | `Tag` |
+| [`delete_tag`](#delete_tag) | `DELETE /tags/{tag_id}` | `Tag` |
+| [`update_document_tags`](#update_document_tags) | `POST /documents/{doc_id}/tags` | `DocumentTags` |
 | [`set_effective_periods`](#set_effective_periods) | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` | `EffectivePeriodsSet` |
 | [`clear_effective_time`](#clear_effective_time) | `DELETE /documents/{doc_id}/effective-periods` | `EffectiveTimeCleared` |
 | [`set_references`](#set_references) | `PUT /documents/{doc_id}/versions/{version_id}/references` | `ReferencesSet` |
@@ -399,6 +412,7 @@ MemoryClient.ingest(
     version_key: str | None = None,
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
+    tags: Sequence[str] | None = None,
 ) -> IngestedVersion
 ```
 
@@ -422,6 +436,7 @@ results.
 | `version_key` | Your permanent name for this version, unique within the document (1 to 512 characters). A key new to the document always creates a version; the latest version's key is accepted again only with the same bytes. Requires `source_kind`/`source_ref`. See [Versions in force](/docs/reference/http-api/ingest#versions-in-force). |
 | `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
 | `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
+| `tags` | Registered tags, each a name (any letter case) or `tag_id`, added to the document's tags; at most 64. Ingest only adds tags and they never decide whether a version is created. See [Tags](/docs/reference/http-api/ingest#tags). |
 
 Raises `ValueError` when:
 
@@ -434,7 +449,8 @@ Raises `ValueError` when:
 - `effective_until` is given without `effective_from`, or is not later than
   it, or a period is given with `versioning_mode="living"`;
 - neither `source` nor `content` is given;
-- bytes are given without `filename`.
+- bytes are given without `filename`;
+- `tags` is a single string instead of a sequence.
 
 Reading a path can raise `OSError`: `FileNotFoundError` when it does not
 exist, whether given as `Path` or `str`.
@@ -443,7 +459,8 @@ Returns [`IngestedVersion`](#models). `created` is `False` when these exact
 bytes were already stored for this document; no new processing starts. A
 `version_key` that names another version, or a start that another version
 already declares, raises `MemoryApiError` with `status_code` 409; a period
-on a `living` document raises it with 422.
+on a `living` document raises it with 422. A tag that is not registered
+raises [`UnknownTag`](#unknowntag) and nothing is stored.
 
 ```python
 from datetime import UTC, datetime
@@ -567,7 +584,7 @@ MemoryClient.list_documents(
 
 Returns one page of the deployment's documents, newest document first, as a
 [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
-returned `cursor` to read the next page; it is `None` on the last page.
+returned `next_cursor` as `cursor` to read the next page; it is `None` on the last page.
 `status` keeps only documents whose newest version has that status. `limit`
 is 1 to 200; the deployment answers `422` outside that range. Deleted
 documents are not listed. See
@@ -579,9 +596,9 @@ while True:
     page = memory.list_documents(cursor=cursor)
     for document in page.documents:
         print(document.doc_id, document.title, document.serving)
-    if page.cursor is None:
+    if page.next_cursor is None:
         break
-    cursor = page.cursor
+    cursor = page.next_cursor
 ```
 
 #### `search_documents`
@@ -593,6 +610,7 @@ MemoryClient.search_documents(
     filters: DocumentSearchFilters | None = None,
     versions: Literal["current", "all"] = "current",
     k: int = 20,
+    limit: int = 50,
     cursor: str | None = None,
     time: ReadTime | None = None,
 ) -> DocumentSearchPage
@@ -604,16 +622,29 @@ and their text, and returns a
 `filters` is a
 [`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters)
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
-`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
-and `doc_ids`. With a `query` the results are ranked and not paged; without
-one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
-`query`, a date without a timezone, or `k` outside 1 to 200 raises
-`pydantic.ValidationError` before any request. A malformed cursor raises
-`MemoryApiError` with `status_code` 400. `time` decides which editions of a
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`,
+`doc_ids` and `tags`, a
+[`DocumentTagFilter`](/docs/reference/result-types#documenttagfilter)
+(`all`, `any`, `none`) of tag names or ids. With a `query` the results are ranked and not paged; without
+one they are newest ingested first and `limit` (default 50) / `cursor` pages them.
+Read `next_cursor` for continuation; ranked responses disclose `truncated`. Passing `cursor` with a
+`query`, a date without a timezone, `k` / `limit` outside 1 to 200, or an
+empty or repeating tag list raises `pydantic.ValidationError` before any
+request. A malformed cursor raises `MemoryApiError` with `status_code` 400; a
+tag that is not registered raises `remember.UnknownTag`, whose `tags` lists
+every one. `time` decides which editions of a
 document with declared effective periods are candidates (default: the ones
 in force now); it takes the same values as in [`search_chunks`](#search_chunks).
 What matches, and how, is in
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+The result's `p3_path` is relative to the corpus root and non-null only when
+that version is served and its nullable publication marker matches current
+export inputs. Historical, raw-only, unpublished, updating and failed
+publications return `None`. `served_version` describes currency independently.
+Resolve again with `DocumentSearchFilters(doc_ids=(doc_id,))` after a
+folder move; [suffix lookup](/docs/self-hosting/filesystem-views#layout) works
+offline. Only the suffix is stable within a folder path.
 
 ```python
 from remember import Client, DocumentSearchFilters
@@ -621,10 +652,18 @@ from remember import Client, DocumentSearchFilters
 memory = Client()
 page = memory.search_documents("audit report")
 emails = memory.search_documents(
-    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), limit=50
 )
 if len(emails.people_matched) > 1:
     print("several people matched:", emails.people_matched)
+
+from remember import DocumentTagFilter
+
+decisions = memory.search_documents(
+    filters=DocumentSearchFilters(
+        tags=DocumentTagFilter(all=("kind:decision",), none=("project:ci-smoke",))
+    )
+)
 ```
 
 #### `delete_document`
@@ -654,6 +693,101 @@ try:
 except MemoryApiError as error:
     if error.status_code != 404:
         raise
+```
+
+### Tags
+
+Tags are names you register, such as `project:billing-migration`, each with
+a description, and assign to documents. A walkthrough is in
+[Tag documents](/docs/guides/tag-documents). Wherever a method takes a
+`tag`, it accepts the name in any letter case or the `tag_id`. Every method
+here except `list_tags` needs a `write` credential.
+
+#### `list_tags`
+
+```python
+MemoryClient.list_tags(*, query: str | None = None) -> TagList
+```
+
+Returns every registered tag, ordered by name ignoring letter case, as a
+`TagList` whose `tags` are [`Tag`](/docs/reference/result-types#tag) models
+(`tag_id`, `name`, `description`, `created_at`, `updated_at`). `query`
+(1 to 200 characters) keeps the tags whose name or description contains it,
+ignoring letter case.
+
+#### `create_tag`
+
+```python
+MemoryClient.create_tag(*, name: str, description: str) -> Tag
+```
+
+Registers a tag. The name is normalized to Unicode NFC and must be 1 to 128
+characters with no whitespace or control characters; the description is at
+most 2,000 characters. Raises `pydantic.ValidationError` for a name or
+description that breaks these rules, before any request, and
+`MemoryApiError` with `status_code` 409 and `code` `"conflict"` when the
+name is already registered in any letter case, or `code`
+`"tag_limit_exceeded"` when the deployment has 10,000 tags.
+
+#### `update_tag`
+
+```python
+MemoryClient.update_tag(
+    *,
+    tag: UUID | str,
+    name: str | None = None,
+    description: str | None = None,
+) -> Tag
+```
+
+Renames a tag, changes its description, or both; give at least one
+(`pydantic.ValidationError` otherwise). Documents keep the tag, and the old
+name stops resolving at once. A name is first looked up with
+`GET /tags?name=…`, which the engine matches the way it matches every tag
+name; a tag that is not registered raises [`UnknownTag`](#unknowntag) with
+`status_code` 404. A new name another tag has raises `MemoryApiError` 409
+with `code` `"conflict"`.
+
+#### `delete_tag`
+
+```python
+MemoryClient.delete_tag(*, tag: UUID | str) -> Tag
+```
+
+Deletes the tag and removes it from every document that carries it, and
+returns the deleted `Tag`. An unregistered tag raises `UnknownTag` with
+`status_code` 404.
+
+#### `update_document_tags`
+
+```python
+MemoryClient.update_document_tags(
+    *,
+    doc_id: UUID | str,
+    add: Sequence[str] | None = None,
+    remove: Sequence[str] | None = None,
+    set: Sequence[str] | None = None,
+) -> DocumentTags
+```
+
+Changes one document's tags in one step and returns a
+[`DocumentTags`](/docs/reference/result-types#documenttags) with the tags
+afterwards. Give `add` and `remove`, or `set` to replace the whole set
+(`set=[]` removes every tag); each list holds at most 64 tags. Removing a
+registered tag the document does not carry is not an error. Changing tags
+starts no processing.
+
+Raises `ValueError` before sending anything when `doc_id` is not a UUID or a
+list is a single string, `pydantic.ValidationError` when `set` is combined
+with `add` or `remove`, `UnknownTag` when a tag is not registered (nothing
+changes), and `MemoryApiError` with `status_code` 404 for an unknown or
+deleted document, or 409 with `code` `"tag_limit_exceeded"` past 64 tags.
+
+```python
+tags = memory.update_document_tags(
+    doc_id=version.doc_id, add=["project:billing-migration", "kind:decision"]
+)
+print(tags.tags)
 ```
 
 ### Versions in force, sections and references
@@ -735,7 +869,7 @@ MemoryClient.section_history(
     doc_id: UUID | str,
     section_key: str,
     time: ReadTime | None = None,
-    k: int = 50,
+    limit: int = 50,
     cursor: str | None = None,
 ) -> SectionHistoryPage
 ```
@@ -743,7 +877,7 @@ MemoryClient.section_history(
 Follows one keyed section across the document's versions. `time` defaults
 to `{"mode": "history"}`. Each row is a version with its `effective`
 intervals and a `status` of `present`, `absent`, `not_indexed` or
-`processing`. Raises `pydantic.ValidationError` for a malformed key or `k`
+`processing`. Raises `pydantic.ValidationError` for a malformed key or `limit`
 outside 1 to 200, and `MemoryApiError` with `status_code` 404 for an
 unknown or deleted document. `section_history_request(request=…)` sends a
 prepared `SectionHistoryRequest`. See
@@ -764,7 +898,7 @@ MemoryClient.document_references(
     direction: Literal["outgoing", "incoming", "both"] = "both",
     kinds: Sequence[ReferenceKind] | None = None,
     time: ReadTime | None = None,
-    k: int = 50,
+    limit: int = 50,
     cursor: str | None = None,
 ) -> DocumentReferencesPage
 ```
@@ -849,6 +983,7 @@ MemoryClient.facts_context(
     hops: int | None = None,
     predicate: str | None = None,
     entity_ids: Sequence[str | UUID] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> Envelope
 ```
 
@@ -862,11 +997,17 @@ evidence.
 | `hops` | 1 or 2; default 1 |
 | `predicate` | 1 to 200 characters |
 | `entity_ids` | 1 to 19 unique entity UUIDs |
+| `documents` | a [documents filter](/docs/reference/assured-operations#the-documents-filter), as `DocumentSearchFilters` or a dict; tags must be registered (`remember.UnknownTag` otherwise) |
 
 ```python
 facts = memory.facts_context(
     "billing migration owner", time={"mode": "history"}
 )
+billing = memory.facts_context(
+    "cutover date", documents={"tags": {"all": ["project:billing-migration"]}}
+)
+for link in billing.fact_evidence:
+    print(link.stance, link.claim_id, link.in_documents_filter)
 for fact in facts.facts:
     print(fact.label, fact.validity.valid_from, fact.validity.valid_until)
 ```
@@ -886,13 +1027,15 @@ MemoryClient.claims_and_sources_context(
     candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     layers: Sequence[str] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> Envelope
 ```
 
 Returns what sources said about `query` (claims) and the matching source
 passages (chunks). `query` is 1 to 8,192 characters. `time` takes the same
 values as in `facts_context`; for documents with declared effective periods
-it reads only the text in force for that scope (default: now). See
+it reads only the text in force for that scope (default: now). `documents`
+returns only what matching documents say. See
 [Assured operations](/docs/reference/assured-operations#claims_and_sources_context).
 
 ```python
@@ -916,15 +1059,17 @@ MemoryClient.combined_context(
     candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     layers: Sequence[str] | None = None,
+    documents: DocumentSearchFilters | Mapping[str, object] | None = None,
 ) -> ContextBundleV2
 ```
 
 Runs `claims_and_sources_context` and `facts_context` together and returns
 both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
-`time` takes the same values as in `facts_context` and applies to both.
+`time` and `documents` take the same values as in `facts_context` and apply
+to both.
 
 ```python
-bundle = memory.combined_context("What did Ravi decide about invoicing?")
+bundle = memory.combined_context("What did John decide about invoicing?")
 print(len(bundle.facts.facts), len(bundle.claims_and_sources.evidence))
 ```
 
@@ -976,14 +1121,15 @@ MemoryClient.lookup_relations(
     predicate: str | None = None,
     object_entity_id: UUID | None = None,
     valid_at: datetime | None = None,
-    k: int = 50,
+    limit: int = 50,
+    cursor: str | None = None,
 ) -> Envelope
 ```
 
 Returns the relations (facts between two entities) that match the pattern.
 With `valid_at`, returns the relations that were valid at that instant;
-without it, the current ones. At most `k` (1–400) come back; the envelope's
-`truncation` says when more matched.
+without it, the current ones. `limit` is 1–200 (default 50). Pass the envelope's
+`next_cursor` as `cursor` until it is `None`.
 
 ```python
 memory.lookup_relations(subject_entity_id=dana_id, predicate="leads")
@@ -993,12 +1139,15 @@ memory.lookup_relations(subject_entity_id=dana_id, predicate="leads")
 
 ```python
 MemoryClient.lookup_observations(
-    *, entity_id: UUID, property_query: str | None = None, k: int = 10
+    *, entity_id: UUID, property_query: str | None = None, k: int = 10,
+    limit: int = 50, cursor: str | None = None,
 ) -> Envelope
 ```
 
 Returns the current observations (facts about one entity), optionally
-narrowed by `property_query` text, at most `k`.
+narrowed by `property_query` text. With a property query, `k` bounds ranked results
+and `truncation.truncated` discloses the cap; a cursor is refused. Without a property
+query, `limit` (default 50, range 1–200) / `cursor` pages through `next_cursor`.
 
 ```python
 memory.lookup_observations(entity_id=dana_id, property_query="role")
@@ -1046,8 +1195,9 @@ Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
 `documents` keeps only claims found in matching document versions (each still
 cites the passage it was first extracted from), with the same fields
-as [`search_documents`](#search_documents); a filtered search is sent as
-`POST /search/claims`. `time` reads only text in force for the scope; a
+as [`search_documents`](#search_documents), tags included; a filtered search
+is sent as `POST /search/claims`. A tag that is not registered raises
+`remember.UnknownTag`. `time` reads only text in force for the scope; a
 search with `time` is sent as `POST` too. See
 [Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents)
 and [Reading text as of a date](/docs/reference/http-api/search#reading-text-as-of-a-date).
@@ -1121,15 +1271,15 @@ MemoryClient.graph_neighborhood(
     predicates: tuple[str, ...] = (),
     valid_at: datetime | None = None,
     believed_at: datetime | None = None,
-    limit: int = 500,
-    continuation: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
     include_paths: bool = False,
 ) -> Envelope
 ```
 
 Returns the entities and relations around one entity. The engine accepts
 `hops` 1–4, `limit` 1–500 and at most 100 `predicates`. Pass the envelope's
-`truncation.continuation` back as `continuation` to read the next page.
+`next_cursor` back as `cursor` to read the next page.
 
 ```python
 around_dana = memory.graph_neighborhood(entity_id=dana_id, hops=1)
@@ -1186,7 +1336,7 @@ MemoryClient.query_sql(
 ```
 
 Runs one statement with positional parameters (`$1`, `$2`, …). Returns the
-`QueryResult/v1` object as a dict. `max_rows` must be 0 or more.
+`QueryResult/v1` object as a dict. `max_rows` must be between 0 and 1,000; larger values are refused.
 
 #### `open_query`
 
@@ -1320,6 +1470,8 @@ with `status_code` 404. See [What is not built yet](/docs/project/not-built-yet)
 RuntimeError
 ├── MemoryApiError                 every memory call
 │   ├── RateLimited                429 from the deployment's admission limits
+│   ├── LayerUnavailable           409 layer_unavailable
+│   ├── UnknownTag                 unknown_tag
 │   └── StoredKeyRefused           the stored key may not go to that address
 └── PipelineDeadLettered           wait_for_readiness
 Exception
@@ -1345,7 +1497,7 @@ Raised by every memory-client method when a request fails.
 | `retryable`, `request_id` | Optional typed server diagnostics; they do not authorize automatic replay. |
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
-| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` (`rate_limited` or `concurrency_limited`); otherwise `None`. |
+| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`), for a `429` (`rate_limited` or `concurrency_limited`), and for the tag refusals `unknown_tag`, `conflict` and `tag_limit_exceeded`; otherwise `None`. |
 | `response` | Not set by the SDK (`None`). |
 
 `str(error)` reads `API <status_code>: <detail>`.
@@ -1390,6 +1542,23 @@ a read needs a [processing layer](/docs/concepts/pipeline#processing-layers)
 the deployment does not process. `layer` is `"claims"` or `"facts"`. Check
 [`processing_layers`](#processing_layers) and use a read the deployment
 serves.
+
+### UnknownTag
+
+A `MemoryApiError` (`code` `unknown_tag`) raised when a call names a tag the
+deployment has not registered. `tags` is a tuple of every unregistered tag
+as the call gave it. `status_code` is 422 for tags in `ingest` or
+`update_document_tags`, and 404 when `update_tag` or `delete_tag` cannot find
+the tag. Nothing was stored or changed. Register the tag with
+[`create_tag`](#create_tag), or check the spelling with
+[`list_tags`](#list_tags).
+
+```python
+try:
+    memory.ingest("notes/billing-sync.md", tags=["project:biling-migration"])
+except remember.UnknownTag as error:
+    print("not registered:", error.tags)
+```
 
 ### PipelineDeadLettered
 
@@ -1442,9 +1611,10 @@ models below are Pydantic models (frozen) unless noted.
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
 | `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`), `version_key` (str or `None`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
-| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
+| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`, `tags` (tuple of tag names). |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
 | `DocumentDeletion` | The result of `delete_document`: `doc_id`, `deleted_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
+| `Tag`, `TagList`, `DocumentTags` | One registered tag (`tag_id`, `name`, `description`, `created_at`, `updated_at`), the result of `list_tags` (`tags`), and the result of `update_document_tags` (`doc_id`, `tags`). |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |

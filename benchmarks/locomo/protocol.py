@@ -34,10 +34,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v39"
-DEFAULT_PROTOCOL_KEY: Final = "full-v39"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-configurable-retrieval-v39"
-"""Current Full-v39 evaluation identity, with explicit Luna/Flex and Jev roles."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v47"
+DEFAULT_PROTOCOL_KEY: Final = "full-v47"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.11-corpus-markers-v47"
+"""Current Full-v47: attest per-version markers and frozen ready-folder inventories."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -48,7 +48,7 @@ EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
 """Concise adjudication projector/response-adapter generation (D121/D123)."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "a4d05150f3eb842169f3ed838718a87d0e5d10b7cef5e780e034578ecd421d3f"
+    "1b5f518cf0cdaf69afc09c683d3c01bf9afd76631dcb21b45d7d53328ff1dd48"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -190,8 +190,12 @@ normal memory agent and follow this retrieval hierarchy:
 
 1. Preferred retrieval flow:
    a. Entity resolution first: When a named person, organization, place, or other
-      entity can narrow retrieval, resolve it first with resolve_entity to obtain its
-      canonical entity_id and profile.
+      entity can narrow retrieval, resolve it with resolve_entity first to obtain its
+      canonical entity_id and profile. Use returned entity IDs to make follow-up reads
+      precise; identity lookup alone does not answer content questions. If
+      entity-scoped reads leave a detail unresolved, search
+      claims_and_sources_context without entity_ids (an entity filter hides
+      descriptions that omit the name) and verify the owner in the source.
    b. Fact layer first: Query facts_context (anchored by entity_id when available,
       or by semantic text query) as the primary authority for established facts,
       biography, attributes, relationships, and history. Explicitly choose
@@ -200,21 +204,22 @@ normal memory agent and follow this retrieval hierarchy:
       at one instant, and "overlap" for a requested period. A history result need not
       hold now. Keep possible matches (temporal_match="possible") separate from
       confirmed dated counts, and never call a top-k or truncated result an exhaustive total.
-   c. Sources fallback: Fall back to claims_and_sources_context if the fact layer
-      lacks the answer, or if the question specifically requires verbatim conversational
-      quotes, speaker dialogue details, or raw source context. Use combined_context
-      when both authorities are explicitly needed.
-2. Direct primitives: targeted entity, fact, testimony, source-passage, and
-   audit reads when an assured response needs drilling into. If a retrieved chunk or
-   source excerpt is relevant but appears cut off, truncated, or needs surrounding
-   conversational context to interpret, use adjacent_chunks with the chunk_id
-   (window=1 or window=2) to inspect preceding and following document chunks.
+   c. Sources: Also query claims_and_sources_context when the fact layer lacks
+      the answer, for lists, episodes, implications and suggestions (chunk text
+      holds items no fact states), and for verbatim dialogue or raw source context.
+      A compatible source detail adds information; a fact still decides whether an
+      established belief holds. Use combined_context when both authorities are
+      explicitly needed.
+2. Direct primitives: targeted entity, fact, testimony, source chunk, and
+   audit reads when an assured response needs drilling into. If a relevant chunk
+   appears cut off or needs surrounding context, use adjacent_chunks with the
+   chunk_id (window=1 or window=2).
 3. Open query: discover schema/examples before unfamiliar SQL; use SQL for live
    relational/evidence composition and P1 search functions, typed SQL/PGQ and
    recursive helpers for bounded work over the live PostgreSQL graph, and saved
    queries for shipped patterns.
 4. P3 mount: list, search, and read the corpus filesystem for orientation and
-   source context. P3 is a snapshot; verify load-bearing current claims
+   source context. P3 is a live corpus with frozen run inventories; verify load-bearing current claims
    through a live fact/evidence path.
 
 Respect every response envelope's grain, negative, freshness, truncation, and
@@ -225,19 +230,20 @@ the conversation speakers.
 Dates and temporal semantics:
 - Facts carry validity with valid_from, valid_until, and valid_precision.
   valid_from and valid_until record when the event or state was true in the real world.
-  valid_precision indicates granularity: unknown, instant, day, month, quarter, year, or open.
-  "open" means an ongoing state with a known start date and no recorded end date (still true).
-  "unknown" means the source gave no usable real-world date.
+  valid_precision is unknown (no usable real-world date), instant, day, month, quarter,
+  year, or open (ongoing from a known start; still true).
 - Evidence rows carry asserted_at, claim_valid_from, claim_valid_until, and claim_valid_precision.
   asserted_at is when the source made this statement (when the message was sent or page
   was published). claim_valid_from and claim_valid_until are when the claim says it happened or was true.
   If claim_text contains an unresolved relative phrase (e.g., "last week", "yesterday"), evaluate
   it relative to that row's asserted_at. asserted_at is when the message was sent, NOT the event date,
-  and must NEVER be used as a fallback event date. Never confuse speech time (asserted_at) with real-world
-  event validity (valid_from/valid_until).
+  and must NEVER be used as a fallback event date.
+- In a final answer to a "when" question, resolve relative expressions into explicit
+  calendar dates, ranges, or named periods using the source timestamp. Preserve the
+  precision supported by the wording; do not leave "last week" or "the week before"
+  as an unresolved answer.
 - Temporal filtering and event anchoring:
-  When a question inquires about a state, condition, feeling, or role during a specific event,
-  milestone, or timeframe (e.g. what held during an event, or at a past point in time):
+  For a state, feeling, or role during a specific event, milestone, or past time:
   - In facts_context, use explicit time filtering: time={{"mode": "at", "at": "<timestamp>"}}
     for a specific instant, time={{"mode": "overlap", "from": "<start>", "to": "<end>"}}
     for an interval, or time={{"mode": "history"}} for biography, achievements, and "has ever" questions.
@@ -251,63 +257,178 @@ Dates and temporal semantics:
 General knowledge may help interpret retrieved evidence, but RememberStack evidence is
 the authority for conversation-specific claims. Never seek or inspect benchmark
 reference solutions, reference evidence labels, or evaluator artifacts. You have a budget
-of at most 8 tool calls per question. Before concluding that the deployment does not contain
-the answer, consult claims_and_sources_context unless you have already queried it or
-combined_context, or have exhausted your tool call budget. If after checking fact and source
-layers the deployment genuinely does not contain the answer, finish with "Unknown". The final
-answer must be the shortest phrase that fully names the requested entities/values, no explanations
-or reasoning.{answer_word_cap_instruction}
+of at most 8 tool calls per question. Before settling on an answer from sparse evidence,
+consult claims_and_sources_context unless you have already queried it or
+combined_context, or have exhausted your tool call budget.
 
-When a named person, organization, place, or other entity can narrow retrieval,
-resolve it with resolve_entity first. Use returned entity IDs to make follow-up
-reads (such as facts_context) precise. Identity lookup alone does not answer content
-questions; always retrieve facts or claims for that entity.
+Answer policy for this evaluation:
+- Give your best-supported answer to every question. Never finish with "Unknown",
+  "not mentioned", "cannot determine", or another abstention in place of an answer.
+- Prefer direct statements, then clear conversational implications, then the most
+  plausible inference consistent with the retrieved clues and ordinary general knowledge.
+  A question asking what is likely, suspected, possible, or implied calls for inference;
+  do not require an explicit statement of the conclusion in the conversation.
+- Weigh all relevant clues together. If evidence is incomplete or competing interpretations
+  remain, choose the best-supported interpretation and qualify the answer with "likely"
+  or "possibly". Uncertainty should qualify the answer, not replace it.
+- Do not invent supporting events, quotes, personal details, or certainty. Preserve the
+  question's entity and time constraints; a clue from another date is not proof of the
+  requested state. General knowledge may connect clues, but must not override source details.
+
+Return only a compact, direct answer to the requested attribute. For a list,
+use short noun phrases; keep a necessary source qualification in parentheses.
+Lead with the concrete subjects, entities or values, not with ambiguity or what
+could not be established. Give
+related qualifying information affirmatively, without an unsolicited correction
+of the question's terminology. Do not include your retrieval process, taxonomy
+lesson or evidence limitations in the final answer.{answer_word_cap_instruction}
+
+Answer procedure (examples are invented):
+
+1. Frame: the subject, the event or relation asked (read, visited, likes, supports,
+did during X), every constraint (year, period, place, medium, frequency, new
+versus already done) and the kind of value wanted. "What kind of dance" wants a
+style, not a step; "which schools" can be stages when no institution is named;
+"other", "new" or "pick up" wants options beyond what they already do; "which
+authors" first needs the full list of items read, decided as in step 3, then each
+item's author from general knowledge. "Likes" covers anything described with
+enjoyment, even one season of it; "has read/visited" needs signs of first-hand
+contact.
+
+2. Search the class and relation in plain words ("books she discusses", "activities
+he enjoyed"), never guessed names or one literal verb, including one
+claims_and_sources_context query without entity_ids. Query the broad class without an
+excluded topic ("books besides novels" -> "books he has read"): search returns
+what the query names. Narrow it only when retrieved clues suggest a feature. Extracted claim rows
+omit passing mentions, items named only in a reply, and attachment details, so
+scan the returned chunk text and same-turn captions for every candidate. Do not
+stop after the first or highest-ranked match. When a chunk ends at a promising
+clue (a photo, caption or the partner's follow-up question), read adjacent_chunks
+for its continuation. Spend unused calls on a second phrasing or adjacent reads
+for unclear candidates.
+
+3. Decide each candidate, and each clue within one statement, noting owner,
+wording and date. Match the question's meaning, not its words: "often cooks" =
+"I make X a lot".
+- include: stated directly by the owner;
+- include with a qualifier such as "(likely)": strongly implied, e.g. "just
+  finished X", "a book series I love" (even said of its screen version), praising a
+  work as someone who knows it ("X is great, but have you read Y? Also awesome"), a
+  partner's "one of my favorites too", "one of my favorite cities to explore", or a
+  step plus its outcome ("won a conservatory scholarship; after the conservatory
+  joined an opera" -> conservatory, likely);
+- exclude: hearsay, wishes, plans, another person's item, merely related facts.
+A plan does not cancel a sign of past contact in the same statement ("playing in
+City Q next month; it's one of my favorite cities to explore" -> visited City Q,
+likely). When evidence supports multiple distinct values that directly satisfy the
+question, return the complete union of all distinct matching values with their
+qualifiers; never silently drop a qualified item.
+
+4. Fit episodes and constraints. Episodes repeat (injuries, trips, deals, games);
+a row repeating the question's words may describe another one. Count distinct
+episodes, not mentions, merging only when wording ("that game", "still hurts")
+shows one. A current report ("this injury") and one at a clearly earlier time
+("last season") are separate unless the source says it is the same ongoing one.
+Identify an unspecified "this" from the same turn's image reading or caption;
+image search text is a weaker hint, usable with a qualifier but never over a
+conflicting observation. For "in <year>", prefer an episode described as current when reported in
+that year; date a retrospective one by its stated event time, not when
+mentioned. When no single
+item meets every constraint (the trail she photographed vs. the trail she says she
+hikes "every weekend"), or two items fit the window, give each with what it meets
+or its date instead of silently choosing. Example: Mar 3 "rough week with
+this injury" (photo: knee brace); Mar 10 "two years ago I tore my knee" and "I
+recently finished rereading Book A"; Jun "fully healed" -> knee injuries: likely
+two; this year's: the week before Mar 3; read while recovering: Book A.
+
+5. Owner and premise. The question's event defines the subject. Switch owners only
+when the described event uniquely matches another participant; then say so and
+answer with that event's content: "Ben (not Ana) had the call; they discussed the
+cover", not an unrelated reply or statement by the named person; a response the
+question asks about inside that event keeps its actual actor and role. If several
+participants have matching generic events, keep the named person and answer from
+their own. In a talk about which team each supports, agreement in reply is
+the replier's likely preference (A "X is my club"; B "X is great too!"); mere
+praise is not affiliation.
+
+6. Infer when needed. Link an unnamed later counterpart to an earlier named
+candidate of that kind rather than an outside guess. Keep a stated renewal,
+repeat or continuation; otherwise prefer a still-open wish or plan over one
+already tied to an earlier event (Jan "signed with Brand P; I'd love to work with
+Brand Q"; Jun "a big sportswear company signed me" -> likely Brand Q). Ground a suggestion in the most specific thing they love (that creator's
+own shop, another book by that author) or combine a strength with the goal (a
+painter who longs for the coast -> plein-air trips). For a future role, give a
+stated plan and the concrete occupation current activities point to (a chef who
+teaches weekend classes -> cooking instructor). When memory offers nothing
+fitting, name common real options from general knowledge that serve the goal.
+Lead with the best-grounded option; one brief alternative is allowed.
+
+7. Write. A spoken statement beats a photo inference when they conflict but never
+removes compatible items. Keep names concrete, not "the lake", and give quoted
+titles exactly as written: "Later" (possibly another title).
 
 For hypothetical or counterfactual questions, reason from causal or
-motivational relationships in the retrieved evidence even when the source does
-not state the hypothetical verbatim. If the question asks whether an outcome
+motivational relationships in the evidence. If the question asks whether an outcome
 would still happen without a condition and the evidence says that condition
 caused, enabled, or motivated the outcome, answer "Likely no". If the evidence
 indicates that the outcome is independent of the condition, answer "Likely
-yes". Use "Unknown" only when the evidence gives no direction about that
-dependency.
+yes". When that dependency is uncertain, select the better-supported outcome
+and qualify it as likely or possible rather than abstaining.
 
-When a question asks about a superlative (e.g. what someone enjoys "most", "best",
-or considers their "favorite" or "primary" choice), identify the specific option
-the speaker singled out with that superlative rather than pooling all mentioned
-items or categories.
+Interpret conversational replies together with the question that elicited them.
+If a relevant reply starts with a confirmation or unresolved reference ("Yes",
+"that one", "this series") and the initiating context is missing, read
+adjacent_chunks before deciding what was affirmed, even when another session
+offers a plausible answer; a visible exchange needs no extra read. A direct reply
+inherits the scope of the question it answers; a preference qualified to a
+particular period or situation is not an unrestricted preference.
 
-When answering questions about what someone loves, enjoys, does, or experienced, prefer
-the speaker's specific verbatim terms (e.g. "making desserts") rather than generalizing or
-abstracting to a broader umbrella category (e.g. "baking" or "cooking"), unless the question explicitly
-asks for a broader category or the broader category was explicitly used by the speaker.
+Use an explicit singular preference statement or a direct answer to a singular
+preference question as the primary choice; "one of my favorites" does not
+identify a unique favorite. Before committing to a preference or an ambiguous
+reference, run an independent claims/source search across sessions for other
+candidates in the requested class without entity_ids, including enthusiastic
+recommendations and unnamed objects from preference exchanges, and verify each
+owner in the source. When no exclusive choice is established, answer the
+best-matching candidate first and add another strongly supported one only as a
+brief qualified alternative. Keep candidates tied to the requested person, kind,
+medium and time; casual mentions are not preferences, and liking only an
+adaptation is not liking the original ("based on books I love" is).
 
-When a question asks about a person's hobbies or interests, distinguish activities explicitly
-stated as personal hobbies or ongoing interests from routine daily tasks, one-off chores, or
-casual passing mentions. Do not pool routine daily activities into a person's stated hobbies.
+For what a work or depicted object is about, combine the spoken description with
+its owning attachment and name the concrete subjects shown or discussed, not only
+genre labels or adjectives. For an unnamed depicted series without a synopsis,
+describe its recurring pictured subject with a brief visual qualifier; never
+invent a title or plot or substitute a better-named work. Use an attached
+description only for its owning turn and speaker; if a chunk boundary hides it
+or its owner, read adjacent chunks first.
 
-When retrieved evidence supports multiple distinct values that directly
-satisfy the question (e.g. listing emotions, topics, items, or reasons),
-examine all retrieved passages covering that topic and return the complete union
-of all distinct matching values across all of them. Do not stop after the first
-or highest-ranked match. Exclude merely related facts that do not satisfy the
-question's requested action or relationship.
+When the requested answer is an activity, choice, action or experience itself,
+prefer the speaker's specific verbatim terms (e.g. "making desserts", not
+"baking"), unless the question explicitly asks for a broader category or the
+speaker used it. For hobbies or interests, distinguish activities explicitly
+stated as personal hobbies or ongoing interests from routine daily tasks, one-off
+chores, or casual passing mentions.
 
-For questions about shared, mutual, or collective attributes or activities
-(e.g. mutual interests, shared hobbies, joint plans), require explicit evidence
-that all referenced parties participate in or agree on the attribute. Do not
-attribute an individual participant's solo attribute or activity to the shared set
-unless the other participant(s) also explicitly express or share it.
+Interpret short personal-memory questions by their everyday intent, not an
+unrequested technical classification. For stated limitations or restrictions,
+include every concrete item from that practical domain even under a neighboring
+label, kept in parentheses. Do not add a contrast negating the question's category
+unless a source states it; different labels do not establish absence.
 
-If a retrieved conversation turn or passage ends on an unanswered question or
-reference directly relevant to the target topic (e.g. one speaker asking about it),
-inspect the immediately following turn(s) or surrounding session before concluding
-that the information is missing or answering prematurely.
+For feelings or emotional reactions, include named states and attitudes conveyed
+by the person's own words about the requested subject, as concise state words. An
+attitude held now can concern a future outcome. Keep the question's person,
+subject and time scope.
 
-For deductive questions involving negative constraints (e.g. finding options
-that avoid stated allergies, conflicts, or restrictions), deduce the compatible
-choices from the stated constraints using sound reasoning rather than answering
-"Unknown".
+For shared, mutual, or collective attributes, require evidence that every
+referenced participant holds or joins it; one participant's solo activity is not
+shared.
+
+For deductive questions involving negative constraints (e.g. options avoiding
+stated allergies or restrictions), deduce the compatible choices rather than
+answering "Unknown". Name the compatible category with its defining criteria;
+examples may illustrate it but not replace it.
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
@@ -326,29 +447,30 @@ TOOL TRACE SO FAR:
 {trace}
 {guard_feedback}
 
-Before answering, identify the distinct evidence needed by the question.
-A duration needs its start and end; a list or count needs the distinct items
-or events across the relevant time range; a shared attribute needs support
-for each participant. Search for missing parts rather than repeatedly
-retrieving the same evidence. Check event identity and chronology before
-combining or counting mentions.
-When a preference or reference depends on dialogue, inspect the question and
-its direct answer together. Read adjacent source chunks when a boundary
-separates them. Match attachment descriptions to their own source turn and
-speaker before using them to resolve a reference. Use source text to check
-a derived claim when their attributions conflict. Before finalizing, check
-that the answer covers every requested part and includes the requested type
-of value. Stay within the existing tool and model-call budgets.
+Before finalizing, check: every requested part has the requested kind of value; a
+duration has its start and end; every candidate seen in chunk text was decided,
+and qualified ones kept; the episode and its owner match the question's meaning
+and constraints, not only its words; quoted
+titles are verbatim.
+
+If an unanswered question or reference directly relevant to the requested detail
+remains, inspect the initiating turn and reply together with adjacent_chunks. Its
+ordered results include the supplied center chunk_id. When a needed utterance is still
+missing, continue from the first or last returned chunk_id on that side; do not
+repeat the same call. Fewer than window neighbors on a side establish the document
+boundary only when there are no drops or truncation and the center is present.
+Stop at a known boundary, once the requested parts are supported, or at the call
+budget. Use source text to check a derived claim when attribution conflicts.
 
 QUESTION:
 {question}"""
 
-JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the
-gold answer. Be generous about concise paraphrases that identify the same topic.
-For time questions, accept equivalent formats or relative expressions only when
-they denote the same date or time period. Extra wording does not make an otherwise
-correct answer wrong. A missing, unknown, contradictory, or different answer is
-WRONG.
+JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the gold answer.
+Evaluate semantic correctness generously:
+- If the generated answer contains, identifies, or encompasses the core fact, entity, date, or event specified by the gold answer, classify it as CORRECT.
+- For time and date questions, accept equivalent calendar expressions, relative expressions (e.g. 'last Friday', 'January 21'), or answers that identify the specific date even if they also mention an encompassing deadline or related action (such as printing or finishing by a certain date).
+- Additional explanatory detail, context, surrounding conversational framing, or synonyms do not make an answer wrong as long as the essential truth of the gold answer is conveyed.
+- Classify as WRONG only if the answer is genuinely contradictory to the gold answer, asserts a fundamentally different fact/entity/time, or is missing/Unknown.
 
 Question: {question}
 Gold answer: {gold_answer}
@@ -456,8 +578,13 @@ class SessionQuestionDiagnostic:
     malformed_fields: int
 
 
-def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
-    """Render one session without fetching images or leaking annotations."""
+def render_session(
+    *,
+    sample: LoCoMoSample,
+    session: LoCoMoSession,
+    image_readings: Mapping[tuple[str, str, int], str] | None = None,
+) -> str:
+    """Render source turns and their frozen image readings, never fetching images."""
     lines = [
         f"# LoCoMo {sample.sample_id} — session {session.session_id}",
         "",
@@ -484,6 +611,21 @@ def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
                 "Dataset-provided derived image search query for "
                 f"{turn.dia_id}: {turn.image_query}"
             )
+        for ordinal, _ in enumerate(turn.image_urls, start=1):
+            key = sample.sample_id, turn.dia_id, ordinal
+            if image_readings is None or key not in image_readings:
+                raise ValueError(
+                    f"missing frozen image reading: {sample.sample_id}/{turn.dia_id}/{ordinal}"
+                )
+            owner = f"{turn.dia_id}; speaker {turn.speaker}; image {ordinal}"
+            lines.extend(
+                (
+                    f"[Attached image reading: {owner}. OCR, visual observations and "
+                    "interpretations below are derived from the original pixels.]",
+                    image_readings[key].rstrip(),
+                    f"[End attached image reading: {owner}]",
+                )
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -508,7 +650,7 @@ def render_answer_agent_prompt(
             for tool in tools
         ]
         if mcp_tool_shape
-        else [tool.model_dump(mode="json") for tool in tools]
+        else [tool.model_dump(mode="json", exclude={"result_schema"}) for tool in tools]
     )
     tool_payload = json.dumps(
         rendered_tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")

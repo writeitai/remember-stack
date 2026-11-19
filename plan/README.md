@@ -52,6 +52,12 @@ registry, full/profile/card postures and extraction eligibility — see
 [the workspace family design](designs/workspace_formats_design.md#7-office-pdf-email-and-notebook-details);
 for finding files and
 filtering by author or date, [D134 document metadata and search](designs/document_metadata_and_search_design.md).
+For the tag registry, caller-assigned tags on documents (`project:…`, `kind:…`) and
+filtering every read — including the context operations — by them, see
+[D156 document tags](designs/document_tags_design.md), its
+[analysis](analysis/document_tags_analysis.md) and [delivery order](plans/document_tags.md).
+Automatic tagging is the unchosen
+[classification rules proposal](proposals/tag_classification_rules.md).
 The families actually shipped for workspaces, and how they serve coding agents, are
 [D138 workspace formats](designs/workspace_formats_design.md).
 The [analysis](analysis/format_coverage_and_conversion_architecture.md) records the
@@ -62,8 +68,15 @@ For conversational anaphora and question-affirmation resolution across dialogue 
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
 
+For the customer corpus mount — type-first document folders containing copied originals
+and reader derivatives, idempotent publication, stable handles and per-document erasure —
+start with [D155 in E0 §§5–7](designs/e0_files_design.md#5-mounting--the-corpus-is-the-customer-filesystem),
+its [analysis](analysis/corpus_document_folders.md) and
+[implementation order](plans/corpus_document_folders.md). This is an accepted
+design amendment, not a claim that the replacement or mount wrapper ships.
+
 For byte-authoritative ingest MIME and explicit classes on every object write,
-see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--gcs-holds-bodies-postgres-holds-the-index)
+see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--object-storage-holds-bodies-postgres-holds-the-index)
 and the [analysis](analysis/content_detection_and_object_classes_20260923.md).
 
 For deleting a document through the API, SDK, CLI or MCP, see D135 in the
@@ -79,11 +92,23 @@ and its [analysis](analysis/version_effective_time_and_section_references.md); t
 [delivery plan](plans/effective_time_and_section_references.md) says which parts ship
 together. It also makes D56's version reuse hold for dated versions (text origin time).
 
+For the sole supported server major, see [D157](../decisions.md#d157-postgresql-18-is-the-reference-server),
+its [analysis](analysis/postgres18_reference_server.md) and
+[graph runtime contract](designs/p2_graph_design.md#9-postgresql-18-and-extension-posture).
+
 For why ranked search must use its indexes, how it keeps eligibility exact and
 reports every early stop, and how semantic recall is measured, start with [D142 in the P1 search design](designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
 its [analysis](analysis/index_driven_ranked_search.md), the unchosen
 [distinct-text index proposal](proposals/distinct_text_search_index.md) and the
 [delivery plan](plans/index_driven_ranked_search.md).
+
+For measured SQL-plan amplification during the full LoCoMo campaign, why the
+affected scoped searches bypass continuation, and a non-binding comparison of
+filter-first ranking with indexed broad search, see the
+[reliability investigation](analysis/retrieval_filtering_reliability_20261112.md).
+The [D153 shared-eligibility design](designs/shared_retrieval_eligibility_design.md)
+was approved by Claude Opus; its [delivery plan](plans/shared_retrieval_eligibility.md)
+tracks implementation and qualification separately.
 
 For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
@@ -94,7 +119,48 @@ and the separate full LoCoMo retrieval budget, start with
 [context operations](designs/open_query_space_design.md#31-platform-operations)
 and the [retrieval-depth analysis](analysis/configurable_context_retrieval_20261022.md).
 
+For concurrent fact projection without a project-wide embedding mutex, see
+[PostgreSQL P1 §7.1](designs/postgres_p1_search_projection_design.md#71-concurrent-fact-labeling-and-embedding)
+and the [coordination/reuse analysis](analysis/fact_label_concurrency_20261111.md).
+
+For the unpublished historical LoCoMo branch, its superseding PRs and the
+general dialogue/attachment instructions carried into Full-v43, see the
+[branch audit](analysis/locomo_unpublished_branch_audit_20261111.md). The
+[benchmark design](designs/locomo_benchmark_design.md) is the current contract;
+the old accumulated development score is not a result for the current profile.
+
 To switch the claims or facts layer off for a deployment, narrow a request to some layers, or
 understand how a layer switched on later is backfilled without re-paying for unchanged text,
 start with [D143's processing layers design](designs/processing_layers_design.md) and its
 [analysis](analysis/processing_layer_toggles.md).
+
+For parallel ingestion without repeating completed identity decisions when
+profiles are enriched, see [D151's commit contract](designs/entity_identity_and_retrieval_design.md#332-parallel-resolution-commits-a-match-against-its-decision-snapshot-d151)
+and the [alternatives analysis](analysis/parallel_identity_resolution.md).
+
+For the non-binding retained-resource inventory and independent storage
+admission investigation, see [the analysis](analysis/storage_classification_and_admission.md)
+and [candidate contract](proposals/storage_mutation_capture_contract.md). Neither
+changes accepted billing policy or establishes a shipped capture capability.
+
+For engine-owned retained-resource classification, native/provider capture
+matching and exact storage evidence acknowledgement, see the
+[consumer contract](designs/storage_capture_consumer_design.md) and its
+[analysis](analysis/storage_capture_consumer_20261111.md). It extends D61's
+substrate evidence boundary without adopting the broader financial-permission
+proposal or claiming that capture is implemented or qualified.
+
+For the shared browse, ranked-result and SQL pagination contracts, see
+[D154](../decisions.md#d154-one-pagination-contract-browse-lists-page-ranked-results-disclose-sql-caps-refuse-silence),
+the [retrieval envelope](designs/retrieval_design.md#5-the-response-envelope--the-contract-is-the-answers-self-account-d49),
+and the [review corrections analysis](analysis/pagination_review_20261113.md).
+
+For concrete answer values and bounded source-chunk continuation, see the
+[consumption contract](designs/retrieval_design.md#8-the-consumption-skill--a-shipped-versioned-deliverable-d51)
+and [evidence-fidelity analysis](analysis/evidence_fidelity_20261113.md). That
+analysis also records the unresolved extractor-generation/text-origin coupling;
+no date-reuse correction is claimed.
+
+For bounded legible identity labels in image observations, with independent OCR
+and explicit cache/downstream costs, see [media §2](designs/media_design.md#2-converter-routes-extends-the-d38-router-table)
+and the [visual-label analysis](analysis/visual_identity_text_20261113.md).

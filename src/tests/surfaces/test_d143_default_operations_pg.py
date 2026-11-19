@@ -7,7 +7,8 @@ the same deployment at the current head, runs the same four assured
 operations (through the executor at a fixed ``evaluated_at`` and through
 ``POST /operations/{name}``) and pipeline readiness, and requires the
 normalised capture to be byte-identical — with no configuration or gap row
-written.
+written. D155 refreshes only the P3 incomplete-publication reason through the
+capture generator; all four assured-operation responses remain unchanged.
 """
 
 from __future__ import annotations

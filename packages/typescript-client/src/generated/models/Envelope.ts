@@ -41,6 +41,7 @@ export type Envelope = {
     freshness: Freshness;
     grain: Grain;
     negative?: Negative | null;
+    next_cursor?: string | null;
     nodes?: Array<GraphNode>;
     pages?: Array<PageRef>;
     paths?: Array<GraphPath>;

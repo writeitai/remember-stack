@@ -24,6 +24,7 @@ from remember import DocumentSearchPage
 from remember import DocumentSearchRequest
 from remember import MemoryApiError
 from remember import MemoryClient
+from remember import UnknownTag
 from remember.cli import main as cli_main
 from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import tool
@@ -32,12 +33,14 @@ from remember.models import current_temporal_scope
 from remember.models import CurrentReadTime
 from remember.models import DeploymentBuildInfo
 from remember.models import DocumentSearchResult
+from remember.models import DocumentTagFilter
 from remember.models import Envelope
 from remember.models import Freshness
 from remember.models import Grain
 from remember.models import HistoryReadTime
 from remember.models import OverlapReadTime
 from remember.models import ReadTime
+from rememberstack.model import UnknownTagError
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.spine.document_search import _decode_cursor
 from rememberstack.spine.document_search import _encode_cursor
@@ -83,11 +86,11 @@ class _Search:
                     version_no=1,
                     status="ready",
                     file_name="Q3_sales_2025.xlsx",
-                    p3_path=f"documents/{_DOC}",
+                    p3_path="spreadsheet/q3-sales--2a43bb03e2c419e141d5fbd9",
                     family="office",
                 ),
             ),
-            cursor="next-page",
+            next_cursor="next-page",
             as_of=_AT,
         )
 
@@ -187,10 +190,10 @@ def test_cli_searches_with_filters(
         == 0
     )
     printed = json.loads(capsys.readouterr().out)
-    assert printed["cursor"] == "next-page"
+    assert printed["next_cursor"] == "next-page"
     request = search.requests[-1]
     assert request.query is None
-    assert request.k == 3
+    assert request.limit == 3
     assert request.filters.family == ("pdf",)
     assert request.filters.authors == ("Alice", "bob@acme.com")
     assert request.filters.created_from == datetime(2025, 1, 1, tzinfo=UTC)
@@ -198,6 +201,20 @@ def test_cli_searches_with_filters(
     assert cli_main(["documents", "search", "audit report"]) == 0
     capsys.readouterr()
     assert search.requests[-1].query == "audit report"
+
+
+def test_cli_refuses_ranked_search_with_cursor_without_a_request(
+    surface: tuple[MemoryClient, _Search],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client, search = surface
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
+    assert cli_main(["documents", "search", "foo", "--cursor", "foreign-cursor"]) == 2
+    assert search.requests == []
+    assert "cursor" in capsys.readouterr().err
 
 
 def test_remember_mcp_searches_even_when_read_only(
@@ -221,17 +238,46 @@ def test_remember_mcp_searches_even_when_read_only(
 
 
 def test_cursor_round_trips_and_refuses_garbage() -> None:
+    from rememberstack.core.cursor_scope import cursor_scope_hash
+
     earlier = datetime(2026, 9, 24, 11, 0, tzinfo=UTC)
-    decoded = _decode_cursor(
-        _encode_cursor(as_of=_AT, ingested_at=earlier, doc_id=_DOC)
+    scope = cursor_scope_hash(
+        {"filters": {}, "versions": "current", "time": None},
+        deployment_id=_DEPLOYMENT_ID,
     )
+    decoded = _decode_cursor(
+        cursor=_encode_cursor(
+            scope_hash=scope, as_of=_AT, ingested_at=earlier, doc_id=_DOC
+        ),
+        scope_hash=scope,
+    )
+    foreign = cursor_scope_hash(
+        {"filters": {}, "versions": "current", "time": None}, deployment_id=_DOC
+    )
+    with pytest.raises(ValueError, match="different"):
+        _decode_cursor(
+            cursor=_encode_cursor(
+                scope_hash=scope, as_of=_AT, ingested_at=_AT, doc_id=_DOC
+            ),
+            scope_hash=foreign,
+        )
     assert decoded is not None
     assert decoded.as_of == _AT
     assert decoded.ingested_at == earlier
     assert decoded.doc_id == _DOC
+    other = cursor_scope_hash(
+        {"filters": {}, "versions": "all", "time": None}, deployment_id=_DEPLOYMENT_ID
+    )
+    with pytest.raises(ValueError, match="different listing"):
+        _decode_cursor(
+            cursor=_encode_cursor(
+                scope_hash=scope, as_of=_AT, ingested_at=earlier, doc_id=_DOC
+            ),
+            scope_hash=other,
+        )
     for garbage in ("not-base64!", "e30", "bm9wZQ"):
         with pytest.raises(ValueError, match="cursor is malformed"):
-            _decode_cursor(garbage)
+            _decode_cursor(cursor=garbage, scope_hash=scope)
 
 
 def _remote_names(*, document_search: bool, read_only: bool) -> list[str]:
@@ -400,3 +446,182 @@ def test_remote_mcp_preserves_search_time_discriminator(
     assert result["isError"] is False
     assert search.requests[-1].time is not None
     assert search.requests[-1].time.mode == time["mode"]
+
+
+# --- D156 tags on the document filter ---------------------------------------
+
+
+class _TagRefusingSearch(_Search):
+    """Refuse the tag ``typo`` the way the spine does, before searching."""
+
+    def search_documents(
+        self, *, deployment_id: UUID, request: DocumentSearchRequest
+    ) -> DocumentSearchPage:
+        tags = request.filters.tags
+        if tags is not None and "typo" in (*tags.all, *tags.any, *tags.none):
+            raise UnknownTagError(tags=["typo"])
+        return super().search_documents(deployment_id=deployment_id, request=request)
+
+
+def _tag_app(search: _TagRefusingSearch) -> TestClient:
+    boundary = _Boundary()
+    return TestClient(
+        build_api(
+            engine=cast("QueryEngine", object()),
+            deployment_id=_DEPLOYMENT_ID,
+            admission=boundary,
+            readiness=boundary,
+            document_search=search,
+        )
+    )
+
+
+@pytest.fixture()
+def tag_surface() -> tuple[MemoryClient, _TagRefusingSearch]:
+    search = _TagRefusingSearch()
+    return MemoryClient(client=_tag_app(search)), search
+
+
+def test_sdk_and_http_carry_the_tag_selector_and_refuse_unknown_tags(
+    tag_surface: tuple[MemoryClient, _TagRefusingSearch],
+) -> None:
+    client, search = tag_surface
+    tags = DocumentTagFilter(
+        all=("project:a",), any=("kind:decision", "kind:spec"), none=("ci",)
+    )
+    client.search_documents(filters=DocumentSearchFilters(tags=tags))
+    assert search.requests[-1].filters.tags == tags
+
+    with pytest.raises(UnknownTag) as refused:
+        client.search_documents(
+            filters=DocumentSearchFilters(tags=DocumentTagFilter(any=("typo",)))
+        )
+    assert (refused.value.status_code, refused.value.tags) == (422, ("typo",))
+
+    http = _tag_app(search)
+    empty = http.post("/documents/search", json={"filters": {"tags": {}}})
+    assert empty.status_code == 422
+    twice = http.post(
+        "/documents/search", json={"filters": {"tags": {"all": ["a", "A"]}}}
+    )
+    assert twice.status_code == 422
+
+
+def test_search_routes_map_unknown_filter_tags_to_unknown_tag() -> None:
+    class _Refusing(_SearchEngine):
+        def search_claims(self, **kwargs: object) -> Envelope:
+            raise UnknownTagError(tags=["typo", "oops"])
+
+        def search_chunks(self, **kwargs: object) -> Envelope:
+            raise UnknownTagError(tags=["typo"])
+
+    boundary = _Boundary()
+    app = build_api(
+        engine=cast("QueryEngine", _Refusing()),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=boundary,
+        readiness=boundary,
+    )
+    http = TestClient(app)
+    body = {"query": "x", "documents": {"tags": {"all": ["typo"], "none": ["oops"]}}}
+    claims = http.post("/search/claims", json=body)
+    assert claims.status_code == 422
+    assert claims.json()["detail"] == {
+        "code": "unknown_tag",
+        "message": "unknown tags: typo, oops",
+        "tags": ["typo", "oops"],
+    }
+    assert http.post("/search/chunks", json=body).json()["detail"]["tags"] == ["typo"]
+    with pytest.raises(UnknownTag):
+        MemoryClient(client=http).search_claims(
+            query="x",
+            documents=DocumentSearchFilters(tags=DocumentTagFilter(all=("typo",))),
+        )
+
+
+def test_sdk_search_claims_and_chunks_send_the_tag_selector() -> None:
+    engine = _SearchEngine()
+    boundary = _Boundary()
+    app = build_api(
+        engine=cast("QueryEngine", engine),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=boundary,
+        readiness=boundary,
+    )
+    client = MemoryClient(client=TestClient(app))
+    filters = DocumentSearchFilters(
+        family=("email",), tags=DocumentTagFilter(none=("project:ci-smoke",))
+    )
+    client.search_claims(query="restart", documents=filters)
+    client.search_chunks(query="restart", documents=filters)
+    assert [call[1]["documents"] for call in engine.calls] == [filters, filters]
+
+
+def test_cli_tag_flags_build_the_tag_selector(
+    surface: tuple[MemoryClient, _Search],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, search = surface
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
+    argv = [
+        "documents",
+        "search",
+        "--tag",
+        "kind:decision",
+        "--any-tag",
+        "project:a",
+        "--any-tag",
+        "project:b",
+        "--not-tag",
+        "project:ci-smoke",
+    ]
+    assert cli_main(argv) == 0
+    capsys.readouterr()
+    assert search.requests[-1].filters.tags == DocumentTagFilter(
+        all=("kind:decision",),
+        any=("project:a", "project:b"),
+        none=("project:ci-smoke",),
+    )
+    assert cli_main(["documents", "search", "q"]) == 0
+    capsys.readouterr()
+    assert search.requests[-1].filters.tags is None
+
+    sent = len(search.requests)
+    assert cli_main(["documents", "search", "--tag", "x", "--tag", "X"]) == 2
+    assert "more than once" in capsys.readouterr().err
+    assert len(search.requests) == sent
+
+
+def test_mcp_search_documents_takes_a_flat_tags_field(
+    tag_surface: tuple[MemoryClient, _TagRefusingSearch],
+) -> None:
+    client, search = tag_surface
+    definition = tool("search_documents")
+    assert definition.tool_version == 4
+    properties = cast("dict[str, dict[str, object]]", definition.input_schema)
+    tags_schema = cast("dict[str, object]", properties["properties"]["tags"])
+    assert set(cast("dict[str, object]", tags_schema["properties"])) == {
+        "all",
+        "any",
+        "none",
+    }
+    server = EngineMcpServer(client=client, read_only=True, path_ingest=False)
+    result = server.call_tool(
+        name="search_documents",
+        arguments={"query": "q3", "tags": {"all": ["project:a"], "none": ["ci"]}},
+    )
+    assert result["isError"] is False
+    assert search.requests[-1].filters.tags == DocumentTagFilter(
+        all=("project:a",), none=("ci",)
+    )
+    refused = server.call_tool(
+        name="search_documents", arguments={"tags": {"any": ["typo"]}}
+    )
+    assert refused["isError"] is True
+    assert "unknown_tag" in str(refused["content"])
+    invalid = server.call_tool(name="search_documents", arguments={"tags": {}})
+    assert invalid["isError"] is True
+    assert "invalid" in str(invalid["content"]).lower()

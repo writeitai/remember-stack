@@ -33,6 +33,7 @@ from rememberstack.ports import AuthPerimeterPort
 from rememberstack.ports import KGitRemotePort
 from rememberstack.ports import ModelProviderPort
 from rememberstack.ports import MountPublisherPort
+from rememberstack.ports import MutableObjectStorePort
 from rememberstack.ports import ObjectStorePort
 from rememberstack.ports import SystemOnePort
 from rememberstack.ports import TaskQueuePort
@@ -74,12 +75,14 @@ _PORT_EXPORTS = {
     "ModelProviderPort",
     "MeterReceiptPort",
     "MountPublisherPort",
+    "MutableObjectStorePort",
     "ObjectStorePort",
     "ObjectPurgePort",
     "PresignedReadPort",
     "StreamingReadPort",
     "PostgresReadPoolPort",
     "ProjectionPurgePort",
+    "CorpusCachePurgePort",
     "SystemOnePort",
     "TaskQueuePort",
     "TelemetryPort",
@@ -120,8 +123,6 @@ class FakeMountPublisher:
         return PublishedMounts(
             deployment_id=deployment_id,
             p3="mount://p3",
-            artifacts="mount://artifacts",
-            raw="mount://raw",
             knowledge="mount://knowledge",
             read_only=True,
         )
@@ -258,11 +259,16 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_sixteen_defined_protocols() -> None:
-    """Keep D61/D74 seams, bounded PostgreSQL reads and D147 reads explicit."""
+def test_inventory_exports_exactly_eighteen_defined_protocols() -> None:
+    """Keep D61/D74 seams, D147 reads and D155 mutation explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 16
+    assert len(_defined_protocols()) == 18
+
+
+def test_immutable_store_does_not_require_mutable_operations() -> None:
+    """E0 consumers retain the narrow create-only capability."""
+    assert not isinstance(FakeObjectStore(), MutableObjectStorePort)
 
 
 def test_representative_fakes_conform_structurally() -> None:
@@ -293,14 +299,16 @@ def test_object_store_fake_rejects_immutable_key_replacement() -> None:
     assert store.read_bytes(key=key) == b"first"
 
 
-def test_mount_fake_returns_exact_four_read_only_surfaces() -> None:
-    """Exercise the D51 four-surface publication result without mount mechanics."""
+def test_mount_fake_returns_corpus_and_standalone_knowledge() -> None:
+    """Expose only the D155 corpus and standalone K locations."""
     deployment_id = uuid4()
     published = FakeMountPublisher().publish(deployment_id=deployment_id)
 
     assert published.deployment_id == deployment_id
     assert published.read_only is True
-    assert {"p3", "artifacts", "raw", "knowledge"} <= set(PublishedMounts.model_fields)
+    assert {"deployment_id", "p3", "knowledge", "read_only"} == set(
+        PublishedMounts.model_fields
+    )
 
 
 def test_model_fake_validates_caller_declared_response_schema() -> None:

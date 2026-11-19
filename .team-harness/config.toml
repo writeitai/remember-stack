@@ -1,8 +1,0 @@
-# Project-local override: long Antigravity analyses must not be cut off by the
-# team-harness default timeout. Other template fields inherit released defaults.
-[agents.antigravity]
-shared_flags = [
-    "--dangerously-skip-permissions",
-    "--print-timeout", "180m0s",
-    "-p",
-]

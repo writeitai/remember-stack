@@ -1,73 +1,61 @@
-"""D74 purge acknowledgement for self-host projection bytes and caches."""
+"""D74 acknowledgement of document-scoped corpus and controlled cache erasure."""
 
-from pathlib import Path
-from pathlib import PurePosixPath
-import shutil
 from uuid import UUID
 
-from rememberstack.model import ObjectKey
-from rememberstack.ports import ObjectPurgePort
-from rememberstack.spine import ProjectionCatalog
+from rememberstack.model import ObjectPurgeEvidence
+from rememberstack.ports.purge import CorpusCachePurgePort
+from rememberstack.ports.purge import ObjectPurgePort
+from rememberstack.workers.corpus_publication import CorpusPublisher
 
 
 class SelfHostProjectionPurger:
-    """Erase old durable P3 prefixes, registry rows, and local serving copies."""
+    """Erase corpus bytes/history and regenerate indexes without recopying survivors.
+
+    No local snapshot materialization exists. An operator-managed FUSE mount
+    must be stopped/remounted by its operator. A host with controlled sessions
+    supplies ``caches``; acknowledgements are mandatory and failures propagate.
+    """
 
     def __init__(
         self,
         *,
+        publisher: CorpusPublisher,
         object_purger: ObjectPurgePort,
-        catalog: ProjectionCatalog,
-        mount_root: Path,
+        caches: CorpusCachePurgePort | None = None,
     ) -> None:
-        """Bind explicit durable and local-cache roots without inventing providers."""
-        self._object_purger = object_purger
-        self._catalog = catalog
-        self._mount_root = mount_root.resolve()
+        self._publisher = publisher
+        self._objects = object_purger
+        self._caches = caches
+
+    def quiesce_projections(self, *, deployment_id: UUID, forget_id: UUID) -> None:
+        if self._caches is not None:
+            self._caches.quiesce(deployment_id=deployment_id, forget_id=forget_id)
 
     def purge_projections(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
-    ) -> None:
-        """Idempotently erase every manifest-nominated old projection copy."""
-        self._object_purger.purge_objects(keys=(), prefixes=prefixes)
-        self._catalog.purge_snapshot_prefixes(
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
+    ) -> ObjectPurgeEvidence | None:
+        evidence = self._publisher.erase_document(
             deployment_id=deployment_id,
-            prefixes=tuple(prefix.root for prefix in prefixes),
+            doc_id=doc_id,
+            forget_id=forget_id,
+            purger=self._objects,
         )
-        for prefix in prefixes:
-            for path in self._serving_paths(deployment_id=deployment_id, prefix=prefix):
-                self._remove(path=path)
+        if self._caches is not None:
+            self._caches.purge(
+                deployment_id=deployment_id, doc_id=doc_id, forget_id=forget_id
+            )
+        return evidence
 
     def verify_projections_purged(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
     ) -> None:
-        """Prove durable bytes, registry rows, caches, and mounts are absent."""
-        self._object_purger.verify_objects_purged(keys=(), prefixes=prefixes)
-        roots = tuple(prefix.root for prefix in prefixes)
-        if self._catalog.snapshot_prefixes_exist(
-            deployment_id=deployment_id, prefixes=roots
-        ):
-            raise RuntimeError("projection purge verification found registry rows")
-        remaining = [
-            str(path)
-            for prefix in prefixes
-            for path in self._serving_paths(deployment_id=deployment_id, prefix=prefix)
-            if path.exists() or path.is_symlink()
-        ]
-        if remaining:
-            raise RuntimeError(
-                f"projection purge verification found serving copies: {remaining!r}"
+        self._publisher.verify_erased(
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            forget_id=forget_id,
+            purger=self._objects,
+        )
+        if self._caches is not None:
+            self._caches.verify(
+                deployment_id=deployment_id, doc_id=doc_id, forget_id=forget_id
             )
-
-    def _serving_paths(self, *, deployment_id: UUID, prefix: ObjectKey) -> tuple[Path]:
-        """Return the exact P3 versioned mount for one prefix."""
-        version = PurePosixPath(prefix.root).name
-        return (self._mount_root / str(deployment_id) / f"p3-{version}",)
-
-    @staticmethod
-    def _remove(*, path: Path) -> None:
-        """Remove one exact serving copy, treating absence as success."""
-        if path.is_symlink() or path.is_file():
-            path.unlink(missing_ok=True)
-        elif path.is_dir():
-            shutil.rmtree(path)

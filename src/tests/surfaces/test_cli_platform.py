@@ -197,7 +197,7 @@ def test_query_free_text_dispatch(
         def __exit__(self, *args: object) -> None:
             pass
 
-        def facts_context(self, query: str) -> object:
+        def facts_context(self, query: str, documents: object = None) -> object:
             captured_calls.append(("fact", query))
 
             class MockEnvelope(BaseModel):
@@ -206,7 +206,9 @@ def test_query_free_text_dispatch(
 
             return MockEnvelope(operation="facts_context", facts=["test fact"])
 
-        def combined_context(self, query: str, layers: object = None) -> object:
+        def combined_context(
+            self, query: str, layers: object = None, documents: object = None
+        ) -> object:
             captured_calls.append(("answer", query))
 
             class MockBundle(BaseModel):
@@ -243,7 +245,7 @@ def test_query_free_text_with_preceding_flags(
         def __exit__(self, *args: object) -> None:
             pass
 
-        def facts_context(self, query: str) -> object:
+        def facts_context(self, query: str, documents: object = None) -> object:
             captured_calls.append(("fact", query))
 
             class MockEnvelope(BaseModel):
@@ -252,7 +254,9 @@ def test_query_free_text_with_preceding_flags(
 
             return MockEnvelope(operation="facts_context", facts=["test fact"])
 
-        def combined_context(self, query: str, layers: object = None) -> object:
+        def combined_context(
+            self, query: str, layers: object = None, documents: object = None
+        ) -> object:
             captured_calls.append(("answer", query))
 
             class MockBundle(BaseModel):

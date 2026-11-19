@@ -1,0 +1,273 @@
+{
+  "observed_at": "2026-11-12T17:30:22.843489+00:00",
+  "operation_seconds": 120,
+  "max_concurrency": 8,
+  "provider_calls": 0,
+  "embedding_mode": "stored observation vector; not a question embedding",
+  "vector_source": "0144ea85-1b35-5d54-bf93-7765ea167649",
+  "vector_sha256": "50c778ad969d13ca2e9bb78e99f6d0f67f030072411778c4d2685eafd5c0ccd6",
+  "scoped-facts_context": {
+    "baseline": {
+      "reader": 0,
+      "seconds": 6.945824362337589,
+      "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+      "negative": null,
+      "truncation": {
+        "truncated": true,
+        "returned": 50,
+        "estimated_total": 60,
+        "total_is_exact": false,
+        "continuation": null,
+        "reason": null
+      }
+    },
+    "readers": [
+      {
+        "reader": 1,
+        "seconds": 7.886914428323507,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 2,
+        "seconds": 7.801909446716309,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 3,
+        "seconds": 7.894240204244852,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 4,
+        "seconds": 8.842624252662063,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 5,
+        "seconds": 8.664629073813558,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 6,
+        "seconds": 8.059314984828234,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 7,
+        "seconds": 7.712643817067146,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 8,
+        "seconds": 8.044024871662259,
+        "sha256": "e3c04c90a08dcfa2079a8fd1067d37bfc376dd170b2279995c19890ceef90e7d",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 50,
+          "estimated_total": 60,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      }
+    ],
+    "all_equal": true
+  },
+  "scoped-claims_and_sources_context": {
+    "baseline": {
+      "reader": 0,
+      "seconds": 3.0445994716137648,
+      "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+      "negative": null,
+      "truncation": {
+        "truncated": true,
+        "returned": 100,
+        "estimated_total": 358,
+        "total_is_exact": false,
+        "continuation": null,
+        "reason": null
+      }
+    },
+    "readers": [
+      {
+        "reader": 1,
+        "seconds": 4.134008154273033,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 2,
+        "seconds": 3.961763272061944,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 3,
+        "seconds": 3.706347532570362,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 4,
+        "seconds": 4.076983273029327,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 5,
+        "seconds": 3.807860840111971,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 6,
+        "seconds": 4.055152181535959,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 7,
+        "seconds": 4.038796551525593,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      {
+        "reader": 8,
+        "seconds": 4.0664062686264515,
+        "sha256": "888f543f345f8d81f621eb20e23a70f66977785427b102931441c287b58f1584",
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 358,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      }
+    ],
+    "all_equal": true
+  },
+  "checked_out_connections_after_reads": 0,
+  "open_snapshot_transactions_after_reads": 0
+}

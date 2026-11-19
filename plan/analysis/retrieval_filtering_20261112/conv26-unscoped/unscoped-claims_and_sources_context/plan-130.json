@@ -1,0 +1,70 @@
+{
+  "statement_ordinal": 130,
+  "analyze": false,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "plan": [
+    {
+      "Plan": {
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 1.29,
+        "Total Cost": 1.3,
+        "Plan Rows": 1,
+        "Plan Width": 16,
+        "Disabled": false,
+        "Plans": [
+          {
+            "Node Type": "Unique",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 1.29,
+            "Total Cost": 1.3,
+            "Plan Rows": 1,
+            "Plan Width": 16,
+            "Disabled": false,
+            "Plans": [
+              {
+                "Node Type": "Sort",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Startup Cost": 1.29,
+                "Total Cost": 1.3,
+                "Plan Rows": 1,
+                "Plan Width": 16,
+                "Disabled": false,
+                "Sort Key": [
+                  "doc_id"
+                ],
+                "Plans": [
+                  {
+                    "Node Type": "Seq Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Relation Name": "document_version_scope",
+                    "Alias": "s",
+                    "Startup Cost": 0.0,
+                    "Total Cost": 1.28,
+                    "Plan Rows": 1,
+                    "Plan Width": 16,
+                    "Disabled": false,
+                    "Filter": "((NOT selectable) AND (in_force && '[\"2026-11-12 13:16:35.060464+00\",\"2026-11-12 13:16:35.060464+00\"]'::tstzrange) AND (deployment_id = '01712365-15ca-444c-96a1-860665b04673'::uuid))"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "Settings": {
+        "max_parallel_workers_per_gather": "0"
+      }
+    }
+  ],
+  "elapsed_seconds": 0.001691177487373352
+}

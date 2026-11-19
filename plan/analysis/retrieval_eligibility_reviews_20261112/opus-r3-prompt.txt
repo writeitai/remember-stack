@@ -1,0 +1,33 @@
+You are reviewing a proposed RememberStack design BEFORE any runtime implementation. The owner explicitly requires your Claude Opus approval before implementation, prioritizes reliability over speed, and wants general-purpose changes rather than LoCoMo-specific score hacks.
+
+Work read-only in /Users/jpuc/code/moje/remember-stack-retrieval-analysis-20261112. Do not edit files, run model/provider calls, probe live hosts/databases, open private environment files, or create agents. Read AGENTS.md/CLAUDE.md and relevant design instructions. Inspect the actual source; do not rely just on the proposal's characterization.
+
+Review target (commit 431900b1d):
+- plan/proposals/shared_retrieval_eligibility.md (the concrete design)
+- plan/analysis/retrieval_filtering_reliability_20261112.md and readable measurements.json (evidence)
+- D142/D149 and relevant current designs
+- src/rememberstack/surfaces/query_engine.py
+- src/rememberstack/adapters/postgres_p1.py and p1_ranked.py
+- relevant entity/fact authority migrations, query-space definitions and tests
+
+The design keeps current scoped exact ranking and broad index continuation. It fixes repeated coverage and candidate provenance, and factors fact source membership/presentation from endpoint visibility so bounded native reads can share endpoint eligibility. No runtime code is edited yet. The active benchmark's incomplete ingestion is separately preserved; do not change it.
+
+Please check carefully:
+1. Complete preservation of deletion/version/coordinate visibility, old-version-only entity provenance, document-entity bridges, merges/latest decisions, current/history identity/belief semantics, D140 evidence windows, D54 counts and contradiction-only facts.
+2. Whether fact factoring is precisely specified and implementable without a second fact-truth query, permission expansion, duplicated count authority or forced full-project materialization. Recommend a smaller equivalent design if it is materially safer; identify any concrete contract gaps that would block implementation.
+3. Physical work and memory at millions of rows; candidate/provenance boundaries, repeated entity work, and whether SQL materialization really ensures the stated reuse.
+4. SQL snapshot/deadline/cancellation, ACL and query-space manifest/saved-query integration.
+5. No paid ingestion/reuse-key changes (D56), hidden fallback, legacy runtime path, new reranker or benchmark-specific logic.
+6. Whether equality, actual-plan, concurrency and full-native-operation gates are adequate and feasible. Distinguish strict correctness requirements from nice-to-have throughput benchmarks.
+
+Return a clear APPROVED or CHANGES REQUIRED verdict. If changes are required, number blocking findings with precise document/source locations and concrete required amendments; separate nonblocking suggestions. Do not approve with unresolved blocking caveats. If you approve, briefly explain why the proposed implementation boundary is safe. Do not implement anything.
+
+
+THIRD REVIEW, narrowed to your remaining four blockers from round 2. Prior reviews are committed in plan/analysis/retrieval_eligibility_reviews_20261112/. No runtime implementation has started. Re-read the revised proposal at 431900b1d and verify these amendments against source:
+1. §4.3 pins the actual p9_46_0067 D140-widened evidence predicate: relation/observation evidence joins claims_visible_history UNION ALL v_memory_claim_carried_periodised. Literal new migration, existing widened fact_claim_live retained. §6 fixes hashed dependency registration. Gate1 uses a REAL database migrated to old head; no hand-picked old constants masquerade as live authority.
+2. §4.2 now specifies entity-driven scope mode (reverse members -> indexed decisions -> latest across all mention decisions -> mention PK -> correlated current-content coordinate -> grouped coverage) for searches, nomination, _entity_tiers and its same-relation budget. Large unrelated-current-mention test added.
+3. O(P) partition tradeoff remains explicit, no guessed time pruning. D23/postgres_schema_design §12 is reconciled at adoption; 120 monthly partitions + default required. UUID minting/reuse keys unchanged.
+4. §6/gate6 name catalog_contract EXPECTED_INDEXES/EXPECTED_VIEWS, storage_capture_guard/catalog current head pins and D152 allocation/guard qualification. No old-head fallback.
+Nonblocking suggestions also incorporated: offline migration refusal, pg_index validity verification, literal public/column comments, sequencing remains delivery-plan content.
+
+Return APPROVED only if the amended design is safe to adopt and implement. If any blocking contradiction remains, name it precisely with required amendment. Do not reopen accepted architecture/tradeoffs without new source evidence; do flag real newly discovered correctness gaps. No edits, agents, model/provider/database calls or implementation. The owner is waiting on this review gate, not asking for runtime changes before approval.

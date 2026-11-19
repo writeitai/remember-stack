@@ -5,7 +5,6 @@
 import type { OutputCoMember } from './OutputCoMember';
 export type OutputContradiction = {
     co_members: Array<OutputCoMember>;
-    continuation: string | null;
     group_id: string;
     returned: number;
     total: number;

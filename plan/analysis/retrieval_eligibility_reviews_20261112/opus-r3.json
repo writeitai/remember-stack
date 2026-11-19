@@ -1,0 +1,23 @@
+{
+  "reviewed_commit": "431900b1d",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "command": [
+    "claude",
+    "--dangerously-skip-permissions",
+    "--model",
+    "claude-opus-5-5",
+    "--effort",
+    "high",
+    "-p",
+    "<prompt file contents>"
+  ],
+  "exit_code": 0,
+  "verdict": "APPROVED",
+  "blocking_findings_remaining": 0,
+  "runtime_implementation_started_at_review": false,
+  "partition_fanout_tradeoff": "accepted",
+  "next_step": "adopt binding design, then implement and qualify",
+  "opus-r3-prompt.txt_sha256": "0b886b542b98f7f4f5022b1350cbe457fd5a0b1193cde5e95a62719dbbceb9a8",
+  "opus-r3-review.md_sha256": "a16d51947a088f3a818b0482fc7cb6d48784f88aca68e2abbd173f1e4086c5b7"
+}

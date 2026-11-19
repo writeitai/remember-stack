@@ -15,6 +15,7 @@ from remember.mcp_tools._definitions import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools._definitions import SECTION_HISTORY_TOOL_NAME
+from remember.mcp_tools._definitions import TAG_TOOL_NAMES
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._documents import parse_search_documents_arguments
 from remember.mcp_tools._errors import invalid_arguments
@@ -28,6 +29,7 @@ from remember.mcp_tools._memory import reject_unknown_keys
 from remember.mcp_tools._query import validate_open_query_arguments
 from remember.mcp_tools._references import parse_document_references_arguments
 from remember.mcp_tools._sections import parse_section_history_arguments
+from remember.mcp_tools._tags import parse_tag_tool_arguments
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
 from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 
@@ -85,7 +87,8 @@ def validate_arguments(
     ``max_body_bytes``. ``pipeline_readiness`` returns ``version_ids`` and a
     ``require`` model; ``delete_document`` returns ``doc_id`` as a UUID;
     ``search_documents``, ``section_history`` and ``document_references``
-    return their ``request`` model.
+    return their ``request`` model; the tag tools return their parsed
+    ``tag``/``doc_id``/``query`` and ``request`` model.
 
     Raises :class:`ToolArgumentError` for the memory write tools and the
     assured operations, and ``SandboxRejection`` (the open-query error
@@ -115,6 +118,8 @@ def validate_arguments(
         return {"request": parse_section_history_arguments(arguments=arguments)}
     if name == DOCUMENT_REFERENCES_TOOL_NAME:
         return {"request": parse_document_references_arguments(arguments=arguments)}
+    if name in TAG_TOOL_NAMES:
+        return parse_tag_tool_arguments(name=name, arguments=arguments)
     if name in OPEN_QUERY_TOOL_NAMES:
         return validate_open_query_arguments(name=name, arguments=arguments)
     if name == ADJACENT_CHUNKS_TOOL_NAME:

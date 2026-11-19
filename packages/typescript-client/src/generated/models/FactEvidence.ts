@@ -6,6 +6,7 @@ export type FactEvidence = {
     claim_id: string;
     fact_id: string;
     fact_kind: 'relation' | 'observation';
+    in_documents_filter?: boolean | null;
     stance: 'supports' | 'contradicts';
 };
 

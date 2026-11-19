@@ -3,6 +3,7 @@
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
+import json
 from typing import cast
 from uuid import UUID
 
@@ -157,6 +158,32 @@ def test_cursor_round_trips_and_rejects_garbage() -> None:
     assert decode_cost_export_cursor(cursor=None) is None
     with pytest.raises(CostExportCursorError):
         decode_cost_export_cursor(cursor="%%%not-a-cursor")
+
+
+def test_origin_main_cost_export_cursor_still_decodes() -> None:
+    """A cursor issued by origin/main's cost export (no scope hash) still decodes.
+
+    The remember.dev billing pipeline persists engine cursors across deploys;
+    D154 must not change the wire encoding.
+    """
+    from base64 import urlsafe_b64encode
+
+    from rememberstack.spine.cost_export import rfc3339_utc
+
+    # Hand-built payload matching origin/main encode_cost_export_cursor.
+    payload = {
+        "horizon_at_issue": rfc3339_utc(value=_WHEN),
+        "last_cost_id": str(_COST),
+        "last_occurred_at": rfc3339_utc(value=_WHEN),
+        "last_source": "surface",
+    }
+    assert "s" not in payload
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    main_cursor = urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    decoded = decode_cost_export_cursor(cursor=main_cursor)
+    assert decoded is not None
+    assert decoded.last_source == "surface"
+    assert decoded.last_cost_id == _COST
 
 
 def test_build_api_does_not_register_export() -> None:

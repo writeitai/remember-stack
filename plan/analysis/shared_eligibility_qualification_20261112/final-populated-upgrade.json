@@ -1,0 +1,10 @@
+{
+  "documents": 1000000,
+  "source": "actual p9_46_0067 populated schema upgraded through native Alembic",
+  "old_index_bytes": 6504448,
+  "migration_seconds": 3.855225499952212,
+  "concurrent_ordinary_writer_completed": true,
+  "provider_calls": 0,
+  "new_index_bytes": 95600640,
+  "migration_wal_bytes": 291470704
+}

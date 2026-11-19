@@ -1,0 +1,11 @@
+{
+  "classification": "rejected_three_UUID_order_prototype",
+  "base_revision": "5a0aca122",
+  "sha256": "1f424414bf29b7cc5202e2bd4dc59a3a97c2c621a94ad718b9098417970095db",
+  "artifact": "bridge-uuid-order-negative.json.gz",
+  "winning_path": "documents_deployment_id_doc_id_key",
+  "one_deployment_tuple_work": 1000007,
+  "two_deployment_tuple_work": 500007,
+  "reason": "deployment is Index Cond while member is post-index Filter",
+  "reproduction": "bridge-text-prototype.py.txt records the same fixture; replace expression keys/order with raw doc_id UUID to reproduce rejected shape"
+}

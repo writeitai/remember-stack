@@ -6,7 +6,7 @@ assured-operation registry generates the agent-facing fields of its four
 operations from these definitions too, so ``GET /operations`` and MCP can never
 describe the same operation differently.
 
-The eighteen ``examples.*`` saved queries are never top-level tools: they run
+The nineteen ``examples.*`` saved queries are never top-level tools: they run
 only through ``run_saved_query`` (D83/D87).
 """
 
@@ -29,6 +29,20 @@ SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
 ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 SECTION_HISTORY_TOOL_NAME: Final = "section_history"
 DOCUMENT_REFERENCES_TOOL_NAME: Final = "document_references"
+LIST_TAGS_TOOL_NAME: Final = "list_tags"
+CREATE_TAG_TOOL_NAME: Final = "create_tag"
+UPDATE_TAG_TOOL_NAME: Final = "update_tag"
+DELETE_TAG_TOOL_NAME: Final = "delete_tag"
+UPDATE_DOCUMENT_TAGS_TOOL_NAME: Final = "update_document_tags"
+#: The D156 tag tools: the registry read, and the registry and assignment writes.
+TAG_READ_TOOL_NAMES: Final[tuple[str, ...]] = (LIST_TAGS_TOOL_NAME,)
+TAG_WRITE_TOOL_NAMES: Final[tuple[str, ...]] = (
+    CREATE_TAG_TOOL_NAME,
+    UPDATE_TAG_TOOL_NAME,
+    DELETE_TAG_TOOL_NAME,
+    UPDATE_DOCUMENT_TAGS_TOOL_NAME,
+)
+TAG_TOOL_NAMES: Final[tuple[str, ...]] = (*TAG_READ_TOOL_NAMES, *TAG_WRITE_TOOL_NAMES)
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
@@ -58,6 +72,12 @@ SOURCE_REF_MAX_LEN: Final = 512
 SOURCE_VERSION_REF_MAX_LEN: Final = 512
 VERSION_KEY_MAX_LEN: Final = 512
 VERSION_IDS_MAX: Final = 1000
+TAG_REF_MAX_LEN: Final = 512
+"""Characters a tag name or reference may have as sent. The 128-character
+limit applies after NFC and is checked when the arguments are parsed."""
+TAG_LIST_MAX: Final = 64
+TAG_FILTER_LIST_MAX: Final = 32
+TAG_DESCRIPTION_MAX_LEN: Final = 2000
 
 Permission = Literal["memory:read", "memory:write"]
 
@@ -147,10 +167,129 @@ _INGEST_DESCRIPTION: Final = (
     " version's bytes). effective_from/effective_until declare when this"
     " version's text is in force (UTC; snapshot lineages only); without"
     " effective_until it lasts until the next declared start."
+    " tags adds registered tags (see list_tags) to the document; ingest never"
+    " removes a tag, and an unregistered tag refuses the ingest with"
+    " unknown_tag before anything is stored."
     ' If the result has parked="no_route", the original is stored but its'
     " conversion is parked waiting for a conversion route for its MIME type."
     " Tell the user now instead of polling readiness."
 )
+
+_TAG_REF: Final[dict[str, object]] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": TAG_REF_MAX_LEN,
+    "description": "The tag's name (any letter case) or its tag_id.",
+}
+_TAG_REFS: Final[dict[str, object]] = {
+    "type": "array",
+    "items": {"type": "string", "minLength": 1, "maxLength": TAG_REF_MAX_LEN},
+    "maxItems": TAG_LIST_MAX,
+    "uniqueItems": True,
+}
+_TAG_NAME: Final[dict[str, object]] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": TAG_REF_MAX_LEN,
+    "description": (
+        "The tag name: no spaces or control characters, such as"
+        " project:autoboard. Unique ignoring letter case."
+    ),
+}
+_TAG_DESCRIPTION: Final[dict[str, object]] = {
+    "type": "string",
+    "maxLength": TAG_DESCRIPTION_MAX_LEN,
+    "description": (
+        "What the tag means and when to apply it, written for agents who will"
+        " choose it later."
+    ),
+}
+
+_LIST_TAGS_DESCRIPTION: Final = (
+    "List this deployment's registered document tags with their tag_id, name"
+    " and description. Tags label documents by how the user organizes them"
+    " (for example project:autoboard or kind:decision); read the descriptions"
+    " to choose the right one. query keeps tags whose name or description"
+    " contains it. Use it before tagging a document, and before creating a tag"
+    " so you reuse an existing one instead of inventing a near-duplicate."
+)
+_CREATE_TAG_DESCRIPTION: Final = (
+    "Register a new document tag. Tags must exist before documents can carry"
+    " them. Check list_tags first and reuse an existing tag when one fits."
+    " Prefer a key:value name such as project:autoboard. A name already"
+    " registered in any letter case is refused with conflict."
+)
+_UPDATE_TAG_DESCRIPTION: Final = (
+    "Rename or re-describe one tag (by name or tag_id). Documents keep the tag."
+    " The old name stops working at once, so only rename when the user asks."
+)
+_DELETE_TAG_DESCRIPTION: Final = (
+    "Delete one tag (by name or tag_id) and remove it from every document that"
+    " carries it. Use only when the user asks; it cannot be undone."
+)
+_UPDATE_DOCUMENT_TAGS_DESCRIPTION: Final = (
+    "Change one document's tags: add and/or remove tags, or set to replace the"
+    " whole set (an empty set clears it). Tags must be registered (see"
+    " list_tags); any unknown tag refuses the whole call with unknown_tag."
+    " Removing a tag the document does not have is fine. Changing tags never"
+    " reprocesses the document. Returns the document's tags afterwards."
+)
+
+_LIST_TAGS_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Keep tags whose name or description contains this.",
+        }
+    },
+}
+_CREATE_TAG_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name", "description"],
+    "properties": {"name": _TAG_NAME, "description": _TAG_DESCRIPTION},
+}
+_UPDATE_TAG_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["tag"],
+    "properties": {
+        "tag": _TAG_REF,
+        "name": {**_TAG_NAME, "description": "The new name."},
+        "description": {**_TAG_DESCRIPTION, "description": "The new description."},
+    },
+}
+_DELETE_TAG_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["tag"],
+    "properties": {"tag": _TAG_REF},
+}
+_UPDATE_DOCUMENT_TAGS_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["doc_id"],
+    "properties": {
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id).",
+        },
+        "add": {**_TAG_REFS, "description": "Tags to add (name or tag_id)."},
+        "remove": {**_TAG_REFS, "description": "Tags to remove (name or tag_id)."},
+        "set": {
+            **_TAG_REFS,
+            "description": (
+                "The document's complete tag set; excludes add and remove. An"
+                " empty list clears the tags."
+            ),
+        },
+    },
+}
 
 _PIPELINE_READINESS_DESCRIPTION: Final = (
     "Inspect whether one or more document version_ids have finished the"
@@ -201,16 +340,30 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     " misspelled names work) and its text. Filters narrow by family (text,"
     " markdown, html, pdf, image, audio, video, office, other), authors,"
     ' recipients (a name or an address; "alice" matches "Alice Novak"),'
-    " created/modified date ranges, language, thread_ref and doc_ids. Each"
+    " created/modified date ranges, language, thread_ref, doc_ids and tags"
+    ' (registered caller tags: {"all": [...], "any": [...], "none": [...]};'
+    " call list_tags to see which exist). Each"
     ' result is a document judged by its current version (versions="all"'
     " searches every live version and returns the newest match); it carries"
     " doc_id, version_id, file_name, title, family, processing status, authors,"
-    " recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem"
-    " view, where one is published) and a short overview when one exists."
+    " recipients, dates and a short overview when one exists. p3_path is the"
+    " relative corpus folder only when this version is served and its current"
+    " export has a matching publication marker; otherwise null, including"
+    " historical, raw-only, updating or failed publications. served_version"
+    " describes authority currency independently of publication. Resolve with"
+    " doc_ids again after type/topic/title moves."
+    " Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run"
+    " find <root> -type d -name '*--<suffix>'; only the suffix is stable."
+    " Verify doc_id and displayed version in document.json. For historical or"
+    " no-edition-in-force selections retain exact version_id/representation_id"
+    " source handles; there is no public source_open RPC. A suffix match"
+    " does not override temporal selection."
     " When a people"
     " filter matches several different people, people_matched lists each with"
     " a document count: narrow the filter (for example by address) instead of"
-    " guessing. Without query, results are newest first and cursor pages them."
+    " guessing. Without query, results are newest first and limit/cursor page"
+    " them (next_cursor continues; null ends). With query, k ranks and"
+    " truncated discloses a cap."
 )
 
 _SECTION_HISTORY_DESCRIPTION: Final = (
@@ -229,7 +382,8 @@ _SECTION_HISTORY_DESCRIPTION: Final = (
     " start when the document declares effective periods (periodised=true),"
     " otherwise by version number. The first page also lists amendments:"
     " live references of kind amends that target this section, with"
-    " change_effective_from and change_date_known. Page with cursor."
+    " change_effective_from and change_date_known. Page with limit/cursor;"
+    " continue via next_cursor."
 )
 
 _DATE_TIME: Final[dict[str, object]] = {
@@ -241,6 +395,60 @@ _DATE_TIME: Final[dict[str, object]] = {
 _STRING_LIST: Final[dict[str, object]] = {
     "type": "array",
     "items": {"type": "string", "minLength": 1},
+}
+
+_TAGS_FILTER: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "minProperties": 1,
+    "properties": {
+        key: {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1, "maxLength": TAG_REF_MAX_LEN},
+            "maxItems": TAG_FILTER_LIST_MAX,
+            "uniqueItems": True,
+            "description": description,
+        }
+        for key, description in (
+            ("all", "The document has every one of these tags."),
+            ("any", "The document has at least one of these tags."),
+            ("none", "The document has none of these tags."),
+        )
+    },
+    "description": (
+        "Registered tags (name or tag_id; call list_tags first)."
+        " Lists combine with AND; an unknown tag is unknown_tag."
+    ),
+}
+
+#: The D134/D156 ``documents`` filter of the three context operations: the
+#: same object ``search`` takes, every field given must hold.
+_DOCUMENTS_FILTER: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "family": {**_STRING_LIST, "description": "Keep these format families."},
+        "authors": {**_STRING_LIST, "description": "Any of these authors."},
+        "recipients": {**_STRING_LIST, "description": "Any of these recipients."},
+        "created_from": _DATE_TIME,
+        "created_to": _DATE_TIME,
+        "modified_from": _DATE_TIME,
+        "modified_to": _DATE_TIME,
+        "language": {"type": "string", "minLength": 1},
+        "thread_ref": {"type": "string", "minLength": 1},
+        "doc_ids": {
+            "type": "array",
+            "items": {"type": "string", "format": "uuid"},
+            "description": "Only these documents (UUIDs).",
+        },
+        "tags": _TAGS_FILTER,
+    },
+    "description": (
+        "Only read what these documents say: the search_documents filters"
+        " (family, authors, recipients, created/modified ranges, language,"
+        " thread_ref, doc_ids) and tags. Call list_tags before filtering by"
+        " tag; an unknown tag is unknown_tag."
+    ),
 }
 
 _SEARCH_DOCUMENTS_TIME_SCHEMA: Final[dict[str, object]] = {
@@ -306,17 +514,33 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "items": {"type": "string", "minLength": 1},
             "description": "Only these documents (UUIDs).",
         },
+        "tags": _TAGS_FILTER,
         "versions": {
             "type": "string",
             "enum": ["current", "all"],
             "description": "current (default) or all live versions.",
         },
         "time": _SEARCH_DOCUMENTS_TIME_SCHEMA,
-        "k": {"type": "integer", "minimum": 1, "maximum": 200},
+        "k": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20,
+            "description": "Ranked top-k when query is set.",
+        },
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50,
+            "description": "Browse page size when query is omitted.",
+        },
         "cursor": {
             "type": "string",
             "minLength": 1,
-            "description": "The previous page's cursor; only without query.",
+            "description": (
+                "Pass the previous page's next_cursor; only without query."
+            ),
         },
     },
 }
@@ -377,11 +601,11 @@ _SECTION_HISTORY_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "The section key, without the leading #.",
         },
         "time": _SECTION_HISTORY_TIME_SCHEMA,
-        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         "cursor": {
             "type": "string",
             "minLength": 1,
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
         },
     },
 }
@@ -406,7 +630,7 @@ _DOCUMENT_REFERENCES_DESCRIPTION: Final = (
     " deleted or forgotten), target_not_in_force, section_not_in_version,"
     " section_not_indexed, pinned_version_unavailable. too_broad means the"
     " section has too many subsections: ask about a narrower one. Page with"
-    " cursor; a short page with a cursor means keep paging."
+    " limit/cursor; a short page with next_cursor means keep paging."
 )
 
 _DOCUMENT_REFERENCES_TIME_SCHEMA: Final[dict[str, object]] = {
@@ -464,11 +688,11 @@ _DOCUMENT_REFERENCES_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "Only these reference kinds.",
         },
         "time": _DOCUMENT_REFERENCES_TIME_SCHEMA,
-        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         "cursor": {
             "type": "string",
             "minLength": 1,
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
         },
     },
 }
@@ -643,6 +867,16 @@ _INGEST_PROPERTIES: Final[dict[str, object]] = {
             " effective_from. Omit it to last until the next declared start."
         ),
     },
+    "tags": {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1, "maxLength": TAG_REF_MAX_LEN},
+        "maxItems": TAG_LIST_MAX,
+        "uniqueItems": True,
+        "description": (
+            "Optional registered tags (name or tag_id) to add to the document."
+            " Call list_tags to see which exist."
+        ),
+    },
 }
 _INGEST_BODY_SOURCES: Final = ("path", "text", "content_base64")
 
@@ -757,7 +991,12 @@ def _object_schema(
 
 _SQL_PARAMETERS: Final[dict[str, object]] = {"type": "array", "items": {}}
 _SAVED_QUERY_VERSION: Final[dict[str, object]] = {"type": "integer", "minimum": 1}
-_MAX_ROWS: Final[dict[str, object]] = {"type": "integer", "minimum": 0}
+_MAX_ROWS: Final[dict[str, object]] = {
+    "type": "integer",
+    "minimum": 0,
+    "maximum": 1000,
+    "description": "Safety row cap; values above 1000 are rejected (D154).",
+}
 
 _TOOLS: Final[tuple[ToolDefinition, ...]] = (
     ToolDefinition(
@@ -765,7 +1004,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_INGEST_DESCRIPTION,
         input_schema=_INGEST_INPUT_SCHEMA,
         permission="memory:write",
-        tool_version=2,
+        tool_version=3,
         http_route="POST /ingest",
     ),
     ToolDefinition(
@@ -790,7 +1029,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_SEARCH_DOCUMENTS_DESCRIPTION,
         input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
         permission="memory:read",
-        tool_version=2,
+        tool_version=4,
         http_route="POST /documents/search",
     ),
     ToolDefinition(
@@ -810,6 +1049,47 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         http_route="POST /documents/references",
     ),
     ToolDefinition(
+        name=LIST_TAGS_TOOL_NAME,
+        description=_LIST_TAGS_DESCRIPTION,
+        input_schema=_LIST_TAGS_INPUT_SCHEMA,
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /tags",
+    ),
+    ToolDefinition(
+        name=CREATE_TAG_TOOL_NAME,
+        description=_CREATE_TAG_DESCRIPTION,
+        input_schema=_CREATE_TAG_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="POST /tags",
+    ),
+    ToolDefinition(
+        name=UPDATE_TAG_TOOL_NAME,
+        description=_UPDATE_TAG_DESCRIPTION,
+        input_schema=_UPDATE_TAG_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="PATCH /tags/{tag_id}",
+    ),
+    ToolDefinition(
+        name=DELETE_TAG_TOOL_NAME,
+        description=_DELETE_TAG_DESCRIPTION,
+        input_schema=_DELETE_TAG_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="DELETE /tags/{tag_id}",
+        destructive=True,
+    ),
+    ToolDefinition(
+        name=UPDATE_DOCUMENT_TAGS_TOOL_NAME,
+        description=_UPDATE_DOCUMENT_TAGS_DESCRIPTION,
+        input_schema=_UPDATE_DOCUMENT_TAGS_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="POST /documents/{doc_id}/tags",
+    ),
+    ToolDefinition(
         name="resolve_entity",
         description=(
             "Resolve a name to ranked current survivor candidates; never silently guess."
@@ -823,11 +1103,16 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
     ),
     ToolDefinition(
         name="claims_and_sources_context",
-        description="High-recall current claims and confirmed source passages.",
+        description=(
+            "High-recall current claims and confirmed source passages. documents"
+            " limits both to what matching documents say; call list_tags before"
+            " filtering by tag."
+        ),
         input_schema=_object_schema(
             properties={
                 "query": _QUERY,
                 "entity_ids": _ENTITY_IDS,
+                "documents": _DOCUMENTS_FILTER,
                 "k": _CONTEXT_K,
                 "candidate_k": _CONTEXT_CANDIDATE_K,
                 "time": _TIME_SCHEMA,
@@ -835,7 +1120,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=4,
+        tool_version=5,
         http_route="POST /operations/claims_and_sources_context",
     ),
     ToolDefinition(
@@ -843,7 +1128,10 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=(
             "Adjudicated relations and observations under an explicit world-time"
             " scope, with bounded live-graph expansion for current or point-in-time"
-            " entity anchors."
+            " entity anchors. documents keeps facts supported by matching"
+            " documents; their contradictions and competing facts from other"
+            " documents stay in the answer, marked in_documents_filter=false."
+            " Call list_tags before filtering by tag."
         ),
         input_schema=_object_schema(
             properties={
@@ -859,19 +1147,21 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
                 },
                 "hops": _HOPS,
                 "predicate": _PREDICATE,
+                "documents": _DOCUMENTS_FILTER,
                 "time": _TIME_SCHEMA,
             },
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=4,
+        tool_version=5,
         http_route="POST /operations/facts_context",
     ),
     ToolDefinition(
         name="combined_context",
         description=(
             "Complete claims-and-sources and neighborhood-aware fact responses side by side"
-            " in ContextBundle/v2."
+            " in ContextBundle/v2. documents applies to both; call list_tags"
+            " before filtering by tag."
         ),
         input_schema=_object_schema(
             properties={
@@ -881,12 +1171,13 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
                 "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
                 "hops": _HOPS,
                 "predicate": _PREDICATE,
+                "documents": _DOCUMENTS_FILTER,
                 "time": _TIME_SCHEMA,
             },
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=5,
+        tool_version=6,
         http_route="POST /operations/combined_context",
     ),
     ToolDefinition(

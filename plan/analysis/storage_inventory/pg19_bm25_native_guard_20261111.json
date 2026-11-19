@@ -1,0 +1,56 @@
+{
+  "image": "sha256:e97ef047169b272734e95f660cca3a4de74c637d0b7c3a7c633122a8f04af43e",
+  "scope": "minimal ownership/ACL primitive with actual NOSUPERUSER LOGIN in disposable DB; not deployed role/auth, full schema or capture qualification",
+  "source_umc": "8023cc00",
+  "source_path": "src/ultimate_memory_cloud/provisioning/database.py",
+  "source_blob": "a68592e97c9c3a5700b74209cb53a1cc89442812",
+  "login": "umc_runtime|umc_runtime|f|f|f",
+  "function_owner": "umc_runtime",
+  "index_owner": "umc_runtime",
+  "execute_after_revoke": false,
+  "revoked_call_state": "42501",
+  "execute_after_owner_regrant": true,
+  "heap_share_confirmed_before": true,
+  "index_bytes_before": 401408,
+  "runtime_owner_spill_succeeded": true,
+  "index_bytes_after": 729088,
+  "heap_share_confirmed_after": true,
+  "existing_sql_index_guard_candidate": {
+    "metadata_before": {
+      "oid": "16460",
+      "filenode": "16460",
+      "tablespace": "0",
+      "xmin": "671"
+    },
+    "metadata_under_guard": {
+      "oid": "16460",
+      "filenode": "16460",
+      "tablespace": "0",
+      "xmin": "671"
+    },
+    "spooled_index_bytes": 1122304,
+    "index_access_exclusive_confirmed": true,
+    "spill_under_index_guard_state": "55P03",
+    "index_bytes_after_blocked_spill": 1122304,
+    "original_rr_snapshot_acquired_while_guarded": true,
+    "metadata_after_release": {
+      "oid": "16460",
+      "filenode": "16460",
+      "tablespace": "0",
+      "xmin": "671"
+    },
+    "original_rr_row_count_after_release": 6000,
+    "original_rr_later_index_bytes": 2113536,
+    "live_row_count_after_release": 6001,
+    "metadata_unchanged": true
+  },
+  "minimal_fixed_definer_candidate": {
+    "index_bytes": 2113536,
+    "session_login": "capture_collector",
+    "function_owner": "capture_guard_owner",
+    "has_direct_customer_table_read": false,
+    "runtime_spill_state": "55P03",
+    "assume_definer_state": "42501",
+    "direct_customer_table_read_state": "42501"
+  }
+}

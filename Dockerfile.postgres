@@ -1,11 +1,11 @@
-FROM postgres:19rc1-trixie@sha256:f6bab6213c486e940e310a88490935cbc71b88f6c19fee3cd2ab14b3b02ff65b AS pg_textsearch_builder
+FROM postgres:18.6-trixie@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4 AS pg_textsearch_builder
 
 ARG PG_TEXTSEARCH_REVISION=fa142d049d08eac45a263f5abc250c8877ae076e
 ARG PG_TEXTSEARCH_SOURCE_SHA256=445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0
 ARG PG_TEXTSEARCH_LICENSE_SHA256=d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5
 ARG PG_TEXTSEARCH_NOTICE_SHA256=ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d
 
-# The prerelease base can carry an older CA bundle than the PGDG archive's
+# The pinned base can carry an older CA bundle than the PGDG archive's
 # current CloudFront chain. Debian remains usable when that source warns, so
 # refresh trust first and then require a clean archive update.
 RUN set -eux; \
@@ -27,11 +27,10 @@ RUN set -eux; \
     update-ca-certificates; \
     apt-get update; \
     # The headers must be the base image's exact server build: the archive
-    # also serves newer prereleases, and an extension compiled against their
-    # headers fails at run time (an index access method struct changes).
+    # also serves newer server builds. Keep compile and runtime inputs equal.
     apt-get install -y --no-install-recommends \
-      build-essential curl patch \
-      "postgresql-server-dev-19=${PG_VERSION}" "libpq-dev=${PG_VERSION}"; \
+      build-essential curl \
+      "postgresql-server-dev-18=${PG_VERSION}" "libpq-dev=${PG_VERSION}"; \
     curl --fail --location --show-error \
       --output /tmp/pg_textsearch.tar.gz \
       "https://github.com/timescale/pg_textsearch/archive/${PG_TEXTSEARCH_REVISION}.tar.gz"; \
@@ -45,47 +44,41 @@ RUN set -eux; \
     echo "${PG_TEXTSEARCH_NOTICE_SHA256}  /src/pg_textsearch/NOTICE" | sha256sum --check --strict; \
     rm -rf /var/lib/apt/lists/*
 
-# PostgreSQL 19 RC 1 headers no longer pull in <limits.h>, and v1.5.1's
-# src/planner/hooks.c uses INT_MAX without including it (upstream issue
-# timescale/pg_textsearch#586). Force-include the standard header on top of
-# the server's own preprocessor flags, which reach both the shared object and
-# the JIT bitcode compiles; the pinned source stays unmodified.
 RUN set -eux; \
     cd /src/pg_textsearch; \
-    make -j"$(nproc)" CPPFLAGS="$(pg_config --cppflags) -include limits.h"; \
+    make -j"$(nproc)"; \
     make install; \
     { \
-      sha256sum /usr/lib/postgresql/19/lib/pg_textsearch.so; \
-      find /usr/share/postgresql/19/extension -maxdepth 1 \
+      sha256sum /usr/lib/postgresql/18/lib/pg_textsearch.so; \
+      find /usr/share/postgresql/18/extension -maxdepth 1 \
         -type f -name 'pg_textsearch*' -print0 | sort -z | xargs -0 sha256sum; \
     } > /tmp/pg_textsearch-artifacts.sha256
 
-# Local PostgreSQL 19 gate (D142, design §6): upstream supports PG19 on a
-# best-effort basis, so every image build runs the extension's own regression
-# suite against a throwaway cluster of this exact server build.
+# Extension gate (D142/D157): every image build runs the upstream regression
+# suite against a throwaway cluster of this exact PostgreSQL 18 server build.
 RUN set -eux; \
     chown -R postgres /src/pg_textsearch; \
-    su postgres -c "/usr/lib/postgresql/19/bin/initdb -D /tmp/pg_regress_data >/dev/null"; \
+    su postgres -c "/usr/lib/postgresql/18/bin/initdb -D /tmp/pg_regress_data >/dev/null"; \
     echo "shared_preload_libraries = 'pg_textsearch'" >> /tmp/pg_regress_data/postgresql.conf; \
-    su postgres -c "/usr/lib/postgresql/19/bin/pg_ctl -D /tmp/pg_regress_data -l /tmp/pg_regress.log -w start"; \
+    su postgres -c "/usr/lib/postgresql/18/bin/pg_ctl -D /tmp/pg_regress_data -l /tmp/pg_regress.log -w start"; \
     if ! su postgres -c "cd /src/pg_textsearch && make installcheck"; then \
       cat /src/pg_textsearch/regression.diffs 2>/dev/null || true; \
       exit 1; \
     fi; \
-    su postgres -c "/usr/lib/postgresql/19/bin/pg_ctl -D /tmp/pg_regress_data -w stop"; \
+    su postgres -c "/usr/lib/postgresql/18/bin/pg_ctl -D /tmp/pg_regress_data -w stop"; \
     rm -rf /tmp/pg_regress_data /tmp/pg_regress.log
 
-FROM postgres:19rc1-trixie@sha256:f6bab6213c486e940e310a88490935cbc71b88f6c19fee3cd2ab14b3b02ff65b
+FROM postgres:18.6-trixie@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
 
 # pg_textsearch uses the PostgreSQL License at the source revision pinned above
-# (v1.5.1, which supports PostgreSQL 19 upstream; no local patch, D142).
-COPY --from=pg_textsearch_builder /usr/lib/postgresql/19/lib/pg_textsearch.so /usr/lib/postgresql/19/lib/pg_textsearch.so
-COPY --from=pg_textsearch_builder /usr/share/postgresql/19/extension/pg_textsearch* /usr/share/postgresql/19/extension/
+# (v1.5.1; no local patch or compiler workaround, D142/D157).
+COPY --from=pg_textsearch_builder /usr/lib/postgresql/18/lib/pg_textsearch.so /usr/lib/postgresql/18/lib/pg_textsearch.so
+COPY --from=pg_textsearch_builder /usr/share/postgresql/18/extension/pg_textsearch* /usr/share/postgresql/18/extension/
 COPY --from=pg_textsearch_builder /src/pg_textsearch/LICENSE /usr/share/doc/pg_textsearch/LICENSE
 COPY --from=pg_textsearch_builder /src/pg_textsearch/NOTICE /usr/share/doc/pg_textsearch/NOTICE
 COPY --from=pg_textsearch_builder /tmp/pg_textsearch-artifacts.sha256 /usr/share/doc/pg_textsearch/artifacts.sha256
 
-# Refresh the prerelease base's trust bundle before the archive update; package
+# Refresh the pinned base's trust bundle before the archive update; package
 # signatures still provide apt's normal authenticity boundary.
 RUN set -eux; \
     for pgdg_source_file in \
@@ -106,6 +99,6 @@ RUN set -eux; \
     update-ca-certificates; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      postgresql-19-partman=5.5.0-1.pgdg13+1 \
-      postgresql-19-pgvector=0.8.6-1.pgdg13+2; \
+      postgresql-18-partman=5.5.0-1.pgdg13+1 \
+      postgresql-18-pgvector=0.8.6-1.pgdg13+2; \
     rm -rf /var/lib/apt/lists/*

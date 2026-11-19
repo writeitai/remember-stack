@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="t d">
   <title id="t">Claims and facts</title>
-  <desc id="d">Three sources make claims about Ravi: kickoff notes on 15 January, slides in February and a retro on 12 June. The first two support the fact that Ravi works on the billing migration, from 14 January. The retro supports a new fact, Ravi works on the search team from 1 June, and closes the earlier fact on 1 June. The claims never change; the facts change and keep their evidence.</desc>
+  <desc id="d">Three sources make claims about John: kickoff notes on 15 January, slides in February and a retro on 12 June. The first two support the fact that John works on the billing migration, from 14 January. The retro supports a new fact, John works on the search team from 1 June, and closes the earlier fact on 1 June. The claims never change; the facts change and keep their evidence.</desc>
   <defs>
     <radialGradient id="glowC" cx="25%" cy="45%" r="45%"><stop offset="0" stop-color="#ee5b44" stop-opacity=".14"/><stop offset="1" stop-color="#ee5b44" stop-opacity="0"/></radialGradient>
     <radialGradient id="glowT" cx="75%" cy="50%" r="45%"><stop offset="0" stop-color="#3e9b8e" stop-opacity=".18"/><stop offset="1" stop-color="#3e9b8e" stop-opacity="0"/></radialGradient>
@@ -64,7 +64,7 @@
     <rect x="60" y="160" width="6" height="104" rx="3" fill="#ee5b44"/>
     <circle cx="94" cy="190" r="9" fill="url(#sphereC)"/>
     <text class="m" x="114" y="195">Kickoff notes · 15 Jan</text>
-    <text class="b" x="86" y="226">“Ravi has been on the billing</text>
+    <text class="b" x="86" y="226">“John has been on the billing</text>
     <text class="b" x="86" y="248">migration since yesterday.”</text>
   </g>
   <g class="s2">
@@ -72,7 +72,7 @@
     <rect x="60" y="290" width="6" height="104" rx="3" fill="#ee5b44"/>
     <circle cx="94" cy="320" r="9" fill="url(#sphereC)"/>
     <text class="m" x="114" y="325">Slides · Feb</text>
-    <text class="b" x="86" y="356">“Ravi is working on the billing</text>
+    <text class="b" x="86" y="356">“John is working on the billing</text>
     <text class="b" x="86" y="378">migration.”</text>
   </g>
   <g class="s3">
@@ -80,13 +80,13 @@
     <rect x="60" y="420" width="6" height="104" rx="3" fill="#ee5b44"/>
     <circle cx="94" cy="450" r="9" fill="url(#sphereC)"/>
     <text class="m" x="114" y="455">Retro · 12 Jun</text>
-    <text class="b" x="86" y="486">“Ravi moved to the search team</text>
+    <text class="b" x="86" y="486">“John moved to the search team</text>
     <text class="b" x="86" y="508">on 1 June.”</text>
   </g>
   <g class="s5">
     <rect class="cardT" x="700" y="175" width="440" height="150" rx="16"/>
     <circle cx="736" cy="212" r="14" fill="url(#sphereT)"/>
-    <text class="h2" x="762" y="218">Ravi works on the billing migration</text>
+    <text class="h2" x="762" y="218">John works on the billing migration</text>
     <text class="m" x="762" y="246">valid 14 Jan – 1 Jun</text>
     <text class="m" x="762" y="270">supported by 2 documents</text>
     <rect x="762" y="284" width="112" height="24" rx="12" fill="#18244f" stroke="#25335f"/>
@@ -95,7 +95,7 @@
   <g class="s7">
     <rect class="cardT" x="700" y="380" width="440" height="120" rx="16"/>
     <circle cx="736" cy="417" r="14" fill="url(#sphereT)"/>
-    <text class="h2" x="762" y="423">Ravi works on the search team</text>
+    <text class="h2" x="762" y="423">John works on the search team</text>
     <text class="m" x="762" y="451">valid from 1 Jun</text>
     <text class="m" x="762" y="475">supported by 1 document</text>
   </g>
@@ -110,6 +110,6 @@
   </g>
   <g class="s8">
     <text class="b" x="60" y="585"><tspan class="cc">Claims are the transcript;</tspan><tspan class="tc"> facts are the verdict.</tspan></text>
-    <text class="m" x="60" y="610">The retro did not erase Ravi's billing work. It gave it an end date, and the history stays queryable.</text>
+    <text class="m" x="60" y="610">The retro did not erase John's billing work. It gave it an end date, and the history stays queryable.</text>
   </g>
 </svg>

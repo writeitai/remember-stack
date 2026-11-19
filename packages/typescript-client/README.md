@@ -61,8 +61,11 @@ section history, supplied reference replacement and reference-generation reads.
 `sectionHistory` defaults to history; `documentReferences` takes exactly one
 chunk or document. Reference sets are NDJSON, including an empty-set replacement.
 `versionKey`, `effectiveFrom` and `effectiveUntil` extend ingest; effective periods
-require UTC and a snapshot lineage. Nested time scopes keep wire keys (`from`,
-`to`) and explicit offsets. The transport-neutral catalogue has all 18 tools.
+require UTC and a snapshot lineage. `tags` adds registered document tags at
+ingest; `listTags`, `createTag`, `updateTag`, `deleteTag` (the last two accept a
+tag name or id) and `updateDocumentTags` manage them, and an unregistered tag
+raises `UnknownTag`. Nested time scopes keep wire keys (`from`, `to`) and
+explicit offsets. The transport-neutral catalogue has all 23 tools.
 
 `QueryResultDict` is an ordinary typed object with `.rows`, `.columns` and
 `.truncated`. Response model types contain validated, defaulted fields; their

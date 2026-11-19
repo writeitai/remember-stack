@@ -20,6 +20,7 @@ from rememberstack.model import ProcessingLane
 from rememberstack.model import QueueRoute
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import UTCDateTime
+from rememberstack.spine.catalog_contract import lane_is_valid
 from rememberstack.spine.work_ledger import WorkLedger
 from rememberstack.workers import RunResult
 from rememberstack.workers import Worker
@@ -120,8 +121,9 @@ class SelfHostWorkerLoop:
         self._deployment_id = deployment_id
         self._routes = tuple(
             (stage, lane)
-            for lane in (ProcessingLane.STEADY, ProcessingLane.BACKFILL)
+            for lane in (ProcessingLane.STEADY, ProcessingLane.BACKFILL, None)
             for stage in stages
+            if lane_is_valid(stage=stage, lane=lane)
         )
         self._bucket = bucket
         self._database_url = database_url

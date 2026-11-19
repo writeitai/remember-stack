@@ -1,0 +1,118 @@
+"""Analysis-only final D153 qualification on freshly cloned, stopped-source stores."""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from time import monotonic
+from typing import Any
+from uuid import UUID
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import URL, create_engine, text
+from rememberstack.spine.retrieval_eligibility import candidate_mention_coverage_ctes, entity_mentions_ctes, fact_eligibility_ctes
+from rememberstack.spine.query_space import build_manifest
+from scripts.qualify_retrieval_concurrency import qualify
+
+
+def write(*, path: Path, value: Any) -> None:
+    """Preserve complete JSON evidence, never credentials."""
+    path.write_text(json.dumps(value,indent=2,default=str)+'\n')
+
+
+def digest(*, rows: list[str]) -> str:
+    """Hash the same complete row encoding as the independent old-head capture."""
+    return hashlib.sha256('\n'.join(rows).encode()).hexdigest()
+
+
+def run(*, private: Path, reference: Path, output: Path, cases: Path, source: Path) -> None:
+    """Migrate only an explicitly labelled qualification clone and compare all evidence."""
+    if output.exists(): raise ValueError('refusing to overwrite final evidence')
+    settings=json.loads(private.read_text())
+    assert settings['source_mounted_read_only'] is True
+    original=json.loads(subprocess.check_output(['docker','inspect',settings['source_container']],text=True))[0]
+    assert original['State']['Status']=='exited' and original['State']['ExitCode']==0
+    db=settings['databases']['target']
+    assert db['container'].startswith('d153-final-')
+    target=json.loads(subprocess.check_output(['docker','inspect',db['container']],text=True))[0]
+    assert target['Config']['Labels']['rememberstack.task']==db['container'].removesuffix('-target')
+    url=URL.create('postgresql+psycopg',**{k:db[k] for k in ('username','password','host','port','database')})
+    engine=create_engine(url,hide_parameters=True)
+    output.mkdir(parents=True)
+    receipt: dict[str,Any]={'source_commit':'fab0a9bda','provider_calls':0,'ingestion':False,'source_container':settings['source_container'],'target_container':db['container'],'original_cleanly_stopped':True,'surface_manifest_hash':build_manifest()['surface_manifest_hash'],'parity':{},'coverage':{}}
+    try:
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar_one()=='p9_46_0067'
+            before_lsn=connection.exec_driver_sql('SELECT pg_current_wal_insert_lsn()::text').scalar_one()
+            receipt['old_document_index_bytes']=connection.exec_driver_sql("SELECT pg_relation_size('ix_documents_entity')").scalar_one()
+        config=Config(str(source/'alembic.ini'));config.set_main_option('sqlalchemy.url',url.render_as_string(hide_password=False).replace('%','%%'))
+        started=monotonic();command.upgrade(config=config,revision='head');receipt['migration_seconds']=monotonic()-started
+        with engine.connect() as connection:
+            receipt['new_document_index_bytes']=connection.exec_driver_sql("SELECT pg_relation_size('ix_documents_entity')").scalar_one()
+            receipt['migration_wal_bytes']=connection.execute(text('SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(),CAST(:lsn AS pg_lsn))'),{'lsn':before_lsn}).scalar_one()
+            receipt['head']=connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar_one()
+        write(path=output/'receipt.json',value=receipt)
+        # Native timing is isolated from the long reference exports: those have
+        # already completed, and their original PostgreSQL copies are stopped.
+        env=dict(os.environ);env['REMEMBERSTACK_DIAGNOSTIC_DATABASE_URL']=url.render_as_string(hide_password=False)
+        subprocess.run([sys.executable,str(source/'scripts/diagnose_retrieval_sql.py'),'--cases',str(cases),'--output',str(output/'native'),'--operation-seconds','20','--plan-seconds','20','--analyze-limit','3'],env=env,check=True)
+        for case in json.loads(cases.read_text()):
+            result=json.loads((output/'native'/case['name']/'summary.json').read_text())
+            assert 'error' not in result,result
+            assert result['result']['negative'] is None,result
+        qualify(private=private,cases=cases,output=output/'eight-readers')
+        concurrency=json.loads((output/'eight-readers'/'receipt.json').read_text())
+        assert concurrency['checked_out_connections_after_reads']==0
+        assert concurrency['open_snapshot_transactions_after_reads']==0
+        for case in json.loads(cases.read_text()):
+            result=concurrency[case['name']];assert result['all_equal'] is True
+            assert result['baseline']['negative'] is None
+            assert all(reader['negative'] is None for reader in result['readers'])
+        reference_receipt=json.loads((reference/'receipt.json').read_text())
+        with engine.connect() as connection:
+            connection.exec_driver_sql('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+            connection.exec_driver_sql('SET LOCAL statement_timeout=600000')
+            connection.exec_driver_sql('SET LOCAL jit=off')
+            connection.exec_driver_sql('SET LOCAL max_parallel_workers_per_gather=0')
+            expected:dict[str,list[str]]={}
+            for view in ('entities_current','facts_visible_history','mentions_live','evidence_lineage','fact_claim_evidence_live'):
+                old=json.loads((reference/f'reference-{view}.json').read_text())
+                assert digest(rows=old)==reference_receipt['views'][view]['reference']['sha256']
+                expected[view]=old
+                started=monotonic();rows=list(connection.execute(text(f'SELECT to_jsonb(row)::text FROM memory_v1.{view} row ORDER BY to_jsonb(row)::text')).scalars())
+                write(path=output/f'{view}.json',value=rows)
+                receipt['parity'][view]={'rows':len(rows),'sha256':digest(rows=rows),'equal':rows==old,'seconds':monotonic()-started}
+                write(path=output/'receipt.json',value=receipt);assert rows==old,view
+            deployment=UUID(json.loads(cases.read_text())[0]['deployment_id'])
+            entities=[UUID(json.loads(row)['entity_id']) for row in expected['entities_current']]
+            mentions=[json.loads(row) for row in expected['mentions_live']]
+            params:dict[str,Any]={'deployment_id':deployment,'entity_ids':entities}
+            for grain,table in (('claim','claims'),('chunk','chunks')):
+                key=grain+'_id';parameter=grain+'_ids'
+                params[parameter]=list(connection.execute(text(f'SELECT DISTINCT {key} FROM {table} WHERE deployment_id=:deployment_id'),params).scalars())
+                oracle:dict[str,set[str]]={}
+                for mention in mentions:
+                    if mention[key] is not None:oracle.setdefault(mention[key],set()).add(mention['resolved_entity_id'])
+                wanted=sorted((identifier,len(ids)) for identifier,ids in oracle.items())
+                for direction,body in (('candidate',candidate_mention_coverage_ctes(grain=grain,candidate_parameter=parameter)),('entity',entity_mentions_ctes(grain=grain))):
+                    started=monotonic();actual=sorted((str(row[0]),row[1]) for row in connection.execute(text('WITH RECURSIVE '+body+' SELECT item_id,coverage FROM scope_coverage'),params))
+                    receipt['coverage'][grain+'-'+direction]={'equal':actual==wanted,'items':len(actual),'seconds':monotonic()-started}
+                    write(path=output/(grain+'-'+direction+'.json'),value=actual);write(path=output/'receipt.json',value=receipt);assert actual==wanted,(grain,direction)
+            candidate_sql="SELECT 'relation'::text fact_kind,relation_id fact_id FROM relations WHERE deployment_id=:deployment_id UNION ALL SELECT 'observation'::text,observation_id FROM observations WHERE deployment_id=:deployment_id"
+            body=fact_eligibility_ctes(candidates_sql=candidate_sql,presentation='full')
+            started=monotonic();facts=list(connection.execute(text('WITH '+body+' SELECT to_jsonb(row)::text FROM eligible_facts row ORDER BY to_jsonb(row)::text'),params).scalars())
+            receipt['shared_fact_builder']={'equal':facts==expected['facts_visible_history'],'rows':len(facts),'sha256':digest(rows=facts),'seconds':monotonic()-started}
+            write(path=output/'fact-builder.json',value=facts);write(path=output/'receipt.json',value=receipt);assert facts==expected['facts_visible_history']
+        receipt['complete']=True;write(path=output/'receipt.json',value=receipt)
+        print('FINAL COMPLETE',output.name,receipt['shared_fact_builder'],flush=True)
+    finally: engine.dispose()
+
+
+def main() -> None:
+    """Require every private source/evidence path explicitly."""
+    p=argparse.ArgumentParser();p.add_argument('--private',type=Path,required=True);p.add_argument('--reference',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--cases',type=Path,required=True);p.add_argument('--source',type=Path,required=True);a=p.parse_args();run(private=a.private,reference=a.reference,output=a.output,cases=a.cases,source=a.source)
+
+if __name__=='__main__':main()

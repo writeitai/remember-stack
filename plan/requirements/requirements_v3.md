@@ -103,15 +103,19 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   their transcript/description happened to mention — D65; the media embedding model is
   per-deployment configuration, and its absence is reported as a stated capability boundary);
   fully rebuildable from the spine plus immutable artifacts.
-- **Live graph** *(formerly physical P2/L6)*: private PostgreSQL 19 node and
+- **Live graph** *(formerly physical P2/L6)*: private PostgreSQL 18 node and
   edge views over normalized authority views plus bounded recursive traversal;
   relationships are bi-temporal and support as-of queries. It copies no graph
   rows, has no projection generation, and becomes visible by ordinary MVCC.
 - **P3 — Corpus filesystem**: the corpus organized as a navigable **directory tree**, materialized
   to object storage and **mounted read-only** so agentic workers can browse the memory on their
-  filesystem; built from document placement hints + entities/relations (K pages are
-  cross-linked, never a structural input — P3 stays rebuildable from the E spine, D40 refined);
-  fully rebuildable. Agents read the curated hierarchy and drill into the source documents.
+  filesystem. One real folder per served completed document contains a copy of
+  its raw original and all reader-useful derivatives; private pipeline objects stay
+  out. Deterministic type first, optional model-chosen topic below it, readable
+  title plus a deterministic suffix derived from `doc_id`, which survives path
+  moves. Idempotent publication, DB-derived bounded member indexes/root `llms.txt`,
+  full repair and per-document D74 erasure without wiping surviving folders
+  are required. Raw stays source of truth. K repos are standalone (D155).
 
 ## Knowledge lifecycle
 
@@ -133,14 +137,14 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   at filesystem work, so the surface is **filesystem-first** wherever a filesystem can carry
   the capability.
 - Exposed as **API, CLI, MCP server, and mounted filesystems** — the mounted read-only
-  surfaces are: the **corpus filesystem** (P3), the **E0 document artifacts** (Markdown +
-  per-document structure + derived media), the **E0 raw originals** (off the navigation path —
-  reached only via explicit pointers; audit-logged), and the **K plane** (the knowledge repo).
+  customer surface is the **corpus filesystem** (P3), containing copied originals,
+  Markdown, per-document structure and reader derivatives together. **K plane**
+  repositories remain standalone git repos. E0 raw/artifact mounts are not required (D155).
   Agents browse the memory as files (`ls`/`cat`/`grep` over navigable trees).
 - **Markdown-first, originals reachable**: the per-document Markdown is the primary
   agent-facing form and what navigation points to — but agents must be able to ingest source
-  media directly (figures and derived imagery from the artifacts; **whole-file originals** —
-  video, audio, photos — from the raw mount via explicit pointers), because conversion is
+  media directly (figures, transcripts and **whole-file originals** — video, audio,
+  photos — in the same corpus folder), because conversion is
   lossy exactly where sources are non-textual.
 - **Environment-adaptive, with a precedence rule**: everything readable is available through
   both the mounts and the API/CLI (full parity — some environments cannot mount). When mounts
@@ -217,8 +221,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 **Fixed engine choices** — the system's identity, never abstracted behind ports:
 
 - Relational spine, derived P1 search projection, and live graph:
-  **PostgreSQL 19**. Before GA, pin the latest proven beta/RC image and keep
-  storage disposable/replayable; after GA, keep the current patched 19.x minor.
+  **PostgreSQL 18** (D157), the sole supported major. Pin the official
+  image by digest, choosing the newest minor and image at least two weeks old.
   Install
   **pgvector** (semantic indexes; reference Qwen profile fixed at 1,536
   dimensions) and **pg_textsearch** (BM25). Pgvectorscale
@@ -239,10 +243,13 @@ model/embedding providers, telemetry export, auth perimeter), each port with exa
 adapters:
 
 - **Reference deployment** (the fixed production profile; also what the cloud offering runs):
-  Postgres on **Hetzner**; workers on **GCP Cloud Run jobs** via **Cloud Tasks**; **GCS** buckets
-  with **gcsfuse** mounts.
+  Postgres on **Hetzner**; workers on **GCP Cloud Run jobs** via **Cloud Tasks**.
+  Corpus storage uses the S3 port (mountable.io, AWS S3, GCS XML/HMAC); the cloud
+  control plane provisions read-only mountable sessions, with stdin-only tickets
+  passed by `remember mount DIR` (D155).
 - **Self-host profile**: S3-compatible object store (e.g. SeaweedFS), Postgres-backed queue, local
-  directory mounts, any git remote, BYO model keys.
+  or read-only S3 FUSE mounts of the corpus bucket, any git remote, BYO model keys.
+  MinIO-backed engine tests qualify the mutable-tree contract (D155).
 
 ## Code
 

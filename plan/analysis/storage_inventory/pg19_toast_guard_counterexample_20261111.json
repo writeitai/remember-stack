@@ -1,0 +1,23 @@
+{
+  "image": "sha256:e97ef047169b272734e95f660cca3a4de74c637d0b7c3a7c633122a8f04af43e",
+  "scope": "completed native TOAST counterexample in disposable cached-image DB; not a full capture/profile qualification",
+  "parent_heap_share": true,
+  "parent_bm25_index_access_exclusive": true,
+  "toast_vacuum": {
+    "before_bytes": 2711552,
+    "exit": 0,
+    "state": null,
+    "after_bytes": 65536
+  },
+  "ordinary_toast_sql": {
+    "heap_share": {
+      "exit": 3,
+      "state": "42501"
+    },
+    "index_no_move": {
+      "exit": 3,
+      "state": "42501"
+    }
+  },
+  "fixed_view_toast_share_held": false
+}

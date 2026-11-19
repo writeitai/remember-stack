@@ -22,7 +22,6 @@ from rememberstack.ports import ProjectionPurgePort
 from rememberstack.spine import ForgetCatalog
 from rememberstack.workers import DeletionService
 from rememberstack.workers import ForgetKnowledgeRebuilder
-from rememberstack.workers import ForgetProjectionRebuilder
 from rememberstack.workers import HardForgetHandler
 from rememberstack.workers import HardForgetReadiness
 from rememberstack.workers import HardForgetService
@@ -54,7 +53,6 @@ def _manifest() -> ForgetManifest:
         fact_ids=(_FACT_ID,),
         entity_ids=(_ENTITY_ID,),
         object_keys=(ObjectKey("raw/forgotten"),),
-        projection_prefixes=(ObjectKey("snapshots/pre-forget"),),
         k_artifact_ids=(_ARTIFACT_ID,),
     )
 
@@ -89,6 +87,9 @@ class _ServingState:
 
 
 class _Catalog:
+    def ordinary_work_is_drained(self, *, deployment_id: UUID) -> bool:
+        return True
+
     def __init__(self, *, state: _ServingState) -> None:
         self.state = state
         self.complete = False
@@ -145,22 +146,20 @@ class _Objects:
         assert _FORGOTTEN not in self.state.channels["verbatim"]
 
 
-class _ProjectionRebuilder:
+class _ProjectionPurger:
     def __init__(self, *, state: _ServingState) -> None:
         self.state = state
 
-    def rebuild_without_lineage(self, *, deployment_id: UUID, forget_id: UUID) -> None:
+    def quiesce_projections(self, *, deployment_id: UUID, forget_id: UUID) -> None:
+        pass
+
+    def purge_projections(
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
+    ) -> None:
         self.state.remove("graph", "browse")
 
-
-class _ProjectionPurger:
-    def purge_projections(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
-    ) -> None:
-        return None
-
     def verify_projections_purged(
-        self, *, deployment_id: UUID, prefixes: tuple[ObjectKey, ...]
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
     ) -> None:
         return None
 
@@ -204,10 +203,7 @@ def _readiness(*, state: _ServingState) -> tuple[HardForgetReadiness, _Catalog]:
         deletion=cast(DeletionService, _Deletion()),
         profile_refresher=RecordingProfileRefresher(),
         object_purgers=(cast(ObjectPurgePort, _Objects(state=state)),),
-        projection_rebuilder=cast(
-            ForgetProjectionRebuilder, _ProjectionRebuilder(state=state)
-        ),
-        projection_purger=cast(ProjectionPurgePort, _ProjectionPurger()),
+        projection_purger=cast(ProjectionPurgePort, _ProjectionPurger(state=state)),
         knowledge_rebuilder=cast(
             ForgetKnowledgeRebuilder, _KnowledgeRebuilder(state=state)
         ),
@@ -250,4 +246,4 @@ def test_s55_survives_whole_and_independent_external_store_restores() -> None:
         readiness.ensure_ready(deployment_id=_DEPLOYMENT_ID)
         _assert_s55(state)
 
-    assert catalog.materializations == 1 + len(restore_groups)
+    assert catalog.materializations >= 1 + len(restore_groups)

@@ -17,6 +17,7 @@ from datetime import UTC
 from pathlib import Path
 import re
 from typing import Any
+from typing import cast
 from uuid import UUID
 from uuid import uuid4
 
@@ -28,6 +29,9 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.models import DocumentTagsUpdate
+from remember.models import TagCreate
+from remember.models import TagUpdate
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
@@ -55,7 +59,9 @@ from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.document_inventory import DocumentInventory
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.spine.tags import TagCatalog
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
 from rememberstack.workers import E0_STRUCTURE_VERSION
@@ -158,9 +164,21 @@ def database_engine() -> Iterator[Engine]:
 @pytest.fixture(autouse=True)
 def bootstrapped_deployment(database_engine: Engine) -> None:
     """A fresh deployment and empty partitioned tables per proof."""
+    _fresh_deployment(engine=database_engine)
+
+
+def _fresh_deployment(*, engine: Engine) -> None:
+    """Empty every table a proof writes and bootstrap the deployment again."""
+    database_engine = engine
     with database_engine.begin() as connection:
         connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
-        for table in ("chunks", "chunk_claims", "claims", "claim_extraction_decisions"):
+        for table in (
+            "chunks",
+            "chunk_claims",
+            "claims",
+            "claim_extraction_decisions",
+            "tags",
+        ):
             connection.execute(statement=text(f"TRUNCATE TABLE {table} CASCADE"))
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(
@@ -273,16 +291,23 @@ class _ReuseRig:
             registry=registry,
         )
 
-    def observe(self, *, content: str) -> IngestedVersion:
+    def observe(
+        self,
+        *,
+        content: str,
+        source_ref: str = "notes/spike.md",
+        tags: tuple[str, ...] = (),
+    ) -> IngestedVersion:
         """One watched observation of the lineage."""
         return self.ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
             source_kind="watched_directory",
-            source_ref="notes/spike.md",
+            source_ref=source_ref,
             upload=DocumentUpload(
                 filename="spike.md",
                 mime="text/markdown",
                 content=content.encode("utf-8"),
+                tags=tags,
             ),
             versioning_mode="living",
             source_modified_at=None,
@@ -1053,3 +1078,143 @@ def test_claimify_reruns_stay_inside_the_edited_neighbourhood(rig: _ReuseRig) ->
     lives in the passing test, so unrelated regressions fail normally."""
     trace = _edit_trace(rig, dated=False)
     assert trace["claimify_changed"] <= trace["allowed"]
+
+
+def _paid_and_processing_totals(rig: _ReuseRig) -> dict[str, int]:
+    """Every model call so far, and every version, reading and work row."""
+    with rig.engine.connect() as connection:
+        rows = {
+            table: connection.execute(
+                text(f"SELECT count(*) FROM {table}")  # noqa: S608 -- fixed names
+            ).scalar_one()
+            for table in (
+                "document_versions",
+                "document_representations",
+                "chunks",
+                "claims",
+                "processing_state",
+            )
+        }
+    return {
+        "generations": len(rig.provider.generated_prompts),
+        "selection": rig.selection_calls(),
+        "claimify": sum(kind == "ClaimifyResponse" for kind, _ in rig.calls),
+        "embeddings": len(rig.provider.embedded_texts),
+        **rows,
+    }
+
+
+def test_tag_writes_make_no_model_call_and_no_version(rig: _ReuseRig) -> None:
+    """D156 §3.4 under Rule 4: tags enter no key, so writing them costs nothing.
+
+    Registering, renaming and deleting tags, and tagging, retagging and
+    clearing a lineage whose version is ready, run no conversion, embedding,
+    Selection or Claimify call, enqueue no work and create no version. A
+    re-sent identical observation carrying tags adds them and stays the D55
+    no-op.
+    """
+    first = rig.observe(content=_paragraphs(edited=False))
+    rig.drain()
+    before = _paid_and_processing_totals(rig)
+    assert before["selection"] > 0 and before["embeddings"] > 0
+
+    catalog = TagCatalog(engine=rig.engine)
+    autoboard = catalog.create_tag(
+        deployment_id=_DEPLOYMENT_ID,
+        request=TagCreate(name="project:autoboard", description="Autoboard."),
+    )
+    catalog.create_tag(
+        deployment_id=_DEPLOYMENT_ID,
+        request=TagCreate(name="kind:decision", description="Decision records."),
+    )
+    for update in (
+        DocumentTagsUpdate(add=("project:autoboard",)),
+        DocumentTagsUpdate(set=("kind:decision",)),
+        DocumentTagsUpdate(set=()),
+        DocumentTagsUpdate(add=("project:autoboard", "kind:decision")),
+        DocumentTagsUpdate(remove=("kind:decision",)),
+    ):
+        catalog.update_document_tags(
+            deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id, request=update
+        )
+    catalog.update_tag(
+        deployment_id=_DEPLOYMENT_ID,
+        tag=str(autoboard.tag_id),
+        request=TagUpdate(name="project:board", description="Renamed."),
+    )
+    catalog.delete_tag(deployment_id=_DEPLOYMENT_ID, tag="kind:decision")
+    resent = rig.observe(content=_paragraphs(edited=False), tags=("project:board",))
+    rig.drain()
+
+    assert not resent.created
+    assert resent.version_id == first.version_id
+    assert _paid_and_processing_totals(rig) == before
+    page = DocumentInventory(engine=rig.engine).list_documents(
+        deployment_id=_DEPLOYMENT_ID
+    )
+    assert [document.tags for document in page.documents] == [("project:board",)]
+
+
+def test_tagged_versions_reuse_exactly_what_untagged_versions_reuse(
+    rig: _ReuseRig, database_engine: Engine, tmp_path: Path
+) -> None:
+    """Two versions ingested with different tags reuse what they would untagged.
+
+    The same two-version edit runs twice in fresh deployments, once without
+    tags and once with a different tag set on each version. Every stage's
+    call count matches per version, and so does every chunk's Selection,
+    Claimify and embedding identity: tags are in no reuse key (D56, D156).
+    """
+
+    def run(*, tagged: bool, rig: _ReuseRig) -> list[object]:
+        if tagged:
+            catalog = TagCatalog(engine=rig.engine)
+            for name in ("project:autoboard", "project:legalit"):
+                catalog.create_tag(
+                    deployment_id=_DEPLOYMENT_ID,
+                    request=TagCreate(name=name, description=name),
+                )
+        trace: list[object] = []
+        for edited, tags in (
+            (False, ("project:autoboard",)),
+            (True, ("project:legalit",)),
+        ):
+            before = _paid_and_processing_totals(rig)
+            version = rig.observe(
+                content=_paragraphs(edited=edited), tags=tags if tagged else ()
+            )
+            assert version.created
+            rig.drain()
+            after = _paid_and_processing_totals(rig)
+            with rig.engine.connect() as connection:
+                identities = connection.execute(
+                    text(
+                        "SELECT extraction_input_hash, claimify_input_hash,"
+                        " embedding_text_hash FROM chunks"
+                        " WHERE version_id = :v ORDER BY ordinal"
+                    ),
+                    {"v": version.version_id},
+                ).all()
+            trace.append(
+                (
+                    {key: after[key] - before[key] for key in after},
+                    [tuple(row) for row in identities],
+                )
+            )
+        return trace
+
+    untagged = run(tagged=False, rig=rig)
+    _fresh_deployment(engine=database_engine)
+    tagged_rig = _ReuseRig(engine=database_engine, root=tmp_path / "tagged")
+    tagged = run(tagged=True, rig=tagged_rig)
+
+    assert tagged == untagged
+    second_version_calls = cast("tuple[dict[str, int], object]", untagged[1])[0]
+    assert 0 < second_version_calls["selection"] < second_version_calls["chunks"]
+    with database_engine.connect() as connection:
+        assert connection.execute(
+            text(
+                "SELECT array_agg(t.name ORDER BY t.name) FROM document_tags dt"
+                " JOIN tags t USING (deployment_id, tag_id)"
+            )
+        ).scalar_one() == ["project:autoboard", "project:legalit"]

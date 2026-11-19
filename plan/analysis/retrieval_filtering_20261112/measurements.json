@@ -1,0 +1,697 @@
+{
+  "observed_date": "2026-11-12",
+  "mode": "read-only, SQL-only, single diagnostic reader; active campaign elsewhere",
+  "provider_calls": 0,
+  "vector_mode": "stored observation vector; NOT the question embedding",
+  "units": "seconds unless labelled ms",
+  "operations": [
+    {
+      "path": "conv26/scoped-claims_and_sources_context/summary.json",
+      "case": {
+        "name": "scoped-claims_and_sources_context",
+        "operation": "claims_and_sources_context",
+        "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+        "entity_ids": [
+          "ebaecaaf-e869-473c-b770-93bb3a850e68"
+        ],
+        "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+        "k": 50,
+        "candidate_k": 200,
+        "embedding_model": "qwen/qwen3-embedding-8b"
+      },
+      "elapsed_seconds": 20.018505850806832,
+      "continuation_calls": [],
+      "result": {
+        "facts": 0,
+        "evidence": 0,
+        "chunks": 0,
+        "sources": 0,
+        "negative": "kind=<NegativeKind.BOUNDARY: 'boundary'> explanation='the operation could not finish inside its database budget' workaround='narrow the query or add filters, then retry'",
+        "truncation": "truncated=True returned=0 estimated_total=0 total_is_exact=False continuation=None reason='p1_deadline'"
+      },
+      "error": null
+    },
+    {
+      "path": "conv26/scoped-facts_context/summary.json",
+      "case": {
+        "name": "scoped-facts_context",
+        "operation": "facts_context",
+        "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+        "entity_ids": [
+          "ebaecaaf-e869-473c-b770-93bb3a850e68"
+        ],
+        "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+        "k": 50,
+        "candidate_k": 200,
+        "embedding_model": "qwen/qwen3-embedding-8b"
+      },
+      "elapsed_seconds": 20.01627851650119,
+      "continuation_calls": [],
+      "result": {
+        "facts": 0,
+        "evidence": 0,
+        "chunks": 0,
+        "sources": 0,
+        "negative": "kind=<NegativeKind.BOUNDARY: 'boundary'> explanation='the operation could not finish inside its database budget' workaround='narrow the query or add filters, then retry'",
+        "truncation": "truncated=True returned=0 estimated_total=0 total_is_exact=False continuation=None reason='p1_deadline'"
+      },
+      "error": null
+    },
+    {
+      "path": "conv26-unscoped/unscoped-claims_and_sources_context/summary.json",
+      "case": {
+        "name": "unscoped-claims_and_sources_context",
+        "operation": "claims_and_sources_context",
+        "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+        "entity_ids": [],
+        "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+        "k": 50,
+        "candidate_k": 200,
+        "embedding_model": "qwen/qwen3-embedding-8b"
+      },
+      "elapsed_seconds": 1.00204954482615,
+      "continuation_calls": [
+        {
+          "k": 200,
+          "channel": "semantic",
+          "statement": "SELECT claim_id::text AS item_id, embedding <=> CAST(:query_vector AS vector) AS distance FROM claims WHERE deployment_id = :deployment_id AND embedding IS NOT NULL AND embedding_model = :embedding_model AND embedding_input_policy_version = :input_policy AND is_current_testimony ORDER BY embedding <=> CAST(:query_vector AS vector)",
+          "account": {
+            "termination": "exhausted",
+            "fetched": 711,
+            "confirmed": 711,
+            "rejected": 0,
+            "fetch_rounds": 1,
+            "coverage_rows": 0,
+            "limits": {
+              "k": 200.0,
+              "work_budget": 40000.0,
+              "initial_fetch": 800.0,
+              "hnsw_max_scan_tuples": 160000.0,
+              "hnsw_ef_search": 200.0
+            }
+          },
+          "elapsed_seconds": 0.19281972758471966
+        },
+        {
+          "k": 200,
+          "channel": "bm25",
+          "statement": "SELECT claim_id::text AS item_id, -(claim_text <@> to_bm25query(:query, 'ix_claims_current_bm25'))::double precision AS score FROM claims WHERE deployment_id = :deployment_id AND is_current_testimony ORDER BY claim_text <@> to_bm25query(:query, 'ix_claims_current_bm25')",
+          "account": {
+            "termination": "exhausted",
+            "fetched": 404,
+            "confirmed": 404,
+            "rejected": 0,
+            "fetch_rounds": 1,
+            "coverage_rows": 0,
+            "limits": {
+              "k": 200.0,
+              "work_budget": 40000.0,
+              "initial_fetch": 800.0
+            }
+          },
+          "elapsed_seconds": 0.1171965803951025
+        },
+        {
+          "k": 200,
+          "channel": "semantic",
+          "statement": "SELECT chunk_id::text AS item_id, embedding <=> CAST(:query_vector AS vector) AS distance FROM chunk_search WHERE deployment_id = :deployment_id AND embedding IS NOT NULL AND embedding_model = :embedding_model AND embedding_input_policy_version = :input_policy ORDER BY embedding <=> CAST(:query_vector AS vector)",
+          "account": {
+            "termination": "exhausted",
+            "fetched": 163,
+            "confirmed": 163,
+            "rejected": 0,
+            "fetch_rounds": 1,
+            "coverage_rows": 0,
+            "limits": {
+              "k": 200.0,
+              "work_budget": 40000.0,
+              "initial_fetch": 800.0,
+              "hnsw_max_scan_tuples": 160000.0,
+              "hnsw_ef_search": 200.0
+            }
+          },
+          "elapsed_seconds": 0.1990013476461172
+        },
+        {
+          "k": 200,
+          "channel": "bm25",
+          "statement": "SELECT chunk_id::text AS item_id, -(search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25'))::double precision AS score FROM chunk_search WHERE deployment_id = :deployment_id ORDER BY search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25')",
+          "account": {
+            "termination": "exhausted",
+            "fetched": 130,
+            "confirmed": 130,
+            "rejected": 0,
+            "fetch_rounds": 1,
+            "coverage_rows": 0,
+            "limits": {
+              "k": 200.0,
+              "work_budget": 40000.0,
+              "initial_fetch": 800.0
+            }
+          },
+          "elapsed_seconds": 0.1921698208898306
+        }
+      ],
+      "result": {
+        "facts": 0,
+        "evidence": 50,
+        "chunks": 50,
+        "sources": 0,
+        "negative": null,
+        "truncation": {
+          "truncated": true,
+          "returned": 100,
+          "estimated_total": 507,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": null
+        }
+      },
+      "error": null
+    },
+    {
+      "path": "conv26-unscoped/unscoped-facts_context/summary.json",
+      "case": {
+        "name": "unscoped-facts_context",
+        "operation": "facts_context",
+        "query": "What pet does Caroline have? Identify Caroline's pet or pets.",
+        "entity_ids": [],
+        "deployment_id": "01712365-15ca-444c-96a1-860665b04673",
+        "k": 50,
+        "candidate_k": 200,
+        "embedding_model": "qwen/qwen3-embedding-8b"
+      },
+      "elapsed_seconds": 20.01555717922747,
+      "continuation_calls": [
+        {
+          "k": 201,
+          "channel": "semantic",
+          "statement": "SELECT relation_id::text AS item_id, embedding <=> CAST(:query_vector AS vector) AS distance FROM relations WHERE deployment_id = :deployment_id AND embedding IS NOT NULL AND embedding_model = :embedding_model AND embedding_input_policy_version = :input_policy ORDER BY embedding <=> CAST(:query_vector AS vector)",
+          "elapsed_seconds": 19.98394708521664
+        }
+      ],
+      "result": {
+        "facts": 0,
+        "evidence": 0,
+        "chunks": 0,
+        "sources": 0,
+        "negative": {
+          "kind": "boundary",
+          "explanation": "the operation could not finish inside its database budget",
+          "workaround": "narrow the query or add filters, then retry"
+        },
+        "truncation": {
+          "truncated": true,
+          "returned": 0,
+          "estimated_total": 0,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": "p1_deadline"
+        }
+      },
+      "error": null
+    },
+    {
+      "path": "conv30/scoped-claims_and_sources_context/summary.json",
+      "case": {
+        "name": "scoped-claims_and_sources_context",
+        "operation": "claims_and_sources_context",
+        "query": "What does Jon's dance studio offer? Classes, programs, services, events, and other offerings associated with his dance studio.",
+        "entity_ids": [
+          "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+        ],
+        "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+        "k": 50,
+        "candidate_k": 200,
+        "source_item_id": "conv-30/qa/0025",
+        "embedding_model": "qwen/qwen3-embedding-8b"
+      },
+      "elapsed_seconds": 20.022943444550037,
+      "continuation_calls": [],
+      "result": {
+        "facts": 0,
+        "evidence": 0,
+        "chunks": 0,
+        "sources": 0,
+        "negative": {
+          "kind": "boundary",
+          "explanation": "the operation could not finish inside its database budget",
+          "workaround": "narrow the query or add filters, then retry"
+        },
+        "truncation": {
+          "truncated": true,
+          "returned": 0,
+          "estimated_total": 0,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": "p1_deadline"
+        }
+      },
+      "error": null
+    },
+    {
+      "path": "conv30/scoped-facts_context/summary.json",
+      "case": {
+        "name": "scoped-facts_context",
+        "operation": "facts_context",
+        "query": "Jon's view of what an ideal dance studio should look like; desired appearance, design, layout, and features",
+        "entity_ids": [
+          "1424f3cb-6f18-4fd8-b843-e6c7610c9824"
+        ],
+        "deployment_id": "283ae078-9a7d-43b1-95ad-33a439ae8c79",
+        "k": 50,
+        "candidate_k": 200,
+        "source_item_id": "conv-30/qa/0005",
+        "embedding_model": "qwen/qwen3-embedding-8b"
+      },
+      "elapsed_seconds": 20.015156595036387,
+      "continuation_calls": [],
+      "result": {
+        "facts": 0,
+        "evidence": 0,
+        "chunks": 0,
+        "sources": 0,
+        "negative": {
+          "kind": "boundary",
+          "explanation": "the operation could not finish inside its database budget",
+          "workaround": "narrow the query or add filters, then retry"
+        },
+        "truncation": {
+          "truncated": true,
+          "returned": 0,
+          "estimated_total": 0,
+          "total_is_exact": false,
+          "continuation": null,
+          "reason": "p1_deadline"
+        }
+      },
+      "error": null
+    }
+  ],
+  "comparisons": [
+    {
+      "path": "conv26-compare/claims-fenced.json",
+      "name": "claims-fenced",
+      "execute": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.004112660884857
+      },
+      "explain": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.003482276573777
+      },
+      "actual_plan": {
+        "Planning Time": null,
+        "Execution Time": null,
+        "Actual Rows": null,
+        "Plan Rows": null,
+        "Shared Hit Blocks": null,
+        "Shared Read Blocks": null,
+        "Temp Read Blocks": null,
+        "Temp Written Blocks": null
+      },
+      "repeated_work_nodes": []
+    },
+    {
+      "path": "conv26-compare/claims-materialized-1.json",
+      "name": "claims-materialized-1",
+      "execute": {
+        "rows": 1,
+        "rows_sha256": "b2535904db8c5c4a324a62ffd90a28f162295f3f693fafddec2ed22c0e7077d0",
+        "elapsed_seconds": 1.3324304074048996
+      },
+      "explain": {
+        "elapsed_seconds": 1.3052169028669596
+      },
+      "actual_plan": {
+        "Planning Time": 90.869,
+        "Execution Time": 1202.129,
+        "Actual Rows": 1.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 1881341,
+        "Shared Read Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "repeated_work_nodes": [
+        {
+          "Node Type": "Index Scan",
+          "Relation Name": "entities",
+          "Alias": "e",
+          "Subplan Name": "CTE visible_scope",
+          "Actual Loops": 1,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1172.884,
+          "Shared Hit Blocks": 1838691
+        },
+        {
+          "Node Type": "Aggregate",
+          "Relation Name": null,
+          "Alias": null,
+          "Subplan Name": "CTE candidate_coverage",
+          "Actual Loops": 1,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1190.846,
+          "Shared Hit Blocks": 1867448
+        }
+      ]
+    },
+    {
+      "path": "conv26-compare/claims-materialized-16.json",
+      "name": "claims-materialized-16",
+      "execute": {
+        "rows": 16,
+        "rows_sha256": "95e5cc7996974013094cb8a23f75b31ec7a63fac6a859dd5af15511a6510655e",
+        "elapsed_seconds": 1.0200913809239864
+      },
+      "explain": {
+        "elapsed_seconds": 1.2562702354043722
+      },
+      "actual_plan": {
+        "Planning Time": 69.57,
+        "Execution Time": 1176.727,
+        "Actual Rows": 16.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 1863886,
+        "Shared Read Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "repeated_work_nodes": [
+        {
+          "Node Type": "Index Scan",
+          "Relation Name": "entities",
+          "Alias": "e",
+          "Subplan Name": "CTE visible_scope",
+          "Actual Loops": 1,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1144.45,
+          "Shared Hit Blocks": 1838691
+        },
+        {
+          "Node Type": "Aggregate",
+          "Relation Name": null,
+          "Alias": null,
+          "Subplan Name": "CTE candidate_coverage",
+          "Actual Loops": 1,
+          "Actual Rows": 16.0,
+          "Actual Total Time": 1166.918,
+          "Shared Hit Blocks": 1849502
+        }
+      ]
+    },
+    {
+      "path": "conv26-compare/claims-materialized-256.json",
+      "name": "claims-materialized-256",
+      "execute": {
+        "rows": 256,
+        "rows_sha256": "ca8422cc59d1f5d7d96a724248e844b79d0b99765836fa508ab3e27a1c2a3e92",
+        "elapsed_seconds": 1.1583962384611368
+      },
+      "explain": {
+        "elapsed_seconds": 1.4627498798072338
+      },
+      "actual_plan": {
+        "Planning Time": 62.271,
+        "Execution Time": 1388.687,
+        "Actual Rows": 256.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 1933475,
+        "Shared Read Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "repeated_work_nodes": [
+        {
+          "Node Type": "Index Scan",
+          "Relation Name": "entities",
+          "Alias": "e",
+          "Subplan Name": "CTE visible_scope",
+          "Actual Loops": 1,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1164.24,
+          "Shared Hit Blocks": 1838691
+        },
+        {
+          "Node Type": "Aggregate",
+          "Relation Name": null,
+          "Alias": null,
+          "Subplan Name": "CTE candidate_coverage",
+          "Actual Loops": 1,
+          "Actual Rows": 256.0,
+          "Actual Total Time": 1368.069,
+          "Shared Hit Blocks": 1913223
+        }
+      ]
+    },
+    {
+      "path": "conv26-compare/claims-native-1.json",
+      "name": "claims-native-1",
+      "execute": {
+        "rows": 1,
+        "rows_sha256": "b2535904db8c5c4a324a62ffd90a28f162295f3f693fafddec2ed22c0e7077d0",
+        "elapsed_seconds": 1.020104706287384
+      },
+      "explain": {
+        "elapsed_seconds": 1.421333022415638
+      },
+      "actual_plan": {
+        "Planning Time": 63.621,
+        "Execution Time": 1339.718,
+        "Actual Rows": 1.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 1904074,
+        "Shared Read Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "repeated_work_nodes": [
+        {
+          "Node Type": "Aggregate",
+          "Relation Name": null,
+          "Alias": null,
+          "Subplan Name": null,
+          "Actual Loops": 1,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1330.875,
+          "Shared Hit Blocks": 1890181
+        },
+        {
+          "Node Type": "Index Scan",
+          "Relation Name": "entities",
+          "Alias": "e",
+          "Subplan Name": null,
+          "Actual Loops": 1,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1283.306,
+          "Shared Hit Blocks": 1838691
+        }
+      ]
+    },
+    {
+      "path": "conv26-compare/claims-native-16.json",
+      "name": "claims-native-16",
+      "execute": {
+        "rows": 16,
+        "rows_sha256": "95e5cc7996974013094cb8a23f75b31ec7a63fac6a859dd5af15511a6510655e",
+        "elapsed_seconds": 15.353961691260338
+      },
+      "explain": {
+        "elapsed_seconds": 19.567914864048362
+      },
+      "actual_plan": {
+        "Planning Time": 71.87,
+        "Execution Time": 19484.373,
+        "Actual Rows": 16.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 30259743,
+        "Shared Read Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "repeated_work_nodes": [
+        {
+          "Node Type": "Aggregate",
+          "Relation Name": null,
+          "Alias": null,
+          "Subplan Name": null,
+          "Actual Loops": 16,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1217.178,
+          "Shared Hit Blocks": 30245359
+        },
+        {
+          "Node Type": "Index Scan",
+          "Relation Name": "entities",
+          "Alias": "e",
+          "Subplan Name": null,
+          "Actual Loops": 16,
+          "Actual Rows": 1.0,
+          "Actual Total Time": 1188.576,
+          "Shared Hit Blocks": 29418951
+        }
+      ]
+    },
+    {
+      "path": "conv26-compare/claims-native.json",
+      "name": "claims-native",
+      "execute": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.004219196736813
+      },
+      "explain": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.0039343778044
+      },
+      "actual_plan": {
+        "Planning Time": null,
+        "Execution Time": null,
+        "Actual Rows": null,
+        "Plan Rows": null,
+        "Shared Hit Blocks": null,
+        "Shared Read Blocks": null,
+        "Temp Read Blocks": null,
+        "Temp Written Blocks": null
+      },
+      "repeated_work_nodes": []
+    },
+    {
+      "path": "conv26-compare/facts-fenced.json",
+      "name": "facts-fenced",
+      "execute": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.005216920748353
+      },
+      "explain": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.00569637492299
+      },
+      "actual_plan": {
+        "Planning Time": null,
+        "Execution Time": null,
+        "Actual Rows": null,
+        "Plan Rows": null,
+        "Shared Hit Blocks": null,
+        "Shared Read Blocks": null,
+        "Temp Read Blocks": null,
+        "Temp Written Blocks": null
+      },
+      "repeated_work_nodes": []
+    },
+    {
+      "path": "conv26-compare/facts-native.json",
+      "name": "facts-native",
+      "execute": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.00407417304814
+      },
+      "explain": {
+        "error": {
+          "type": "OperationalError",
+          "sqlstate": "57014",
+          "message": "canceling statement due to statement timeout"
+        },
+        "elapsed_seconds": 20.00509326532483
+      },
+      "actual_plan": {
+        "Planning Time": null,
+        "Execution Time": null,
+        "Actual Rows": null,
+        "Plan Rows": null,
+        "Shared Hit Blocks": null,
+        "Shared Read Blocks": null,
+        "Temp Read Blocks": null,
+        "Temp Written Blocks": null
+      },
+      "repeated_work_nodes": []
+    },
+    {
+      "path": "conv30-compare/claims-materialized-1.json",
+      "name": "claims-materialized-1",
+      "execute": {
+        "rows": 1,
+        "rows_sha256": "ca356f5004991ab17e84473a65c72c5bea15388ddb676e2aa7a33d1874597d89",
+        "elapsed_seconds": 0.9995033033192158
+      },
+      "explain": {
+        "elapsed_seconds": 1.1851679682731628
+      },
+      "actual_plan": {
+        "Planning Time": 64.036,
+        "Execution Time": 1112.47,
+        "Actual Rows": 1.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 1836422,
+        "Shared Read Blocks": 0
+      }
+    },
+    {
+      "path": "conv30-compare/claims-materialized-256.json",
+      "name": "claims-materialized-256",
+      "execute": {
+        "rows": 256,
+        "rows_sha256": "7c97ccc8199f3e6c6f927a7e61dd0186ea55fb9b53ed5f3d09a73e22e877977d",
+        "elapsed_seconds": 1.1729624215513468
+      },
+      "explain": {
+        "elapsed_seconds": 1.3928271811455488
+      },
+      "actual_plan": {
+        "Planning Time": 76.448,
+        "Execution Time": 1304.455,
+        "Actual Rows": 256.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 1860735,
+        "Shared Read Blocks": 0
+      }
+    },
+    {
+      "path": "conv30-compare/claims-native-1.json",
+      "name": "claims-native-1",
+      "execute": {
+        "rows": 1,
+        "rows_sha256": "ca356f5004991ab17e84473a65c72c5bea15388ddb676e2aa7a33d1874597d89",
+        "elapsed_seconds": 0.9990498758852482
+      },
+      "explain": {
+        "elapsed_seconds": 1.1519537456333637
+      },
+      "actual_plan": {
+        "Planning Time": 71.498,
+        "Execution Time": 1069.326,
+        "Actual Rows": 1.0,
+        "Plan Rows": 1,
+        "Shared Hit Blocks": 1837668,
+        "Shared Read Blocks": 0
+      }
+    }
+  ]
+}

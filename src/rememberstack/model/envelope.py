@@ -268,6 +268,11 @@ class CoMember(BaseModel):
     label: str
     evidence_count: int
     validity: Validity
+    in_documents_filter: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: whether this side has live support
+    from a matching document (D156 §4.4); omitted from unfiltered reads."""
 
 
 class Contradiction(BaseModel):
@@ -278,8 +283,9 @@ class Contradiction(BaseModel):
     never silently resolved"). The bounded form: co-members come back INLINE
     up to a guaranteed cap (typical groups are 2–3 sides — both FY2023
     revenue figures together, each with its own evidence handle); beyond the
-    cap the block still always carries `group_id`, `returned`, `total`, and a
-    `continuation`. One-sided is never a valid answer.
+    cap the block still always carries `group_id`, `returned`, and `total`.
+    One-sided is never a valid answer. Paging co-members is out of scope
+    (D154); ``returned`` and ``total`` disclose the cap.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -288,7 +294,6 @@ class Contradiction(BaseModel):
     co_members: tuple[CoMember, ...] = ()
     returned: int = Field(ge=0)
     total: int = Field(ge=0)
-    continuation: str | None = None
 
 
 class FactResult(BaseModel):
@@ -414,6 +419,11 @@ class FactEvidence(BaseModel):
     fact_id: UUID
     claim_id: UUID
     stance: Literal["supports", "contradicts"]
+    in_documents_filter: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: whether the claim's document matches
+    it (D156 §4.4); omitted from unfiltered reads."""
 
 
 class EvidenceTotal(BaseModel):
@@ -426,11 +436,22 @@ class EvidenceTotal(BaseModel):
     stance: Literal["supports", "contradicts"]
     returned: int = Field(ge=0)
     total: int = Field(ge=0)
+    """Distinct supporting or contradicting lineages, deployment-wide (D54)."""
+    in_documents_filter_total: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+    """Under a ``documents`` filter only: how many of those lineages match it
+    (D156 §4.4); omitted from unfiltered reads."""
 
     @model_validator(mode="after")
     def _returned_does_not_exceed_total(self) -> "EvidenceTotal":
         if self.returned > self.total:
             raise ValueError("returned evidence cannot exceed its exact total")
+        if (
+            self.in_documents_filter_total is not None
+            and self.in_documents_filter_total > self.total
+        ):
+            raise ValueError("matching evidence cannot exceed its exact total")
         return self
 
 
@@ -636,10 +657,10 @@ class ScanRow(BaseModel):
 
 
 class Truncation(BaseModel):
-    """The explicit cap marker (S18/S49): no silent top-k ever.
+    """The explicit cap marker (S18/S49 / D154): no silent top-k ever.
 
-    ``estimated_total`` is what the traversal could see before the cap;
-    ``continuation`` carries the opaque cursor a follow-up call passes back.
+    ``estimated_total`` is what the producer could see before the cap.
+    Follow-up paging uses ``Envelope.next_cursor``, not a field here.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -648,7 +669,6 @@ class Truncation(BaseModel):
     returned: int = Field(ge=0)
     estimated_total: int = Field(ge=0)
     total_is_exact: bool = True  # false when the count itself hit its cap
-    continuation: str | None = None
     reason: str | None = None
     """Machine-readable cap reason when the producer can distinguish it."""
 
@@ -682,6 +702,8 @@ class Envelope(BaseModel):
     pages: tuple[PageRef, ...] = ()  # S31/S45: pages_about discovery
     freshness: Freshness
     truncation: Truncation | None = None  # S18/S49: caps are never silent
+    next_cursor: str | None = None
+    """Browse / graph paging token; null exactly at the end (D154)."""
     dropped_by_hydration: int = 0
     excluded_unstamped: int = Field(default=0, ge=0)
     negative: Negative | None = None

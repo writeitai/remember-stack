@@ -1,0 +1,125 @@
+{
+  "runtime_source_commit": "fab0a9bda",
+  "qualification_test_commit": "d64049fe6",
+  "test": "src/tests/spine/test_d153_eligibility_pg.py::test_document_bridge_work_ignores_unrelated_lineages",
+  "classification": "actual migrated schema, independent fresh index per stratum",
+  "strata": [
+    {
+      "documents": 1000000,
+      "deployments": 1,
+      "tombstones": false,
+      "distinct": false,
+      "source": "actual head migration, no injected DDL",
+      "provider_calls": 0,
+      "index_bytes": 124469248,
+      "artifact": "final-bridge-1-False-False.json.gz",
+      "sha256": "27514b99f8bf8798de7df901acc49707bc3c6da24be86ce301b6d3ecb7b6c1e9",
+      "plans": {
+        "force_custom_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.905,
+          "planning_ms": 13.737
+        },
+        "force_generic_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.303,
+          "planning_ms": 2.13
+        }
+      }
+    },
+    {
+      "documents": 100000,
+      "deployments": 1,
+      "tombstones": false,
+      "distinct": true,
+      "source": "actual head migration, no injected DDL",
+      "provider_calls": 0,
+      "index_bytes": 12492800,
+      "artifact": "final-bridge-1-False-True.json.gz",
+      "sha256": "34b3398ca1f98274e95a625ad659594733540028859beb8ed149f3932a58a0e4",
+      "plans": {
+        "force_custom_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.658,
+          "planning_ms": 11.604
+        },
+        "force_generic_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.291,
+          "planning_ms": 1.983
+        }
+      }
+    },
+    {
+      "documents": 1000000,
+      "deployments": 16,
+      "tombstones": false,
+      "distinct": false,
+      "source": "actual head migration, no injected DDL",
+      "provider_calls": 0,
+      "index_bytes": 125009920,
+      "artifact": "final-bridge-16-False-False.json.gz",
+      "sha256": "cecbadb12d2f0b1502a6dd6dd67ece20480f1b168eba84e87bb532d579ca3985",
+      "plans": {
+        "force_custom_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.851,
+          "planning_ms": 10.831
+        },
+        "force_generic_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.449,
+          "planning_ms": 2.306
+        }
+      }
+    },
+    {
+      "documents": 1000000,
+      "deployments": 16,
+      "tombstones": true,
+      "distinct": false,
+      "source": "actual head migration, no injected DDL",
+      "provider_calls": 0,
+      "index_bytes": 125173760,
+      "artifact": "final-bridge-16-True-False.json.gz",
+      "sha256": "01b64ec15316428a221a0ce4a60a9681d291e990ceccdec7d904bf180a6d4f04",
+      "plans": {
+        "force_custom_plan": {
+          "tuple_work": 62500.0,
+          "execution_ms": 219.252,
+          "planning_ms": 14.186
+        },
+        "force_generic_plan": {
+          "tuple_work": 62500.0,
+          "execution_ms": 190.298,
+          "planning_ms": 2.817
+        }
+      }
+    },
+    {
+      "documents": 1000000,
+      "deployments": 2,
+      "tombstones": false,
+      "distinct": false,
+      "source": "actual head migration, no injected DDL",
+      "provider_calls": 0,
+      "index_bytes": 124772352,
+      "artifact": "final-bridge-2-False-False.json.gz",
+      "sha256": "4dd3f322712641225aec8e9fc900f45d98b68d252a9c86aa2231d89821d5658e",
+      "plans": {
+        "force_custom_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.727,
+          "planning_ms": 13.811
+        },
+        "force_generic_plan": {
+          "tuple_work": 1.0,
+          "execution_ms": 0.296,
+          "planning_ms": 2.017
+        }
+      }
+    }
+  ],
+  "test_result": "12 passed,16 deselected,260.14s including exact-state and real cancelled CREATE/DROP tests",
+  "storage_caveat": "read strata insert after migration; populated-upgrade receipt measures bulk construction separately"
+}

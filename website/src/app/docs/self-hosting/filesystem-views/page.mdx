@@ -1,139 +1,139 @@
 export const metadata = {
   title: "Filesystem views",
-  description: "Publish a self-hosted RememberStack memory as a read-only directory tree that an agent can browse with ls, cat and grep.",
+  description: "Browse a live, read-only corpus of document folders containing originals, Markdown and reader assets.",
 };
 
 # Filesystem views
 
 <AppliesTo products={["self-hosted"]} />
 
-Some agents work best with files. A filesystem view gives them one: a
-directory tree with a page per document and per entity, grouped by source,
-by month and by topic, with an index in every directory. An agent can
-`cat` the index, follow a path, and `grep` the tree without calling the
-API.
+The `remember-corpusfs` bucket is a live filesystem for readers. Each completed
+source has one folder containing its original, exact converted Markdown, active
+PageIndex, available source map and reader media. Publication runs automatically
+through the ordinary `llm` worker class. It makes no model calls.
 
-The tree is generated from the database. It holds no information the
-memory does not, and it is a snapshot: it shows the memory as it was when
-you built it, until you build it again.
+A newer stored or parked upload leaves the previous completed reading in place.
+A source with no completed reading has no corpus folder; its original remains
+available through the version-addressed API.
 
-## Build a snapshot
+## Mount the corpus
+
+Use an S3 filesystem tool with read-only credentials and options to mount the
+configured corpus bucket. Bound its stat, listing and data caches. The bucket
+root is the filesystem root; separate raw and artifact mounts are unnecessary.
+RememberStack does not provision a FUSE mount or enforce local permissions.
+Provider access logging must include reads of corpus originals.
+
+## Layout
+
+```text
+<corpus root>/
+├── llms.txt
+├── _index.md
+├── pdf/
+│   ├── _index.md
+│   └── finance/annual-reports/
+│       ├── _index.md
+│       └── annual-report--9bf3e4c0c2d4861075a6ef82/
+│           ├── _index.md
+│           ├── document.json
+│           ├── original.pdf
+│           ├── document.md
+│           ├── pageindex.json
+│           ├── source_map.json
+│           └── media/
+└── …
+```
+
+The fixed types are `email`, `chat`, `image`, `audio`, `video`, `pdf`,
+`spreadsheet`, `presentation`, `document`, `data` and `other`. A document can
+have an optional topic under its type. Large member tables use navigation pages
+under a reserved `~/` subtree; pagination never moves document folders.
+
+Start at `llms.txt`, follow type/topic indexes, then open a folder's `_index.md`.
+`document.json` records the document, displayed version, representation,
+inventory and deterministic publication identity. Pipeline manifests, extraction
+state and historical readings are excluded. Plane K is a separate repository.
+
+Resolve a folder through MCP `search_documents` with `doc_ids`, the SDK's
+`search_documents(filters=DocumentSearchFilters(doc_ids=(doc_id,)))`, or
+`POST /documents/search` with `filters.doc_ids`. `p3_path` is relative to the
+corpus root. It is non-null only when the selected version is served and its
+nullable publication marker matches its current export inputs. Raw-only,
+unpublished, updating, failed and historical results carry `null`.
+`served_version` describes authority currency independently of publication.
+
+Title, topic or type changes can move the folder. Re-resolve after a move;
+only the suffix is stable within its path. Keep the `doc_id`; its suffix
+is the first 24 hex characters of SHA-256 over the UUID's 16 bytes. For offline
+lookup, substitute that suffix in:
+
+```bash
+find <root> -type d -name '*--<suffix>'
+```
+
+Check `doc_id` and the displayed version in `document.json` before treating the
+folder as a particular edition. The search can cost a full tree listing.
+A matching asset directory beneath another document folder is not a separate
+document: verify the first document-folder component and its `document.json`.
+A suffix match can locate the served folder even when a temporal query selects
+another edition or no edition is in force; it does not change that selection.
+There is no public `source_open` operation for whole historical files yet.
+
+The corpus is a sources-layer projection: switching claims or facts off does
+not change its layout. K remains a standalone repository and may be checked
+out separately.
+
+## Publication and repair
+
+Each object is replaced completely, but the folder and tree are not atomic.
+During an update, complete old and new files can coexist while the folder index
+says `updating`; a move can briefly expose two folders. Check the ready folder's
+publication identity before and after a read when consistency matters.
+
+`require_p3=True` in [readiness](/docs/guides/wait-for-readiness) checks each
+requested served version's current publication marker. It reports
+`corpus_publication_incomplete` for missing or mismatching markers and
+`p3_version_not_served` for a historical edition. An unrelated publication cannot
+satisfy this check. `version` is the export digest for one ready requested version and null for
+multiple versions. `built_at` and `published_at` are null.
+
+Digest-verifying repair runs daily through the existing delayed-work ledger,
+leases, retries and delivery. Configure
+`REMEMBERSTACK_SELFHOST_CORPUS_VERIFY_INTERVAL_S` to a positive number of seconds;
+its default is `86400`. Setup seeds the first task and a successful verification
+seeds its successor. A dead-lettered task remains visible for operator replay.
+To verify and reconcile immediately:
 
 ```bash
 docker compose --profile operations run --rm projections
 ```
 
-The `projections` service runs `project --plane p3`. It renders the whole
-tree, writes it to the `remember-corpusfs` bucket in the object store under a new
-version, and marks that version as the latest. It prints a short report
-with the `snapshot_id`, the `version` and the number of `files`. Each run
-builds the tree from scratch.
+This runs `project --plane p3`, repairs the same live tree and prints the number
+of served documents reconciled. Matching digests avoid recopying originals and
+media. Ordinary publication touches only the changed document and its navigation
+ancestors.
 
-Nothing builds snapshots on a schedule. Run the command again, from cron or
-by hand, when you want the view to catch up.
+## Deletion, forget and restore
 
-## Publish it to a directory
+Normal document deletion removes that document's recorded corpus folders and
+repairs navigation before reporting success. A store failure reports failure and
+leaves durable retry work.
 
-`mounts` copies the latest snapshot out of the object store into a directory:
+Before coordinating hard-forget on operator-managed processes, stop ordinary
+writers and wait for their outstanding storage calls. An expired work lease is
+not proof that an issued provider request has stopped.
 
-```bash
-mkdir -p memory-views
-docker compose run --rm --no-deps \
-  --user "$(id -u):$(id -g)" \
-  -v "$PWD/memory-views:/memory-views" \
-  api mounts --root /memory-views
-```
+Hard-forget closes admission, drains work, erases every matching suffix folder,
+unfinished upload and retained object version, then regenerates navigation from
+scrubbed database authority. It preserves other document files in place. When a
+provider does not implement multipart-upload listing, purge records
+`provider_managed` coverage and logs a warning; unfinished-part cleanup follows
+that provider's policy. Published-object absence is still verified.
 
-`--user` makes the files yours rather than the container user's. `p3` is a
-relative symbolic link to the snapshot directory beside it, so the tree
-works on the host whatever path you mount it at inside the container.
-
-The command prints where each view is, as paths inside the container:
-
-```json
-{"deployment_id": "…", "p3": "/memory-views/<deployment-id>/p3", "artifacts": "/memory-views/<deployment-id>/artifacts", "raw": "/memory-views/<deployment-id>/raw", "read_only": true}
-```
-
-Publishing is atomic: `p3` is a link that switches from one complete
-snapshot directory to the next, so an agent reading the tree never sees a
-half-copied one. Old snapshot directories stay in place; delete them when
-you no longer need them.
-
-## The three views
-
-| View | Contents |
-|---|---|
-| `p3` | The corpus tree described below. |
-| `artifacts` | The converted Markdown and other artifacts, **if** you pass `--artifacts-root` pointing at a directory where the `remember-artifacts` bucket is mounted. Otherwise an empty directory. |
-| `raw` | The original files, **if** you pass `--raw-root` pointing at a directory where the `remember-raw` bucket is mounted. Otherwise an empty directory. Nothing in the corpus tree links into it: reaching an original means following the `raw_uri` in a document's page on purpose. |
-
-`--raw-root` and `--artifacts-root` must be existing directories. They
-default to `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` and
-`REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT`. RememberStack does not mount
-buckets itself; use an S3 filesystem tool of your choice.
-
-## Layout of the corpus tree
-
-```text
-p3/
-├── _index.md              how to navigate; which paths are stable
-├── llms.txt               the facets and where things live
-├── documents/
-│   ├── _index.md          one row per document
-│   └── <doc_id>/_index.md one page per document
-├── entities/
-│   ├── _index.md          one row per entity
-│   └── <entity_id>/_index.md one page per entity, listing the documents that mention it
-├── by-source/<source_kind>/<title>-<doc_id>.md
-├── by-time/<yyyy>/<mm>/<title>-<doc_id>.md
-└── by-topic/<topic path>/<title>-<doc_id>.md
-```
-
-Every directory, including the intermediate ones, carries an `_index.md`
-listing what is in it with a one-line summary per entry, and an
-`llms.txt` for orientation. An agent reads one index to learn what a
-directory holds instead of opening every file.
-
-Paths come in two kinds:
-
-- **Stable paths:** `documents/<doc_id>/` and `entities/<entity_id>/`.
-  They are addressed by id and do not move between snapshots, including
-  when a document gets a new version. Store these.
-- **View paths:** everything under `by-source/`, `by-time/` and
-  `by-topic/`. They may be reorganised as the memory grows. Every page
-  there names its stable path in its front matter.
-
-A document appears in `by-source/` under its `source_kind`, in `by-time/`
-under the month of its `source_modified_at` (or its publication time), and
-in `by-topic/` when structuring proposed a topic path for it. A directory
-with more than 150 entries is split into sub-directories by name prefix
-(`REMEMBERSTACK_P3_SHARD_THRESHOLD`).
-
-A document page holds front matter (`doc_id`, `canonical_path`,
-`version_id`, `content_hash`, `artifact_uri`, `raw_uri`, `mime`,
-`source_kind`, `source_ref` and the state of the latest stored version),
-the title and the document's summary. It does not hold the document's
-text; `artifact_uri` points to the converted Markdown.
-
-## Read-only is your job
-
-The views are meant to be read, never written: changes go through the API
-and the pipeline, and PostgreSQL is the authority. `mounts` does not set
-file permissions. If agents or users should not be able to change the tree,
-make the directory read-only for them, for example by mounting it read-only
-into the agent's container. The same applies to bucket mounts you pass as
-`--raw-root` and `--artifacts-root`, and reads of the raw originals are
-logged only if your mount tool logs them.
-
-## When it refuses
-
-Building a snapshot and publishing the views both refuse to run while a
-hard forget is in progress ([Operating the pipeline](/docs/self-hosting/operating#when-a-hard-forget-is-in-progress)).
-
-<Cloud>
-
-On remember.dev you read memory through the API, the SDK and
-[hosted MCP](/docs/cloud/hosted-mcp);
-see [What remember.dev serves](/docs/cloud/compatibility).
-
-</Cloud>
+Before restoring traffic, the startup gate replays every portable manifest,
+including ones previously marked complete. Keep that intent outside the ordinary
+restore set. A replay failure keeps admission closed. Engine-controlled sessions
+must stop serving and acknowledge cache erasure; operator-managed FUSE mounts
+must be stopped and remounted for forget. See
+[hard-forget recovery](/docs/self-hosting/upgrades#hard-forget-manifests).

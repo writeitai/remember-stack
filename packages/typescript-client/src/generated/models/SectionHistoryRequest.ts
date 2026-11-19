@@ -12,7 +12,7 @@ import type { OverlapReadTime } from './OverlapReadTime';
 export type SectionHistoryRequest = {
     cursor?: string | null;
     doc_id: string;
-    'k'?: number;
+    limit?: number;
     section_key: string;
     time?: ((CurrentReadTime & {
         mode: 'current';

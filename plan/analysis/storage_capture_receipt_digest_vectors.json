@@ -1,0 +1,100 @@
+{
+  "qualification": "Existing v3 engine/CP model compatibility and actual CP canonical_outcome_digest outputs; no engine storage-capture digest implementation or native capture is qualified.",
+  "engine_source": "a7c824f450f29210eddcad965fe1bfe5c135ef6c",
+  "engine_model": "src/rememberstack/model/metering.py:ManagedDocumentVersionOutcome",
+  "umc_source": "dadb39562b1e2e139c46014bf9007fbba8a24828",
+  "umc_function": "src/ultimate_memory_cloud/billing/rating.py:canonical_outcome_digest",
+  "retrieved_on": "2026-11-11",
+  "vectors": [
+    {
+      "case": "winter_utc_success",
+      "wire_outcome": {
+        "contract_version": "rememberstack.document_version_outcome.v3",
+        "measurement_id": "11111111-2222-4333-8444-555555555555",
+        "document_version_id": "opaque-fixture-version",
+        "outcome": "succeeded",
+        "completed_at": "2026-01-15T12:30:00Z",
+        "reason_code": null,
+        "profile_complete": true,
+        "version_commit_sequence": 42
+      },
+      "expected_canonical_utf8": "{\"completed_at\":\"2026-01-15T12:30:00Z\",\"contract_version\":\"rememberstack.document_version_outcome.v3\",\"document_version_id\":\"opaque-fixture-version\",\"measurement_id\":\"11111111-2222-4333-8444-555555555555\",\"outcome\":\"succeeded\",\"profile_complete\":true,\"reason_code\":null,\"version_commit_sequence\":42}",
+      "sha256": "3ddac39a2184df8cc04818ba99b11d38eb3fca5090f53f1db522e6978f19541b"
+    },
+    {
+      "case": "winter_offset_same_instant",
+      "wire_outcome": {
+        "contract_version": "rememberstack.document_version_outcome.v3",
+        "measurement_id": "11111111-2222-4333-8444-555555555555",
+        "document_version_id": "opaque-fixture-version",
+        "outcome": "succeeded",
+        "completed_at": "2026-01-15T13:30:00+01:00",
+        "reason_code": null,
+        "profile_complete": true,
+        "version_commit_sequence": 42
+      },
+      "expected_canonical_utf8": "{\"completed_at\":\"2026-01-15T12:30:00Z\",\"contract_version\":\"rememberstack.document_version_outcome.v3\",\"document_version_id\":\"opaque-fixture-version\",\"measurement_id\":\"11111111-2222-4333-8444-555555555555\",\"outcome\":\"succeeded\",\"profile_complete\":true,\"reason_code\":null,\"version_commit_sequence\":42}",
+      "sha256": "3ddac39a2184df8cc04818ba99b11d38eb3fca5090f53f1db522e6978f19541b"
+    },
+    {
+      "case": "summer_utc_success",
+      "wire_outcome": {
+        "contract_version": "rememberstack.document_version_outcome.v3",
+        "measurement_id": "11111111-2222-4333-8444-555555555555",
+        "document_version_id": "opaque-fixture-version",
+        "outcome": "succeeded",
+        "completed_at": "2026-07-15T12:30:00Z",
+        "reason_code": null,
+        "profile_complete": true,
+        "version_commit_sequence": 42
+      },
+      "expected_canonical_utf8": "{\"completed_at\":\"2026-07-15T12:30:00Z\",\"contract_version\":\"rememberstack.document_version_outcome.v3\",\"document_version_id\":\"opaque-fixture-version\",\"measurement_id\":\"11111111-2222-4333-8444-555555555555\",\"outcome\":\"succeeded\",\"profile_complete\":true,\"reason_code\":null,\"version_commit_sequence\":42}",
+      "sha256": "b8532e5111cfc846ed57f4b724354dcfc1255f037a2b49e6857dcf8438dec7d9"
+    },
+    {
+      "case": "summer_offset_same_instant",
+      "wire_outcome": {
+        "contract_version": "rememberstack.document_version_outcome.v3",
+        "measurement_id": "11111111-2222-4333-8444-555555555555",
+        "document_version_id": "opaque-fixture-version",
+        "outcome": "succeeded",
+        "completed_at": "2026-07-15T14:30:00+02:00",
+        "reason_code": null,
+        "profile_complete": true,
+        "version_commit_sequence": 42
+      },
+      "expected_canonical_utf8": "{\"completed_at\":\"2026-07-15T12:30:00Z\",\"contract_version\":\"rememberstack.document_version_outcome.v3\",\"document_version_id\":\"opaque-fixture-version\",\"measurement_id\":\"11111111-2222-4333-8444-555555555555\",\"outcome\":\"succeeded\",\"profile_complete\":true,\"reason_code\":null,\"version_commit_sequence\":42}",
+      "sha256": "b8532e5111cfc846ed57f4b724354dcfc1255f037a2b49e6857dcf8438dec7d9"
+    },
+    {
+      "case": "microseconds_success",
+      "wire_outcome": {
+        "contract_version": "rememberstack.document_version_outcome.v3",
+        "measurement_id": "11111111-2222-4333-8444-555555555555",
+        "document_version_id": "opaque-fixture-version",
+        "outcome": "succeeded",
+        "completed_at": "2026-01-15T12:30:00.120000Z",
+        "reason_code": null,
+        "profile_complete": true,
+        "version_commit_sequence": 42
+      },
+      "expected_canonical_utf8": "{\"completed_at\":\"2026-01-15T12:30:00.120000Z\",\"contract_version\":\"rememberstack.document_version_outcome.v3\",\"document_version_id\":\"opaque-fixture-version\",\"measurement_id\":\"11111111-2222-4333-8444-555555555555\",\"outcome\":\"succeeded\",\"profile_complete\":true,\"reason_code\":null,\"version_commit_sequence\":42}",
+      "sha256": "6fba3fef749993a404f3da2edbcf3cb07a9938a350965432686e4c713af1e713"
+    },
+    {
+      "case": "failed_null_fields",
+      "wire_outcome": {
+        "contract_version": "rememberstack.document_version_outcome.v3",
+        "measurement_id": "11111111-2222-4333-8444-555555555555",
+        "document_version_id": null,
+        "outcome": "failed",
+        "completed_at": "2026-01-15T12:30:00.000001Z",
+        "reason_code": "fixture_failed",
+        "profile_complete": false,
+        "version_commit_sequence": null
+      },
+      "expected_canonical_utf8": "{\"completed_at\":\"2026-01-15T12:30:00.000001Z\",\"contract_version\":\"rememberstack.document_version_outcome.v3\",\"document_version_id\":null,\"measurement_id\":\"11111111-2222-4333-8444-555555555555\",\"outcome\":\"failed\",\"profile_complete\":false,\"reason_code\":\"fixture_failed\",\"version_commit_sequence\":null}",
+      "sha256": "0888c00c89b597f0232199350a7fef13a4de008d057c2fe061867b3a8604c158"
+    }
+  ]
+}

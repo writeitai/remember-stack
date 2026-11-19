@@ -27,6 +27,12 @@ export default {
     "DocumentSearchRequest": [
       "cursor_pages_filters_only"
     ],
+    "DocumentTagFilter": [
+      "_one_list_without_duplicates"
+    ],
+    "DocumentTagsUpdate": [
+      "_set_excludes_add_and_remove"
+    ],
     "EffectivePeriodInput": [
       "_ends_after_it_starts"
     ],
@@ -47,6 +53,9 @@ export default {
     ],
     "ReferenceInput": [
       "_consistent"
+    ],
+    "TagUpdate": [
+      "_changes_something"
     ]
   },
   "queryErrorStatus": {
@@ -210,6 +219,10 @@ export default {
     {
       "method": "GET",
       "pattern": "^/processing-layers$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/tags$"
     }
   ],
   "secretConfigurationKeys": [

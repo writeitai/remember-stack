@@ -30,6 +30,7 @@ from remember.models import DocumentSearchResult
 from remember.models import DocumentStatus
 from remember.models import DocumentStatusFilter
 from remember.models import DocumentSummary
+from remember.models import DocumentTagFilter
 from remember.models import DocumentVersionSummary
 from remember.models import EffectiveInterval
 from remember.models import MatchingEdition
@@ -49,8 +50,8 @@ from remember.models import ReferencesSet
 from remember.models import ReferenceTarget
 from remember.models import ReferenceWindow
 from remember.models import SearchRequest
-from remember.models import SECTION_HISTORY_DEFAULT_K
-from remember.models import SECTION_HISTORY_MAX_K
+from remember.models import SECTION_HISTORY_DEFAULT_LIMIT
+from remember.models import SECTION_HISTORY_MAX_LIMIT
 from remember.models import SectionAmendment
 from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
@@ -75,6 +76,7 @@ __all__ = (
     "DocumentPage",
     "DocumentPeopleMatch",
     "DocumentSearchFilters",
+    "DocumentTagFilter",
     "DocumentSearchPage",
     "DocumentSearchPerson",
     "DocumentSearchRequest",
@@ -109,8 +111,8 @@ __all__ = (
     "PipelineStageReadiness",
     "ReadinessRequirements",
     "SearchRequest",
-    "SECTION_HISTORY_DEFAULT_K",
-    "SECTION_HISTORY_MAX_K",
+    "SECTION_HISTORY_DEFAULT_LIMIT",
+    "SECTION_HISTORY_MAX_LIMIT",
     "ToolDescriptor",
     "VersionPipelineReadiness",
 )

@@ -84,6 +84,17 @@ export default {
         "minLength": 1,
         "type": "string"
       },
+      "tags": {
+        "description": "Optional registered tags (name or tag_id) to add to the document. Call list_tags to see which exist.",
+        "items": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxItems": 64,
+        "type": "array",
+        "uniqueItems": true
+      },
       "text": {
         "description": "UTF-8 document body. Mutually exclusive with path and content_base64. Requires filename.",
         "minLength": 1,
@@ -124,7 +135,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
+      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
       "destructive": false,
       "http_route": "POST /ingest",
       "input_schema": {
@@ -245,6 +256,17 @@ export default {
             "minLength": 1,
             "type": "string"
           },
+          "tags": {
+            "description": "Optional registered tags (name or tag_id) to add to the document. Call list_tags to see which exist.",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          },
           "text": {
             "description": "UTF-8 document body. Mutually exclusive with path and content_base64. Requires filename.",
             "minLength": 1,
@@ -275,7 +297,7 @@ export default {
       },
       "name": "ingest",
       "permission": "memory:write",
-      "tool_version": 2
+      "tool_version": 3
     },
     {
       "annotations": {
@@ -365,7 +387,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref and doc_ids. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem view, where one is published) and a short overview when one exists. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and cursor pages them.",
+      "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
       "destructive": false,
       "http_route": "POST /documents/search",
       "input_schema": {
@@ -390,7 +412,7 @@ export default {
             "type": "string"
           },
           "cursor": {
-            "description": "The previous page's cursor; only without query.",
+            "description": "Pass the previous page's next_cursor; only without query.",
             "minLength": 1,
             "type": "string"
           },
@@ -411,6 +433,8 @@ export default {
             "type": "array"
           },
           "k": {
+            "default": 20,
+            "description": "Ranked top-k when query is set.",
             "maximum": 200,
             "minimum": 1,
             "type": "integer"
@@ -418,6 +442,13 @@ export default {
           "language": {
             "minLength": 1,
             "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Browse page size when query is omitted.",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
           },
           "modified_from": {
             "description": "An ISO 8601 instant with a timezone, inclusive.",
@@ -442,6 +473,47 @@ export default {
               "type": "string"
             },
             "type": "array"
+          },
+          "tags": {
+            "additionalProperties": false,
+            "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+            "minProperties": 1,
+            "properties": {
+              "all": {
+                "description": "The document has every one of these tags.",
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "any": {
+                "description": "The document has at least one of these tags.",
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "none": {
+                "description": "The document has none of these tags.",
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "type": "object"
           },
           "thread_ref": {
             "minLength": 1,
@@ -528,21 +600,21 @@ export default {
       },
       "name": "search_documents",
       "permission": "memory:read",
-      "tool_version": 2
+      "tool_version": 4
     },
     {
       "annotations": {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with cursor.",
+      "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with limit/cursor; continue via next_cursor.",
       "destructive": false,
       "http_route": "GET /documents/{doc_id}/sections/{section_key}/history",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
           "cursor": {
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
             "minLength": 1,
             "type": "string"
           },
@@ -551,7 +623,7 @@ export default {
             "minLength": 1,
             "type": "string"
           },
-          "k": {
+          "limit": {
             "default": 50,
             "maximum": 200,
             "minimum": 1,
@@ -648,7 +720,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with cursor; a short page with a cursor means keep paging.",
+      "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with limit/cursor; a short page with next_cursor means keep paging.",
       "destructive": false,
       "http_route": "POST /documents/references",
       "input_schema": {
@@ -660,7 +732,7 @@ export default {
             "type": "string"
           },
           "cursor": {
-            "description": "The previous page's cursor.",
+            "description": "Pass the previous page's next_cursor.",
             "minLength": 1,
             "type": "string"
           },
@@ -677,12 +749,6 @@ export default {
             "description": "The document's UUID (doc_id); or give chunk_id.",
             "minLength": 1,
             "type": "string"
-          },
-          "k": {
-            "default": 50,
-            "maximum": 200,
-            "minimum": 1,
-            "type": "integer"
           },
           "kinds": {
             "description": "Only these reference kinds.",
@@ -701,6 +767,12 @@ export default {
             "maxItems": 7,
             "minItems": 1,
             "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
           },
           "section_key": {
             "description": "With doc_id: the section key, without the leading #.",
@@ -789,6 +861,187 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": true
       },
+      "description": "List this deployment's registered document tags with their tag_id, name and description. Tags label documents by how the user organizes them (for example project:autoboard or kind:decision); read the descriptions to choose the right one. query keeps tags whose name or description contains it. Use it before tagging a document, and before creating a tag so you reuse an existing one instead of inventing a near-duplicate.",
+      "destructive": false,
+      "http_route": "GET /tags",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "description": "Keep tags whose name or description contains this.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_tags",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Register a new document tag. Tags must exist before documents can carry them. Check list_tags first and reuse an existing tag when one fits. Prefer a key:value name such as project:autoboard. A name already registered in any letter case is refused with conflict.",
+      "destructive": false,
+      "http_route": "POST /tags",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "What the tag means and when to apply it, written for agents who will choose it later.",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "description": "The tag name: no spaces or control characters, such as project:autoboard. Unique ignoring letter case.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "type": "object"
+      },
+      "name": "create_tag",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Rename or re-describe one tag (by name or tag_id). Documents keep the tag. The old name stops working at once, so only rename when the user asks.",
+      "destructive": false,
+      "http_route": "PATCH /tags/{tag_id}",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "The new description.",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "description": "The new name.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tag": {
+            "description": "The tag's name (any letter case) or its tag_id.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "name": "update_tag",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Delete one tag (by name or tag_id) and remove it from every document that carries it. Use only when the user asks; it cannot be undone.",
+      "destructive": true,
+      "http_route": "DELETE /tags/{tag_id}",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "tag": {
+            "description": "The tag's name (any letter case) or its tag_id.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "type": "object"
+      },
+      "name": "delete_tag",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Change one document's tags: add and/or remove tags, or set to replace the whole set (an empty set clears it). Tags must be registered (see list_tags); any unknown tag refuses the whole call with unknown_tag. Removing a tag the document does not have is fine. Changing tags never reprocesses the document. Returns the document's tags afterwards.",
+      "destructive": false,
+      "http_route": "POST /documents/{doc_id}/tags",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "add": {
+            "description": "Tags to add (name or tag_id).",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "doc_id": {
+            "description": "The document's UUID (doc_id).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "remove": {
+            "description": "Tags to remove (name or tag_id).",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "set": {
+            "description": "The document's complete tag set; excludes add and remove. An empty list clears the tags.",
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "doc_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_document_tags",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
       "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
       "destructive": false,
       "http_route": "POST /operations/resolve_entity",
@@ -814,7 +1067,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "High-recall current claims and confirmed source passages.",
+      "description": "High-recall current claims and confirmed source passages. documents limits both to what matching documents say; call list_tags before filtering by tag.",
       "destructive": false,
       "http_route": "POST /operations/claims_and_sources_context",
       "input_schema": {
@@ -825,6 +1078,114 @@ export default {
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
           },
           "entity_ids": {
             "items": {
@@ -923,14 +1284,14 @@ export default {
       },
       "name": "claims_and_sources_context",
       "permission": "memory:read",
-      "tool_version": 4
+      "tool_version": 5
     },
     {
       "annotations": {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded live-graph expansion for current or point-in-time entity anchors.",
+      "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded live-graph expansion for current or point-in-time entity anchors. documents keeps facts supported by matching documents; their contradictions and competing facts from other documents stay in the answer, marked in_documents_filter=false. Call list_tags before filtering by tag.",
       "destructive": false,
       "http_route": "POST /operations/facts_context",
       "input_schema": {
@@ -941,6 +1302,114 @@ export default {
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
           },
           "entity_ids": {
             "items": {
@@ -1056,14 +1525,14 @@ export default {
       },
       "name": "facts_context",
       "permission": "memory:read",
-      "tool_version": 4
+      "tool_version": 5
     },
     {
       "annotations": {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2.",
+      "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2. documents applies to both; call list_tags before filtering by tag.",
       "destructive": false,
       "http_route": "POST /operations/combined_context",
       "input_schema": {
@@ -1074,6 +1543,114 @@ export default {
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
           },
           "entity_ids": {
             "items": {
@@ -1183,7 +1760,7 @@ export default {
       },
       "name": "combined_context",
       "permission": "memory:read",
-      "tool_version": 5
+      "tool_version": 6
     },
     {
       "annotations": {
@@ -1229,6 +1806,8 @@ export default {
         "additionalProperties": false,
         "properties": {
           "max_rows": {
+            "description": "Safety row cap; values above 1000 are rejected (D154).",
+            "maximum": 1000,
             "minimum": 0,
             "type": "integer"
           },
@@ -1403,6 +1982,8 @@ export default {
         "additionalProperties": false,
         "properties": {
           "max_rows": {
+            "description": "Safety row cap; values above 1000 are rejected (D154).",
+            "maximum": 1000,
             "minimum": 0,
             "type": "integer"
           },

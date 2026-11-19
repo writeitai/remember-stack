@@ -76,7 +76,6 @@ from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.managed_metering import ManagedMeterCatalog
 from rememberstack.spine.processing_layers import ProcessingLayerCatalog
-from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
@@ -713,9 +712,7 @@ def _readiness(*, engine: Engine) -> PipelineReadinessCatalog:
     from rememberstack.profiles.selfhost import _expected_components
 
     return PipelineReadinessCatalog(
-        engine=engine,
-        expected_components=_expected_components(),
-        projections=ProjectionCatalog(engine=engine),
+        engine=engine, expected_components=_expected_components()
     )
 
 
@@ -1814,8 +1811,18 @@ def test_a_retained_claim_subset_runs_no_fact_work_before_its_facts_admission(
         )
         assert rig.gap(version_id=version.version_id, layer="facts") is None
     # (readiness pins production chunk parameters; this rig's are small)
+    # This E-layer rig deliberately leaves D155's publisher unbound. Its two
+    # serving-change events stay pending; every layer job must still succeed.
     assert (
-        rig.scalar("SELECT count(*) FROM processing_state WHERE status <> 'succeeded'")
+        rig.scalar(
+            "SELECT count(*) FROM processing_state WHERE stage = 'publish_corpus' AND status = 'pending'"
+        )
+        == 2
+    )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_state WHERE stage <> 'publish_corpus' AND status <> 'succeeded'"
+        )
         == 0
     )
     assert rig.stage_rows(stages=("label_relation",)) > 0

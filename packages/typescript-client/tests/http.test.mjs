@@ -302,7 +302,7 @@ test('citation path edges keep each reference binding and source label',async()=
 
 test('unsafe integer query parameters refuse before HTTP',async()=>{
   let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.envelope);}}});
-  try{await assert.rejects(client.lookupRelations({k:2**53}),error=>error instanceof InputValidationError&&error.code==='numeric.precision');assert.equal(calls,0);}finally{client.close();}
+  try{await assert.rejects(client.lookupRelations({limit:2**53}),error=>error instanceof InputValidationError&&error.code==='numeric.precision');assert.equal(calls,0);}finally{client.close();}
 });
 
 for(const kind of ['references','periods','clear-time'])test(`${kind} connection refusal sends once and leaves the refreshed target for a later call`,async()=>{

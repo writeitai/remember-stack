@@ -24,6 +24,7 @@ from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model.client import ProcessingLayerState
 from rememberstack.model.client import ProcessingLayerStates
+from rememberstack.surfaces.graph_queries import _encode_cursor
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.http_api import build_api
 
@@ -147,6 +148,30 @@ def test_typed_graph_routes_forward_bounded_requests() -> None:
     assert graph.calls[0][1]["predicates"] == ("works_for",)
     assert graph.calls[1][1]["max_hops"] == 5
     assert graph.calls[2][1]["to_doc_id"] == _DOC_B
+
+
+@pytest.mark.parametrize("hops", [1, 4])
+def test_http_accepts_an_emitted_graph_keyset_cursor(hops: int) -> None:
+    """Both the shortest and longest allowed keysets fit the HTTP request."""
+    graph = _Graph()
+    now = datetime.now(UTC)
+    cursor = _encode_cursor(
+        scope_hash="f" * 16,
+        after=(hops, (_ENTITY_A,) * hops, (_ENTITY_B,) * (hops + 1)),
+        valid_at=now,
+        believed_at=now,
+    )
+    assert len(cursor) > 200
+    response = _client(graph).post(
+        "/graph/neighborhood",
+        json={"entity_id": str(_ENTITY_A), "hops": hops, "cursor": cursor},
+    )
+    assert response.status_code == 200
+    assert graph.calls[-1][1]["cursor"] == cursor
+    oversized = _client(graph).post(
+        "/graph/neighborhood", json={"entity_id": str(_ENTITY_A), "cursor": "x" * 2049}
+    )
+    assert oversized.status_code == 422
 
 
 def test_graph_routes_reject_unbounded_or_unknown_fields() -> None:

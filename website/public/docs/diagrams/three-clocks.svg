@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" role="img" aria-labelledby="t d">
   <title id="t">Three clocks</title>
-  <desc id="d">One fact, Ravi works on the billing migration, on three timelines. World time: true from 14 January to 1 June. Said-on time: the kickoff notes said it on 15 January and the retro said it ended on 12 June. Belief time: the memory learned it on 15 January and still holds it. A query at 1 March finds the fact true; a query at 1 July finds it no longer current, ended 1 June.</desc>
+  <desc id="d">One fact, John works on the billing migration, on three timelines. World time: true from 14 January to 1 June. Said-on time: the kickoff notes said it on 15 January and the retro said it ended on 12 June. Belief time: the memory learned it on 15 January and still holds it. A query at 1 March finds the fact true; a query at 1 July finds it no longer current, ended 1 June.</desc>
   <defs>
     <radialGradient id="glowC" cx="25%" cy="45%" r="45%"><stop offset="0" stop-color="#ee5b44" stop-opacity=".14"/><stop offset="1" stop-color="#ee5b44" stop-opacity="0"/></radialGradient>
     <radialGradient id="glowT" cx="75%" cy="50%" r="45%"><stop offset="0" stop-color="#3e9b8e" stop-opacity=".18"/><stop offset="1" stop-color="#3e9b8e" stop-opacity="0"/></radialGradient>
@@ -59,7 +59,7 @@
   <rect width="1200" height="600" rx="24" fill="url(#glowC)"/>
   <rect width="1200" height="600" rx="24" fill="url(#glowT)"/>
   <text class="k" x="60" y="62">ONE FACT, THREE CLOCKS</text>
-  <text class="h" x="60" y="92">Ravi works on the billing migration</text>
+  <text class="h" x="60" y="92">John works on the billing migration</text>
   <text class="sm" x="174" y="136">JAN</text>
   <line x1="170" y1="146" x2="170" y2="470" stroke="#18244f"/>
   <text class="sm" x="314" y="136">FEB</text>

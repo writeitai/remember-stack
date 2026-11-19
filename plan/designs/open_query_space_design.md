@@ -1,6 +1,6 @@
 # Open query space — binding design
 
-> **Binding D98 amendment (2026-08-27).** Public Cypher and the immutable P2
+> **Binding D98/D157 amendment (2026-11-14).** Public Cypher and the immutable P2
 > graph surface are removed. `query_cypher` and `explain_cypher`, Cypher
 > grammar/limits/errors, `snapshot_graph`, `p2_snapshot`, generation discovery,
 > and P2 confirmation are not public or internal contracts. A server-owned,
@@ -8,7 +8,7 @@
 > replacement public bounded `graph_neighborhood`/`graph_path`/
 > `graph_citation_path` SQL functions and
 > typed graph operations use recursive SQL for variable/shortest traversal.
-> PostgreSQL 19 RC 1 has no SQL/PGQ (Beta 4 removed it; D98 RC 1 amendment),
+> PostgreSQL 18 has no SQL/PGQ (D157),
 > so SQL/PGQ is not part of any surface. All plain-SQL, invariant
 > compilation, tenancy, saved-query,
 > discovery, result-cap, audit, and assured-operation rules below remain binding.
@@ -46,7 +46,7 @@ D54, D80, and D87 remain controlling.*
 ## 1. Principles (binding)
 
 1. **PostgreSQL authorizes every live result.** The live public data language IS
-   PostgreSQL 19 SQL over the versioned `memory_v1` schema. Physical tables,
+   PostgreSQL 18 SQL over the versioned `memory_v1` schema. Physical tables,
    raw projection tables, and operator schemas are never public. PostgreSQL
    views compile row-level invariants; P1 ranked scans, the fixed one-hop read,
    and recursive graph helpers apply those authorities in the same transaction.
@@ -147,7 +147,8 @@ contracts. There are no compatibility aliases.
 
 The 17 previously demoted recipe names remain discoverable, non-default saved
 queries in the `examples` namespace. D98 adds the new
-`examples.graph_citation_path`, for 18 shipped examples total. An `examples.*` query returns
+`examples.graph_citation_path`, and D156 adds `examples.facts_by_tag`, for 19 shipped
+examples total. An `examples.*` query returns
 `QueryResult/v1`, carries customer-space semantics, is editable only by copying
 it to a customer namespace, and is not a platform contract or a top-level MCP
 tool. The two removed context names do not become saved-query tools:
@@ -180,6 +181,7 @@ current-fact examples already cover `current_context`'s SQL pattern.
 | `graph_neighborhood` | `examples.graph_neighborhood` | Direct call to `graph_neighborhood` |
 | `graph_path` | `examples.graph_path` | Direct call to `graph_path` |
 | — | `examples.graph_citation_path` | Direct call to directed `graph_citation_path`; new under D98, not a compatibility alias |
+| — | `examples.facts_by_tag` | `document_tags_live` joined through supporting `fact_claim_evidence_live` rows to `facts_current`; new under D156, not a compatibility alias |
 
 The examples preserve familiar discovery names, not the old recipe behavior or
 `Envelope` shapes. No compatibility promise is made: the pre-release library
@@ -225,9 +227,9 @@ The four assured operations are pinned in the manifest as:
 | Operation | Version | Contract |
 |---|---:|---|
 | `resolve_entity` | 1 | D49 fact `Envelope`; ranked survivor candidates, `unknown_entity`/`boundary`, current identity regime |
-| `claims_and_sources_context` | 4 | D49 evidence `Envelope`; bounded hybrid claims and current source passages, never facts or entity candidates |
-| `facts_context` | 4 | D49 fact `Envelope`; semantically nominated relations and observations under an explicit world-time scope, with both evidence stances and exact associations/totals |
-| `combined_context` | 5 | `ContextBundle/v2`; the complete `claims_and_sources_context` and `facts_context` responses in separately named fields, never one mixed result list |
+| `claims_and_sources_context` | 5 | D49 evidence `Envelope`; bounded hybrid claims and current source passages, never facts or entity candidates; optional D134/D156 `documents` filter |
+| `facts_context` | 5 | D49 fact `Envelope`; semantically nominated relations and observations under an explicit world-time scope, with both evidence stances and exact associations/totals; optional D134/D156 `documents` filter |
+| `combined_context` | 6 | `ContextBundle/v2`; the complete `claims_and_sources_context` and `facts_context` responses in separately named fields, never one mixed result list |
 
 The exact public input schemas are below. Their numeric defaults and hard caps
 are the starting contract carried from the measured predecessor paths; changing
@@ -236,12 +238,18 @@ one after measurement requires an operation-version and manifest roll.
 | Operation | Inputs |
 |---|---|
 | `resolve_entity` | Existing v1 schema, unchanged |
-| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60) |
-| `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
-| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: the same closed fact-time union, default `{"mode":"current"}` |
+| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: optional D140 testimony time scope ([effective time design](effective_time_and_section_references_design.md)) |
+| `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–19 unique UUIDs; `hops`: integer 1–2, default 1, live-graph expansion from the anchors; `predicate`: optional string, length 1–200, restricting expansion edges; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
+| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–19 unique UUIDs; `hops` and `predicate` as for `facts_context`; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: the same closed fact-time union, default `{"mode":"current"}` |
 
 All objects forbid unknown fields. A present `entity_ids` array cannot be empty
-or contain duplicates. On every content operation, explicit `candidate_k` cannot
+or contain duplicates. A present `documents` filter is validated by D134/D156's
+rules before retrieval; when it is combined with `entity_ids`, an item must
+satisfy both. A filter that matches no live document is not an error: a
+completed empty result is `known_empty` with an explanation naming whether no
+live document matched or the matching documents say nothing relevant
+([document tags design §4.5](document_tags_design.md#45-saying-why-a-filtered-read-is-empty)).
+Incomplete reads keep `boundary`. On every content operation, explicit `candidate_k` cannot
 be smaller than `k`. The resolved default is 50 results per grain and 200
 candidates per channel. Rationale and measurement limits are in
 [the retrieval-depth analysis](../analysis/configurable_context_retrieval_20261022.md). Malformed UUIDs, unknown fields, invalid bounds, an invalid time
@@ -343,7 +351,16 @@ set:
   mention/occurrence associations contain any supplied survivor ID;
 - observations are eligible when their subject is anchored; relations are
   eligible when either endpoint is anchored; and
-- fact world-time membership is the selected mode above.
+- fact world-time membership is the selected mode above; and
+- under a `documents` filter, claims are eligible when they have a live
+  occurrence in a matching document, chunks when their document matches, and
+  facts when at least one live supporting claim comes from a matching
+  document (D134 §4, D156). The filter selects; it never changes a fact's
+  value or status. Supporting evidence is drawn from matching documents only,
+  while contradicting evidence and contradiction co-members come from every
+  document, each association marked `in_documents_filter`, and every
+  `evidence_totals[]` row adds the matching count beside its deployment-wide
+  count ([document tags design §4.4](document_tags_design.md#44-fact-evidence-under-a-filter-support-from-the-scope-contradictions-from-everywhere)).
 
 The P1 projections therefore carry rebuildable nomination metadata for every
 selector they apply directly. A backend may instead have PostgreSQL enumerate
@@ -378,7 +395,7 @@ relation ranks ahead of an otherwise comparable A-only fact. Association with
 any supplied ID remains sufficient—there is no public any/all switch. With no
 IDs, deployment-wide nomination is unchanged.
 
-`combined_context` passes the confirmed IDs, `k`, and `candidate_k` unchanged to
+`combined_context` passes the confirmed IDs, the `documents` filter, `k`, and `candidate_k` unchanged to
 both children, with time selecting the same scope. Its default is 50 facts plus
 50 claims and 50 chunks, not one shared 50-item list. A call with k=100 can return
 300 primary records plus attached fact evidence. The children preserve their
@@ -437,7 +454,9 @@ bounded live-graph neighborhood before P1 fact-text nomination, and
 the pre-D114 composite advanced to version 2 with that changed fact child.
 D114 renames it to `combined_context@3` and changes its response to
 `ContextBundle/v2`; `resolve_entity@1`, `claims_and_sources_context@1`, and
-`facts_context@2` otherwise retain their behavior. Explicit deeper or path-shaped graph
+`facts_context@2` otherwise retain their behavior. D156 adds the optional
+`documents` input and its response disclosures, advancing
+`claims_and_sources_context@5`, `facts_context@5` and `combined_context@6`. Explicit deeper or path-shaped graph
 work still uses the live SQL helpers or `examples.multi_hop_context`; it is not
 silently added to an assured response.
 
@@ -468,6 +487,8 @@ labeled orientation text, never evidence.
 | `mentions_live` | one mention in current content; `(deployment_id, mention_id)` | Exact document/chunk/claim anchors, nullable resolution, survivor identity, method/confidence; unresolved mentions remain visible |
 | `identity_events_visible` | one visible resolution/merge/split event; `(deployment_id, object_kind, event_id)` | Participants, outcome/method/confidence, supersession state and decision clock; source-only forgotten events absent |
 | `entity_document_mentions` | one survivor entity × live document; `(deployment_id, entity_id, doc_id)` | Exact live mention count and first/last mention clocks |
+| `tags_current` | one registered tag (D156); `(deployment_id, tag_id)` | Name as declared, description and clocks; [document tags design §5](document_tags_design.md#5-storage) |
+| `document_tags_live` | one tag assignment on a live lineage (D156); `(deployment_id, doc_id, tag_id)` | Current tag name and `assigned_at`; deleted lineages absent |
 | `facts_visible_history` | one historically visible relation or observation; `(deployment_id, fact_kind, fact_id)` | Raw valid/transaction clocks, subject/predicate/object or statement/label, contradiction group, `evidence_count_current`, `contradict_count_current`, and `support_state_current`; manifest comments state these are live current-testimony values, not historical reconstructions; at least one surviving historical provenance lineage |
 | `facts_current` | one currently valid relation or observation; `(deployment_id, fact_kind, fact_id)` | §3.3 D41 predicate, one shared `evaluated_at`, D54 counts/support state; does **not** apply the D140 evidence gate (combine with `fact_in_scope_support` to exclude facts supported only by text not in force) |
 | `fact_claim_evidence_live` | one current claim-to-fact association; `(deployment_id, fact_kind, fact_id, claim_id, stance)` | Stance is exactly `supports` or `contradicts`, matching shipped `evidence_stance`/`FactEvidence.stance`; claim-validity fields and source handle; current testimony and live lineage only |
@@ -535,6 +556,17 @@ a compatibility promise. Old major schemas remain read-only during any later
 published compatibility window.
 
 ### 3.3 Invariant compilation
+
+**D153 shared eligibility.** The
+[shared read contract](shared_retrieval_eligibility_design.md) permits equivalent
+private source-qualified projections plus one tested endpoint-visibility rule
+inside an admitted read snapshot. Every full public row retains the same
+source, coordinate, entity and time membership. Sharing a proof does not waive
+it. The fact source helper contains actual D140 carried-claim semantics and
+D54 presentation/counts; native batches qualify distinct endpoints once.
+Current and reconstructed historical identity regimes never share a proof.
+The source-qualified helper is private, owned by `rememberstack_view_owner`,
+revoked from PUBLIC/query roles and unreachable through the sandbox.
 
 **D48 template.** Every lineage path includes an inner authorization chain of
 this form, specialized to its coordinates:
@@ -826,7 +858,7 @@ EXECUTE privilege for subsequent functions in this schema.
 
 ### 3.5 Graph query boundary
 
-Public Cypher is removed. The reference server (PostgreSQL 19 RC 1 and later)
+Public Cypher is removed. The reference server (PostgreSQL 18)
 has no SQL/PGQ, so there is no graph-pattern syntax to admit, and the
 default-deny `pglast` gate rejects it as well. The typed graph API and
 server-owned SQL use the live-graph contract in
@@ -1046,8 +1078,9 @@ saved-query filter is not an authorization boundary.
 
 ### 4.3 Limits
 
-The gateway clamps a requested value to the interactive hard cap or rejects it
-when clamping would change query semantics. The analytical tier requires an
+HTTP, SDK and MCP execution requests accept `max_rows` from 0 to 1,000 and
+refuse values outside that range; HTTP returns 422 (D154). Executor-internal
+resource limits and stored defaults remain bounded by their tier caps. The analytical tier requires an
 operator entitlement and a separate one-concurrent-query pool; it retains the
 same language schemas, grammar, tenancy boundary, applicable D48 time boundary,
 QueryResult contract, and nomination/body/graph caps. The table below is the
@@ -1232,6 +1265,15 @@ Corpus deletion never requires rewriting a saved query: live execution observes
 the invariant views and no result cache exists.
 
 ## 6. Discovery, manifest, and benchmark identity
+
+D153 registers the source-qualified fact helper, carried-periodised-claim
+helper and actual widened fact-claim authority as hashed dependencies. The
+former pre-D140 helper hash is superseded; identical public column types are
+not proof of identical body/dependency identity. Changed authored definitions
+roll the canonical manifest and normal saved-query revalidation. Historical
+run identities remain immutable; current benchmark pins must match the
+qualified schema. Current physical catalog/index and D152 schema-head/capture
+guards are requalified together. These checks preserve private reachability.
 
 Every public view, column, and SQL function has manifest-owned comments stating
 its grain/type, key or identity meaning, current/history meaning, null-clock
@@ -1681,7 +1723,7 @@ for the shipping surface pass before release.
 |---|---|---|
 | `lexical_facts(query, k, filters)` | D94 stores fact embeddings on natural relation/observation rows but deliberately does not expand the admitted facts lexical surface. The binding P1 contract exposes semantic facts only. | Trigger: **a pg_textsearch BM25 index and scored fact-label lexical method are designed together**. Adoption requires frozen exact-term fixtures, the same analyzer/rank/score and D142 ranked-read nomination/confirmation contract as claims/chunks, current/at/overlap/history equivalence, the facts-filter allowlist, manifest enumeration, a `facts_context` descriptor/version roll adding lexical fusion, and same-change OSS docs. |
 | Complete removal of the assured-operation layer | One-call typed defaults remain product value; this design does not decide their deletion | An open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
-| Public arbitrary SQL/PGQ | PostgreSQL 19 Beta 4 removed SQL/PGQ, so the reference server (RC 1 and later) cannot run it. The release exposes only the server-owned one-hop read and typed/bounded graph functions. | Adopt only if a supported PostgreSQL release ships SQL/PGQ again and the public AST gate parses its complete admitted grammar and rejects every unsupported/mutating form by structure. A separate binding proposal must define the admitted subset, tenancy rewrite, budgets, result contract, fuzz corpus, and manifest representation. |
+| Public arbitrary SQL/PGQ | The reference server, PostgreSQL 18, has no SQL/PGQ. The release exposes only the server-owned one-hop read and typed/bounded graph functions. | Adopt only if a supported PostgreSQL release ships SQL/PGQ again and the public AST gate parses its complete admitted grammar and rejects every unsupported/mutating form by structure. A separate binding proposal must define the admitted subset, tenancy rewrite, budgets, result contract, fuzz corpus, and manifest representation. |
 | Pgvectorscale StreamingDiskANN as the default ANN index | D94 binds pgvector HNSW first; installing an additional index extension without a present need violates YAGNI | The open proposal may inform a later binding decision. D94 does not install, test, benchmark, or pre-authorize it; a future promotion changes only the private vector index, never the public query contract or storage boundary. |
 | Media-segment public views/SRF | The binding media row/embedding contract is not yet part of this schema | First production corpus requiring SQL composition over D65 media segments; a separate design adds typed locators/derivation and rolls the schema/hash. |
 | Saved-query marketplace and shared dependencies | Signing, supply-chain review, publisher liability, and fleet recall are outside customer-local registry v1 | First operator-approved cross-deployment sharing requirement, followed by a signing/install/revocation design and adversarial supply-chain suite. |

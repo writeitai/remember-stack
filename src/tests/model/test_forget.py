@@ -33,7 +33,6 @@ def _manifest(**updates: object) -> ForgetManifest:
         "content_hashes": ("b" * 64, "c" * 64),
         "chunk_ids": _CHUNK_IDS,
         "object_keys": (ObjectKey("artifacts/a"), ObjectKey("raw/b")),
-        "projection_prefixes": (ObjectKey("snapshots/old"),),
     }
     values.update(updates)
     return ForgetManifest.model_validate(values)
@@ -58,7 +57,6 @@ def test_manifest_is_content_free_frozen_and_exactly_versioned() -> None:
         "fact_ids",
         "entity_ids",
         "object_keys",
-        "projection_prefixes",
         "k_artifact_ids",
     )
     assert manifest.schema_version == 1

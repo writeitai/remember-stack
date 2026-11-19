@@ -1,7 +1,7 @@
 # Packaging & Distribution — Artifacts, Task Execution, Code Architecture (Design)
 
-> **Binding D98 amendment (2026-08-27).** The shipped database is the pinned
-> PostgreSQL 19 image with pgvector, pg_textsearch, and pg_partman (the
+> **Binding D98/D157 amendment (2026-11-14).** The shipped database is the pinned
+> PostgreSQL 18 image (D157) with pgvector, pg_textsearch, and pg_partman (the
 > server has no SQL/PGQ since the D98 RC 1 amendment). Packaging contains no Ladybug wheel, graph snapshot volume, graph
 > builder/reader, or public Cypher API/CLI/MCP surface. Typed live graph
 > operations and public bounded SQL helpers remain. Pre-D98 references to open
@@ -93,6 +93,14 @@ published to PyPI (D108).
   container only.
 
 ## 3. Task execution — one model, two delivery shells
+
+The read-only [D152 storage consumer](storage_capture_consumer_design.md)
+is an engine operational capability, not a new queue or service. Both
+maintained substrate families must meet the same qualified capture contract;
+an unsupported configured store refuses evidence rather than falling back to
+live listing. Existing unmetered memory semantics, processing admission and
+hard-forget authority remain. Shipping capture requires its native/profile
+tests and matching operator contract; design acceptance does not advertise it.
 
 **The unifying rule (this section's core, refining D61's queue-port row):**
 

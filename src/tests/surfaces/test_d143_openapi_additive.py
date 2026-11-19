@@ -6,7 +6,12 @@ those reference. Removing exactly those from today's export must give back the
 pre-D143 document, byte for byte after canonical serialisation; its hash is
 pinned here because the old document itself is a build product of history.
 D150 adds one more enum value, ``admission``, to a readiness stage's
-``defer_reason``; it is stripped the same way.
+``defer_reason``; it is stripped the same way. D156 adds the tag routes, the
+optional ``tags`` query parameter on ``POST /ingest``, the tag schemas and a
+``tags`` field on document inventory and search results, and the ``tags``
+selector of the document search filter; D156 step 3 adds the filtered fact
+read's optional ``in_documents_filter`` marks and matching evidence total.
+Those are stripped too.
 """
 
 from __future__ import annotations
@@ -22,17 +27,52 @@ _ROOT = Path(__file__).parents[3]
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 _PRE_D143_SHA256: Final = (
-    "c2bce70429554311e8564e59b2429e371798da1712e3be6aa3bb1c44eff5578f"
+    "baae77c8e6e8b808ea0f2fccf2b768c54396df09424db4fe56ccc38653c19cf5"
 )
-"""Canonical hash of ``openapi.json`` at fbcd489bd (main just before D143's code)."""
+"""Canonical hash of ``openapi.json`` after stripping D143 additions.
+
+Pinned after D155 slice 5 (``p3_path`` and p3 readiness field descriptions);
+before that, against the D154 pagination rename baseline (browse ``limit`` /
+``next_cursor``, Envelope ``next_cursor``, Truncation without
+``continuation``, QueryResult without ``exact_total*``, graph keyset
+cursor capacity 2,048). Earlier pin was
+``c2bce704…`` at fbcd489bd (main just before D143's code).
+"""
 
 _PRE_D143_VERSION: Final = "0.17.2"
 """``info.version`` in that document; a release bump is not a D143 change."""
 
-_ADDED_ROUTES: Final = frozenset({"/processing-layers"})
-_ADDED_SCHEMAS: Final = frozenset(
-    {"ProcessingLayer", "ProcessingLayerStates", "OutputProcessingLayerStates"}
+_ADDED_ROUTES: Final = frozenset(
+    {"/processing-layers", "/tags", "/tags/{tag_id}", "/documents/{doc_id}/tags"}
 )
+_ADDED_SCHEMAS: Final = frozenset(
+    {
+        "ProcessingLayer",
+        "ProcessingLayerStates",
+        "OutputProcessingLayerStates",
+        # D156
+        "DocumentTags",
+        "DocumentTagsUpdate",
+        "Tag",
+        "TagCreate",
+        "TagList",
+        "TagUpdate",
+        # D156 step 2: the document filter's tag selector
+        "DocumentTagFilter",
+    }
+)
+_D156_TAGGED_SCHEMAS: Final = (
+    "DocumentSummary",
+    "DocumentSearchResult",
+    "DocumentSearchFilters",
+)
+"""Schemas that gained a ``tags`` property in D156."""
+_D156_FILTER_DISCLOSURES: Final = {
+    "CoMember": "in_documents_filter",
+    "FactEvidence": "in_documents_filter",
+    "EvidenceTotal": "in_documents_filter_total",
+}
+"""D156 step 3: optional properties present only on filtered fact reads."""
 
 
 def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
@@ -49,7 +89,12 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
         for operation in operations.values():
             if not isinstance(operation, dict) or "parameters" not in operation:
                 continue
-            kept = [p for p in operation["parameters"] if p.get("name") != "layers"]
+            kept = [
+                p
+                for p in operation["parameters"]
+                if p.get("name") != "layers"
+                and not (p.get("name") == "tags" and p.get("in") == "query")
+            ]
             if kept:
                 operation["parameters"] = kept
             else:
@@ -57,6 +102,17 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
     schemas = stripped.get("components", {}).get("schemas", {})
     for name in _ADDED_SCHEMAS:
         schemas.pop(name, None)
+    for name in tuple(schemas):
+        if name.removeprefix("Output") in _ADDED_SCHEMAS:
+            schemas.pop(name)
+        elif name.removeprefix("Output") in _D156_TAGGED_SCHEMAS:
+            schemas[name]["properties"].pop("tags")
+            if "tags" in schemas[name].get("required", ()):
+                schemas[name]["required"].remove("tags")
+        elif name.removeprefix("Output") in _D156_FILTER_DISCLOSURES:
+            schemas[name]["properties"].pop(
+                _D156_FILTER_DISCLOSURES[name.removeprefix("Output")]
+            )
     reasons = schemas["PipelineStageReadiness"]["properties"]["defer_reason"]["anyOf"]
     reasons[0]["enum"] = [value for value in reasons[0]["enum"] if value != "admission"]
     return stripped

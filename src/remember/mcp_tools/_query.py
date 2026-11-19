@@ -65,7 +65,7 @@ def validate_open_query_arguments(
             validated["parameters"] = ()
         if "max_rows" in args:
             validated["max_rows"] = _require_int(
-                args["max_rows"], field="max_rows", minimum=0
+                args["max_rows"], field="max_rows", minimum=0, maximum=1000
             )
     elif name == "describe_query_space":
         # Explicit null is a type error for string fields; only omission defaults.
@@ -128,7 +128,7 @@ def validate_open_query_arguments(
             validated["parameters"] = ()
         if "max_rows" in args:
             validated["max_rows"] = _require_int(
-                args["max_rows"], field="max_rows", minimum=0
+                args["max_rows"], field="max_rows", minimum=0, maximum=1000
             )
     return validated
 

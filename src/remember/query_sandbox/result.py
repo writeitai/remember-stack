@@ -125,8 +125,6 @@ class QueryResult(BaseModel):
     limits: ResultLimits
     truncated: bool = False
     truncation_reason: str | None = None
-    exact_total_known: bool = False
-    exact_total: int | None = None
     ordered_result: bool = False
     empty_result: bool = False
     negative_kind: None = None  # never a D49 negative on this surface (§4.1)

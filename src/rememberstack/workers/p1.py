@@ -7,7 +7,7 @@ human-readable labels of relations (deterministic template generation) and
 observations (their statements), embedded beside their status scalar.
 
 Label and embed are checkpointed separately so crash/retry does not discard
-paid or CPU work (plan/designs/pipeline_checkpointing_design.md).
+paid or CPU work (plan/designs/postgres_p1_search_projection_design.md §7).
 """
 
 from typing import Final
@@ -199,108 +199,57 @@ class LabelFactsHandler:
             doc_id = None
         else:
             doc_id = _payload_uuid(work=work, field="doc_id")
-        label_generation = FACT_LABEL_VERSION
-        with self._facts.label_lock(deployment_id=work.deployment_id):
-            # Phase L — deterministic labels, durable per relation.
-            for relation in self._facts.relations_for_labeling(
+        pending_relations = {
+            row.relation_id
+            for row in self._facts.relations_for_labeling(
                 deployment_id=work.deployment_id,
                 doc_id=doc_id,
-                label_version=label_generation,
+                label_version=FACT_LABEL_VERSION,
                 fact_ids=relation_ids,
-            ):
-                label = deterministic_fact_label(
-                    subject=relation.subject_name,
-                    predicate=relation.predicate,
-                    object_name=relation.object_name,
-                )
-                window = FactWindow(
-                    valid_from=relation.valid_from,
-                    valid_until=relation.valid_until,
-                    valid_precision=relation.valid_precision,
-                )
-                self._facts.record_fact_label(
-                    relation_id=relation.relation_id,
-                    label=label,
-                    label_version=label_generation,
-                    window=window,
-                )
-
-            # Phase E — embed rows missing this embed generation.
-            rows: list[P1FactRow] = [
-                P1FactRow(
-                    fact_id=relation.relation_id,
-                    deployment_id=work.deployment_id,
-                    kind="relation",
-                    label=relation.fact_label,
-                    status=relation.status,
-                    valid_from=relation.valid_from,
-                    valid_until=relation.valid_until,
-                    valid_precision=relation.valid_precision,
-                    ingested_at=relation.ingested_at,
-                    invalidated_at=relation.invalidated_at,
-                    vector=(0.0,),
-                )
-                for relation in self._facts.relations_for_embedding(
-                    deployment_id=work.deployment_id,
-                    doc_id=doc_id,
-                    label_version=label_generation,
-                    fact_ids=relation_ids,
-                    embedding_model=self._settings.embedding_model,
-                )
-            ]
-            for observation in self._facts.observations_for_embedding(
+            )
+        }
+        pending_relations.update(
+            row.relation_id
+            for row in self._facts.relations_for_embedding(
                 deployment_id=work.deployment_id,
                 doc_id=doc_id,
-                fact_ids=observation_ids,
+                label_version=FACT_LABEL_VERSION,
                 embedding_model=self._settings.embedding_model,
+                fact_ids=relation_ids,
+            )
+        )
+        pending_observations = {
+            row.observation_id
+            for row in self._facts.observations_for_embedding(
+                deployment_id=work.deployment_id,
+                doc_id=doc_id,
+                embedding_model=self._settings.embedding_model,
+                fact_ids=observation_ids,
+            )
+        }
+        pending = sorted(
+            [("relation", item) for item in pending_relations]
+            + [("observation", item) for item in pending_observations]
+        )
+        batch_size = self._settings.embed_batch_size
+        for batch_start in range(0, len(pending), batch_size):
+            batch = pending[batch_start : batch_start + batch_size]
+            batch_relations = tuple(item for kind, item in batch if kind == "relation")
+            batch_observations = tuple(
+                item for kind, item in batch if kind == "observation"
+            )
+            with self._facts.label_lock(
+                deployment_id=work.deployment_id,
+                relation_ids=batch_relations,
+                observation_ids=batch_observations,
             ):
-                window = FactWindow(
-                    valid_from=observation.valid_from,
-                    valid_until=observation.valid_until,
-                    valid_precision=observation.valid_precision,
+                self._project_batch(
+                    deployment_id=work.deployment_id,
+                    relation_ids=batch_relations,
+                    observation_ids=batch_observations,
+                    meter=meter,
+                    call_offset=batch_start,
                 )
-                label = observation.obs_label.strip()
-                self._facts.record_observation_label(
-                    observation_id=observation.observation_id,
-                    statement=label,
-                    label=label,
-                    window=window,
-                )
-                rows.append(
-                    P1FactRow(
-                        fact_id=observation.observation_id,
-                        deployment_id=work.deployment_id,
-                        kind="observation",
-                        label=label,
-                        status=observation.status,
-                        valid_from=observation.valid_from,
-                        valid_until=observation.valid_until,
-                        valid_precision=observation.valid_precision,
-                        ingested_at=observation.ingested_at,
-                        invalidated_at=observation.invalidated_at,
-                        vector=(0.0,),
-                    )
-                )
-            batch_size = self._settings.embed_batch_size
-            for batch_start in range(0, len(rows), batch_size):
-                batch = rows[batch_start : batch_start + batch_size]
-                response = self._model_provider.embed(
-                    request=EmbeddingRequest(
-                        model=self._settings.embedding_model,
-                        texts=tuple(row.label for row in batch),
-                        dimensions=P1_VECTOR_DIMENSIONS,
-                    )
-                )
-                meter.record(
-                    call_key=f"embed_facts:{batch_start}",
-                    tier="embedding",
-                    usage=response.usage,
-                )
-                embedded = tuple(
-                    row.model_copy(update={"vector": vector})
-                    for row, vector in zip(batch, response.vectors, strict=True)
-                )
-                self._fact_index.upsert_facts(rows=embedded)
         if self._profile_refresher is not None:
             if doc_id is not None:
                 relation_ids, observation_ids = self._facts.document_fact_ids(
@@ -314,6 +263,118 @@ class LabelFactsHandler:
                 call_key=f"profile:application:{work.target_id}",
             )
         return HandlerOutcome()
+
+    def _project_batch(
+        self,
+        *,
+        deployment_id: UUID,
+        relation_ids: tuple[UUID, ...],
+        observation_ids: tuple[UUID, ...],
+        meter: CostMeterPort,
+        call_offset: int,
+    ) -> None:
+        """Recheck and durably project one reserved batch of fact IDs."""
+        label_generation = FACT_LABEL_VERSION
+        # Phase L — deterministic labels, durable per relation.
+        for relation in self._facts.relations_for_labeling(
+            deployment_id=deployment_id,
+            doc_id=None,
+            label_version=label_generation,
+            fact_ids=relation_ids,
+        ):
+            label = deterministic_fact_label(
+                subject=relation.subject_name,
+                predicate=relation.predicate,
+                object_name=relation.object_name,
+            )
+            window = FactWindow(
+                valid_from=relation.valid_from,
+                valid_until=relation.valid_until,
+                valid_precision=relation.valid_precision,
+            )
+            self._facts.record_fact_label(
+                relation_id=relation.relation_id,
+                label=label,
+                label_version=label_generation,
+                window=window,
+            )
+
+        # Phase E — embed rows missing this embed generation.
+        rows: list[P1FactRow] = [
+            P1FactRow(
+                fact_id=relation.relation_id,
+                deployment_id=deployment_id,
+                kind="relation",
+                label=relation.fact_label,
+                status=relation.status,
+                valid_from=relation.valid_from,
+                valid_until=relation.valid_until,
+                valid_precision=relation.valid_precision,
+                ingested_at=relation.ingested_at,
+                invalidated_at=relation.invalidated_at,
+                vector=(0.0,),
+            )
+            for relation in self._facts.relations_for_embedding(
+                deployment_id=deployment_id,
+                doc_id=None,
+                label_version=label_generation,
+                fact_ids=relation_ids,
+                embedding_model=self._settings.embedding_model,
+            )
+        ]
+        for observation in self._facts.observations_for_embedding(
+            deployment_id=deployment_id,
+            doc_id=None,
+            fact_ids=observation_ids,
+            embedding_model=self._settings.embedding_model,
+        ):
+            window = FactWindow(
+                valid_from=observation.valid_from,
+                valid_until=observation.valid_until,
+                valid_precision=observation.valid_precision,
+            )
+            label = observation.obs_label.strip()
+            self._facts.record_observation_label(
+                observation_id=observation.observation_id,
+                statement=label,
+                label=label,
+                window=window,
+            )
+            rows.append(
+                P1FactRow(
+                    fact_id=observation.observation_id,
+                    deployment_id=deployment_id,
+                    kind="observation",
+                    label=label,
+                    status=observation.status,
+                    valid_from=observation.valid_from,
+                    valid_until=observation.valid_until,
+                    valid_precision=observation.valid_precision,
+                    ingested_at=observation.ingested_at,
+                    invalidated_at=observation.invalidated_at,
+                    vector=(0.0,),
+                )
+            )
+        batch_size = self._settings.embed_batch_size
+        for batch_start in range(0, len(rows), batch_size):
+            batch = rows[batch_start : batch_start + batch_size]
+            response = self._model_provider.embed(
+                request=EmbeddingRequest(
+                    model=self._settings.embedding_model,
+                    texts=tuple(row.label for row in batch),
+                    dimensions=P1_VECTOR_DIMENSIONS,
+                )
+            )
+            meter.record(
+                call_key=f"embed_facts:{call_offset + batch_start}",
+                tier="embedding",
+                usage=response.usage,
+            )
+            embedded = tuple(
+                row.model_copy(update={"vector": vector})
+                for row, vector in zip(batch, response.vectors, strict=True)
+            )
+            self._fact_index.upsert_facts(rows=embedded)
 
 
 def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:

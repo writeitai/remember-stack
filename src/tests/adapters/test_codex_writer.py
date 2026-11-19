@@ -13,7 +13,7 @@ from rememberstack.model import PublishedMounts
 
 
 def _request() -> KnowledgeWriterSessionRequest:
-    """Build one isolated writer request with all four read-only mount locators."""
+    """Build one isolated writer request with corpus and standalone K locators."""
     deployment_id = uuid4()
     return KnowledgeWriterSessionRequest(
         session_id=uuid4(),
@@ -24,8 +24,6 @@ def _request() -> KnowledgeWriterSessionRequest:
         mounts=PublishedMounts(
             deployment_id=deployment_id,
             p3="mount://p3",
-            artifacts="mount://artifacts",
-            raw="mount://raw",
             knowledge="mount://knowledge",
             read_only=True,
         ),

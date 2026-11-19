@@ -224,6 +224,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "Null for p3: the live corpus has no global build time.",
           "title": "Built At"
         },
         "checked_at": {
@@ -242,6 +243,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "Null for p3: the live corpus has no global publication time.",
           "title": "Published At"
         },
         "ready": {
@@ -266,6 +268,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "For p3, the export digest of one ready requested version; null for multiple versions or incomplete publication.",
           "title": "Version"
         }
       },
@@ -545,6 +548,19 @@ export default {
           "title": "Fact Id",
           "type": "string"
         },
+        "in_documents_filter": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In Documents Filter",
+          "x-exclude-if-none": true
+        },
         "label": {
           "title": "Label",
           "type": "string"
@@ -707,18 +723,6 @@ export default {
           },
           "title": "Co Members",
           "type": "array"
-        },
-        "continuation": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Continuation"
         },
         "group_id": {
           "format": "uuid",
@@ -1017,7 +1021,14 @@ export default {
     "DocumentPage": {
       "additionalProperties": false,
       "properties": {
-        "cursor": {
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/DocumentSummary"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "next_cursor": {
           "anyOf": [
             {
               "type": "string"
@@ -1027,14 +1038,7 @@ export default {
             }
           ],
           "default": null,
-          "title": "Cursor"
-        },
-        "documents": {
-          "items": {
-            "$ref": "#/$defs/DocumentSummary"
-          },
-          "title": "Documents",
-          "type": "array"
+          "title": "Next Cursor"
         }
       },
       "required": [
@@ -1411,14 +1415,19 @@ export default {
     },
     "DocumentReferencesPage": {
       "additionalProperties": false,
-      "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a cursor. ``too_broad`` is set (and\n``rows`` empty) when the section has too many descendant keys.",
+      "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``next_cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a non-null ``next_cursor``. Null means\nthe end. ``too_broad`` is set (and ``rows`` empty) when the section has\ntoo many descendant keys.",
       "properties": {
         "believed_at": {
           "format": "date-time",
           "title": "Believed At",
           "type": "string"
         },
-        "cursor": {
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string"
+        },
+        "next_cursor": {
           "anyOf": [
             {
               "type": "string"
@@ -1428,12 +1437,7 @@ export default {
             }
           ],
           "default": null,
-          "title": "Cursor"
-        },
-        "evaluated_at": {
-          "format": "date-time",
-          "title": "Evaluated At",
-          "type": "string"
+          "title": "Next Cursor"
         },
         "rows": {
           "items": {
@@ -1516,13 +1520,6 @@ export default {
           "default": null,
           "title": "Doc Id"
         },
-        "k": {
-          "default": 50,
-          "maximum": 200,
-          "minimum": 1,
-          "title": "K",
-          "type": "integer"
-        },
         "kinds": {
           "anyOf": [
             {
@@ -1548,6 +1545,13 @@ export default {
           ],
           "default": null,
           "title": "Kinds"
+        },
+        "limit": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
         },
         "section_key": {
           "anyOf": [
@@ -1736,6 +1740,17 @@ export default {
           "title": "Recipients",
           "type": "array"
         },
+        "tags": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentTagFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "thread_ref": {
           "anyOf": [
             {
@@ -1762,7 +1777,14 @@ export default {
           "title": "As Of",
           "type": "string"
         },
-        "cursor": {
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/DocumentSearchResult"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "next_cursor": {
           "anyOf": [
             {
               "type": "string"
@@ -1772,14 +1794,7 @@ export default {
             }
           ],
           "default": null,
-          "title": "Cursor"
-        },
-        "documents": {
-          "items": {
-            "$ref": "#/$defs/DocumentSearchResult"
-          },
-          "title": "Documents",
-          "type": "array"
+          "title": "Next Cursor"
         },
         "people_matched": {
           "default": [],
@@ -1799,6 +1814,11 @@ export default {
             }
           ],
           "default": null
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1844,7 +1864,7 @@ export default {
     },
     "DocumentSearchRequest": {
       "additionalProperties": false,
-      "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches and\nthere is no cursor. Without one they are every document the filters\nmatch, newest declared creation date first, paged by ``cursor``.",
+      "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches (top\n``k``); there is no cursor. Without a query they are every document the\nfilters match, newest judged-version ingest time first, paged by\n``limit`` and ``cursor`` (D154).",
       "properties": {
         "cursor": {
           "anyOf": [
@@ -1871,6 +1891,7 @@ export default {
             "modified_from": null,
             "modified_to": null,
             "recipients": [],
+            "tags": null,
             "thread_ref": null
           }
         },
@@ -1879,6 +1900,13 @@ export default {
           "maximum": 200,
           "minimum": 1,
           "title": "K",
+          "type": "integer"
+        },
+        "limit": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Limit",
           "type": "integer"
         },
         "query": {
@@ -2093,6 +2121,7 @@ export default {
             }
           ],
           "default": null,
+          "description": "Relative corpus folder only for the served selected version with a matching nullable publication marker. Null for historical, raw-only, unpublished, updating or failed publications. Type/topic/title changes move it: re-resolve by doc_id; only the folder suffix is stable. Retain version_id and representation_id for exact source identity.",
           "title": "P3 Path"
         },
         "recipients": {
@@ -2130,6 +2159,7 @@ export default {
         },
         "served_version": {
           "default": true,
+          "description": "Whether version_id is served, independently of corpus publication.",
           "title": "Served Version",
           "type": "boolean"
         },
@@ -2156,6 +2186,14 @@ export default {
           ],
           "title": "Status",
           "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
         },
         "thread_ref": {
           "anyOf": [
@@ -2248,6 +2286,14 @@ export default {
           "default": null,
           "title": "Source Uri"
         },
+        "tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
         "title": {
           "anyOf": [
             {
@@ -2269,6 +2315,110 @@ export default {
         "serving"
       ],
       "title": "DocumentSummary",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentTagFilter": {
+      "additionalProperties": false,
+      "description": "Caller tags a document must carry (D156 \u00a74.1); every list given must hold.\n\n``all``: the document has every listed tag; ``any``: at least one;\n``none``: none of them. A tag is a registered name (matched ignoring case)\nor a ``tag_id``; an unregistered tag fails the read with ``unknown_tag``\nbefore anything is searched. Tags are the document's (lineage's) current\ntags, also when a time scope reads an older version. An untagged document\nmatches ``none`` and fails ``all`` and ``any``.",
+      "properties": {
+        "all": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "All",
+          "type": "array"
+        },
+        "any": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Any",
+          "type": "array"
+        },
+        "none": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "None",
+          "type": "array"
+        }
+      },
+      "title": "DocumentTagFilter",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentTags": {
+      "additionalProperties": false,
+      "description": "A document's tag names after a tag write.",
+      "properties": {
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "doc_id",
+        "tags"
+      ],
+      "title": "DocumentTags",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentTagsUpdate": {
+      "additionalProperties": false,
+      "description": "Change one document's tags atomically: ``add``/``remove``, or ``set``.\n\n``set`` replaces the whole set and excludes ``add`` and ``remove``; an\nempty ``set`` clears the document's tags. Removing a tag the document\ndoes not have is not an error.",
+      "properties": {
+        "add": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Add",
+          "type": "array"
+        },
+        "remove": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Remove",
+          "type": "array"
+        },
+        "set": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Set"
+        }
+      },
+      "title": "DocumentTagsUpdate",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -2634,6 +2784,18 @@ export default {
           ],
           "default": null
         },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
+        },
         "nodes": {
           "default": [],
           "items": {
@@ -2985,6 +3147,20 @@ export default {
           "title": "Fact Kind",
           "type": "string"
         },
+        "in_documents_filter_total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In Documents Filter Total",
+          "x-exclude-if-none": true
+        },
         "returned": {
           "minimum": 0,
           "title": "Returned",
@@ -3035,6 +3211,19 @@ export default {
           ],
           "title": "Fact Kind",
           "type": "string"
+        },
+        "in_documents_filter": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In Documents Filter",
+          "x-exclude-if-none": true
         },
         "stance": {
           "enum": [
@@ -4633,23 +4822,6 @@ export default {
           "default": null,
           "title": "Evaluated At"
         },
-        "exact_total": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Exact Total"
-        },
-        "exact_total_known": {
-          "default": false,
-          "title": "Exact Total Known",
-          "type": "boolean"
-        },
         "execution_started_at": {
           "format": "date-time",
           "title": "Execution Started At",
@@ -5795,7 +5967,7 @@ export default {
     },
     "SectionHistoryPage": {
       "additionalProperties": false,
-      "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``cursor`` pins ``evaluated_at`` and\n``believed_at`` for the following pages.",
+      "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``next_cursor`` pins ``evaluated_at``\nand ``believed_at`` for the following pages; null exactly at the end.",
       "properties": {
         "amendments": {
           "default": [],
@@ -5810,18 +5982,6 @@ export default {
           "title": "Believed At",
           "type": "string"
         },
-        "cursor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Cursor"
-        },
         "doc_id": {
           "format": "uuid",
           "title": "Doc Id",
@@ -5831,6 +5991,18 @@ export default {
           "format": "date-time",
           "title": "Evaluated At",
           "type": "string"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
         },
         "periodised": {
           "title": "Periodised",
@@ -5882,11 +6054,11 @@ export default {
           "title": "Doc Id",
           "type": "string"
         },
-        "k": {
+        "limit": {
           "default": 50,
           "maximum": 200,
           "minimum": 1,
-          "title": "K",
+          "title": "Limit",
           "type": "integer"
         },
         "section_key": {
@@ -6392,6 +6564,120 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "Tag": {
+      "additionalProperties": false,
+      "description": "One registered tag: a name callers and agents use, and what it means.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "tag_id": {
+          "format": "uuid",
+          "title": "Tag Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tag_id",
+        "name",
+        "description",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Tag",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TagCreate": {
+      "additionalProperties": false,
+      "description": "Register one tag. A name already registered, in any case, is refused.",
+      "properties": {
+        "description": {
+          "maxLength": 2000,
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "TagCreate",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TagList": {
+      "additionalProperties": false,
+      "description": "The deployment's registered tags, by name (``list_tags``).",
+      "properties": {
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/Tag"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tags"
+      ],
+      "title": "TagList",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TagUpdate": {
+      "additionalProperties": false,
+      "description": "Rename or re-describe one tag; its assignments are unaffected.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "title": "TagUpdate",
+      "type": "object",
+      "x-extra": "forbid"
+    },
     "TemporalMatch": {
       "description": "Whether a fact definitely or possibly overlapped the query window.",
       "enum": [
@@ -6630,19 +6916,8 @@ export default {
     },
     "Truncation": {
       "additionalProperties": false,
+      "description": "Disclosure that a ranked or safety cap applied (D154).",
       "properties": {
-        "continuation": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Continuation"
-        },
         "estimated_total": {
           "minimum": 0,
           "title": "Estimated Total",

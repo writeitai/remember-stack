@@ -23,6 +23,7 @@ from datetime import datetime
 from datetime import UTC
 from functools import wraps
 from itertools import batched
+import json
 import math
 from time import monotonic
 from typing import Any
@@ -48,6 +49,11 @@ from remember.retrieval import DEFAULT_CONTEXT_K
 from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from remember.retrieval import MAX_CONTEXT_K
 from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
+from rememberstack.core.cursor_scope import assert_cursor_scope
+from rememberstack.core.cursor_scope import cursor_scope_hash
+from rememberstack.core.document_filters import any_live_document_matches
+from rememberstack.core.document_filters import claim_selected_matching
+from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -128,16 +134,21 @@ from rememberstack.ports.p1_index import P1SearchIds
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
+from rememberstack.spine.effective_time import belief_watermark
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.processing_layers import admit_layers_on
+from rememberstack.spine.retrieval_eligibility import candidate_mention_coverage_ctes
+from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
 from rememberstack.spine.surface_cost import current_surface_scope
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostOutcome
+from rememberstack.spine.tags import resolve_filter_tags_on
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 
@@ -147,6 +158,12 @@ if TYPE_CHECKING:
 DEFAULT_DELTA_LIMIT = 500
 """How many change-feed rows one `delta` page returns before truncating —
 a starting point to measure, not a committed constant (retrieval §13)."""
+
+DEFAULT_LOOKUP_BROWSE_LIMIT = 50
+"""Default page size for filter-only relation/observation browse (D154)."""
+
+MAX_LOOKUP_BROWSE_LIMIT = 200
+"""Maximum page size for filter-only relation/observation browse (D154)."""
 
 DEFAULT_TRANSCRIPT_LIMIT = 40
 """How many decision-history rows one `transcript` returns before truncating
@@ -159,12 +176,12 @@ DEFAULT_SCAN_BATCH = 1_000
 """How many rows the batch `scan` cursor fetches per round-trip."""
 
 CONTRADICTION_COMEMBER_CAP = 25
-"""How many co-members a contradiction block returns inline before it pages
-(S23). Typical groups are 2–3 sides, so the cap is rarely reached — but when
-it is, the block still carries group_id/returned/total/continuation, never a
-one-sided answer. WP-5.6 measured this starting cap below its explicit 16 KiB
-inline-envelope budget; that budget is an operating target, not a protocol
-limit."""
+"""How many co-members a contradiction block returns inline before it caps
+(S23 / D154). Typical groups are 2–3 sides, so the cap is rarely reached — but
+when it is, the block still carries group_id/returned/total, never a one-sided
+answer. Paging co-members is out of scope. WP-5.6 measured this starting cap
+below its explicit 16 KiB inline-envelope budget; that budget is an operating
+target, not a protocol limit."""
 
 RESOLVE_CONTEXT_LIMIT: Final = 8
 """Maximum focal entities in WP-5.6's bounded S51 context tie-break."""
@@ -237,6 +254,89 @@ _BOUNDED_AGGREGATE_FORMS = frozenset(
 `count` and `timeline` are naturally bounded (one row / one row per year)."""
 
 
+def _encode_lookup_cursor(
+    *, scope_hash: str, evaluated_at: datetime, ingested_at: datetime, fact_id: UUID
+) -> str:
+    """Pack a browse-lookup keyset position with its pinned belief instant."""
+    raw = json.dumps(
+        {
+            "v": 1,
+            "s": scope_hash,
+            "e": evaluated_at.isoformat(),
+            "a": ingested_at.isoformat(),
+            "i": str(fact_id),
+        },
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_lookup_cursor(
+    token: str | None, *, scope_hash: str
+) -> tuple[datetime, tuple[datetime, UUID] | None]:
+    """Unpack a browse-lookup cursor, or raise when it is malformed."""
+    if token is None:
+        return datetime.now(tz=UTC), None
+    padding = "=" * (-len(token) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(token + padding).decode())
+        if int(payload["v"]) != 1:
+            raise ValueError("bad version")
+        evaluated_at = datetime.fromisoformat(payload["e"])
+        ingested_at = datetime.fromisoformat(payload["a"])
+        fact_id = UUID(str(payload["i"]))
+        payload_scope = payload["s"]
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ) as error:
+        raise ValueError(f"invalid lookup cursor: {token!r}") from error
+    if evaluated_at.tzinfo is None or ingested_at.tzinfo is None:
+        raise ValueError(f"invalid lookup cursor: {token!r}")
+    assert_cursor_scope(payload_scope=payload_scope, expected_scope=scope_hash)
+    return evaluated_at, (ingested_at, fact_id)
+
+
+def _lookup_relations_scope_hash(
+    *,
+    deployment_id: UUID,
+    subject_entity_id: UUID | None,
+    predicate: str | None,
+    object_entity_id: UUID | None,
+    valid_at: datetime | None,
+) -> str:
+    """Scope of a relations browse listing (filters that define membership)."""
+    return cursor_scope_hash(
+        {
+            "subject_entity_id": None
+            if subject_entity_id is None
+            else str(subject_entity_id),
+            "predicate": predicate,
+            "object_entity_id": None
+            if object_entity_id is None
+            else str(object_entity_id),
+            "valid_at": None if valid_at is None else valid_at.isoformat(),
+        },
+        deployment_id=deployment_id,
+    )
+
+
+def _lookup_observations_scope_hash(
+    *, deployment_id: UUID, entity_id: UUID, valid_at: datetime | None
+) -> str:
+    """Scope of an observations browse listing."""
+    return cursor_scope_hash(
+        {
+            "entity_id": str(entity_id),
+            "valid_at": None if valid_at is None else valid_at.isoformat(),
+        },
+        deployment_id=deployment_id,
+    )
+
+
 def _encode_feed_cursor(*, at: datetime, item_id: UUID) -> str:
     """Pack a delta feed position into one opaque, resumable token."""
     raw = f"{at.isoformat()}|{item_id}".encode()
@@ -252,7 +352,7 @@ def _decode_feed_cursor(token: str | None) -> tuple[datetime, UUID] | None:
         at_text, id_text = raw.rsplit("|", 1)
         return (datetime.fromisoformat(at_text), UUID(id_text))
     except (ValueError, binascii.Error) as error:
-        raise ValueError(f"invalid delta continuation: {token!r}") from error
+        raise ValueError(f"invalid delta cursor: {token!r}") from error
 
 
 def _with_surface[**P, T](
@@ -580,6 +680,47 @@ class QueryEngine:
             connection.exec_driver_sql("SELECT 1")
             yield connection
 
+    def _resolve_documents(
+        self, *, deployment_id: UUID, documents: DocumentSearchFilters | None
+    ) -> DocumentSearchFilters | None:
+        """Resolve the filter's D156 tags to ids, refusing unknown tags first."""
+        if documents is None or documents.tags is None:
+            return documents
+        with self._read() as connection:
+            return resolve_filter_tags_on(
+                connection=connection, deployment_id=deployment_id, filters=documents
+            )
+
+    def _empty_explanation(
+        self,
+        *,
+        deployment_id: UUID,
+        documents: DocumentSearchFilters | None,
+        empty: bool,
+        unfiltered: str,
+    ) -> str:
+        """The ``known_empty`` explanation of a completed read (D156 §4.5).
+
+        Only a completed, empty, filtered read asks whether any live document
+        matches the filter, so it can say which of the two cases occurred;
+        every other read keeps its ordinary explanation and costs nothing.
+        """
+        if not empty or documents is None:
+            return unfiltered
+        statement, parameters = any_live_document_matches(
+            filters=documents, prefix="documents_"
+        )
+        with self._read() as connection:
+            matched = connection.execute(
+                text(statement), {"deployment_id": deployment_id, **parameters}
+            ).scalar_one()
+        if matched:
+            return (
+                f"{unfiltered}: live documents match the documents filter,"
+                " but none of them says anything relevant"
+            )
+        return f"{unfiltered}: no live document matches the documents filter"
+
     def _touched_pending(
         self,
         *,
@@ -651,6 +792,7 @@ class QueryEngine:
                 entity_ids=entity_ids,
                 candidates=candidates,
                 testimony=testimony,
+                documents=documents,
             )
             return _Touched(
                 touched_by_testimony,
@@ -730,6 +872,7 @@ class QueryEngine:
         entity_ids: tuple[UUID, ...],
         candidates: tuple[UUID, ...],
         testimony: Callable[..., object],
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[UUID, ...]:
         """The entity-scoped form of the §3.7 probe: replay the real nomination.
 
@@ -754,6 +897,8 @@ class QueryEngine:
                 "time": scope,
                 "pending_doc_ids": pending,
             }
+            if documents is not None:
+                arguments["documents"] = documents
             if channel == "semantic":
                 arguments["vector"] = self._embed(
                     query=query,
@@ -1182,6 +1327,7 @@ class QueryEngine:
         predicate: str | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        documents: DocumentSearchFilters | None = None,
         _database_deadline: float | None = None,
         _required_entity_ids: tuple[UUID, ...] | None = None,
         _optional_entity_nodes: Mapping[UUID, GraphNode] | None = None,
@@ -1191,6 +1337,13 @@ class QueryEngine:
         D142 §8.2 (review r1 P1-3): standalone calls own one ranked-read
         context (snapshot, deadline, pinned instant); calls from a compound
         recipe join the recipe's.
+
+        ``documents`` (D134/D156) keeps a fact only with live support from a
+        matching document, before ranking. Supporting evidence then comes from
+        matching documents only; contradicting evidence and contradiction
+        co-members come from every document, marked ``in_documents_filter``,
+        and each ``evidence_totals`` row adds its matching count (§4.4). The
+        fact's value, window, support and contradiction status are unchanged.
         """
         selected_time = time or CurrentFactTime()
         try:
@@ -1205,6 +1358,7 @@ class QueryEngine:
                     predicate=predicate,
                     time=time,
                     evaluated_at=evaluation,
+                    documents=documents,
                     _database_deadline=_database_deadline,
                     _required_entity_ids=_required_entity_ids,
                     _optional_entity_nodes=_optional_entity_nodes,
@@ -1237,12 +1391,17 @@ class QueryEngine:
         predicate: str | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        documents: DocumentSearchFilters | None = None,
         _database_deadline: float | None = None,
         _required_entity_ids: tuple[UUID, ...] | None = None,
         _optional_entity_nodes: Mapping[UUID, GraphNode] | None = None,
     ) -> Envelope:
         """The facts_context body inside its operation context."""
         _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        documents = self._resolve_documents(
+            deployment_id=deployment_id,
+            documents=None if documents is None or is_empty(documents) else documents,
+        )
         candidate_k = ContextRetrievalBudget(
             k=k, candidate_k=candidate_k
         ).candidate_depth
@@ -1303,6 +1462,7 @@ class QueryEngine:
             evaluated_at=evaluation,
             deadline=database_deadline,
             candidate_k=candidate_k,
+            documents=documents,
         )
         candidate_keys = tuple(
             (item.qualifier, UUID(item.item_id))
@@ -1311,6 +1471,7 @@ class QueryEngine:
         )
         evidence_by_fact_stance: dict[tuple[str, UUID, str], list[RowMapping]] = {}
         totals: dict[tuple[str, UUID, str], int] = {}
+        matching_totals: dict[tuple[str, UUID, str], int] = {}
         with self._fact_connection(
             deadline=database_deadline, isolation_level="REPEATABLE READ"
         ) as connection:
@@ -1357,6 +1518,7 @@ class QueryEngine:
                     ranking_entity_ids=required_entity_ids,
                     predicate=predicate,
                     deadline=database_deadline,
+                    documents=documents,
                 )
                 visited_candidates += len(batch)
                 confirmed_rows.extend(batch_rows)
@@ -1374,27 +1536,43 @@ class QueryEngine:
                     evidence_per_fact=evidence_per_fact,
                     deadline=database_deadline,
                     scope=gate_scope,
+                    documents=documents,
                 )
                 if fact_rows
                 else []
             )
-            periodised_claims = tuple(
-                {row["claim_id"] for row in evidence_rows if row["periodised"]}
-            )
-            occurrences = (
-                _selected_occurrences(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    claim_ids=periodised_claims,
-                    scope=gate_scope,
+            # A matching claim is shown through its matching occurrences, any
+            # other through every occurrence the scope selects.
+            occurrences: dict[UUID, list[ClaimOccurrence]] = {}
+            for matching in (False, True):
+                periodised_claims = tuple(
+                    {
+                        row["claim_id"]
+                        for row in evidence_rows
+                        if row["periodised"]
+                        and bool(documents is not None and row["in_filter"]) is matching
+                    }
                 )
-                if periodised_claims
-                else {}
-            )
+                if periodised_claims:
+                    occurrences.update(
+                        _selected_occurrences(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            claim_ids=periodised_claims,
+                            scope=gate_scope,
+                            documents=documents if matching else None,
+                        )
+                    )
             for row in evidence_rows:
                 key = (str(row["kind"]), row["fact_id"], str(row["stance"]))
-                evidence_by_fact_stance.setdefault(key, []).append(row)
                 totals[key] = int(row["evidence_total"])
+                if documents is not None:
+                    matching_totals[key] = int(row["matching_total"])
+                    if row["stance"] == "supports" and not row["in_filter"]:
+                        # D156 §4.4: support is drawn from matching documents
+                        # only; the lineage still counts in the totals.
+                        continue
+                evidence_by_fact_stance.setdefault(key, []).append(row)
             confirmed_facts = self._enrich_facts_context_facts(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -1402,6 +1580,7 @@ class QueryEngine:
                 time=selected_time,
                 evaluated_at=evaluation,
                 deadline=database_deadline,
+                documents=documents,
             )
         facts = confirmed_facts[:k]
         selected = _select_fact_evidence(
@@ -1421,6 +1600,9 @@ class QueryEngine:
                     "fact_id": row["fact_id"],
                     "claim_id": row["claim_id"],
                     "stance": str(row["stance"]),
+                    "in_documents_filter": (
+                        bool(row["in_filter"]) if documents is not None else None
+                    ),
                 }
             )
             for row in selected
@@ -1439,6 +1621,8 @@ class QueryEngine:
                     "evidence_total",
                     "stance_rank",
                     "periodised",
+                    "in_filter",
+                    "matching_total",
                 }
             }
             shown = occurrences.get(claim_id)
@@ -1464,6 +1648,11 @@ class QueryEngine:
                 stance=stance,
                 returned=returned_counts[(fact.kind, fact.fact_id, stance)],
                 total=totals.get((fact.kind, fact.fact_id, stance), 0),
+                in_documents_filter_total=(
+                    matching_totals.get((fact.kind, fact.fact_id, stance), 0)
+                    if documents is not None
+                    else None
+                ),
             )
             for fact in facts
             for stance in _EVIDENCE_STANCES
@@ -1475,6 +1664,12 @@ class QueryEngine:
         confirmation_incomplete = visited_candidates < len(candidate_keys)
         nomination_account = search_account(nominated)
         nomination_stopped = not nomination_account.termination.complete
+        explanation = self._empty_explanation(
+            deployment_id=deployment_id,
+            documents=documents,
+            empty=not facts and not nomination_stopped,
+            unfiltered=f"no adjudicated facts match {query!r}",
+        )
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=_fact_temporal_scope(
@@ -1511,7 +1706,7 @@ class QueryEngine:
             if facts
             else _empty_negative(
                 nomination_account,
-                explanation=f"no adjudicated facts match {query!r}",
+                explanation=explanation,
                 workaround="broaden the query or inspect source testimony",
             ),
         )
@@ -1533,6 +1728,7 @@ class QueryEngine:
         predicate: str | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
+        documents: DocumentSearchFilters | None = None,
         _database_deadline: float | None = None,
         _snapshot_connection: Connection | None = None,
     ) -> Envelope:
@@ -1545,6 +1741,10 @@ class QueryEngine:
         graph is a typed boundary rather than a silent anchor-only fallback.
         Interval and history reads preserve their explicit anchor scope because
         neighborhood expansion requires a single world-time instant.
+
+        ``documents`` (D134/D156) scopes the facts (see ``facts_context``),
+        never the anchors or their graph neighborhood; its tags are checked
+        before any retrieval.
         """
         _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
         candidate_k = ContextRetrievalBudget(
@@ -1554,6 +1754,10 @@ class QueryEngine:
         _validate_optional_predicate(predicate=predicate)
         anchors = _validate_context_entity_ids(entity_ids=entity_ids)
         _validate_default_facts_context_anchor_count(anchors=anchors)
+        documents = self._resolve_documents(
+            deployment_id=deployment_id,
+            documents=None if documents is None or is_empty(documents) else documents,
+        )
         evaluation = evaluated_at or datetime.now(UTC)
         selected_time = time or CurrentFactTime()
         operation = self._fact_read_pool.operation() if self._fact_read_pool else None
@@ -1584,6 +1788,7 @@ class QueryEngine:
                     predicate=predicate,
                     time=selected_time,
                     evaluated_at=evaluation,
+                    documents=documents,
                     _database_deadline=database_deadline,
                     _required_entity_ids=required_entity_ids,
                     _optional_entity_nodes=optional_entity_nodes,
@@ -1823,6 +2028,7 @@ class QueryEngine:
         evaluated_at: datetime | None = None,
         time: ReadTime | FactTime | None = None,
         layers: frozenset[ProcessingLayer] | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Return current claims and source passages, never facts or entities.
 
@@ -1830,11 +2036,15 @@ class QueryEngine:
         for the scope in every nomination channel and at confirmation.
         ``layers`` (D143 §7.1) narrows the consulted channels — claims,
         sources or both; entity scoping needs the facts layer.
+        ``documents`` (D134/D156) keeps only claims with a live occurrence in a
+        matching document and chunks of matching documents, before ranking; an
+        unregistered tag is ``UnknownTagError`` before retrieval.
         """
         candidate_k = ContextRetrievalBudget(
             k=k, candidate_k=candidate_k
         ).candidate_depth
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
+        documents = None if documents is None or is_empty(documents) else documents
         admission = self.layer_admission(
             deployment_id=deployment_id,
             channels=_EVIDENCE_LAYERS,
@@ -1851,6 +2061,7 @@ class QueryEngine:
                 evaluated_at=evaluated_at,
                 time=time,
                 channels=admission.consulted,
+                documents=documents,
             ),
             admission=admission,
         )
@@ -1866,6 +2077,7 @@ class QueryEngine:
         evaluated_at: datetime | None,
         time: ReadTime | FactTime | None,
         channels: frozenset[ProcessingLayer],
+        documents: DocumentSearchFilters | None,
     ) -> Envelope:
         """The operation body over the channels its layer admission allows."""
         # D142 §8.2 (review r1 P1-3/P1-4): the entity check, every channel,
@@ -1873,6 +2085,9 @@ class QueryEngine:
         # deadline and authority instant.
         try:
             with self._operation(evaluated_at=evaluated_at) as evaluation:
+                documents = self._resolve_documents(
+                    deployment_id=deployment_id, documents=documents
+                )
                 scope = TextScope.of(time=time, evaluated_at=evaluation)
                 if entity_ids:
                     with self._read() as connection:
@@ -1896,6 +2111,7 @@ class QueryEngine:
                     evaluation=evaluation,
                     nominate_in_scope=True,
                     channels=channels,
+                    documents=documents,
                 )
         except P1EntityScopeTooBroadError as error:
             return _entity_scope_too_broad(grain=Grain.EVIDENCE, explanation=str(error))
@@ -1918,11 +2134,13 @@ class QueryEngine:
         channels: frozenset[ProcessingLayer] = frozenset(
             {ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS}
         ),
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """The body of ``claims_and_sources_context`` inside one P1 snapshot.
 
         Only the admitted ``channels`` nominate, and the D140 pending probes
-        follow them (D143 §7.2 rule 4).
+        follow them (D143 §7.2 rule 4). A completed empty filtered answer
+        says whether any live document matched the filter (D156 §4.5).
         """
         answer = self._claims_and_sources_context_retrieval(
             deployment_id=deployment_id,
@@ -1933,6 +2151,7 @@ class QueryEngine:
             scope=scope,
             nominate_in_scope=nominate_in_scope,
             channels=channels,
+            documents=documents,
         )
         probes: tuple[
             tuple[Literal["claim", "chunk"], Literal["semantic", "bm25"], int], ...
@@ -1952,7 +2171,7 @@ class QueryEngine:
             deployment_id=deployment_id,
             scope=scope,
             query=query,
-            documents=None,
+            documents=documents,
             probes=probes,
             entity_ids=entity_ids,
         )
@@ -1962,21 +2181,34 @@ class QueryEngine:
             doc_ids=(
                 *(record.doc_id for record in answer.evidence),
                 *(record.doc_id for record in answer.chunks),
+                *(documents.doc_ids if documents is not None else ()),
                 *touched,
             ),
             pending_complete=_touched_complete(touched),
         )
-        return answer.model_copy(
-            update={
-                "temporal_scope": _text_temporal_scope(scope=scope),
-                "freshness": answer.freshness.model_copy(
-                    update={
-                        "pg_live_ts": evaluation,
-                        "scope_pending": scoped.scope_pending,
-                    }
-                ),
-            }
-        )
+        update: dict[str, object] = {
+            "temporal_scope": _text_temporal_scope(scope=scope),
+            "freshness": answer.freshness.model_copy(
+                update={"pg_live_ts": evaluation, "scope_pending": scoped.scope_pending}
+            ),
+        }
+        negative = answer.negative
+        if (
+            documents is not None
+            and negative is not None
+            and negative.kind is NegativeKind.KNOWN_EMPTY
+        ):
+            update["negative"] = negative.model_copy(
+                update={
+                    "explanation": self._empty_explanation(
+                        deployment_id=deployment_id,
+                        documents=documents,
+                        empty=True,
+                        unfiltered=negative.explanation,
+                    )
+                }
+            )
+        return answer.model_copy(update=update)
 
     @_requires_layer(ProcessingLayer.FACTS)
     def lookup_relations(
@@ -1987,50 +2219,77 @@ class QueryEngine:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
-        k: int = 50,
+        limit: int = DEFAULT_LOOKUP_BROWSE_LIMIT,
+        cursor: str | None = None,
     ) -> Envelope:
-        """Relations matching the (s, p, o) pattern — fact grain (S1/S3/S9).
+        """Browse relations matching the (s, p, o) pattern — fact grain (S1/S3/S9).
 
-        At most `k` relations return, strongest evidence first; when more
-        match, the envelope's `truncation` says so (no silent top-k, S18).
-
-        Without `valid_at`, current means both clocks: still believed AND the
-        valid-time window covers now. With `valid_at`, the window test moves
-        to that instant (the S9-class as-of read; belief stays live — the
-        believed_at axis arrives with its own parameter). The applied instant
-        is echoed in the envelope. An existing entity with no matching facts
-        is `known_empty` (S39).
+        Filter-only browse list (D154): ``limit`` (default 50, max 200) and
+        opaque ``cursor`` in; ``Envelope.next_cursor`` out. Ordered by
+        ``(ingested_at DESC, relation_id DESC)``; the cursor pins the belief
+        instant. Without ``valid_at``, current means both clocks: still
+        believed AND the valid-time window covers now. With ``valid_at``, the
+        window test moves to that instant. An existing entity with no matching
+        facts is ``known_empty`` (S39).
         """
-        evaluated_at = datetime.now(tz=UTC)
-        as_of = valid_at or evaluated_at
-        with self._engine.connect() as connection:
-            rows = (
-                connection.execute(
-                    _LOOKUP_RELATIONS,
-                    {
-                        "deployment_id": deployment_id,
-                        "subject_entity_id": subject_entity_id,
-                        "predicate": predicate,
-                        "object_entity_id": object_entity_id,
-                        "as_of": as_of,
-                        "limit": k + 1,
-                        **_lookup_scope(
-                            valid_at=valid_at, evaluated_at=evaluated_at
-                        ).parameters(),
-                    },
-                )
-                .mappings()
-                .all()
+        if not 1 <= limit <= MAX_LOOKUP_BROWSE_LIMIT:
+            raise ValueError(
+                f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
             )
-        truncated = len(rows) > k
-        rows = rows[:k]
-        # Every candidate carries its own temporal_match; an undated fact is a
-        # flagged possible match here, exactly as in facts_context.
+        scope_hash = _lookup_relations_scope_hash(
+            deployment_id=deployment_id,
+            subject_entity_id=subject_entity_id,
+            predicate=predicate,
+            object_entity_id=object_entity_id,
+            valid_at=valid_at,
+        )
+        evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
+        with self._engine.connect() as connection:
+            # Wait for stamped declarations before opening the page snapshot.
+            if keyset is None:
+                evaluated_at = belief_watermark(
+                    connection=connection, deployment_id=deployment_id
+                )
+            connection = connection.execution_options(isolation_level="REPEATABLE READ")
+            with connection.begin():
+                as_of = valid_at or evaluated_at
+                rows = (
+                    connection.execute(
+                        _lookup_relations_sql(),
+                        {
+                            "deployment_id": deployment_id,
+                            "subject_entity_id": subject_entity_id,
+                            "predicate": predicate,
+                            "object_entity_id": object_entity_id,
+                            "as_of": as_of,
+                            "evaluated_at": evaluated_at,
+                            "cursor_at": keyset[0] if keyset else None,
+                            "cursor_id": keyset[1] if keyset else None,
+                            "limit": limit + 1,
+                            **_lookup_scope(
+                                valid_at=valid_at, evaluated_at=evaluated_at
+                            ).parameters(),
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="relation") for row in rows),
             kind="relation",
         )
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = _encode_lookup_cursor(
+                scope_hash=scope_hash,
+                evaluated_at=evaluated_at,
+                ingested_at=last["ingested_at"],
+                fact_id=last["fact_id"],
+            )
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=(
@@ -2042,7 +2301,7 @@ class QueryEngine:
             ),
             facts=facts,
             freshness=_freshness(),
-            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
+            next_cursor=next_cursor,
             negative=None
             if facts
             else Negative(
@@ -2061,59 +2320,122 @@ class QueryEngine:
         entity_id: UUID,
         property_query: str | None = None,
         k: int = 10,
+        limit: int = DEFAULT_LOOKUP_BROWSE_LIMIT,
+        cursor: str | None = None,
         valid_at: datetime | None = None,
     ) -> Envelope:
         """Observations on one entity — current, or as-of on the valid-time
         axis (S2/S9, D43): "headcount mid-2024" is the capped slice whose
         window covers that instant.
 
-        With a property query, the facts channel NOMINATES by label similarity
-        and the spine confirms live rows (D48); without one, the entity block
-        is read directly.
+        Without a property query this is a browse list (D154): ``limit`` /
+        ``cursor`` → ``next_cursor``, ordered by ``(ingested_at DESC, id)``.
+        With a property query the facts channel nominates by label similarity
+        and the spine confirms live rows (D48); ranked top-``k`` always
+        discloses ``truncation`` when more than ``k`` matched. ``cursor`` with
+        ``property_query`` is rejected.
         """
+        if property_query is not None and cursor is not None:
+            raise ValueError(
+                "cursor pages filter-only observation lookups; "
+                "drop property_query or cursor"
+            )
         dropped = 0
         truncated = False
-        evaluated_at = datetime.now(tz=UTC)
-        as_of = valid_at or evaluated_at
+        next_cursor = None
         if property_query is None:
-            with self._engine.connect() as connection:
-                rows = (
-                    connection.execute(
-                        _LOOKUP_OBSERVATIONS,
-                        {
-                            "deployment_id": deployment_id,
-                            "entity_id": entity_id,
-                            "as_of": as_of,
-                            "limit": k + 1,
-                            **_lookup_scope(
-                                valid_at=valid_at, evaluated_at=evaluated_at
-                            ).parameters(),
-                        },
-                    )
-                    .mappings()
-                    .all()
+            if not 1 <= limit <= MAX_LOOKUP_BROWSE_LIMIT:
+                raise ValueError(
+                    f"lookup limit must be between 1 and {MAX_LOOKUP_BROWSE_LIMIT}"
                 )
-            truncated = len(rows) > k
-            rows = rows[:k]
-        else:
-            nominated = self._search_index.search_facts(
-                deployment_id=str(deployment_id),
-                vector=self._embed(
-                    query=property_query,
-                    call_site=SurfaceCallSite.LOOKUP_OBSERVATIONS,
-                    deployment_id=deployment_id,
-                ),
-                k=k,
-                kind="observation",
+            scope_hash = _lookup_observations_scope_hash(
+                deployment_id=deployment_id, entity_id=entity_id, valid_at=valid_at
             )
-            rows, dropped = self._confirm_observations(
+            evaluated_at, keyset = _decode_lookup_cursor(cursor, scope_hash=scope_hash)
+            with self._engine.connect() as connection:
+                if keyset is None:
+                    evaluated_at = belief_watermark(
+                        connection=connection, deployment_id=deployment_id
+                    )
+                connection = connection.execution_options(
+                    isolation_level="REPEATABLE READ"
+                )
+                with connection.begin():
+                    as_of = valid_at or evaluated_at
+                    rows = (
+                        connection.execute(
+                            _lookup_observations_sql(),
+                            {
+                                "deployment_id": deployment_id,
+                                "entity_id": entity_id,
+                                "as_of": as_of,
+                                "evaluated_at": evaluated_at,
+                                "cursor_at": keyset[0] if keyset else None,
+                                "cursor_id": keyset[1] if keyset else None,
+                                "limit": limit + 1,
+                                **_lookup_scope(
+                                    valid_at=valid_at, evaluated_at=evaluated_at
+                                ).parameters(),
+                            },
+                        )
+                        .mappings()
+                        .all()
+                    )
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            if has_more and rows:
+                last = rows[-1]
+                next_cursor = _encode_lookup_cursor(
+                    scope_hash=scope_hash,
+                    evaluated_at=evaluated_at,
+                    ingested_at=last["ingested_at"],
+                    fact_id=last["fact_id"],
+                )
+        else:
+            if not 1 <= k <= 400:
+                raise ValueError("lookup k must be between 1 and 400")
+            evaluated_at = datetime.now(tz=UTC)
+            as_of = valid_at or evaluated_at
+            # Restrict to this entity before the k+1 cut so truncated /
+            # known_empty describe this entity's matches, not the corpus.
+            search_scored = getattr(self._search_index, "search_facts_scored", None)
+            vector = self._embed(
+                query=property_query,
+                call_site=SurfaceCallSite.LOOKUP_OBSERVATIONS,
+                deployment_id=deployment_id,
+            )
+            if search_scored is not None:
+                scored = search_scored(
+                    deployment_id=str(deployment_id),
+                    vector=vector,
+                    k=k + 1,
+                    kind="observation",
+                    entity_ids=(str(entity_id),),
+                    time=(
+                        CurrentFactTime()
+                        if valid_at is None
+                        else AtFactTime(at=valid_at)
+                    ),
+                    evaluated_at=evaluated_at,
+                )
+                nominated = tuple(item.item_id for item in scored)
+            else:
+                nominated = tuple(
+                    self._search_index.search_facts(
+                        deployment_id=str(deployment_id),
+                        vector=vector,
+                        k=k + 1,
+                        kind="observation",
+                    )
+                )
+            confirmed, dropped = self._confirm_observations(
                 deployment_id=deployment_id,
                 entity_id=entity_id,
                 observation_ids=tuple(UUID(item) for item in nominated),
                 as_of=as_of,
             )
-        # Every candidate carries its own temporal_match; an undated fact is a
-        # flagged possible match here, exactly as in facts_context.
+            truncated = len(nominated) > k
+            rows = confirmed[:k]
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="observation") for row in rows),
@@ -2132,6 +2454,7 @@ class QueryEngine:
             freshness=_freshness(),
             dropped_by_hydration=dropped,
             truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
+            next_cursor=next_cursor,
             negative=None
             if facts
             else Negative(
@@ -2173,6 +2496,9 @@ class QueryEngine:
         # for nomination, confirmation and the pending/freshness reads.
         try:
             with self._operation(evaluated_at=None) as evaluation:
+                documents = self._resolve_documents(
+                    deployment_id=deployment_id, documents=documents
+                )
                 scope = TextScope.of(time=time, evaluated_at=evaluation)
                 nominated = self._nominate_claim_ids(
                     deployment_id=deployment_id,
@@ -2206,11 +2532,17 @@ class QueryEngine:
                     ),
                     pending_complete=_touched_complete(touched),
                 )
+                account = search_account(nominated)
+                explanation = self._empty_explanation(
+                    deployment_id=deployment_id,
+                    documents=documents,
+                    empty=not evidence and account.termination.complete,
+                    unfiltered="no current-testimony claims match the query",
+                )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
-        account = search_account(nominated)
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
@@ -2222,7 +2554,7 @@ class QueryEngine:
             if evidence
             else _empty_negative(
                 account,
-                explanation="no current-testimony claims match the query",
+                explanation=explanation,
                 workaround="broaden the query or inspect the source artifacts",
             ),
         )
@@ -2236,6 +2568,7 @@ class QueryEngine:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         time: TextScope | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Rank claim IDs without returning unconfirmed claim content.
 
@@ -2253,6 +2586,7 @@ class QueryEngine:
                     k=k,
                     channel=channel,
                     call_site=SurfaceCallSite.NOMINATE_CLAIMS,
+                    documents=documents,
                     time=time,
                 )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
@@ -2287,6 +2621,9 @@ class QueryEngine:
         # for nomination, confirmation and the pending/freshness reads.
         try:
             with self._operation(evaluated_at=None) as evaluation:
+                documents = self._resolve_documents(
+                    deployment_id=deployment_id, documents=documents
+                )
                 scope = TextScope.of(time=time, evaluated_at=evaluation)
                 nominated = self._nominate_chunk_ids(
                     deployment_id=deployment_id,
@@ -2320,11 +2657,17 @@ class QueryEngine:
                     ),
                     pending_complete=_touched_complete(touched),
                 )
+                account = search_account(nominated)
+                explanation = self._empty_explanation(
+                    deployment_id=deployment_id,
+                    documents=documents,
+                    empty=not chunks and account.termination.complete,
+                    unfiltered="no live source chunks match the query",
+                )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
-        account = search_account(nominated)
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
@@ -2336,7 +2679,7 @@ class QueryEngine:
             if chunks
             else _empty_negative(
                 account,
-                explanation="no live source chunks match the query",
+                explanation=explanation,
                 workaround="broaden the query or inspect the source artifacts",
             ),
         )
@@ -2418,8 +2761,12 @@ class QueryEngine:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         time: TextScope | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Rank source-chunk IDs without returning unconfirmed source text."""
+        """Rank source-chunk IDs without returning unconfirmed source text.
+
+        ``documents`` must already be resolved (tags as ids).
+        """
         # D142 §8.6 (review r1 P1-7): the nomination runs under one operation
         # deadline and pinned instant even without a later confirmation.
         try:
@@ -2430,6 +2777,7 @@ class QueryEngine:
                     k=k,
                     channel=channel,
                     call_site=SurfaceCallSite.NOMINATE_CHUNKS,
+                    documents=documents,
                     time=time,
                 )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
@@ -2695,6 +3043,7 @@ class QueryEngine:
         group_exact_text: bool = False,
         entity_ids: tuple[UUID, ...] = (),
         time: TextScope | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Confirm claim ids into evidence rows, keeping any prior ranking.
 
@@ -2714,6 +3063,7 @@ class QueryEngine:
             deployment_id=deployment_id,
             claim_ids=ordered_ids,
             entity_ids=entity_ids,
+            documents=documents,
             scope=time,
         )
         positions = {claim_id: index for index, claim_id in enumerate(ordered_ids)}
@@ -2762,6 +3112,7 @@ class QueryEngine:
         limit: int | None = None,
         entity_ids: tuple[UUID, ...] = (),
         time: TextScope | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Confirm chunk ids into live source evidence, preserving scores.
 
@@ -2776,6 +3127,7 @@ class QueryEngine:
             deployment_id=deployment_id,
             chunk_ids=ordered_ids,
             entity_ids=entity_ids,
+            documents=documents,
             scope=time,
         )
         positions = {chunk_id: index for index, chunk_id in enumerate(ordered_ids)}
@@ -2838,15 +3190,6 @@ class QueryEngine:
             for envelope in inputs
             if envelope.truncation is not None
         )
-        continuations = tuple(
-            truncation.continuation
-            for truncation in truncations
-            if truncation.continuation is not None
-        )
-        if len(continuations) > 1:
-            raise ValueError(
-                "combine_evidence cannot merge multiple continuation tokens"
-            )
         evidence_by_id = {
             record.claim_id: record
             for envelope in inputs
@@ -2870,7 +3213,6 @@ class QueryEngine:
                 returned=len(evidence) + len(chunks),
                 estimated_total=estimated_total,
                 total_is_exact=all(item.total_is_exact for item in truncations),
-                continuation=continuations[0] if continuations else None,
                 reason=next((item.reason for item in truncations if item.reason), None),
             )
         # review r1 P1-1: an input that stopped early or answered with a
@@ -2954,7 +3296,7 @@ class QueryEngine:
         since: datetime,
         kinds: tuple[str, ...] | None = None,
         limit: int = DEFAULT_DELTA_LIMIT,
-        continuation: str | None = None,
+        cursor: str | None = None,
     ) -> Envelope:
         """The change feed as a query: what changed since `since` (S13/S14/S30).
 
@@ -2967,14 +3309,14 @@ class QueryEngine:
         of {relation, observation, claim, page}.
 
         Ordered newest-first over the FULL `(at, id)` key and bounded: hitting
-        `limit` sets a truncation marker carrying an opaque `continuation`.
-        Paginating means passing that token back (keeping the same `since`) —
-        it resumes strictly before the last row seen, so a page boundary that
-        splits rows sharing one timestamp never drops the tied remainder.
+        `limit` sets ``Envelope.next_cursor`` (D154). Paginating means passing
+        that token back (keeping the same `since`) — it resumes strictly
+        before the last row seen, so a page boundary that splits rows sharing
+        one timestamp never drops the tied remainder.
         """
         if limit < 1:
             raise ValueError("limit must be at least 1")
-        cursor = _decode_feed_cursor(continuation)
+        feed_cursor = _decode_feed_cursor(cursor)
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -2983,8 +3325,8 @@ class QueryEngine:
                         "deployment_id": deployment_id,
                         "since": since,
                         "kinds": list(kinds) if kinds else None,
-                        "cursor_at": cursor[0] if cursor else None,
-                        "cursor_id": str(cursor[1]) if cursor else None,
+                        "cursor_at": feed_cursor[0] if feed_cursor else None,
+                        "cursor_id": str(feed_cursor[1]) if feed_cursor else None,
                         "fetch": limit + 1,
                     },
                 )
@@ -3017,8 +3359,10 @@ class QueryEngine:
                 returned=len(changes),
                 estimated_total=len(changes),
                 total_is_exact=not truncated,
-                continuation=next_cursor,
-            ),
+            )
+            if truncated
+            else None,
+            next_cursor=next_cursor,
             negative=None
             if changes
             else Negative(
@@ -3233,12 +3577,16 @@ class QueryEngine:
         channels: frozenset[ProcessingLayer] = frozenset(
             {ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS}
         ),
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Run the testimony hybrid, optionally ranking inside an entity scope.
 
         ``scope`` (D140) is applied at confirmation, and in every nomination
         channel when ``nominate_in_scope`` (otherwise the PostgreSQL index
-        applies the current scope itself).
+        applies the current scope itself). ``documents`` (a resolved D134/D156
+        filter) is an eligibility input of every nomination channel and is
+        re-checked at confirmation, so results come only from matching
+        documents (D156 §4.3).
 
         This deliberately mirrors the registered operation's two independent
         semantic/BM25 nominations, RRF, one confirmation per grain, and typed
@@ -3255,6 +3603,7 @@ class QueryEngine:
                 channel="semantic",
                 entity_ids=entity_ids,
                 time=nomination_time,
+                documents=documents,
             )
             lexical = self._nominate_claims_and_sources_claims(
                 deployment_id=deployment_id,
@@ -3263,6 +3612,7 @@ class QueryEngine:
                 channel="bm25",
                 entity_ids=entity_ids,
                 time=nomination_time,
+                documents=documents,
             )
             fused = self.fuse(
                 rankings=(
@@ -3279,6 +3629,7 @@ class QueryEngine:
                     group_exact_text=True,
                     entity_ids=entity_ids,
                     time=scope,
+                    documents=documents,
                 ),
                 k=k,
                 nomination_exhausted=(
@@ -3298,6 +3649,7 @@ class QueryEngine:
                 channel="semantic",
                 entity_ids=entity_ids,
                 time=nomination_time,
+                documents=documents,
             )
             lexical = self._nominate_claims_and_sources_chunks(
                 deployment_id=deployment_id,
@@ -3306,6 +3658,7 @@ class QueryEngine:
                 channel="bm25",
                 entity_ids=entity_ids,
                 time=nomination_time,
+                documents=documents,
             )
             fused = self.fuse(
                 rankings=(
@@ -3321,6 +3674,7 @@ class QueryEngine:
                     ranking=fused.ranking,
                     entity_ids=entity_ids,
                     time=scope,
+                    documents=documents,
                 ),
                 k=k,
                 nomination_exhausted=(
@@ -3351,6 +3705,7 @@ class QueryEngine:
         channel: Literal["semantic", "bm25"],
         entity_ids: tuple[UUID, ...],
         time: TextScope | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Nominate claims globally or through one normalized entity join."""
         if not entity_ids:
@@ -3360,8 +3715,11 @@ class QueryEngine:
                 k=k,
                 channel=channel,
                 time=time,
+                documents=documents,
             )
         in_scope: dict[str, Any] = {} if time is None else {"time": time}
+        if documents is not None:
+            in_scope["documents"] = documents
         nomination_method = getattr(
             self._search_index, "nominate_testimony_scored", None
         )
@@ -3435,6 +3793,7 @@ class QueryEngine:
         channel: Literal["semantic", "bm25"],
         entity_ids: tuple[UUID, ...],
         time: TextScope | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Nominate passages globally or through one normalized entity join."""
         if not entity_ids:
@@ -3444,8 +3803,11 @@ class QueryEngine:
                 k=k,
                 channel=channel,
                 time=time,
+                documents=documents,
             )
         in_scope: dict[str, Any] = {} if time is None else {"time": time}
+        if documents is not None:
+            in_scope["documents"] = documents
         nomination_method = getattr(
             self._search_index, "nominate_testimony_scored", None
         )
@@ -3525,11 +3887,19 @@ class QueryEngine:
         evaluated_at: datetime,
         deadline: float,
         candidate_k: int = DEFAULT_CONTEXT_CANDIDATES,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank candidates, deferring final fact authority to the confirm gate."""
+        """Rank candidates, deferring final fact authority to the confirm gate.
+
+        A resolved ``documents`` filter is an eligibility input of every
+        nomination (D156 §4.6), never a filter on its ranked output; like a
+        predicate it takes the authority-checked ``search_facts_scored`` path,
+        which applies it before each cut and scores a selective filter's few
+        eligible facts exactly.
+        """
         method = (
             None
-            if predicate is not None
+            if predicate is not None or documents is not None
             else getattr(self._search_index, "nominate_facts_scored", None)
         )
         if not callable(method):
@@ -3559,6 +3929,8 @@ class QueryEngine:
             }
             if predicate is not None:
                 arguments["equality_filters"] = {"predicate": predicate}
+            if documents is not None:
+                arguments["documents"] = documents
             return cast("tuple[P1Nomination, ...]", method(**arguments))
 
         nominated = nominate(scope=entity_ids, ranking_scope=ranking_entity_ids)
@@ -3712,7 +4084,7 @@ class QueryEngine:
 
         For every returned fact in a live contradiction group, the OTHER
         live sides come back inline (bounded by the cap, with
-        group_id/returned/total/continuation) — one-sided is never a valid
+        group_id/returned/total) — one-sided is never a valid
         answer. A fact under an open `support_withdrawn` review flag is
         marked `withdrawn` (flagged, not vanished). Two bounded batch reads,
         never one-per-fact.
@@ -3811,8 +4183,13 @@ class QueryEngine:
         time: FactTime,
         evaluated_at: datetime,
         deadline: float,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[FactResult, ...]:
-        """Build and enrich a mixed fact nomination under the selected scope."""
+        """Build and enrich a mixed fact nomination under the selected scope.
+
+        Contradiction co-members come from every document; with ``documents``
+        each says whether it has live support from a matching one (D156 §4.4).
+        """
         if not rows:
             return ()
         by_kind: dict[str, tuple[FactResult, ...]] = {
@@ -3843,8 +4220,20 @@ class QueryEngine:
                 connection=connection, deadline=deadline
             )
             params = _fact_time_parameters(time=time, evaluated_at=evaluated_at)
+            statement = _FACTS_CONTEXT_CONTRADICTION_MEMBERS
+            if documents is not None:
+                in_filter_sql, document_parameters = fact_supported_matching(
+                    filters=documents,
+                    fact_kind="fact.fact_kind",
+                    fact_id="fact.fact_id",
+                    prefix="documents_",
+                )
+                params.update(document_parameters)
+                statement = _contradiction_members_statement(
+                    in_filter_sql=in_filter_sql
+                )
             member_rows = connection.execute(
-                _FACTS_CONTEXT_CONTRADICTION_MEMBERS,
+                statement,
                 {"deployment_id": deployment_id, "groups": list(groups), **params},
             ).mappings()
             for row in member_rows:
@@ -3888,11 +4277,6 @@ class QueryEngine:
                 co_members=tuple(_co_member(member) for member in returned),
                 returned=len(returned),
                 total=len(others),
-                continuation=(
-                    str(returned[-1]["fact_id"])
-                    if len(returned) < len(others)
-                    else None
-                ),
             )
         return fact.model_copy(update=update) if update else fact
 
@@ -3922,16 +4306,19 @@ class QueryEngine:
             return (), 0, {}
         if entity_ids and not current_only:
             raise ValueError("entity-scoped historical claim hydration is unsupported")
-        if documents is not None and (entity_ids or not current_only):
-            raise ValueError(
-                "document-filtered claim hydration is current and unscoped only"
-            )
+        if documents is not None and not current_only:
+            raise ValueError("document-filtered claim hydration is current only")
         extra: dict[str, Any] = {}
         if scope is not None:
-            statement = _confirm_claims_in_scope_statement(
-                current_only=current_only, entity_scoped=bool(entity_ids)
+            # With ``documents`` the time scope and the filter are re-checked
+            # on the same occurrence (D156 §4.3).
+            statement, document_parameters = _confirm_claims_in_scope_statement(
+                current_only=current_only,
+                entity_scoped=bool(entity_ids),
+                documents=documents,
             )
             extra.update(scope.parameters())
+            extra.update(document_parameters)
         else:
             statement = (
                 _CONFIRM_CLAIMS_CURRENT_SCOPED
@@ -3940,16 +4327,15 @@ class QueryEngine:
                 if current_only
                 else _CONFIRM_CLAIMS_HISTORY
             )
-        if documents is not None:
-            # D134: the filter decides inclusion only. The claim is re-checked
-            # for a live occurrence in a matching version, and the evidence is
-            # its origin occurrence, exactly as without a filter.
-            occurrence_sql, document_parameters = matching_occurrence_exists(
-                filters=documents, claim="c.claim_id", prefix="documents_"
-            )
-            extra.update(document_parameters)
-            base = statement if scope is not None else _CONFIRM_CLAIMS_CURRENT
-            statement = text(f"{base.text}  AND {occurrence_sql}\n")
+            if documents is not None:
+                # D134: the filter decides inclusion only. The claim is
+                # re-checked for a live occurrence in a matching version, and
+                # the evidence is its origin occurrence, as without a filter.
+                occurrence_sql, document_parameters = matching_occurrence_exists(
+                    filters=documents, claim="c.claim_id", prefix="documents_"
+                )
+                extra.update(document_parameters)
+                statement = text(f"{statement.text}  AND {occurrence_sql}\n")
         rows: list[RowMapping] = []
         occurrences: dict[UUID, list[ClaimOccurrence]] = {}
         # Multiple chunks are one answer, so they must observe one database
@@ -3976,6 +4362,7 @@ class QueryEngine:
                     deployment_id=deployment_id,
                     claim_ids=periodised,
                     scope=scope,
+                    documents=documents,
                 )
         confirmed = {row["claim_id"]: row for row in rows}
         coverage = {
@@ -4032,8 +4419,6 @@ class QueryEngine:
         """
         if not chunk_ids:
             return (), 0, {}
-        if documents is not None and entity_ids:
-            raise ValueError("document-filtered chunk hydration is unscoped only")
         statement = _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS
         extra: dict[str, Any] = {}
         predicates: list[str] = []
@@ -4138,8 +4523,10 @@ class QueryEngine:
                             "as_of": as_of,
                             # "at" the confirmed instant; for a current
                             # lookup that instant is the evaluation instant.
+                            # Ranked confirmation reads current belief through
+                            # the projection (same as a first browse page).
                             **_lookup_scope(
-                                valid_at=as_of, evaluated_at=as_of
+                                valid_at=as_of, evaluated_at=as_of, pinned_belief=False
                             ).parameters(),
                         },
                     )
@@ -4276,11 +4663,20 @@ class QueryEngine:
         return response.vectors[0]
 
 
-def _lookup_scope(*, valid_at: datetime | None, evaluated_at: datetime) -> TextScope:
-    """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current."""
+def _lookup_scope(
+    *, valid_at: datetime | None, evaluated_at: datetime, pinned_belief: bool = True
+) -> TextScope:
+    """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current.
+
+    Browse pages always pin ``believed_at`` to the evaluation clock (page one
+    pins the DB ``now()``; later pages reuse the cursor) so the as-of evidence
+    gate is the same predicate on every page (D154). Ranked confirmation keeps
+    ``pinned_belief=False`` and reads current belief through the projection.
+    """
     return TextScope.of(
         time=None if valid_at is None else AtFactTime(at=valid_at),
         evaluated_at=evaluated_at,
+        believed_at=evaluated_at if pinned_belief else None,
     )
 
 
@@ -4504,8 +4900,13 @@ def _confirm_facts_context(
     ranking_entity_ids: tuple[UUID, ...],
     predicate: str | None,
     deadline: float,
+    documents: DocumentSearchFilters | None = None,
 ) -> tuple[RowMapping, ...]:
-    """Re-confirm exact nominated identities, time, and anchors by fact kind."""
+    """Re-confirm exact nominated identities, time, anchors and filter by fact kind.
+
+    ``documents`` (resolved) is re-checked as the D156 §4.3 fact eligibility:
+    live support from a matching document on an occurrence in scope.
+    """
     if not candidate_keys:
         return ()
     nomination_rank = {key: rank for rank, key in enumerate(candidate_keys, start=1)}
@@ -4514,9 +4915,21 @@ def _confirm_facts_context(
         fact_ids = [fact_id for kind, fact_id in candidate_keys if kind == fact_kind]
         if not fact_ids:
             continue
+        statement = _CONFIRM_FACTS_CONTEXT_BY_KIND[fact_kind]
+        document_parameters: dict[str, Any] = {}
+        if documents is not None:
+            supported_sql, document_parameters = fact_supported_matching(
+                filters=documents,
+                fact_kind=f"'{fact_kind}'",
+                fact_id="fact.fact_id",
+                prefix="documents_",
+            )
+            statement = _confirm_facts_context_statement(
+                fact_kind=fact_kind, documents_sql=f"\n      AND {supported_sql}"
+            )
         _configure_facts_context_connection(connection=connection, deadline=deadline)
         rows = connection.execute(
-            _CONFIRM_FACTS_CONTEXT_BY_KIND[fact_kind],
+            statement,
             {
                 "deployment_id": deployment_id,
                 "fact_ids": fact_ids,
@@ -4524,6 +4937,7 @@ def _confirm_facts_context(
                 "ranking_entity_ids": list(ranking_entity_ids),
                 "predicate": predicate,
                 **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
+                **document_parameters,
             },
         ).mappings()
         confirmed.extend(rows)
@@ -4548,18 +4962,34 @@ def _facts_context_evidence(
     evidence_per_fact: int,
     deadline: float,
     scope: TextScope,
+    documents: DocumentSearchFilters | None = None,
 ) -> Sequence[RowMapping]:
-    """Read representative in-scope D54 evidence within the operation budget."""
+    """Read representative in-scope D54 evidence within the operation budget.
+
+    With ``documents`` every row says whether its lineage matches the filter
+    and how many lineages of its stance match (D156 §4.4).
+    """
     _configure_facts_context_connection(connection=connection, deadline=deadline)
+    statement = _CURRENT_FACT_EVIDENCE
+    document_parameters: dict[str, Any] = {}
+    if documents is not None:
+        in_filter_sql, document_parameters = matching_occurrence_exists(
+            filters=documents,
+            claim="evidence.claim_id",
+            prefix="documents_",
+            in_scope="evidence",
+        )
+        statement = _fact_evidence_statement(in_filter_sql=in_filter_sql)
     return (
         connection.execute(
-            _CURRENT_FACT_EVIDENCE,
+            statement,
             {
                 "deployment_id": deployment_id,
                 "fact_ids": [row["fact_id"] for row in fact_rows],
                 "fact_kinds": [row["kind"] for row in fact_rows],
                 "per_stance_limit": evidence_per_fact,
                 **scope.parameters(),
+                **document_parameters,
             },
         )
         .mappings()
@@ -4655,8 +5085,8 @@ def _unknown_context_entity(
 def _account_truncation(
     account: P1SearchAccount, *, returned: int
 ) -> Truncation | None:
-    """The D142 §8.6 disclosure of an early-stopped search, else ``None``."""
-    if account.termination.complete:
+    """Disclose a filled top-k or early-stopped search (D142 §8.6 / D154)."""
+    if account.termination is P1Termination.EXHAUSTED:
         return None
     return Truncation(
         truncated=True,
@@ -5014,11 +5444,15 @@ def _fact_result(*, row, kind: str) -> FactResult:  # noqa: ANN001
 
 
 def _co_member(row: dict[str, object]) -> CoMember:
-    """Build one contradiction co-member record from a live spine row."""
+    """Build one contradiction co-member record from a live spine row.
+
+    ``in_filter`` is present only under a ``documents`` filter (D156 §4.4).
+    """
     return CoMember(
         fact_id=row["fact_id"],  # type: ignore[arg-type]
         label=row["label"],  # type: ignore[arg-type]
         evidence_count=row["evidence_count"],  # type: ignore[arg-type]
+        in_documents_filter=row.get("in_filter"),  # type: ignore[arg-type]
         validity=Validity(
             valid_from=row["valid_from"],  # type: ignore[arg-type]
             valid_until=row["valid_until"],  # type: ignore[arg-type]
@@ -5421,15 +5855,30 @@ _RESOLVE_CONTEXT_HITS = text(
     """
 )
 
-_LOOKUP_RELATIONS = text(
-    f"""
+
+_LOOKUP_BELIEF_PREDICATE = (
+    "ingested_at <= :evaluated_at"
+    " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+)
+"""One as-of belief/ingest predicate for every browse-lookup page (D154).
+
+Page one pins ``evaluated_at`` from the database clock; later pages reuse the
+cursor. Rows ingested after that instant stay out; rows invalidated after it
+stay in. There is no first-page-only ``invalidated_at IS NULL`` branch.
+"""
+
+
+def _lookup_relations_sql() -> TextClause:
+    """Browse-relations statement; every page uses the as-of evidence gate."""
+    return text(
+        f"""
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
-      AND invalidated_at IS NULL
+      AND {_LOOKUP_BELIEF_PREDICATE}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (CAST(:subject_entity_id AS uuid) IS NULL
@@ -5437,28 +5886,42 @@ _LOOKUP_RELATIONS = text(
       AND (CAST(:predicate AS text) IS NULL OR predicate = :predicate)
       AND (CAST(:object_entity_id AS uuid) IS NULL
            OR object_entity_id = :object_entity_id)
-      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id")}
-    ORDER BY evidence_count DESC, ingested_at, relation_id
+      AND (
+            CAST(:cursor_at AS timestamptz) IS NULL
+            OR ingested_at < :cursor_at
+            OR (ingested_at = :cursor_at AND relation_id < CAST(:cursor_id AS uuid))
+          )
+      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id", pinned_belief=True)}
+    ORDER BY ingested_at DESC, relation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
-)
+    )
 
-_LOOKUP_OBSERVATIONS = text(
-    f"""
+
+def _lookup_observations_sql() -> TextClause:
+    """Browse-observations statement; every page uses the as-of evidence gate."""
+    return text(
+        f"""
     SELECT observation_id AS fact_id, statement AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
       AND subject_entity_id = :entity_id
-      AND invalidated_at IS NULL
+      AND {_LOOKUP_BELIEF_PREDICATE}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
-      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id")}
-    ORDER BY evidence_count DESC, ingested_at, observation_id
+      AND (
+            CAST(:cursor_at AS timestamptz) IS NULL
+            OR ingested_at < :cursor_at
+            OR (ingested_at = :cursor_at AND observation_id < CAST(:cursor_id AS uuid))
+          )
+      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id", pinned_belief=True)}
+    ORDER BY ingested_at DESC, observation_id DESC
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
-)
+    )
+
 
 _FACTS_CONTEXT_TIME_PREDICATE = """
       AND fact.ingested_at <= :evaluated_at
@@ -5495,16 +5958,25 @@ _FACTS_CONTEXT_COVERAGE = """
 
 
 def _confirm_facts_context_statement(
-    *, fact_kind: Literal["relation", "observation"]
+    *, fact_kind: Literal["relation", "observation"], documents_sql: str = ""
 ) -> TextClause:
-    """Build one fixed-kind public-authority confirmation statement."""
+    """Build one fixed-kind public-authority confirmation statement.
+
+    ``documents_sql`` is the D156 §4.3 eligibility clause of a ``documents``
+    filter, re-checked here as every selector is.
+    """
+    eligibility = fact_eligibility_ctes(
+        candidates_sql=(
+            f"SELECT '{fact_kind}'::text AS fact_kind, fact_id FROM requested"
+        )
+    )
     return text(
         f"""
     WITH requested AS MATERIALIZED (
         SELECT fact_id, nomination_rank
         FROM unnest(CAST(:fact_ids AS uuid[]))
              WITH ORDINALITY AS nominated(fact_id, nomination_rank)
-    )
+    ), {eligibility}
     SELECT requested.nomination_rank, '{fact_kind}'::text AS kind, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
@@ -5513,18 +5985,11 @@ def _confirm_facts_context_statement(
            fact.support_state_current AS support_state,
            {_FACTS_CONTEXT_COVERAGE} AS coverage
     FROM requested
-    CROSS JOIN LATERAL (
-        SELECT visible.*
-        FROM memory_v1.facts_visible_history AS visible
-        WHERE visible.deployment_id = :deployment_id
-          AND visible.fact_kind = '{fact_kind}'
-          AND visible.fact_id = requested.fact_id
-        OFFSET 0
-    ) AS fact
+    JOIN eligible_facts AS fact ON fact.fact_id = requested.fact_id
     WHERE (CAST(:predicate AS text) IS NULL
            OR (fact.fact_kind = 'relation' AND fact.predicate = :predicate))
       {_FACTS_CONTEXT_TIME_PREDICATE} {_FACTS_CONTEXT_ENTITY_PREDICATE}
-      AND {fact_in_scope(fact_kind=fact_kind, fact_id="fact.fact_id")}
+      AND {fact_in_scope(fact_kind=fact_kind, fact_id="fact.fact_id")}{documents_sql}
     ORDER BY coverage DESC, requested.nomination_rank, kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragments are module constants
     )
@@ -5535,27 +6000,87 @@ _CONFIRM_FACTS_CONTEXT_BY_KIND: dict[Literal["relation", "observation"], TextCla
     for fact_kind in ("relation", "observation")
 }
 
-_FACTS_CONTEXT_CONTRADICTION_MEMBERS = text(
-    f"""
+_CONTRADICTION_CANDIDATES = " UNION ALL ".join(
+    f"SELECT '{kind}'::text AS fact_kind, indexed.{identifier} AS fact_id"
+    f" FROM {table} indexed WHERE indexed.deployment_id = :deployment_id"
+    " AND indexed.contradiction_group = ANY(CAST(:groups AS uuid[]))"
+    + _FACTS_CONTEXT_TIME_PREDICATE.replace("fact.", "indexed.")
+    for table, kind, identifier in (
+        ("relations", "relation", "relation_id"),
+        ("observations", "observation", "observation_id"),
+    )
+)
+
+
+def _contradiction_members_statement(*, in_filter_sql: str | None) -> TextClause:
+    """The contradiction co-members of the selected facts' groups, from everywhere.
+
+    With ``in_filter_sql`` (a ``documents`` filter's fact eligibility) each
+    member also says whether it has live support from a matching document;
+    members are returned either way (D156 §4.4).
+    """
+    in_filter = "" if in_filter_sql is None else f", {in_filter_sql} AS in_filter"
+    return text(
+        f"""
+    WITH {fact_eligibility_ctes(candidates_sql=_CONTRADICTION_CANDIDATES)}
     SELECT fact.fact_kind AS kind, fact.contradiction_group, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
            fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
-           fact.invalidated_at, fact.support_state_current AS support_state
-    FROM memory_v1.facts_visible_history AS fact
+           fact.invalidated_at, fact.support_state_current AS support_state{in_filter}
+    FROM eligible_facts AS fact
     WHERE fact.deployment_id = :deployment_id
       AND fact.contradiction_group = ANY(CAST(:groups AS uuid[]))
       {_FACTS_CONTEXT_TIME_PREDICATE}
       AND {fact_in_scope_by_kind(kind="fact.fact_kind", fact_id="fact.fact_id")}
     ORDER BY fact.contradiction_group, fact.ingested_at, fact.fact_kind, fact.fact_id
-    """  # noqa: S608 -- interpolated fragment is a module constant
+    """  # noqa: S608 -- interpolated fragments are module constants
+    )
+
+
+_FACTS_CONTEXT_CONTRADICTION_MEMBERS = _contradiction_members_statement(
+    in_filter_sql=None
 )
 
-# D140 §8.1: only evidence claims in scope for the read are shown, so each
-# lineage's representative is chosen among its in-scope claims; a claim of a
-# periodised lineage is then shown through its in-scope occurrence.
-_CURRENT_FACT_EVIDENCE = text(
-    f"""
+
+def _fact_evidence_statement(*, in_filter_sql: str | None) -> TextClause:
+    """Representative in-scope D54 evidence per (fact, stance, lineage).
+
+    D140 §8.1: only evidence claims in scope for the read are shown, so each
+    lineage's representative is chosen among its in-scope claims; a claim of
+    a periodised lineage is then shown through its in-scope occurrence.
+
+    With ``in_filter_sql`` (a ``documents`` filter's matching-occurrence test
+    for ``evidence.claim_id``, D156 §4.4) a lineage matches when one of its
+    claims does; its representative is a matching claim when it has one,
+    matching lineages rank first in each stance, and each row carries
+    ``in_filter`` and the stance's matching-lineage count ``matching_total``
+    beside the deployment-wide ``evidence_total``. Without it the statement
+    is exactly the unfiltered one.
+    """
+    filtered = in_filter_sql is not None
+    match_join = (
+        f" CROSS JOIN LATERAL (SELECT {in_filter_sql} AS in_filter) AS filter_match"
+        if filtered
+        else ""
+    )
+    match_first = "filter_match.in_filter DESC, " if filtered else ""
+    lineage_match = (
+        ",\n               bool_or(filter_match.in_filter) AS in_filter"
+        if filtered
+        else ""
+    )
+    matching_total = (
+        "count(*) FILTER (WHERE lineage.in_filter) OVER ("
+        " PARTITION BY lineage.kind, lineage.fact_id, lineage.stance"
+        ")::bigint AS matching_total, lineage.in_filter,"
+        if filtered
+        else ""
+    )
+    lineage_first = "lineage.in_filter DESC, " if filtered else ""
+    match_columns = ", in_filter, matching_total" if filtered else ""
+    return text(
+        f"""
     WITH requested AS (
         SELECT fact_id, kind, nomination_rank
         FROM unnest(
@@ -5569,14 +6094,14 @@ _CURRENT_FACT_EVIDENCE = text(
         SELECT requested.fact_id, requested.kind, requested.nomination_rank,
                evidence.stance, evidence.doc_id,
                (array_agg(evidence.claim_id
-                          ORDER BY evidence.asserted_at DESC NULLS LAST,
+                          ORDER BY {match_first}evidence.asserted_at DESC NULLS LAST,
                                    evidence.claim_id))[1] AS representative_claim_id,
-               max(evidence.asserted_at) AS asserted_to
+               max(evidence.asserted_at) AS asserted_to{lineage_match}
         FROM requested
         JOIN v_memory_fact_claim_live AS evidence
           ON evidence.deployment_id = :deployment_id
          AND evidence.fact_kind = requested.kind
-         AND evidence.fact_id = requested.fact_id
+         AND evidence.fact_id = requested.fact_id{match_join}
         WHERE {claim_in_scope(claim="evidence.claim_id")}
         GROUP BY requested.fact_id, requested.kind, requested.nomination_rank,
                  evidence.stance, evidence.doc_id, evidence.source_kind,
@@ -5586,10 +6111,10 @@ _CURRENT_FACT_EVIDENCE = text(
                lineage.nomination_rank, lineage.stance,
                count(*) OVER (
                    PARTITION BY lineage.kind, lineage.fact_id, lineage.stance
-               )::bigint AS evidence_total,
+               )::bigint AS evidence_total, {matching_total}
                row_number() OVER (
                    PARTITION BY lineage.kind, lineage.fact_id, lineage.stance
-                   ORDER BY lineage.asserted_to DESC NULLS LAST,
+                   ORDER BY {lineage_first}lineage.asserted_to DESC NULLS LAST,
                             lineage.doc_id, lineage.representative_claim_id
                ) AS stance_rank,
                claim.claim_id, claim.doc_id, claim.chunk_id, claim.claim_text,
@@ -5629,14 +6154,17 @@ _CURRENT_FACT_EVIDENCE = text(
            char_start, char_end, evidence_spans, is_attributed, is_current_testimony,
            asserted_at, claim_valid_from, claim_valid_until,
            claim_valid_precision, claim_valid_kind, document_title, source_kind,
-           periodised
+           periodised{match_columns}
     FROM representative
     WHERE stance_rank <= :per_stance_limit
     ORDER BY nomination_rank,
              CASE stance WHEN 'supports' THEN 0 ELSE 1 END,
              stance_rank, claim_id
     """  # noqa: S608 -- interpolated fragments are module constants
-)
+    )
+
+
+_CURRENT_FACT_EVIDENCE = _fact_evidence_statement(in_filter_sql=None)
 
 
 _CONFIRM_OBSERVATIONS = text(
@@ -5683,7 +6211,8 @@ _CONFIRM_CLAIMS_CURRENT = text(
 )
 
 _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
-    """
+    f"""
+    WITH RECURSIVE {candidate_mention_coverage_ctes(grain="claim", candidate_parameter="claim_ids")}
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
            c.char_start, c.char_end,
            COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
@@ -5704,16 +6233,10 @@ _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
         ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
         LIMIT 1
     ) AS occ ON true
-    JOIN LATERAL (
-        SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        WHERE mention.deployment_id = c.deployment_id
-          AND mention.claim_id = c.claim_id
-          AND mention.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-    ) AS scope ON scope.coverage > 0
+    JOIN scope_coverage AS scope ON scope.item_id = c.claim_id
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
-    """
+    """  # noqa: S608 -- internal eligibility builder
 )
 
 _CONFIRM_CLAIMS_HISTORY = text(
@@ -5772,14 +6295,9 @@ _CONFIRM_CHUNKS = text(
 )
 
 _CONFIRM_CHUNKS_SCOPED = text(
-    f"""{_CONFIRM_CHUNK_COLUMNS}, scope.coverage{_CONFIRM_CHUNK_SOURCES}
-    JOIN LATERAL (
-        SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        WHERE mention.deployment_id = ch.deployment_id
-          AND mention.chunk_id = ch.chunk_id
-          AND mention.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-    ) AS scope ON scope.coverage > 0
+    f"""WITH RECURSIVE {candidate_mention_coverage_ctes(grain="chunk", candidate_parameter="chunk_ids")}
+    {_CONFIRM_CHUNK_COLUMNS}, scope.coverage{_CONFIRM_CHUNK_SOURCES}
+    JOIN scope_coverage AS scope ON scope.item_id = ch.chunk_id
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
     """  # noqa: S608 -- interpolated fragments are module constants
@@ -5811,42 +6329,57 @@ _ADJACENT_CHUNKS = text(
 
 
 def _confirm_claims_in_scope_statement(
-    *, current_only: bool, entity_scoped: bool
-) -> TextClause:
-    """Confirm claims under a D140 time scope (§3.4).
+    *,
+    current_only: bool,
+    entity_scoped: bool,
+    documents: DocumentSearchFilters | None = None,
+) -> tuple[TextClause, dict[str, Any]]:
+    """Confirm claims under a D140 time scope (§3.4), with any D134/D156 filter.
 
     The claim is read from the base table, so a claim of a periodised lineage
     confirms through an occurrence in a selected version even when its origin
     version was deleted. Undeclared lineages keep today's rule: membership of
-    the live (current-testimony) claim relation.
+    the live (current-testimony) claim relation. With ``documents`` the
+    selected occurrence must also lie in a matching version (D156 §4.3).
     """
     published = (
         "memory_v1.claims_live" if current_only else "memory_v1.claims_visible_history"
     )
-    selected = claim_selected(
-        claim="c.claim_id",
-        doc="c.doc_id",
-        current_testimony=(
-            f"EXISTS (SELECT 1 FROM {published} AS published"
-            " WHERE published.deployment_id = c.deployment_id"
-            " AND published.claim_id = c.claim_id)"
-        ),
+    current_testimony = (
+        f"EXISTS (SELECT 1 FROM {published} AS published"
+        " WHERE published.deployment_id = c.deployment_id"
+        " AND published.claim_id = c.claim_id)"
     )
+    parameters: dict[str, Any] = {}
+    if documents is None:
+        selected = claim_selected(
+            claim="c.claim_id", doc="c.doc_id", current_testimony=current_testimony
+        )
+    else:
+        selected, parameters = claim_selected_matching(
+            filters=documents,
+            claim="c.claim_id",
+            doc="c.doc_id",
+            current_testimony=current_testimony,
+            prefix="documents_",
+        )
     coverage_column = ", scope.coverage" if entity_scoped else ""
+    coverage_ctes = (
+        "WITH RECURSIVE "
+        + candidate_mention_coverage_ctes(
+            grain="claim", candidate_parameter="claim_ids"
+        )
+        if entity_scoped
+        else ""
+    )
     coverage_join = (
-        """
-    JOIN LATERAL (
-        SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
-        FROM memory_v1.mentions_live AS mention
-        WHERE mention.deployment_id = c.deployment_id
-          AND mention.claim_id = c.claim_id
-          AND mention.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-    ) AS scope ON scope.coverage > 0"""
+        " JOIN scope_coverage AS scope ON scope.item_id = c.claim_id"
         if entity_scoped
         else ""
     )
     return text(
         f"""
+    {coverage_ctes}
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
            c.char_start, c.char_end,
            COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
@@ -5874,7 +6407,7 @@ def _confirm_claims_in_scope_statement(
       {"AND c.is_current_testimony" if current_only else ""}
       AND {selected}
     """  # noqa: S608 -- interpolated fragments are module constants
-    )
+    ), parameters
 
 
 # One occurrence per (claim, selected version): the earliest attachment in
@@ -5897,6 +6430,7 @@ _SELECTED_OCCURRENCES = f"""
     WHERE cc.deployment_id = :deployment_id
       AND cc.claim_id = ANY(CAST(:claim_ids AS uuid[]))
       AND {version_selected(version="ch.version_id")}
+      {{documents}}
     ORDER BY cc.claim_id, ch.version_id, cc.created_at,
              cc.derivation_kind NULLS FIRST, ch.chunk_id
 """  # noqa: S608 -- interpolated fragment is a module constant
@@ -5931,15 +6465,28 @@ def _selected_occurrences(
     deployment_id: UUID,
     claim_ids: tuple[UUID, ...],
     scope: TextScope,
+    documents: DocumentSearchFilters | None = None,
 ) -> dict[UUID, list[ClaimOccurrence]]:
-    """Each claim's occurrences in the versions the scope selects, by effective start."""
+    """Each claim's occurrences in the versions the scope selects, by effective start.
+
+    With ``documents`` only occurrences in matching versions are returned: a
+    filtered testimony read shows what matching documents said (D156 §4.4).
+    """
+    document_sql = ""
+    document_parameters: dict[str, Any] = {}
+    if documents is not None:
+        version_sql, document_parameters = live_version_matches(
+            filters=documents, version="ch.version_id", prefix="documents_"
+        )
+        document_sql = f"AND {version_sql}"
     rows = (
         connection.execute(
-            text(_SELECTED_OCCURRENCES),
+            text(_SELECTED_OCCURRENCES.format(documents=document_sql)),
             {
                 "deployment_id": deployment_id,
                 "claim_ids": [str(claim_id) for claim_id in claim_ids],
                 **scope.parameters(),
+                **document_parameters,
             },
         )
         .mappings()

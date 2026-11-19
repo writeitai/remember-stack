@@ -26,7 +26,7 @@ from remember.models import SectionHistoryRequest
 
 logger = logging.getLogger(__name__)
 
-_KEYS = frozenset({"doc_id", "section_key", "time", "k", "cursor"})
+_KEYS = frozenset({"doc_id", "section_key", "time", "limit", "cursor"})
 
 
 class SectionHistoryBackend(Protocol):

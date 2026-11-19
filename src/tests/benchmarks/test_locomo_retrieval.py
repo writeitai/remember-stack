@@ -20,6 +20,8 @@ import pytest
 from remember.client import MemoryClient
 from remember.errors import MemoryApiError
 from remember.models import Envelope
+from tests.benchmarks.corpus_support import publications
+from tests.benchmarks.corpus_support import write_corpus
 
 _RELATION_ID = UUID("57000000-0000-0000-0000-000000000020")
 _ENTITY_ID = UUID("57000000-0000-0000-0000-000000000021")
@@ -47,50 +49,52 @@ def _query_result_payload(**updates: object) -> dict[str, object]:
     return payload
 
 
-def test_p3_mount_lists_searches_and_reads_one_pinned_snapshot(tmp_path: Path) -> None:
+def test_p3_mount_lists_searches_and_reads_one_frozen_inventory(tmp_path: Path) -> None:
     root = _p3(root=tmp_path)
-    (root / "by-source").mkdir()
-    (root / "by-source" / "session.md").write_text(
+    (root / "document").mkdir(exist_ok=True)
+    (root / "document" / "session.md").write_text(
         "# Session\nThe launch code is ORBIT-17.\n", encoding="utf-8"
     )
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
 
-    listed = mount.call(name="p3_list", arguments={"path": "by-source"})
+    listed = mount.call(name="p3_list", arguments={"path": "document"})
     searched = mount.call(name="p3_search", arguments={"query": "orbit-17"})
     read = mount.call(
-        name="p3_read", arguments={"path": "by-source/session.md", "start_line": 2}
+        name="p3_read", arguments={"path": "document/session.md", "start_line": 2}
     )
 
-    assert listed["entries"] == [
-        {"name": "session.md", "path": "by-source/session.md", "type": "file"}
-    ]
+    listed_entries = listed["entries"]
+    assert isinstance(listed_entries, list)
+    assert {
+        "name": "session.md",
+        "path": "document/session.md",
+        "type": "file",
+    } in listed_entries
     assert searched["matches"] == [
         {
-            "path": "by-source/session.md",
+            "path": "document/session.md",
             "line_number": 2,
             "text": "The launch code is ORBIT-17.",
         }
     ]
     assert read["content"] == "The launch code is ORBIT-17."
-    assert read["snapshot_version"] == "p3-v1"
+    assert read["inventory_sha256"] == mount.inventory_sha256
 
 
 def test_p3_mount_rejects_wrong_version_traversal_and_symlinks(tmp_path: Path) -> None:
     root = _p3(root=tmp_path)
     outside = tmp_path / "outside.md"
     outside.write_text("secret", encoding="utf-8")
-    (root / "escape").symlink_to(outside)
 
     with pytest.raises(RetrievalInfrastructureError, match="differs from readiness"):
-        P3Mount(root=root, expected_version="other")
-    (root / ".snapshot-version").write_text(
-        "operator-private-version", encoding="utf-8"
-    )
+        P3Mount(root=root, publications=publications("other"))
+    write_corpus(root, "operator-private-version")
     with pytest.raises(RetrievalInfrastructureError) as version_error:
-        P3Mount(root=root, expected_version="expected-version")
+        P3Mount(root=root, publications=publications("expected-version"))
     assert "operator-private-version" not in str(version_error.value)
-    (root / ".snapshot-version").write_text("p3-v1", encoding="utf-8")
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    write_corpus(root, "p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
+    (root / "escape").symlink_to(outside)
     with pytest.raises(RetrievalToolError, match="path must be"):
         mount.call(name="p3_list", arguments={"path": None})
     with pytest.raises(RetrievalToolError, match="relative"):
@@ -110,11 +114,11 @@ def test_p3_mount_sanitizes_root_and_io_failures(
 ) -> None:
     missing = tmp_path / "operator-private" / "missing"
     with pytest.raises(RetrievalInfrastructureError) as missing_error:
-        P3Mount(root=missing, expected_version="p3-v1")
+        P3Mount(root=missing, publications=publications("p3-v1"))
     assert str(missing) not in str(missing_error.value)
 
     root = _p3(root=tmp_path)
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     original_iterdir = Path.iterdir
 
     def unreadable(path: Path):  # noqa: ANN202
@@ -131,12 +135,12 @@ def test_p3_mount_sanitizes_root_and_io_failures(
 def test_p3_post_resolution_disappearance_is_infrastructure_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A changing served snapshot never earns the model a correction call."""
+    """A changing served corpus never earns the model a correction call."""
     root = _p3(root=tmp_path)
-    target = root / "by-source"
-    target.mkdir()
-    mount = P3Mount(root=root, expected_version="p3-v1")
-    original = mount._snapshot_kind  # noqa: SLF001
+    target = root / "document"
+    target.mkdir(exist_ok=True)
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
+    original = mount._corpus_kind  # noqa: SLF001
     inspected = 0
 
     def disappear(*, path: Path):  # noqa: ANN202
@@ -145,13 +149,13 @@ def test_p3_post_resolution_disappearance_is_infrastructure_failure(
             inspected += 1
             if inspected > 1:
                 raise RetrievalInfrastructureError(
-                    "P3 snapshot entry disappeared during inspection"
+                    "P3 corpus entry disappeared during inspection"
                 )
         return original(path=path)
 
-    monkeypatch.setattr(mount, "_snapshot_kind", disappear)
+    monkeypatch.setattr(mount, "_corpus_kind", disappear)
     with pytest.raises(RetrievalInfrastructureError, match="disappeared"):
-        mount.call(name="p3_list", arguments={"path": "by-source"})
+        mount.call(name="p3_list", arguments={"path": "document"})
 
 
 def test_p3_resolution_and_descriptor_failures_are_infrastructure_failures(
@@ -163,7 +167,7 @@ def test_p3_resolution_and_descriptor_failures_are_infrastructure_failures(
     root = _p3(root=tmp_path)
     target = root / "session.md"
     target.write_text("inside", encoding="utf-8")
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     original_resolve = Path.resolve
 
     def disappear(path: Path, *, strict: bool = False) -> Path:
@@ -196,7 +200,7 @@ def test_p3_intermediate_close_failure_releases_every_owned_descriptor(
     nested = root / "nested"
     nested.mkdir()
     (nested / "session.md").write_text("inside", encoding="utf-8")
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     original_close = retrieval.os.close
     opened_nested_fd: int | None = None
     failed_once = False
@@ -242,7 +246,7 @@ def test_p3_root_close_failure_is_best_effort(
     """Mount teardown never exposes a raw operating-system exception."""
     from benchmarks.locomo import retrieval
 
-    mount = P3Mount(root=_p3(root=tmp_path), expected_version="p3-v1")
+    mount = P3Mount(root=_p3(root=tmp_path), publications=publications("p3-v1"))
     root_fd = mount._root_fd  # noqa: SLF001
     assert root_fd is not None
     original_close = retrieval.os.close
@@ -267,7 +271,7 @@ def test_p3_missing_child_checks_that_its_parent_did_not_change(
 ) -> None:
     """A missing child is correctable only while its inspected parent is unchanged."""
     root = _p3(root=tmp_path)
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     parent = mount._root / "dir"  # noqa: SLF001
     parent.mkdir()
     target = parent / "session.md"
@@ -295,7 +299,7 @@ def test_p3_fifo_replacement_cannot_block_a_read(
     root = _p3(root=tmp_path)
     target = root / "session.md"
     target.write_text("inside", encoding="utf-8")
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     original_open = retrieval.os.open
     replaced = False
 
@@ -321,7 +325,7 @@ def test_p3_fifo_replacement_cannot_block_a_read(
 
 
 @pytest.mark.parametrize("tool_name", ("p3_search", "p3_read"))
-def test_p3_file_replacement_cannot_escape_pinned_snapshot(
+def test_p3_file_replacement_cannot_escape_pinned_corpus(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_name: str
 ) -> None:
     """Search and read use one no-follow descriptor for type-check and bytes."""
@@ -332,7 +336,7 @@ def test_p3_file_replacement_cannot_escape_pinned_snapshot(
     target.write_text("inside", encoding="utf-8")
     outside = tmp_path / "operator-private.md"
     outside.write_text("outside secret", encoding="utf-8")
-    mount = P3Mount(root=root, expected_version="p3-v1")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     original_open = retrieval.os.open
     replaced = False
 
@@ -367,9 +371,9 @@ def test_p3_walk_caps_are_real_and_fingerprinted(
     root = _p3(root=tmp_path)
     for name in ("a.md", "b.md", "c.md"):
         (root / name).write_text(name, encoding="utf-8")
+    mount = P3Mount(root=root, publications=publications("p3-v1"))
     monkeypatch.setattr(retrieval, "P3_LIST_MAX_VISITED", 2)
     monkeypatch.setattr(retrieval, "P3_SEARCH_MAX_ENTRIES", 2)
-    mount = P3Mount(root=root, expected_version="p3-v1")
 
     listed = mount.call(name="p3_list", arguments={})
     searched = mount.call(name="p3_search", arguments={"query": "missing"})
@@ -559,8 +563,8 @@ def test_query_execution_rejects_partial_query_result_contract() -> None:
 
 
 def _p3(*, root: Path) -> Path:
-    """Create one minimal valid P3 snapshot directory."""
+    """Create one minimal valid P3 corpus directory."""
     p3 = root / "p3"
     p3.mkdir()
-    (p3 / ".snapshot-version").write_text("p3-v1", encoding="utf-8")
+    write_corpus(p3, "p3-v1")
     return p3

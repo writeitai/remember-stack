@@ -30,11 +30,11 @@ For the billing migration stand-up:
 ```markdown
 # Billing migration stand-up — 2026-09-17
 
-Participants: Dana, Ravi
+Participants: Dana, John
 
 [t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?
 
-[t2 | 2026-09-17T09:31:10Z] Ravi: It needs a rewrite. The migration moves from June to October.
+[t2 | 2026-09-17T09:31:10Z] John: It needs a rewrite. The migration moves from June to October.
 
 [t3 | 2026-09-17T09:32:05Z] Dana: Agreed. I will tell finance today.
 ```
@@ -84,14 +84,14 @@ def render_session(title: str, participants: list[str], turns: list[Turn]) -> st
 turns = [
     Turn("t1", datetime(2026, 9, 17, 9, 30, tzinfo=UTC), "Dana",
          "Where are we on the invoice exporter?"),
-    Turn("t2", datetime(2026, 9, 17, 9, 31, 10, tzinfo=UTC), "Ravi",
+    Turn("t2", datetime(2026, 9, 17, 9, 31, 10, tzinfo=UTC), "John",
          "It needs a rewrite. The migration moves from June to October."),
     Turn("t3", datetime(2026, 9, 17, 9, 32, 5, tzinfo=UTC), "Dana",
          "Agreed. I will tell finance today."),
 ]
 
 client = remember.Client.from_env()
-body = render_session("Billing migration stand-up — 2026-09-17", ["Dana", "Ravi"], turns)
+body = render_session("Billing migration stand-up — 2026-09-17", ["Dana", "John"], turns)
 version = client.ingest(
     body.encode("utf-8"),
     filename="standup-2026-09-17.md",
@@ -129,7 +129,7 @@ From an agent over MCP, pass the rendered text:
 {
   "name": "ingest",
   "arguments": {
-    "text": "# Billing migration stand-up — 2026-09-17\n\nParticipants: Dana, Ravi\n\n[t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?\n",
+    "text": "# Billing migration stand-up — 2026-09-17\n\nParticipants: Dana, John\n\n[t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?\n",
     "filename": "standup-2026-09-17.md",
     "source_kind": "meeting",
     "source_ref": "standup/2026-09-17",
@@ -147,7 +147,7 @@ two shapes to choose from.
 conversation into sessions (per day, per topic, per agent run) and ingest
 each finished session once, with its own `source_ref`, in the default
 `snapshot` mode. Each session stays dated testimony forever. Nothing is
-reprocessed, and a question about "what Ravi said on Tuesday" has a
+reprocessed, and a question about "what John said on Tuesday" has a
 document that is exactly Tuesday.
 
 **Re-send one growing document in `living` mode.** If you must keep one

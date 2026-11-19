@@ -229,6 +229,17 @@ def client_models() -> dict[str, Any]:
                 models[name]["properties"][field.alias or field_name]["x-exclude"] = (
                     True
                 )
+            if field.exclude_if is not None:
+                # The only supported rule: omit the field exactly when it is None
+                # (D156's filter disclosures); False, 0 and "" are serialized.
+                if not (
+                    field.exclude_if(None) is True
+                    and not any(field.exclude_if(value) for value in (False, 0, ""))
+                ):
+                    raise ValueError(f"{name}.{field_name}: unsupported exclude_if")
+                models[name]["properties"][field.alias or field_name][
+                    "x-exclude-if-none"
+                ] = True
             if not field.is_required():
                 models[name]["properties"][field.alias or field_name]["default"] = (
                     to_jsonable_python(field.get_default(call_default_factory=True))

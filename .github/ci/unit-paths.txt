@@ -25,7 +25,8 @@ src/tests/benchmarks/test_beam_answer_agent.py
 src/tests/benchmarks/test_beam_official_score.py
 src/tests/benchmarks/test_locomo_ablation.py
 src/tests/benchmarks/test_locomo_dataset.py
-src/tests/benchmarks/test_locomo_judge_sidecar.py
+src/tests/benchmarks/test_locomo_images.py
+src/tests/benchmarks/test_locomo_mem0_style_judge.py
 src/tests/benchmarks/test_locomo_luna6_profile.py
 src/tests/benchmarks/test_locomo_protocol.py
 src/tests/benchmarks/test_locomo_retrieval.py
@@ -37,6 +38,8 @@ src/tests/benchmarks/test_workspacebench_core.py
 src/tests/benchmarks/test_workspacebench_runner.py
 src/tests/core/test_blockizer_corpus.py
 src/tests/core/test_chunker.py
+src/tests/core/test_corpus_export.py
+src/tests/workers/test_corpus_export_inventory.py
 src/tests/core/test_context_references.py
 src/tests/core/test_consumption_skill.py
 src/tests/core/test_conversion.py
@@ -60,6 +63,10 @@ src/tests/core/test_section_snap.py
 src/tests/core/test_selection_references.py
 src/tests/core/test_source_passages.py
 src/tests/core/test_source_origins.py
+src/tests/core/test_storage_capture.py
+src/tests/adapters/test_fsit_storage_capture.py
+src/tests/adapters/test_fsit_storage_capture_transport.py
+src/tests/spine/test_managed_storage_capture.py
 src/tests/core/test_structure_skeleton.py
 src/tests/core/test_temporal.py
 src/tests/core/test_metering.py
@@ -93,6 +100,8 @@ src/tests/surfaces/test_client_credential_safety.py
 src/tests/surfaces/test_cost_export_contract.py
 src/tests/surfaces/test_document_deletion_clients.py
 src/tests/surfaces/test_document_search_clients.py
+src/tests/surfaces/test_document_tags_surfaces.py
+src/tests/surfaces/test_document_tag_context_surfaces.py
 src/tests/surfaces/test_document_deletion_http.py
 src/tests/surfaces/test_document_inventory_http.py
 src/tests/surfaces/test_forget_admission.py
@@ -140,6 +149,7 @@ src/tests/workers/test_e2_occurrence_provenance.py
 src/tests/surfaces/test_direct_admission.py
 src/tests/surfaces/test_client_connection.py
 src/tests/surfaces/test_client_login.py
+src/tests/surfaces/test_cli_mount.py
 src/tests/surfaces/test_section_history_clients.py
 src/tests/adapters/test_perimeter_trust.py
 src/tests/workers/test_self_reference_naming.py
@@ -161,6 +171,12 @@ src/tests/surfaces/test_query_sandbox_layers.py
 src/tests/surfaces/test_d143_openapi_additive.py
 src/tests/surfaces/test_d143_layer_errors.py
 src/tests/profiles/test_engine_settings.py
+src/tests/profiles/test_storage_capture_batch.py
 src/tests/spine/test_new_work.py
 src/tests/surfaces/test_per_request_perimeter.py
 src/tests/surfaces/test_request_embeddings.py
+src/tests/adapters/test_object_operations.py
+src/tests/surfaces/test_pagination_documentation.py
+src/tests/adapters/test_mount_provisioning.py
+src/tests/benchmarks/test_locomo_corpus_attestation.py
+src/tests/spine/test_storage_capture_profile.py

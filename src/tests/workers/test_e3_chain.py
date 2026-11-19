@@ -506,7 +506,6 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
     succeeded via the zero-chunk aggregate.
     """
     from rememberstack.spine import PipelineReadinessCatalog
-    from rememberstack.spine import ProjectionCatalog
     from rememberstack.spine.supersession import ADJUDICATOR_VERSION
     from rememberstack.workers import E0_CONVERT_VERSION
     from rememberstack.workers import E0_STRUCTURE_VERSION
@@ -620,7 +619,6 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
                 embedding_model=P1Settings().embedding_model
             ),
         },
-        projections=ProjectionCatalog(engine=rig.engine),
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(ingested.version_id,),

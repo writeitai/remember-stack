@@ -1,0 +1,13 @@
+{
+  "statement_ordinal": 38,
+  "analyze": true,
+  "statement_timeout_seconds": 20.0,
+  "planner_controls": "normal; jit off; parallel workers 0",
+  "note": "independent replay, not original-operation wall time",
+  "error": {
+    "type": "OperationalError",
+    "sqlstate": "57014",
+    "message": "canceling statement due to statement timeout"
+  },
+  "elapsed_seconds": 20.0150711145252
+}

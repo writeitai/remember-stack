@@ -16,7 +16,7 @@ that ship in the repository. Check [Requirements](/docs/self-hosting/requirement
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.19.0
+git checkout v0.21.0
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -28,7 +28,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.19.0`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.21.0`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -88,13 +88,13 @@ RememberStack image, and starts everything in dependency order:
 
 | Service | Command | Role |
 |---|---|---|
-| `postgres` | `postgres` | PostgreSQL 19 prerelease with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
-| `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
+| `postgres` | `postgres` | PostgreSQL 18 with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
+| `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and the live corpus. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --class convert` | Turns an uploaded file into Markdown using the configured [converter](/docs/self-hosting/converters), one file at a time. |
 | `worker-llm` | `worker --class llm` | Runs every other pipeline stage, up to 20 items at once: finds sections and writes summaries, checks supplied references, splits documents into chunks, embeds them, selects the sentences that state something and turns them into claims, resolves entities into relations and facts, decides whether a new statement confirms, contradicts or replaces a fact, embeds claims and facts, writes relation labels, settles each version's lifecycle, and rechecks fact dates when declared periods change. |
-| `projections` | `project --plane p3` | Profile `operations` only. Builds a [filesystem view](/docs/self-hosting/filesystem-views) snapshot on demand. |
+| `projections` | `project --plane p3` | Profile `operations` only. Verifies and reconciles the live [corpus](/docs/self-hosting/filesystem-views) on demand; ordinary publication and periodic verification also run through the workers. |
 
 Each worker wakes when new work for one of its stages is committed. The
 `llm` worker finishes items further along the pipeline before it starts
@@ -135,9 +135,9 @@ Save this as `standup.md`:
 ```markdown
 # Stand-up, 17 September 2026
 
-Ravi said the billing migration moves from June to October, because the
+John said the billing migration moves from June to October, because the
 invoice exporter needs a rewrite. Dana agreed and will tell finance.
-Ravi owns the invoice exporter.
+John owns the invoice exporter.
 ```
 
 Send it and ask about it:
@@ -185,9 +185,9 @@ Compose names volumes after the project, `rememberstack`:
 | Volume | Mounted at | Holds |
 |---|---|---|
 | `rememberstack_postgres-data` | `/var/lib/postgresql` in `postgres` | The database: every document, version, claim, fact and entity, the work queue and the cost ledger |
-| `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
+| `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and corpus copies |
 | `rememberstack_app-state` | `/var/lib/rememberstack` in the app containers | Working directories; the optional debug capture of invalid model output |
-| `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Hard-forget manifests. Empty in a Compose deployment. |
+| `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Portable hard-forget intent, replayed before serving restored data. |
 
 The first two hold the memory. Back them up together; see
 [Upgrades and migrations](/docs/self-hosting/upgrades#back-up).

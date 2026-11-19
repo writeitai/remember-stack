@@ -29,7 +29,7 @@ function main() {
     npm({args:['install','--ignore-scripts','--no-audit','--no-fund',join(directory,packed.filename),`typescript@${metadata.devDependencies.typescript}`,`@types/node@${metadata.devDependencies['@types/node']}`],cwd:directory});
     const checks=`
 const client = new sdk.Client({client:{request:async()=>Response.json([])}});
-if(sdk.Client !== sdk.RememberClient || sdk.memoryTools().length!==18)throw new Error('public exports are incomplete');
+if(sdk.Client !== sdk.RememberClient || sdk.memoryTools().length!==23)throw new Error('public exports are incomplete');
 client.listOperations().then(operations=>{if(operations.length!==0)throw new Error('invalid response');client.close();});
 /** Verify filled response fields and recursive JSON typing in declarations. */
 function responseTypes({query,envelope}:{query:sdk.QueryResultDict;envelope:sdk.Envelope}):void {

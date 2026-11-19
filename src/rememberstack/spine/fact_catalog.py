@@ -66,25 +66,44 @@ class FactCatalog:
         )
 
     @contextmanager
-    def label_lock(self, *, deployment_id: UUID) -> Iterator[None]:
-        """Serialize concurrent label sweeps for one deployment.
+    def label_lock(
+        self,
+        *,
+        deployment_id: UUID,
+        relation_ids: tuple[UUID, ...],
+        observation_ids: tuple[UUID, ...],
+    ) -> Iterator[None]:
+        """Reserve only this batch's facts without a provider-spanning transaction.
 
-        A session-scoped advisory lock on a dedicated connection, held for
-        the whole label+embed pass (which spans several transactions) — two
-        document jobs can never interleave labels and vectors on one fact.
+        Consistent key order prevents overlapping batches from deadlocking.
+        A waiter rechecks eligibility after acquisition, so already embedded
+        facts do not cause another paid call. Independent facts use other keys.
         """
-        with self._engine.connect() as connection:
-            connection.execute(
-                _ACQUIRE_LABEL_LOCK, {"key": f"{deployment_id}:label-facts"}
-            )
-            connection.commit()
+        keys = sorted(
+            {f"{deployment_id}:label-fact:relation:{item}" for item in relation_ids}
+            | {
+                f"{deployment_id}:label-fact:observation:{item}"
+                for item in observation_ids
+            }
+        )
+        if not keys:
+            yield
+            return
+        with self._engine.connect().execution_options(
+            isolation_level="AUTOCOMMIT"
+        ) as connection:
+            attempted: list[str] = []
             try:
+                for key in keys:
+                    # Include the in-flight acquisition in failure cleanup too.
+                    attempted.append(key)
+                    connection.execute(_ACQUIRE_LABEL_LOCK, {"key": key})
                 yield
             finally:
-                connection.execute(
-                    _RELEASE_LABEL_LOCK, {"key": f"{deployment_id}:label-facts"}
-                )
-                connection.commit()
+                connection.rollback()
+                if not connection.invalidated:
+                    for key in reversed(attempted):
+                        connection.execute(_RELEASE_LABEL_LOCK, {"key": key})
 
     def application_changes(
         self, *, deployment_id: UUID, application_id: UUID

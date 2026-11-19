@@ -5,6 +5,8 @@ export const metadata = {
 
 # Keep a source up to date
 
+Pagination follows the shared [Pagination and truncation](/docs/reference/http-api#pagination-and-truncation) contract (D154).
+
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 Specs get edited. The billing migration plan said June; now it says
@@ -190,9 +192,9 @@ while True:
     for document in page.documents:
         if document.source_kind == "file" and document.source_uri not in present:
             client.delete_document(doc_id=document.doc_id)
-    if page.cursor is None:
+    if page.next_cursor is None:
         break
-    cursor = page.cursor
+    cursor = page.next_cursor
 ```
 
 Deleting removes the document's claims from the evidence and closes the

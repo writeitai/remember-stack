@@ -114,6 +114,10 @@ class MistralOcrSettings(BaseSettings):
             f":keep-{int(self.keep_provider_response)}"
         )
 
+    def converter_version(self) -> str:
+        """Compute the route identity without creating a provider client."""
+        return f"{MISTRAL_OCR_CONVERTER_VERSION}:{self.version_fingerprint()}"
+
 
 class MistralOcrProviderError(Exception):
     """A transient provider/transport failure: the worker retries, then DLQs.
@@ -148,7 +152,7 @@ class MistralOcrConverter:
     def version(self) -> str:
         """Normalization pin plus the settings fingerprint (D38): any model or
         option change creates new representations instead of replaying old ones."""
-        return f"{MISTRAL_OCR_CONVERTER_VERSION}:{self._settings.version_fingerprint()}"
+        return self._settings.converter_version()
 
     def convert_path(self, *, path: Path, mime: str) -> ConversionResult:
         """:meth:`convert` for a document on local disk (D147).
