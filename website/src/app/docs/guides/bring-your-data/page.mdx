@@ -302,8 +302,11 @@ wrong?](/docs/guides/unknowns-and-ambiguity#why-is-my-answer-empty-or-wrong).
 
 ## Costs on remember.dev
 
-remember.dev charges for processing each document, by its characters or,
-for a PDF, by its pages, and for the storage the result takes. A document that fails to process is not
+remember.dev charges for processing the files it reads: a PDF by its
+pages, every other read file (Markdown, text, Office files, HTML and the
+rest) by the characters of its reading after whitespace is normalised. A
+file it only describes with a card (an image, audio, video or an archive)
+pays only for its storage. Everything you store is charged as stored data. A document that fails to process is not
 charged, and re-sending identical bytes is free, so re-running an import
 costs only what is new. Check your balance and set a monthly cap before a
 large import; see [Pricing and credits](/docs/cloud/pricing) and [Spend

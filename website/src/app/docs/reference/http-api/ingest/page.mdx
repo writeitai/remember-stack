@@ -262,15 +262,14 @@ for it; it will not become ready on its own.
 
 <Cloud>
 
-remember.dev caps bodies at 100,000,000 bytes and requires `Content-Length`.
-On remember.dev the spend hold is placed before the body cap is checked, and
-the control plane refuses an over-cap hold itself. The engine then answers an
-over-cap body with `503` `spend_lease_unavailable` rather than `413`. Treat
-both as "too large" when the body is over 100,000,000 bytes.
+remember.dev caps a request body at 100,000,000 bytes and requires
+`Content-Length`; a larger body is refused with `413` `body_too_large`. A
+file of up to 5 GiB goes through a direct multipart upload instead; see
+[Limits](/docs/cloud/limits#ingest).
 
-A metered deployment (remember.dev) refuses no type or size of file at
-ingest: it measures each new version in the convert stage, and a file no
-route reads is stored and carded without a processing charge.
+On remember.dev each new version is measured while it is converted. A file
+the `card` route describes (an image, audio, video or an archive) has no
+processing charge.
 
 </Cloud>
 

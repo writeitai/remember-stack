@@ -299,15 +299,16 @@ read. See [What remember.dev serves](/docs/cloud/compatibility) and
 <Tab label="Self-hosted">
 
 A fresh self-hosted deployment reads Markdown, plain text, code and
-configuration files, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`)
+configuration files, HTML, EPUB, Word, PowerPoint, email (`.eml`)
 and Jupyter notebooks, profiles spreadsheets, CSV and data files (their
 sheets, columns and first rows; no claims), and describes images, media and
 archives with a card. A file of a type it cannot read (the LibreOffice
 formats, when the engine runs without LibreOffice) is stored and its
 processing is parked, not refused: the ingest succeeds with `"parked": "no_route"`, and the version
-waits until an operator adds a converter for its type. Reading scanned
-PDFs and images with OCR needs converters that you configure with your
-own provider key.
+waits until an operator adds a converter for its type. Every PDF needs the
+Mistral OCR key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`), which reads every
+page; without it PDFs are stored and parked. Reading images needs a
+converter that you configure with your own provider key.
 See [File formats and converters](/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
