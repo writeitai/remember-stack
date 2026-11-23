@@ -77,10 +77,10 @@ ignores.
 | HTTP `ProviderCallError` handler (`surfaces/http_api.py:793`) | `provider_call_failed` (same 503) | ERROR |
 | HTTP unmapped exception (new catch-all handler, same 500) | `api_unhandled_exception` | ERROR |
 | Uncaught exception ending a process or thread (`sys.excepthook`, `threading.excepthook`, installed with the handler) | `process_unhandled_exception` | ERROR |
-| API startup or shutdown failure (a lifespan wrapper around the app's lifespan, e.g. the cost-export listener failing to bind) | `api_lifespan_failed` | ERROR |
+| API startup or shutdown failure, e.g. the cost-export listener failing to bind. The lifespan wrapper is applied **outermost**, after every other app wrapping including the cost-export listener (`profiles/selfhost.py:1288`), so it sees every inner failure | `api_lifespan_failed` | ERROR |
 | Expired-lease sweep: a requeue announcement fails (`workers/base.py:627`) | `worker_requeue_announce_failed`. The sweep reports it and continues with the remaining rows, so later dead letters are still finalized and reported | ERROR |
 | Query sandbox: a `SandboxRejection` the bridge raised for an operational cause (`P1_UNAVAILABLE`, embedding provider failure; `surfaces/query_sandbox/bridge.py:369`), consumed at `executor.py:861` | `query_dependency_unavailable`; same wire result | ERROR |
-| Query sandbox: `psycopg.Error` in SQLSTATE class `XX` (internal error, e.g. `DataCorrupted`) or `58` (system error), at `executor.py:944` | `query_database_internal_error`; same `execution_error` result. Other classes are the caller's SQL and are not reported | ERROR |
+| Query sandbox: `psycopg.Error` at `executor.py:944`. The executor tracks whether the caller's statement is executing. Any error outside that phase is engine-owned SQL and is reported: catalog and manifest reads (`spine/query_space/manifest.py:886`), setup and type lookups. During the caller's statement, an error in SQLSTATE class `08` (connection), `53` (resources), `57` (operator intervention), `58` (system) or `XX` (internal) is reported. Any other class during the caller's statement is the caller's fault and is not reported | `query_engine_sql_failed` (engine-owned phase) or `query_database_internal_error` (caller phase, listed classes); same `execution_error` result | ERROR |
 | Managed metering: the control plane rejects the producer credential (`MeterReceiptUnauthorized`) on the measurement path (`spine/managed_metering.py:164`) or the outcome path (`:423`) | `meter_receipt_unauthorized`; replay continues | ERROR |
 | MCP tool unexpected failure (`_internal_error`, `surfaces/mcp.py:568`) | `mcp_tool_failed` (same wire response) | ERROR |
 | Storage capture, per failed scope (`profiles/storage_capture_batch.py`) | the engine refusal's declared `code`, else `storage_capture_failed` | ERROR |
@@ -129,9 +129,14 @@ transport fails, a scope's own earlier reason is kept.
   loggers=("rememberstack",))`**, the embedder entry point. It attaches one
   handler with the caller's sink, a callable that takes an `ErrorReport`, to
   each named logger, and installs the process and thread excepthooks. It
-  also registers a bounded drain at exit: `flush(timeout=2s)` on every sink
-  through `atexit` and before the engine's own `os._exit` paths. A report
-  queued just before a fatal exit is therefore delivered.
+  also registers a bounded drain. A sink is any callable; a sink object that
+  also has `flush(timeout)` is buffered and gets drained.
+  **`drain_error_reporting(timeout=2.0)`** calls each buffered sink's
+  `flush` in a daemon thread and returns at the deadline even if a flush
+  stalls. It runs through `atexit`, before the engine's own `os._exit`
+  paths, and embedders call it before theirs (remember.dev's convert
+  route). A report queued just before a fatal exit is therefore delivered
+  when the sink can deliver it within the deadline.
   An embedder adds its own namespaces; remember.dev passes
   `("rememberstack", "umc_runtime")`.
 
@@ -146,7 +151,7 @@ handler with each configured sink.
 
 | Tracker | Configuration | Sink |
 |---|---|---|
-| Sentry, GlitchTip, Bugsink | `REMEMBERSTACK_SENTRY_DSN`, `_ENVIRONMENT`, `_SAMPLE_RATE` (unchanged) | The SDK is initialized with `default_integrations=False` and no integrations, so it captures nothing by itself: no logging, framework, thread or excepthook capture. The sink sends one event per report with `capture_event` inside a fresh, empty scope, so ambient tags, contexts, user or breadcrumbs from the current scope never apply. Its `flush` is the bounded drain above. The event holds the exception type, frames, level, the `error_code` tag and the worker tags; in `full`, also the message, exception text and extras (as `extra`). `TelemetryPort` no longer sends exceptions to Sentry, and `before_send` no longer drops worker records. In `metadata`, `before_send` keeps its scrubbing as a backstop. |
+| Sentry, GlitchTip, Bugsink | `REMEMBERSTACK_SENTRY_DSN`, `_ENVIRONMENT`, `_SAMPLE_RATE` (unchanged) | The SDK is initialized with `default_integrations=False` and no integrations, so it captures nothing by itself: no logging, framework, thread or excepthook capture. The sink sends one event per report directly on the adapter's client, `client.capture_event(event, scope=None)`. That bypasses the global, isolation and current scopes, so no ambient tags, contexts, user or breadcrumbs apply. Its `flush` is drained by `drain_error_reporting`. The event holds the exception type, frames, level, the `error_code` tag and the worker tags; in `full`, also the message, exception text and extras (as `extra`). `TelemetryPort` no longer sends exceptions to Sentry, and `before_send` no longer drops worker records. In `metadata`, `before_send` keeps its scrubbing as a backstop. |
 | Any OpenTelemetry backend | Standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`), `OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_SERVICE_NAME` | Emits one OTel log record per report through a `LoggerProvider` and the OTLP HTTP exporter (HTTP/protobuf; both already in the image). Attributes: `error.code`, `exception.type`, `code.frames` (basename:function:line lines) and the tags. In `full`, the body is the message, plus `exception.message` and one `extra.<name>` attribute per extra. No stock `LoggingHandler` and no root-logger attachment. |
 
 `REMEMBERSTACK_ERROR_DETAIL` = `metadata` (default) | `full` sets the
@@ -160,7 +165,8 @@ documented as content-bearing.
 `except` handler that catches a failure class (analysis §5.1) passes only
 in one of these ways:
 
-- its last statement is `raise`;
+- its last statement is `raise` and no `return`, `continue` or `break`
+  can leave the handler before it (nested functions excepted);
 - a top-level statement of its body calls a reporter. The reporters are
   `report_failure` and `_internal_error`, which calls `report_failure`;
 - a top-level statement calls `logger.error` or `logger.exception` with an
@@ -199,8 +205,12 @@ exporter, and assert on the serialized payload:
 - A subprocess that reports and then exits (normally, through `os._exit`,
   and through an API lifespan failure) delivers its event to the fake
   transport.
-- A populated ambient Sentry scope (tags, contexts, user, breadcrumbs) adds
-  nothing to the final payload.
+- Populated global, isolation and current Sentry scopes (tags, contexts,
+  user, breadcrumbs) add nothing to the final payload.
+- A sink whose `flush` stalls cannot delay `drain_error_reporting` past its
+  deadline; the process exits on time.
+- An API whose cost-export listener fails to bind delivers
+  `api_lifespan_failed` before the process exits.
 - A nested `extras` mapping with an inner `api_token` arrives masked in both
   sinks.
 

@@ -213,7 +213,7 @@ per-scope result, is fixed here.
 | `workers/base.py:451` | `NonRetryableHandlerError, ProviderAccountingError` | `worker_item_failed` (terminal) |
 | `workers/base.py:671` | `Exception` | `worker_finalizer_failed` |
 | `workers/base.py:692` | `Exception` | `provider_usage_unrecorded` |
-| `workers/e3.py:484` | `ProviderInvalidResponseError` | `e3_provider_invalid_response` |
+| `workers/e3.py:484` | `ProviderInvalidResponseError` | `e3_claim_normalize_failed` (logged once, at `:492`) |
 
 #### Expected outcome; WARNING + code
 
@@ -224,7 +224,7 @@ per-scope result, is fixed here.
 | `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried. The sibling `MeterReceiptUnauthorized` branch at `:164` is ERROR `meter_receipt_unauthorized` (design §2.1) |
 | `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnauthorized` (a `MeterReceiptUnavailable` subclass): ERROR `meter_receipt_unauthorized`; other `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues with capped backoff in both cases |
 | `surfaces/query_engine.py:1798` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary in the response |
-| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
+| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; the additive profile channel is skipped and fact search answers alone (no boundary in the response) |
 | `surfaces/query_engine.py:4576` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
 
 #### Raised later
@@ -281,6 +281,9 @@ per-scope result, is fixed here.
 
 ### 5.3 Handlers that raise on only some branches
 
+This includes handlers whose last statement is `raise` but which can
+`return`, `continue` or `break` first (one, at `spine/fact_adjudication.py:501`).
+
 | Site | Consumed branch | Disposition |
 |---|---|---|
 | `adapters/openrouter.py:1466` | Inline accounting failed with a generation id | Raised later: the usage poll raises when exhausted |
@@ -288,7 +291,8 @@ per-scope result, is fixed here.
 | `core/file_card.py:174`, `:229` | Unreadable image or archive bytes | Exempt: input classification |
 | `surfaces/query_engine.py:1012`, `:1366`, `:2118`, `:2542`, `:2592`, `:2667`, `:2783` | The request deadline expired | Expected: WARNING `query_budget_exceeded`; a disclosed boundary in the response |
 | `surfaces/query_sandbox/executor.py:118` | Type-name lookup failed within budget | Exempt: falls back to the type oid in a column label |
-| `workers/e1.py:470` | A single chunk fails embedding (not an outage) and is skipped as poison | Report: ERROR `embedding_chunk_skipped` |
+| `workers/e1.py:470` | A single chunk fails embedding (not an outage) and is skipped as poison | Report: ERROR `embedding_chunk_skipped` (`mixed`) |
+| `spine/fact_adjudication.py:501` | Ends in `raise`, but with `fallback_to_prompt` set it returns the prompt adjudication first | Expected: WARNING `fact_adjudication_prompt_fallback` on the fallback branch (`mixed`) |
 
 ### 5.4 Existing ERROR calls
 
@@ -307,7 +311,7 @@ All 18 get an `error_code`:
 | `spine/surface_cost.py:162`, `:167`, `:197` | `surface_cost_deployment_mismatch`, `surface_cost_scope_missing`, `surface_cost_record_failed` |
 | `surfaces/mcp.py:568` | `mcp_tool_failed` |
 | `workers/base.py:258`, `:452`, `:487`, `:672`, `:697` | per the boundary table in the design (§2.1) |
-| `workers/e3.py:492` | `e3_claim_normalize_failed` |
+| `workers/e3.py:492` | `e3_claim_normalize_failed`; the same code as its enclosing handler at `:484` (§5.2) |
 
 ### 5.5 Boundaries outside `except`
 
