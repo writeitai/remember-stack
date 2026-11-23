@@ -107,7 +107,8 @@ CREATE INDEX ix_layer_gaps_open
 need no data migration. A gap row is inserted once per version and layer and keeps its lane
 through discharge and reopening until it is deleted. A gap is *open* while `discharged_at` is null; a layer is backfilling
 while it is enabled and has an open gap of a live version. Like `obs_flush_version_state`, gap
-rows carry no foreign key; archive and forget delete them explicitly (§6.3).
+rows carry no foreign key; archive parks them (excluded from admission until the version
+returns) and forget deletes them explicitly (§6.3).
 
 ### 3.3 One fence
 

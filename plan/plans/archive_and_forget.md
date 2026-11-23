@@ -21,7 +21,9 @@ Python surface (D141), because the parity check compares that inventory with the
   document-derived writer, the per-document object lock in every object writer, skipped queued
   work, input generations for profiles and K) and the background erasure job (§3.4), driven
   through the existing internal entry point so the job can be tested before any public route.
-- `remember forget reapply [--from]` and `remember forget list --json` (§3.10).
+- `remember ops forget-reapply [--from]` and `remember ops forget-export` (§3.10), offline
+  operator commands inside the engine container; the public `remember forget list|status`
+  over HTTP lands with slice 2.
 - The re-ingest gate with its default refusal (§3.6: common lock order, staged originals,
   409 `document_forgotten`) on every ingest path, so the old permanent guard is never removed
   without its replacement in place. Only the `allow_forgotten` override waits for slice 2.

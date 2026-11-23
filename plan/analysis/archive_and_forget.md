@@ -169,8 +169,8 @@ covers:
   keep healthy for a case remember.dev does not have. Rejected.
 - **Chosen: one PostgreSQL row per forget, plus an operator command.** The row carries the
   content-free inventory (IDs, hashes, object keys) and drives the background job, the
-  re-ingest guard and verification. `remember forget list --json` exports the records, and
-  `remember forget reapply` re-runs erasure for every record (and for records from an
+  re-ingest guard and verification. `remember ops forget-export` exports the records, and
+  `remember ops forget-reapply` re-runs erasure for every record (and for records from an
   exported file). The documented restore procedure runs `reapply` before the restored
   deployment takes traffic.
 

@@ -441,7 +441,7 @@ COMMENT ON TABLE pipeline_component_versions IS
 -- forgets — D159's one content-free record per forgotten document
 -- (archive_and_forget_design.md §3.5). It drives the background erasure job, the re-ingest
 -- guard (refused unless one request sets allow_forgotten) and verification, and is what
--- `remember forget list --json` exports and `remember forget reapply` re-runs after a restore.
+-- `remember ops forget-export` exports and `remember ops forget-reapply` re-runs after a restore.
 -- There is no second store. Attempts/retry/DLQ remain in processing_state, never here.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE forgets (
@@ -450,7 +450,7 @@ CREATE TABLE forgets (
   doc_id                uuid NOT NULL,          -- no FK: the document row is erased
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
-  inventory             jsonb,                  -- content-free IDs and object keys; set by the erasure job
+  inventory             jsonb,                  -- content-free row IDs (delete vs scrub), content hashes, object locators and K artifact IDs; never full keys or paths; set by the erasure job
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',
   status                forget_status NOT NULL DEFAULT 'erasing',
   requested_at          timestamptz NOT NULL DEFAULT now(),
@@ -2341,7 +2341,7 @@ path; failure has no complete placement generation.
 Forget (D159) uses the forget record's `doc_id` to erase only that document's
 suffix-bearing folders, clear its marker and regenerate/prune navigation indexes
 from scrubbed authority. Clear `corpus_paths` after cleanup/navigation; a null set
-never skips full suffix discovery on forget or `remember forget reapply`. It leaves
+never skips full suffix discovery on forget or `remember ops forget-reapply`. It leaves
 surviving original/media objects in place. Retry and `reapply` need no historic
 path list; complete local markers never skip independently restored stores. The
 forget job clears its work rows' payloads and errors and cannot reintroduce
@@ -2914,7 +2914,7 @@ runs in one transaction under the lineage row lock:
 
 **[Archive and forget §3](archive_and_forget_design.md#3-forget) is authoritative for the
 request, the per-document fence, the background erasure job, the `forgets` record (DDL in §2), the
-re-ingest guard and `remember forget reapply` after a restore.** This
+re-ingest guard and `remember ops forget-reapply` after a restore.** This
 section owns only the PostgreSQL part. The request runs §13.1's cascade, or finishes a pending
 archive cascade idempotently through D135's finish-or-refuse rerun, sets `deleted_at` on the lineage and its versions, marks the document's
 pending and failed work items `skipped` and inserts the `forgets` row in one transaction.

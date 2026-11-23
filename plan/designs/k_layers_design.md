@@ -775,8 +775,9 @@ The deletion cascade (requirements; E0 §2) reaches plane K mechanically through
   through `parent_artifact_id` across scopes), then rewrites history, publishes once, and
   leaves rebuilding to ordinary K work from clean inputs. It advances the input generation of
   every K scope it touches, so a compile prepared before the forget is discarded at
-  publication. The forget record lists those paths, so `remember forget reapply`
-  erases a restored K remote again after a restore; backup schedules and physical expiry belong
+  publication. After a restore, `remember ops forget-reapply` discards and rebuilds every
+  compiled page of the restored repository, recognized by its own frontmatter (archive and
+  forget §3.10); the forget record keeps K paths only while a redaction is pending. Backup schedules and physical expiry belong
   to the operator/cloud under D60. Authored pages and compiled-page curation sidecars that still
   cite the document get the `redaction_required` flag and are listed on the forget record;
   everything else is erased at once. When the owner's edit removes the citation, the K sync
@@ -817,7 +818,7 @@ structurally (one committer, disjoint writes, DAG order).
 4. Compile-cycle economics at scale (dirty-pages distribution per debounce window; hub-page
    budgets; shared-model-page recompile blast radius).
 5. ~~Git-history erasure + restore non-resurrection mechanics for forget~~ **DESIGNED by
-   D159** — affected paths are erased from every reachable ref, and `remember forget reapply`
+   D159** — affected paths are erased from every reachable ref, and `remember ops forget-reapply`
    erases a restored remote again before it serves; the whole-database canary is the
    executable check. Provider backup rotation remains an operator/cloud concern under D60.
 6. **Future-state extraction** for migration-style scopes (§9): decision-language →

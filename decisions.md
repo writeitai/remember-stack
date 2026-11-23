@@ -2269,7 +2269,7 @@ never permission to skip a separately restored store or database.
 
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** `ForgetManifestPort`, the dedicated manifest root/store
 > in the port table row above, and the readiness re-honor are removed: forget records live in
-> PostgreSQL and `remember forget reapply` runs after a restore. The object, corpus and K
+> PostgreSQL and `remember ops forget-reapply` runs after a restore. The object, corpus and K
 > purge capabilities stay (the corpus port gains mount-session invalidation).
 
 ---
@@ -2313,7 +2313,7 @@ adapters/llm/workers/surfaces/eval/profiles`; core is pure and infra-free; SQL o
 imports** (architecture erosion fails loudly); profiles are explicit composition roots — no DI
 framework. **Portability rides rebuild-first (D7, refined by D75)**: portable state = Postgres +
 raw/artifact objects + the K repo (**D159**: there is no manifest root); native operator tools
-move the authoritative stores, the operator runs `remember forget reapply` before serving, and projections rebuild
+move the authoritative stores, the operator runs `remember ops forget-reapply` before serving, and projections rebuild
 after restore — the cloud↔self-host migration path in both directions without a transport subsystem.
 
 **Context.** Fills D60's deliverable and D61's profile mechanics. Redis/arq was considered for
@@ -3035,7 +3035,7 @@ restore canary is green; design resolution alone does not pretend the runtime co
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** There is no hard-forget manifest root to transfer
 > first and no readiness replay: every clause below about transferring or verifying the
 > manifest root and running the hard-forget readiness pass is history. A restore ends with
-> `remember forget reapply --from` the latest full export of forget records before traffic. The state-and-ordering contract for the other stores stands.
+> `remember ops forget-reapply --from` the latest full export of forget records before traffic. The state-and-ordering contract for the other stores stands.
 
 **Decision.** The OSS library defines which deployment state is authoritative and the only safe
 restore order; it does not implement `remember export` / `remember import`, a universal archive
@@ -7630,7 +7630,7 @@ fact child).
 > **Extended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Corpus publication is engine-owned work
 > invoked through the same explicit context, `run_task` and delivery collector.
 > D74's per-document corpus erasure/replay uses the separately durable manifest store.
-> (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: no manifest store or replay; forget's corpus step and `remember forget reapply`.)
+> (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: no manifest store or replay; forget's corpus step and `remember ops forget-reapply`.)
 > No hosted scheduler or correctness authority is added to this repository.
 
 **Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c). Merged

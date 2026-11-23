@@ -292,7 +292,11 @@ These are exactly the predicates `facts_context` applies to fact windows
 facts and on text.
 
 Selection additionally requires the version to be non-deleted and `ready` with a ready current
-representation. While the version in force at an instant is still processing, its lineage
+representation, and testifying (not D159-archived). Archive eligibility is read from the
+archive ledger (`version_archive_events`) as of the belief watermark, never from the current
+flag, so pinned selection and cursor pages keep one consistent answer even if an archive lands
+between pages. A read that opts in with `include_archived=true` uses a historical selection
+path that admits archived editions while keeping the same period filtering. While the version in force at an instant is still processing, its lineage
 contributes nothing to that scope — it never serves the text that version replaced.
 
 For an **undeclared** lineage, every mode selects the served version — today's behaviour,

@@ -265,7 +265,7 @@ lineage, current or historical (an archived document's evidence counts), is requ
 retain a shared source-derived assertion; a contradiction
 alone cannot preserve the forgotten wording. Reconstruct a shared observation
 from a surviving supporting original normalization output. Never adopt counterevidence as the
-fact's replacement statement. Recompute exclusivity when `remember forget reapply`
+fact's replacement statement. Recompute exclusivity when `remember ops forget-reapply`
 re-runs an older forget record, without changing its stored inventory. Existing NULL profile input hashes permit bounded
 repair discovery on retry. Evidence aggregates must agree with remaining
 application pointers. No prepared fingerprint, cited UUID array,

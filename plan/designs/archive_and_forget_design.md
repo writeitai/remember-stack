@@ -173,7 +173,10 @@ not every independently obtained copy of a fact. PostgreSQL erasure is logical (
 
 What remains: the content-free forget record (§3.5), currency-transition and fact-closure
 rows stripped of source text, aggregate counts, work-ledger rows (status and IDs only), the
-cost ledger, and metering receipts detached from the erased version.
+cost ledger, and metering receipts detached from the erased version. Cost-ledger call keys
+are opaque (a hash of their inputs) on every write path; a migration replaces existing keys
+that embed source text (reclustering put the normalized alias into `call_key`), keeping
+every receipt and total.
 
 ### 3.2 The request: hide at once
 
@@ -218,7 +221,12 @@ gets that for the one document, never for the deployment:
 - **Queued work is retired** (§3.2 step 3), and claim queries never hand out work whose
   document is tombstoned.
 - **Running work finishes or expires first.** At hide, lease renewal (D145) is refused for
-  running items of the document, so a hung handler cannot hold the forget forever; the job
+  running items of the document, so a hung handler cannot hold the forget forever. A lease
+  ending does not by itself release PostgreSQL session locks, so the dedicated lock sessions
+  are bounded too: a worker terminates its own lock sessions when its lease lapses, and the
+  janitor terminates (`pg_terminate_backend`) any lock session whose attempt's lease has
+  expired. Forget never blocks on a lock: it tries it and, on contention, reschedules
+  itself; the job
   proceeds once each such item has finished or its lease has expired (an expired attempt's
   token is stale and cannot publish). The forget job never blocks a worker slot while it
   waits: it releases its locks and reschedules itself with the ledger's `not_before`, as for
@@ -285,10 +293,13 @@ the document hidden and the record `erasing`; nothing reopens.
 1. **Wait for the fence** (§3.3).
 2. **PostgreSQL, one transaction.**
    - *Inventory.* Record the content-free inventory on the forget record before anything is
-     deleted: row IDs, content hashes, engine-generated object prefixes (`{doc_id}/…`) and
-     staged-object IDs rather than full keys (a raw key ends with the caller's file
-     extension; exact keys are discovered by listing the prefixes during the purge), and the
-     K artifact IDs (not their paths) that cite the
+     deleted: row IDs, content hashes, and content-free object **locators** rather than full
+     keys (a raw key ends with the caller's file extension; exact keys are discovered by
+     listing during the purge): the engine prefix `{doc_id}/` (with its re-add generation,
+     §3.6), the opaque key of every original kept outside that prefix (a registered
+     `uploads/<id>` original, D147), the owning prefix plus content hash of a deduplicated
+     original stored under another lineage, and staged-object IDs; and the K artifact IDs
+     (not their paths) that cite the
      document's evidence (read from the citation bindings, which the deletes below remove).
      The inventory separates rows to **delete** from rows to **scrub** (kept as content-free
      retired rows, with the fields to clear named), so verification checks each correctly. On
@@ -362,10 +373,11 @@ the document hidden and the record `erasing`; nothing reopens.
      only unrelated facts), and of every page that depends on one of them through the
      compiler's actual inputs, followed transitively: same-scope summaries,
      previous Markdown, and child summaries reached through `parent_artifact_id` links across
-     scopes. A page compiled in agent mode (the writer explored the memory freely, so its
-     inputs are not fully recorded, k_layers §writer runtime) counts as dependent if it was
-     compiled after the forgotten document was first ingested. Writers work in a checkout
-     without Git history, so no writer can read purged history. Those bodies are gone before
+     scopes. A bundle-mode writer runs in a sandbox that holds only its prepared working
+     directory (no memory CLI credentials, no mounts, no Git history), so its recorded
+     bundle is exactly what it read. A page compiled in agent mode (the writer explored the
+     memory freely, so its inputs are not established) counts as dependent if it was compiled
+     after the forgotten document was first ingested. Those bodies are gone before
      the history rewrite re-adds current files, so no contaminated current file is
      re-added;
    - erase every other registered K path from all reachable Git history and re-add its
@@ -396,7 +408,7 @@ CREATE TABLE forgets (
   doc_id                uuid NOT NULL,          -- no FK: the document row is erased
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
-  inventory             jsonb,                  -- content-free IDs, object keys and prefixes; set by step 2
+  inventory             jsonb,                  -- content-free row IDs (delete vs scrub), content hashes, object locators and K artifact IDs; set by step 2
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',
   status                forget_status NOT NULL DEFAULT 'erasing',
   requested_at          timestamptz NOT NULL DEFAULT now(),
@@ -415,7 +427,7 @@ CREATE INDEX ix_forgets_content ON forgets USING gin (content_hashes);
 The record holds no text, names, titles, title-derived paths, URIs or prompts. It is the
 only forget state; there is no second store and nothing reads it at start. `GET /forgets` and
 `GET /forgets/{forget_id}` return records without the inventory; the CLI is
-`remember forget list [--json]` (the JSON export includes the inventory, for `reapply`) and
+`remember forget list` and
 `remember forget status FORGET_ID`.
 
 ### 3.6 Re-ingest guard and adding a document back
@@ -460,7 +472,12 @@ written before a refusal are deleted through their staged row.
   transaction, only if it commits. Other matching records (a different forgotten lineage that
   shared these bytes) are passed over for this request but stay, and keep guarding their own
   identities and hashes. A pending authored-page wait for a deleted record ends; those pages
-  keep their review flag. The person chose to have the content back, so its history in those pages is
+  keep their review flag. A re-added lineage keeps its deterministic `doc_id` but writes its
+  objects under a new generation prefix (`{doc_id}/r<n>/…`, `n` stored on the documents row),
+  so a delete issued by a stalled eraser of the earlier forget, which only ever targets the
+  forgotten generation's locators, can never remove the re-added copy. Erasers also take the
+  lineage-identity lock (shared with ingest and re-add) around each mutation batch and
+  re-check their record and attempt under it. The person chose to have the content back, so its history in those pages is
   no longer an erasure obligation.
 
 The flag exists only per request: on the HTTP ingest routes, the `MemoryClient` ingest
@@ -517,7 +534,7 @@ review flag says so.
 Restoring backups is the operator's (D60). The restore procedure ends with:
 
 ```
-remember forget reapply [--from forgets.json]
+remember ops forget-reapply [--from forgets.json]
 ```
 
 `reapply` works from one record set: the latest export when `--from` is given (it replaces
@@ -534,7 +551,11 @@ records. For each record:
 Compiled K pages are regenerable (D46), so `reapply` does not trust a restored K tree's compiled
 pages to match the inventory (a restored page may predate the compile that dropped its
 citation): it discards every compiled body, summary and previous Markdown in the restored
-repository, erases their history, and lets ordinary K work rebuild them. Authored pages and
+repository, erases their history, and lets ordinary K work rebuild them. It identifies
+compiled files from the restored revision itself: every compiled page carries its ownership
+(`page_kind: compiled` and its artifact ID) in its own frontmatter, so a compiled page
+restored under a path it has since moved from is still recognized and discarded rather than
+adopted as an authored page. Authored pages and
 sidecars are checked against every record's inventory as in step 5.
 
 Either way it erases the union of the exported inventory and whatever the restored database
@@ -549,7 +570,7 @@ It prints what it erased. The operator runs it before the restored deployment ta
 the engine does not run it at start and never refuses to start because of it.
 
 A database restored from before a forget no longer contains that forget's record, so the
-operator keeps `remember forget list --json` exports, which include each record's full
+operator keeps `remember ops forget-export` exports, which include each record's full
 content-free inventory, outside the database backup (the erasure log any controller keeps)
 and passes the latest full export (every record, not only those newer than the backup) with
 `--from`. An older export would re-impose a guard a deliberate
@@ -565,7 +586,10 @@ database backups.
 HTTP `POST /documents/{doc_id}/forget`, `GET /forgets`, `GET /forgets/{forget_id}`;
 `MemoryClient.forget_document`, `list_forgets`, `get_forget`; CLI
 `remember documents forget DOC_ID` (asks for confirmation; `--yes` skips it),
-`remember forget list|status|reapply`; MCP tool `forget_document` with a required
+`remember forget list|status`; the operator commands `remember ops forget-export` (every
+record with its inventory) and `remember ops forget-reapply`, which run inside the engine
+container against the database, so they work before the API and workers start; MCP tool
+`forget_document` with a required
 `confirm: true` argument and a description telling the agent to confirm with the user first
 (omitted by `--read-only`; `destructiveHint: true`). The TypeScript client exposes the same
 operations, parameters, answers and errors (D141 parity); `reapply` is CLI-only.
@@ -595,7 +619,7 @@ operations, parameters, answers and errors (D141 parity); `reapply` is CLI-only.
 - The stop-and-remount rule for mounts.
 
 The `forget_manifests` table becomes `forgets` by migration. A record that exists only in a
-deployment's old external manifest store is imported with `remember forget reapply --from`
+deployment's old external manifest store is imported with `remember ops forget-reapply --from`
 using that store's export.
 
 ## 5. Acceptance tests
@@ -604,7 +628,8 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
 
 1. **Whole-database canary.** Plant a unique token in one document A (body, title, file name,
    metadata, extracted claims, a fact statement and entity alias it alone contributed, the
-   name of an entity that another document B also relates to,
+   name of an entity that another document B also relates to, a reclustering cost-ledger
+   call key,
    a compiled K page, the corpus folder); forget it; `pg_dump` the whole database, read
    every object and object version in every bucket, walk the K repository's reachable
    history and the corpus tree, and find the token nowhere. A tag assigned to the document
@@ -651,7 +676,12 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
    PUT paused across A's purge, with B's document locks held, is caught. A paused P1 label job
    on a shared fact discards its stale label. A forget racing a full corpus reconcile completes
    without deadlock. A resolver decision whose candidates included the forgotten entity
-   publishes no stale rationale. A writer whose sessions died while forget regenerated an
+   publishes no stale rationale. A stalled eraser's delete issued after a deliberate re-add
+   leaves the re-added copy intact. A writer that stalls while holding both object locks
+   loses them when its lease lapses, and the forget proceeds without occupying a worker slot.
+   A bundle-mode writer cannot reach the memory CLI or mounts. An edited version whose flush
+   unit holds both fresh claims (episode 1) and reused claims (episode 2) applies each
+   against its own episode. A writer whose sessions died while forget regenerated an
    index does not delete the new index.
 10. **Authored pages.** An authored page citing the document: forget erases everything else
     and reports `waiting_for_redaction` with the path; after the owner's edit the sync
@@ -677,8 +707,11 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     stops listing it within its cache bound, and a fresh open fails after the bound; the test
     records the chosen tool's behaviour for already-open handles. A PUT that commits after its
     writer's sessions died and its client timed out is caught by the delayed pass.
-13. **Restore.** Restore the pre-forget database dump and run `reapply --from` the export: the
-    canary passes. Restore only the K repository from before a compile that dropped the
+13. **Restore.** Restore the pre-forget database dump and run `forget-reapply --from` the
+    export: the canary passes. Restore only the raw bucket against the post-forget database:
+    a registered `uploads/<id>` original and a deduplicated original are erased from their
+    locators. Restore only the K repository from before a page moved: the compiled page under
+    its old path is discarded, not adopted. Restore only the K repository from before a compile that dropped the
     citation: `reapply` discards the restored compiled pages and the canary passes. Restore only the corpus bucket and run `reapply`: it passes. A stale export
     does not erase another lineage that owns identical bytes. A restore spanning a deliberate
     re-add, with the latest export, neither erases the re-add nor revives its guard. A

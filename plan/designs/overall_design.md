@@ -248,7 +248,7 @@ PG entity registry             (D98)                      → GCS bytes
   cascade, hides the document at once, then erases it in one background job from PostgreSQL,
   object storage, P1, P3 (including open mount sessions) and affected K history, and verifies;
   only that document is fenced, and the rest of the deployment keeps serving. After restoring a
-  backup the operator runs `remember forget reapply`.
+  backup the operator runs `remember ops forget-reapply`.
 - **Maintenance**: PostgreSQL autovacuum/index telemetry and evidence-driven
   reindexing; P1 rebuild drills; semantic linter cadence; predicate-registry
   review. There is no P1 index-maintenance ticker (D94).

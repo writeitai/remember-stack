@@ -213,7 +213,7 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   debounced/scheduled — staleness bounded by an explicit, configurable cadence.
 - **Observable and recoverable, without an OSS operations platform**: typed telemetry and
   CLI/admin inspection cover every pipeline; the portable-state definition and the
-  operator-run restore step (`remember forget reapply` before traffic, D159) cover the sources
+  operator-run restore step (`remember ops forget-reapply` before traffic, D159) cover the sources
   of truth. Operators move bytes with
   native tools. Dashboard backends, alerts, HA, and physical backup schedules/retention are
   deployment-operator or cloud responsibilities (D60/D61/D75).

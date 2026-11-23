@@ -330,7 +330,7 @@ The portable restore order is deliberately small and fail-closed:
    the K repository while preserving the deployment id.
 2. Restore Postgres, raw/artifact objects, and the K repository with their native tools, then run
    normal schema migrations.
-3. Run `remember forget reapply [--from forgets.json]` before the restored deployment takes
+3. Run `remember ops forget-reapply [--from forgets.json]` before the restored deployment takes
    traffic. With `--from`, the latest exported file is the authoritative record set (it
    replaces the restored database's records rather than merging with them, and supplies forgets
    made after the backup); without it, the database's records are used. For each record it
@@ -344,7 +344,7 @@ The portable restore order is deliberately small and fail-closed:
 The engine does not run `reapply` at start and never refuses to start because of it; a restore is
 a deliberate operator action, so the operator runs it. Credentials, provider configuration, backup
 retention, transfer progress, retries, and cross-store snapshot policy remain operator or
-`ultimate-memory-cloud` responsibilities, and so does keeping `remember forget list --json`
+`ultimate-memory-cloud` responsibilities, and so does keeping `remember ops forget-export`
 exports outside the database backup, so that forgets newer than a restored backup can be
 re-applied with `--from`; without that export, such a forget does not survive the restore.
 
@@ -370,7 +370,7 @@ re-applied with `--from`; without that export, such a forget does not survive th
 3. **Compose quickstart UX**: measure the cold-start-to-first-query time; it is a release
    gate (target: minutes).
 4. **Portable restore round-trip drill**: restore the pre-forget PostgreSQL fixture and
-   independently restore external stores, run `remember forget reapply --from` the exported
+   independently restore external stores, run `remember ops forget-reapply --from` the exported
    forget list, then prove forgotten-data non-resurrection and an independent control green
    ([archive and forget §5](archive_and_forget_design.md#5-acceptance-tests), test 11). Production-builder
    delegation remains the separately green WP-7.4/WP-7.5 contract. No library transport feature is

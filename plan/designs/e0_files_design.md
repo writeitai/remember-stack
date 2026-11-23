@@ -1130,7 +1130,7 @@ served lineage/version. A matching marker means its publish completed files,
 cleanup and affected-index regeneration for the current digest; a recent unrelated
 publish proves nothing. Reconcile can verify inventories and repair store damage;
 the marker does not certify an independently restored bucket, which
-`remember forget reapply` must clean before the deployment takes traffic (§6.7). A selected historical edition reports `p3_version_not_served`;
+`remember ops forget-reapply` must clean before the deployment takes traffic (§6.7). A selected historical edition reports `p3_version_not_served`;
 a raw-only/parked selection is not ready; a missing/mismatching marker reports
 `corpus_publication_incomplete`, with adapter/DLQ failures still visible in the
 ordinary ledger. Aggregate `p3` requires all requested selections to match.
@@ -1181,13 +1181,13 @@ historic titles, paths, suffix reservations or a corpus-wide purge scope.
    unfinished-upload coverage under §5's provider rule.
    Clear `corpus_paths` after object cleanup and navigation repair; its friendly
    paths must not survive a completed forget. Always do the full suffix scan even
-   when the recorded set is empty, including under `remember forget reapply`.
+   when the recorded set is empty, including under `remember ops forget-reapply`.
    Any error leaves the forget record `erasing` and retries the same idempotent
    procedure; the document stays hidden and nothing else waits.
 4. Send controlled mount sessions the invalidation for every deleted and regenerated
    path and require their acknowledgement.
 
-After a restore, the operator runs `remember forget reapply` before the restored
+After a restore, the operator runs `remember ops forget-reapply` before the restored
 deployment takes traffic; it repeats steps 2–4 for every forget record, including suffix
 deletion in a separately restored bucket
 ([archive and forget §3.10](archive_and_forget_design.md#310-after-a-restore)). A local clean
@@ -1233,7 +1233,7 @@ Arbitrary downloaded client bytes remain outside the library-controlled boundary
 6. Archive removes that document's folders and regenerates indexes. Forget does
    the same at once, then its background job runs the per-document erasure with
    scrubbed DB authority and all-store verification while the rest of the corpus keeps
-   serving; after a restore, `remember forget reapply` repeats it before serving.
+   serving; after a restore, `remember ops forget-reapply` repeats it before serving.
 
 ## 8. Decisions and measurements
 
