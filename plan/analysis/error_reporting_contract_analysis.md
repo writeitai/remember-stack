@@ -221,8 +221,8 @@ per-scope result, is fixed here.
 |---|---|---|
 | `adapters/managed/perimeter_trust.py:315` | `Exception` | `perimeter_refresh_failed`; keeps the last good key set |
 | `adapters/managed/perimeter_trust.py:328` | `Exception` | `perimeter_refresh_failed`; keeps the last accepted document |
-| `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried |
-| `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues with capped backoff in both cases |
+| `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried. The sibling `MeterReceiptUnauthorized` branch at `:164` is ERROR `meter_receipt_unauthorized` (design §2.1) |
+| `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnauthorized` (a `MeterReceiptUnavailable` subclass): ERROR `meter_receipt_unauthorized`; other `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues with capped backoff in both cases |
 | `surfaces/query_engine.py:1798` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary in the response |
 | `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
 | `surfaces/query_engine.py:4576` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
@@ -275,7 +275,7 @@ per-scope result, is fixed here.
 | `surfaces/query_sandbox/executor.py:872` | `psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout` | the caller's statement hit its disclosed timeout (`statement_timeout` result) |
 | `surfaces/query_sandbox/executor.py:884` | `psycopg.errors.LockNotAvailable` | the caller's statement hit its disclosed lock timeout |
 | `surfaces/query_sandbox/executor.py:895` | `psycopg.errors.InvalidParameterValue` | the caller's parameter was invalid |
-| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | a statement error in the caller's SQL, returned as `execution_error` |
+| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | SQLSTATE class `XX` or `58`: ERROR `query_database_internal_error`; any other class is the caller's SQL (exempt). Same `execution_error` result in both cases (design §2.1) |
 | `workers/e0_summary.py:694` | `Exception` | cache corruption is a cache miss |
 | `workers/e0_summary.py:724` | `Exception` | cache corruption is a cache miss |
 
@@ -316,6 +316,15 @@ All 18 get an `error_code`:
 | `surfaces/http_api.py:793` `ProviderCallError` handler | Quiet 503 | ERROR `provider_call_failed`, same 503 |
 | Unmapped exception in a route | Logged by `uvicorn.error` only | Catch-all handler: ERROR `api_unhandled_exception`, same 500 |
 | `profiles/storage_capture_batch.py:142` `_failure_code` | Any code-shaped message, else the type name (`TimeoutError`) | Only an engine refusal's declared `code`, else `storage_capture_failed` |
+
+### 5.6 Failures returned as values
+
+Found by review; no scan finds these:
+
+| Site | Today | Fix |
+|---|---|---|
+| `workers/e0_summary.py:619` (and the same result handling in its siblings) | A summary that passes the schema but is blank is metered and becomes `None` | ERROR `summary_failed`, same outcome |
+| `profiles/storage_capture_batch.py` per-scope result | `None` with no report (v0.21.0) | Per-scope ERROR with the declared code (design §2.1) |
 
 ## 6. Cost of getting it wrong
 

@@ -77,6 +77,11 @@ ignores.
 | HTTP `ProviderCallError` handler (`surfaces/http_api.py:793`) | `provider_call_failed` (same 503) | ERROR |
 | HTTP unmapped exception (new catch-all handler, same 500) | `api_unhandled_exception` | ERROR |
 | Uncaught exception ending a process or thread (`sys.excepthook`, `threading.excepthook`, installed with the handler) | `process_unhandled_exception` | ERROR |
+| API startup or shutdown failure (a lifespan wrapper around the app's lifespan, e.g. the cost-export listener failing to bind) | `api_lifespan_failed` | ERROR |
+| Expired-lease sweep: a requeue announcement fails (`workers/base.py:627`) | `worker_requeue_announce_failed`. The sweep reports it and continues with the remaining rows, so later dead letters are still finalized and reported | ERROR |
+| Query sandbox: a `SandboxRejection` the bridge raised for an operational cause (`P1_UNAVAILABLE`, embedding provider failure; `surfaces/query_sandbox/bridge.py:369`), consumed at `executor.py:861` | `query_dependency_unavailable`; same wire result | ERROR |
+| Query sandbox: `psycopg.Error` in SQLSTATE class `XX` (internal error, e.g. `DataCorrupted`) or `58` (system error), at `executor.py:944` | `query_database_internal_error`; same `execution_error` result. Other classes are the caller's SQL and are not reported | ERROR |
+| Managed metering: the control plane rejects the producer credential (`MeterReceiptUnauthorized`) on the measurement path (`spine/managed_metering.py:164`) or the outcome path (`:423`) | `meter_receipt_unauthorized`; replay continues | ERROR |
 | MCP tool unexpected failure (`_internal_error`, `surfaces/mcp.py:568`) | `mcp_tool_failed` (same wire response) | ERROR |
 | Storage capture, per failed scope (`profiles/storage_capture_batch.py`) | the engine refusal's declared `code`, else `storage_capture_failed` | ERROR |
 
@@ -87,7 +92,9 @@ thread pool keep their traceback.
 
 Storage capture's declared codes are the fixed reason strings its refusals
 already use: `NativeStorageCaptureRefused`, the managed capture refusals in
-`profiles/managed_storage_capture.py`, and the batch admission errors. Each
+`profiles/managed_storage_capture.py`, `ProviderCaptureUnavailable` (e.g.
+`provider_transport_lost`, `adapters/fsit_storage_capture_transport.py:378`)
+and the batch admission errors. Each
 of those exception classes gains a `code` attribute, set from the same
 literal it puts in its message today, such as
 `capture_writer_class_unknown`. The existing test stays: when the batch
@@ -107,7 +114,10 @@ transport fails, a scope's own earlier reason is kept.
     `exception_text` (`str()` of the exception) and `extras` (the record's
     non-standard attributes). Values of keys whose name contains `token`,
     `secret`, `password`, `key`, `authorization` or `cookie` are replaced by
-    `[masked]`. There are no local variables in either detail.
+    `[masked]`, recursively through nested mappings and sequences. There are
+    no local variables in either detail. Masking is by key; a credential
+    embedded in message or exception text is not detected, which is why
+    `full` is for synthetic data (§4).
 - **`ErrorReportHandler(sinks, detail)`**, a `logging.Handler` at ERROR,
   attached to the `rememberstack` logger. It accepts records with or
   without an exception. A record without `error_code` gets
@@ -118,7 +128,10 @@ transport fails, a scope's own earlier reason is kept.
 - **`install_error_reporting(sink, *, detail="metadata", service,
   loggers=("rememberstack",))`**, the embedder entry point. It attaches one
   handler with the caller's sink, a callable that takes an `ErrorReport`, to
-  each named logger, and installs the process and thread excepthooks.
+  each named logger, and installs the process and thread excepthooks. It
+  also registers a bounded drain at exit: `flush(timeout=2s)` on every sink
+  through `atexit` and before the engine's own `os._exit` paths. A report
+  queued just before a fatal exit is therefore delivered.
   An embedder adds its own namespaces; remember.dev passes
   `("rememberstack", "umc_runtime")`.
 
@@ -133,7 +146,7 @@ handler with each configured sink.
 
 | Tracker | Configuration | Sink |
 |---|---|---|
-| Sentry, GlitchTip, Bugsink | `REMEMBERSTACK_SENTRY_DSN`, `_ENVIRONMENT`, `_SAMPLE_RATE` (unchanged) | The SDK is initialized with `default_integrations=False` and no integrations, so it captures nothing by itself: no logging, framework, thread or excepthook capture. The sink sends one event per report with `capture_event`. The event holds the exception type, frames, level, the `error_code` tag and the worker tags; in `full`, also the message, exception text and extras (as `extra`). `TelemetryPort` no longer sends exceptions to Sentry, and `before_send` no longer drops worker records. In `metadata`, `before_send` keeps its scrubbing as a backstop. |
+| Sentry, GlitchTip, Bugsink | `REMEMBERSTACK_SENTRY_DSN`, `_ENVIRONMENT`, `_SAMPLE_RATE` (unchanged) | The SDK is initialized with `default_integrations=False` and no integrations, so it captures nothing by itself: no logging, framework, thread or excepthook capture. The sink sends one event per report with `capture_event` inside a fresh, empty scope, so ambient tags, contexts, user or breadcrumbs from the current scope never apply. Its `flush` is the bounded drain above. The event holds the exception type, frames, level, the `error_code` tag and the worker tags; in `full`, also the message, exception text and extras (as `extra`). `TelemetryPort` no longer sends exceptions to Sentry, and `before_send` no longer drops worker records. In `metadata`, `before_send` keeps its scrubbing as a backstop. |
 | Any OpenTelemetry backend | Standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`), `OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_SERVICE_NAME` | Emits one OTel log record per report through a `LoggerProvider` and the OTLP HTTP exporter (HTTP/protobuf; both already in the image). Attributes: `error.code`, `exception.type`, `code.frames` (basename:function:line lines) and the tags. In `full`, the body is the message, plus `exception.message` and one `extra.<name>` attribute per extra. No stock `LoggingHandler` and no root-logger attachment. |
 
 `REMEMBERSTACK_ERROR_DETAIL` = `metadata` (default) | `full` sets the
@@ -153,10 +166,11 @@ in one of these ways:
 - a top-level statement calls `logger.error` or `logger.exception` with an
   `extra` dict literal containing `"error_code"`;
 - the `except` line carries `# error-contract: <reason>`, where the reason
-  starts with `raised later`, `expected` or `exempt`.
+  starts with `raised later`, `expected`, `exempt` or `mixed`.
 
-A conditional `raise` therefore needs the comment or a report on its other
-branch. The analysis rows marked "raised later", "expected" and "exempt"
+A conditional `raise` needs one of these. `mixed` is for a handler that
+raises on one branch and reports on another (e1's single-chunk skip). Each
+`mixed` site has a unit test asserting both branches. The analysis rows marked "raised later", "expected" and "exempt"
 (§5.2, §5.3) carry the comment; expected rows also log at WARNING with
 their code.
 
@@ -182,6 +196,13 @@ exporter, and assert on the serialized payload:
   one coded event with the route's traceback.
 - An uncaught exception in a thread yields one `process_unhandled_exception`
   event.
+- A subprocess that reports and then exits (normally, through `os._exit`,
+  and through an API lifespan failure) delivers its event to the fake
+  transport.
+- A populated ambient Sentry scope (tags, contexts, user, breadcrumbs) adds
+  nothing to the final payload.
+- A nested `extras` mapping with an inner `api_token` arrives masked in both
+  sinks.
 
 The existing wire responses (HTTP 503/500, the MCP tool error) are
 asserted unchanged.
@@ -196,9 +217,17 @@ Analysis §5 is the work list:
 - §5.3: 13 handlers that raise on only some branches;
 - §5.4: all 18 ERROR calls gain codes;
 - §5.5: three boundaries outside `except`;
+- §5.6: failures returned as values that review found;
+- the boundaries in §2.1 not covered above: lifespan, sweep continuation,
+  sandbox operational rejections and internal errors, and meter credential
+  rejection;
 - the storage-capture failure code comes only from a declared refusal
   `code` attribute, else `storage_capture_failed`. Arbitrary exception text
   can no longer become a code.
+
+The list is what the scan and review found at design time. A site found
+later, during implementation or afterwards, follows the same rules in the
+same PR and is added to the analysis. It does not reopen this design.
 
 ## 7. Documentation
 
