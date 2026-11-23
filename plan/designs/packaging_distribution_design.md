@@ -332,9 +332,9 @@ The portable restore order is deliberately small and fail-closed:
    normal schema migrations.
 3. Run `remember forget reapply [--from forgets.json]` before the restored deployment takes
    traffic. It re-runs the erasure for every forget record in the restored database and in the
-   exported file, which supplies forgets made after the backup was taken; a file record is
-   skipped when someone deliberately added that content back after the forget
-   ([archive and forget §3.10](archive_and_forget_design.md#310-after-a-restore)).
+   latest exported file, which supplies forgets made after the backup was taken. It matches a
+   restored document by its exact `doc_id`, never by hash, so another lineage owning identical
+   bytes is untouched ([archive and forget §3.10](archive_and_forget_design.md#310-after-a-restore)).
 4. Rebuild P1 and P3 through their normal production builders, ensure the live graph catalog
    (node and edge views, roles) and bounded traversal helpers, run the S55/control canaries, and
    only then admit traffic.

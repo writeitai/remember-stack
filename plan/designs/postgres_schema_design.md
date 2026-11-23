@@ -467,6 +467,18 @@ CREATE INDEX ix_forgets_source ON forgets (deployment_id, source_identity_hash)
   WHERE source_identity_hash IS NOT NULL;
 CREATE INDEX ix_forgets_content ON forgets USING gin (content_hashes);
 
+-- D159 staged originals: E0 records a key before writing an original and deletes the row when
+-- the version registers, so a crash never leaves an untracked object. Forget deletes staged
+-- objects carrying a forgotten hash; the janitor deletes rows older than the request bound.
+CREATE TABLE staged_objects (
+  deployment_id   uuid NOT NULL REFERENCES deployments,
+  object_key      text NOT NULL,
+  content_hash    text NOT NULL,
+  staged_at       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, object_key)
+);
+CREATE INDEX ix_staged_objects_hash ON staged_objects (deployment_id, content_hash);
+
 -- ─────────────────────────────────────────────────────────────────────────
 -- processing_state — idempotency + status + dead-letter, the D12 spine.
 -- One row per (target, stage, component_version). A worker INSERTs (ON CONFLICT DO NOTHING) this
@@ -1182,6 +1194,7 @@ CREATE TABLE documents (
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
   archived_at     timestamptz,                 -- D159 archive mark (§13.1); cleared when a changed version or unarchive brings the lineage back
+  archived_by     text CHECK (archived_by IN ('caller','source')), -- who archived: a caller, or a connector that observed the source deletion (a reappearing source file revives only the latter)
   deleted_at      timestamptz,                 -- forget tombstone, set by the forget request until the job erases the row (§13.2)
   UNIQUE (deployment_id, source_kind, source_ref),  -- lineage identity (D55)
   UNIQUE (deployment_id, doc_id)                -- composite-FK target (tenancy isolation, §0)
@@ -1245,6 +1258,7 @@ CREATE TABLE document_versions (
   error           text,
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- system-time origin for everything derived from this version
   superseded_at   timestamptz,                 -- set when a newer version becomes current (lineage pointer moved)
+  archived_at     timestamptz,                 -- D159 testimony cutoff: set on every version that existed when the lineage was archived; never cleared, so pre-archive versions never testify again
   deleted_at      timestamptz,                 -- version tombstone: internal version retirement (§13.1) or forget (§13.2); archive never sets it
   version_key     text,                        -- D140: optional caller-chosen version address, assigned only at creation (a new key always creates a version; an existing key on any other observation is rejected); unique per lineage; NOT the mutable source_version_ref cursor
   UNIQUE (deployment_id, doc_id, version_no),   -- no per-lineage content uniqueness: A→B→A is a third version sharing one content object (migration p3_01_0008)
