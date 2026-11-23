@@ -192,8 +192,10 @@ lineage identity means no version can be added meanwhile), then in one transacti
 3. marks every `pending` or `failed` work item that targets the document, one of its
    versions, representations, chunks or claims as `skipped` (rows and costs are kept;
    claimable work never includes a tombstoned document);
-4. inserts the forget record with status `erasing`, the source-identity hash and every
-   version's content hash, so the re-ingest guard (§3.6) is active from this commit;
+4. inserts the forget record with status `erasing`, the lineage's current re-add generation
+   (so purge, mount invalidation and `forget-reapply` target the exact `-r<n>` suffix and
+   prefix after the document row is gone), the source-identity hash and every version's
+   content hash, so the re-ingest guard (§3.6) is active from this commit;
 5. enqueues one `forget` work item whose target is the forget record (`forget_id`), not the
    document, so a later forget of a re-added lineage that reuses the deterministic `doc_id`
    never collides with an earlier forget's finished item. The job re-reads its record and
@@ -355,10 +357,14 @@ the document hidden and the record `erasing`; nothing reopens.
    Retained object versions follow E0 §6.7 (versioning off, or enumerate and purge every
    version). Forget does not depend on listing a provider's unfinished uploads: every
    multipart upload the engine starts is tracked (§3.6), so it is aborted by ID.
-4. **Corpus filesystem (D155).** Under the publication lock and the per-document lock, scan
-   corpus keys for every folder with the document's suffix (including former moved paths and
-   interrupted copies), delete them, regenerate affected indexes from the scrubbed database,
-   invalidate the deleted and changed paths in controlled mount sessions (§3.7), and verify.
+4. **Corpus filesystem (D155).** Scan the corpus keys for every folder with the forgotten
+   generation's suffix (including former moved paths and interrupted copies) outside the
+   shared publication lock. Then delete them and regenerate the affected indexes from the
+   scrubbed database in bounded batches, each under the publication lock and the
+   per-document lock taken briefly with try-and-reschedule; invalidate the deleted and
+   changed paths in controlled mount sessions (§3.7); and verify. Forget therefore never holds
+   the deployment-wide lock across a scan, and a stalled full reconcile (whose lock session is
+   bounded by its lease like every other) cannot stop it for long.
 5. **Knowledge plane (K).** Every K publication, ordinary or forget's, is a conditional ref
    update: it succeeds only if the repository head is still the head its checkout started
    from, and every purge advances that head. So a stale publisher whose single-committer
@@ -370,8 +376,10 @@ the document hidden and the record `erasing`; nothing reopens.
      hidden from the agent writer's checkout during rebuilds), so no compile can copy their
      text into a compiled page;
    - delete the compiled body, cached model summaries and kept previous Markdown of every
-     page in the inventory's K artifact list, of every compiled page that read a blocking
-     sidecar or authored page as input (its body may already hold that prose even if it cites
+     page in the inventory's K artifact list, of every compiled page whose recorded inputs
+     (its bundle, not only its citations: a writer can copy uncited bundle text) contained any
+     of the document's evidence, of every compiled page that read a blocking sidecar or
+     authored page as input (its body may already hold that prose even if it cites
      only unrelated facts), and of every page that depends on one of them through the
      compiler's actual inputs, followed transitively: same-scope summaries,
      previous Markdown, and child summaries reached through `parent_artifact_id` links across
@@ -387,11 +395,14 @@ the document hidden and the record `erasing`; nothing reopens.
      may have in older history (D74's conservative rule: current citation bindings cannot
      prove a page never cited it);
    - delete every K session transcript (planner and writer) in the deployment by sweeping
-     their dedicated object prefixes, which needs no per-row locator; transcript uploads use
-     the same conditional-publication rule as Git, so a stale session cannot upload after the
-     sweep;
+     their dedicated object prefixes, which needs no per-row locator. Transcript uploads hold
+     the deployment's two-session K transcript fence (the same rule as the per-document object
+     fence, with its own keys), which the sweep takes exclusively, and the delayed
+     re-verification re-checks those prefixes, so a transcript PUT already in flight cannot
+     survive the sweep;
    - retire or recompute every planner-generated registration (a page path, a routing rule)
-     whose text came from a forgotten or renamed entity, before anything is rebuilt, so the
+     whose text came from a forgotten or renamed entity or from the forgotten document's own
+     title or names, before anything is rebuilt, so the
      next compile cannot publish the forgotten name again;
    - publish once, verify the rewritten history, and leave the deleted compiled pages to be
      rebuilt by ordinary K work from clean inputs (when K or the facts layer is switched off,
@@ -415,6 +426,7 @@ CREATE TABLE forgets (
   forget_id             uuid PRIMARY KEY,
   deployment_id         uuid NOT NULL REFERENCES deployments,
   doc_id                uuid NOT NULL,          -- no FK: the document row is erased
+  generation            smallint NOT NULL DEFAULT 0, -- the lineage's re-add generation at hide (selects the -r<n> suffix and prefix)
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
   inventory             jsonb,                  -- content-free row IDs (delete vs scrub), content hashes, object locators and K artifact IDs; set by step 2
@@ -423,7 +435,7 @@ CREATE TABLE forgets (
   requested_at          timestamptz NOT NULL DEFAULT now(),
   erased_at             timestamptz,            -- every engine-owned store verified clean
   completed_at          timestamptz,            -- blocking pages redacted and erased too
-  UNIQUE (deployment_id, doc_id),
+  UNIQUE (deployment_id, doc_id, generation),
   UNIQUE (deployment_id, forget_id),
   CHECK ((status = 'complete') = (completed_at IS NOT NULL)),
   CHECK (status = 'erasing' OR (erased_at IS NOT NULL AND inventory IS NOT NULL))
@@ -482,7 +494,9 @@ written before a refusal are deleted through their staged row.
   shared these bytes) are passed over for this request but stay, and keep guarding their own
   identities and hashes. A pending authored-page wait for a deleted record ends; those pages
   keep their review flag. A re-added lineage keeps its deterministic `doc_id` but writes its
-  objects under a new generation prefix (`{doc_id}/r<n>/…`, `n` stored on the documents row),
+  objects under a new generation prefix (`{doc_id}/r<n>/…`, `n` stored on the documents row;
+  a stored-object re-add copies the client's `uploads/<id>` object into that prefix and
+  deletes the upload rather than keeping the upload key as its original),
   and its corpus folders under a generation-specific suffix (`corpus_suffix(doc_id)` followed
   by `-r<n>`, E0 §6), so a delete issued by a stalled eraser of the earlier forget, which only
   ever targets the forgotten generation's locators and suffix, can never remove the re-added
@@ -554,9 +568,9 @@ deliberate re-add released after the backup stays released), otherwise the datab
 records. For each record:
 
 - if the restored database holds that exact lineage (by `doc_id`; never by hash, so another
-  lineage that owns identical bytes is untouched), reapply hides it and runs the whole
-  erasure (§3.2 steps 1–5 and §3.4) under that record, ignoring the request's idempotent
-  short-circuit;
+  lineage that owns identical bytes is untouched), reapply runs the same hide and scrub
+  operations the request and job use (§3.2 steps 1–4 and §3.4) directly under that record, not
+  through the request, and marks any restored `forget` work item for the record as settled;
 - otherwise it re-runs §3.4 steps 3–6.
 
 Compiled K pages are regenerable (D46), so `reapply` does not trust a restored K tree's compiled
@@ -636,7 +650,11 @@ operations, parameters, answers and errors (D141 parity); `reapply` is CLI-only.
 - The permanent re-ingest guard.
 - The stop-and-remount rule for mounts.
 
-The `forget_manifests` table becomes `forgets` by migration. A record that exists only in a
+The migration from the D135/D74 release also converts existing tombstones: a lineage a caller
+deleted becomes a caller archive and one a connector observed deleted becomes a source archive
+(versions get the archive cutoff, `deleted_at` is cleared); internal version tombstones stay
+as they are. So no lineage is left "being forgotten" without a forget record. The
+`forget_manifests` table becomes `forgets` by migration. A record that exists only in a
 deployment's old external manifest store is imported with `remember ops forget-reapply --from`
 using that store's export.
 
@@ -645,7 +663,8 @@ using that store's export.
 Run against real PostgreSQL and MinIO with deterministic providers and no hosted model calls.
 
 1. **Whole-database canary.** Plant a unique token in one document A (body, title, file name,
-   metadata, extracted claims, a planner-generated page path and routing rule, a fact statement and entity alias it alone contributed, the
+   metadata, extracted claims (and uncited bundle text a writer copied), a planner-generated
+   page path and routing rule, a fact statement and entity alias it alone contributed, the
    name of an entity that another document B also relates to, a reclustering cost-ledger
    call key,
    a compiled K page, the corpus folder); forget it; `pg_dump` the whole database, read
@@ -698,7 +717,13 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
    leaves the re-added copy intact, in object storage and in the corpus. A corpus publisher
    that stalls mid-PUT while its heartbeat still runs is refused renewal and the forget
    proceeds. Restore only the artifact bucket against the post-forget database: K session
-   transcripts are swept. A writer that stalls while holding both object locks
+   transcripts are swept; a transcript PUT that lands after the first sweep is caught by the
+   delayed pass. A stored-object re-add whose earlier upload key receives a late DELETE after
+   registration keeps its copy. Two lineages staging the same bytes: forgetting one never
+   aborts the other's upload. A stalled full reconcile with a running heartbeat does not stop a
+   forget. Restore only the corpus bucket from between a re-add and its second forget: the
+   second forget's generation is erased. Upgrade from the D135 release: deleted lineages
+   become archives. A writer that stalls while holding both object locks
    loses them when its lease lapses, and the forget proceeds without occupying a worker slot.
    A bundle-mode writer cannot reach the memory CLI or mounts. An edited version whose flush
    unit holds both fresh claims (episode 1) and reused claims (episode 2) applies each

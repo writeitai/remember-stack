@@ -448,6 +448,7 @@ CREATE TABLE forgets (
   forget_id             uuid PRIMARY KEY,
   deployment_id         uuid NOT NULL REFERENCES deployments,
   doc_id                uuid NOT NULL,          -- no FK: the document row is erased
+  generation            smallint NOT NULL DEFAULT 0, -- the lineage's re-add generation at hide (selects the -r<n> suffix and prefix)
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
   inventory             jsonb,                  -- content-free row IDs (delete vs scrub), content hashes, object locators and K artifact IDs; never full keys or paths; set by the erasure job
@@ -456,7 +457,7 @@ CREATE TABLE forgets (
   requested_at          timestamptz NOT NULL DEFAULT now(),
   erased_at             timestamptz,            -- every engine-owned store verified clean
   completed_at          timestamptz,            -- blocking pages redacted and erased too
-  UNIQUE (deployment_id, doc_id),
+  UNIQUE (deployment_id, doc_id, generation),
   UNIQUE (deployment_id, forget_id),
   CHECK ((status = 'complete') = (completed_at IS NOT NULL)),
   CHECK (status = 'erasing' OR (erased_at IS NOT NULL AND inventory IS NOT NULL))
@@ -470,16 +471,21 @@ CREATE INDEX ix_forgets_content ON forgets USING gin (content_hashes);
 -- D159 staged objects: every engine write path records a key (and, for multipart, the upload ID
 -- before the first part) before writing. The row is deleted only once the key is adopted as a
 -- version's original or the object (a refused or duplicate copy) is deleted and verified absent,
--- so a crash never leaves an untracked object or upload. Forget deletes staged objects carrying a
--- forgotten hash and aborts their uploads by ID; the janitor deletes rows older than the request bound.
+-- so a crash never leaves an untracked object or upload. Forget sweeps its own lineage and
+-- generation's staged objects and aborts their uploads by ID; only unadopted raw originals are
+-- swept by content hash. The janitor deletes rows older than the request bound.
 CREATE TABLE staged_objects (
   deployment_id   uuid NOT NULL REFERENCES deployments,
+  store           text NOT NULL,               -- raw | artifacts | corpus
   object_key      text NOT NULL,
-  content_hash    text NOT NULL,
+  doc_id          uuid,                        -- owning lineage; NULL only for an unadopted raw original, the one kind swept by content hash
+  generation      smallint NOT NULL DEFAULT 0, -- the owning lineage's re-add generation
+  content_hash    text,                        -- set for raw originals
   multipart_upload_id text,                    -- set while a multipart upload is open, so forget can abort it by ID without provider listing
   staged_at       timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, object_key)
+  PRIMARY KEY (deployment_id, store, object_key, staged_at)
 );
+CREATE INDEX ix_staged_objects_owner ON staged_objects (deployment_id, doc_id, generation);
 CREATE INDEX ix_staged_objects_hash ON staged_objects (deployment_id, content_hash);
 
 -- D159 archive intervals in belief time: one row per archive of a version, closed by unarchive, so

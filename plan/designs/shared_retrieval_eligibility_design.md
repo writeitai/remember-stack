@@ -145,7 +145,10 @@ CREATE INDEX ix_documents_entity ON public.documents
 ```
 
 The correlated membership probe keeps all three predicates (deployment,
-member and `deleted_at IS NULL`) and uses `ORDER BY document.doc_id::text
+member, and a live document: `deleted_at IS NULL AND archived_at IS NULL`, so an entity whose
+only source is archived (D159) leaves current retrieval). Historical eligibility, which the
+history views' endpoint join uses, admits archived documents (still excluding deleted ones),
+so closed historical facts keep their endpoints. The probe and uses `ORDER BY document.doc_id::text
 COLLATE pg_catalog."C" LIMIT 1 OFFSET 0`. This order selects any live bridge;
 it is not relevance, temporal or identity order. Only this native expression
 index supplies it without sorting. `OFFSET 0` prevents PostgreSQL from

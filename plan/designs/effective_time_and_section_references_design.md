@@ -334,7 +334,8 @@ pre-computed list of versions and never a filter on finished top-k:
 - Filter-only listings (paged `search_documents`) never enumerate candidates through the scope.
   They walk D134's existing belief-independent lineage order (§3.6) and evaluate the scope for
   each batch of candidate lineages at the pinned belief instant — through the projection when
-  the belief instant is still current (no declaration or mode event of those lineages since),
+  the belief instant is still current (no declaration, mode, archive or un-archive event of
+  those lineages since; archive events are stamped under the same belief-watermark guard),
   otherwise through `effective_intervals` for that batch.
 
 Verification target (a starting point, measured in the implementation commits): on a

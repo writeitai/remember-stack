@@ -41,8 +41,8 @@ Python surface (D141), because the parity check compares that inventory with the
 - Tests: whole-database canary, schema coverage, every table seeded, nothing extra removed, no
   orphans, never existed, no global stop, kill/resume/late writers, concurrent forgets,
   authored pages, mounts, restore without re-adds, large document, and the refusal half of
-  re-ingest (design §5 tests 1–10, 12 and 16, test 13 except its re-add cases, and test 11
-  without the flag).
+  re-ingest (design §5 tests 1–8, 10, 12 and 16, test 9 except its re-add and testimony-episode
+  cases, test 13 except its re-add cases, and test 11 without the flag).
 
 ## 2. Forget on every surface, the re-ingest guard and `allow_forgotten`
 
@@ -53,7 +53,7 @@ Python surface (D141), because the parity check compares that inventory with the
 - The per-request `allow_forgotten` flag (HTTP, SDK, `remember ingest --allow-forgotten`, MCP
   `ingest`) releasing exactly one record, with 409 `forget_in_progress` while erasing.
 - Tests: re-ingest with the flag (design §5 test 11, except its archive and unarchive cases, which move to slice 3), the restore cases that span a deliberate
-  re-add (test 13), and the surface contract tests.
+  re-add (test 13) and the re-add cases of test 9, and the surface contract tests.
 
 ## 3. Archive, un-archive and the removal of the public delete
 
@@ -69,7 +69,9 @@ Python surface (D141), because the parity check compares that inventory with the
 - Remove in the same change: `DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
   `remember documents delete`, the `delete_document` MCP tool, their TypeScript counterparts
   and `DocumentDeletion`.
-- Tests: archive and Rule 4 (design §5 tests 14 and 15, and test 11's archive and unarchive cases): un-archiving identical bytes makes
+- The upgrade migration converting D135 tombstones to caller or source archives (design §4),
+  tested by upgrading from the previous release.
+- Tests: archive and Rule 4 (design §5 tests 14 and 15, the testimony-episode cases of test 9, and test 11's archive and unarchive cases): un-archiving identical bytes makes
   no Selection, Claimify or embedding call, and a one-section edit of an archived document pays
   only for that section.
 

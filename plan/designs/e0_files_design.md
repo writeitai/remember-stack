@@ -1154,7 +1154,8 @@ summaries and leaving unchanged text's paid-work identities intact (Rule 4).
 
 Forget ([archive and forget design §3](archive_and_forget_design.md#3-forget)) erases one
 document's corpus copies; the rest of the corpus keeps serving and publishing. The forget
-record's `doc_id` is sufficient for P3: the suffix is computable from `doc_id` alone, without
+record's `doc_id` and re-add `generation` are sufficient for P3: the suffix is computable
+from them alone (`corpus_suffix(doc_id)`, plus `-r<n>` for a re-added generation), without
 historic titles, paths, suffix reservations or a corpus-wide purge scope.
 
 1. The forget request removes the document's recorded folders, regenerates the affected
