@@ -156,13 +156,12 @@ def _failure_classes(modules: list[tuple[str, str, ast.Module]]) -> set[str]:
 
 
 def _aliases(tree: ast.Module) -> dict[str, str]:
-    """Local name to ``module.Name``, for ``from module import Name as Alias``."""
+    """Local name to ``module.Name`` for every ``from module import Name [as X]``."""
     return {
-        alias.asname: f"{node.module}.{alias.name}" if node.module else alias.name
+        alias.asname or alias.name: f"{node.module}.{alias.name}"
         for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
+        if isinstance(node, ast.ImportFrom) and node.module
         for alias in node.names
-        if alias.asname
     }
 
 
@@ -275,12 +274,18 @@ def _log_level(node: ast.AST, loggers: set[str]) -> str | None:
 
 
 def _error_call(node: ast.AST, loggers: set[str]) -> bool:
-    """An ERROR-or-above call on an engine logger or the ``logging`` module."""
+    """An ERROR-or-above call on an engine logger, the ``logging`` module, or an
+    inline ``logging.getLogger(...)``."""
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
         return False
-    if node.func.attr not in ERROR_LEVELS or not isinstance(node.func.value, ast.Name):
+    if node.func.attr not in ERROR_LEVELS:
         return False
-    return node.func.value.id in loggers or node.func.value.id == "logging"
+    receiver = node.func.value
+    if isinstance(receiver, ast.Call):
+        return ast.unparse(receiver.func) in {"logging.getLogger", "getLogger"}
+    if not isinstance(receiver, ast.Name):
+        return False
+    return receiver.id in loggers or receiver.id == "logging"
 
 
 def _executed(nodes: list[ast.stmt]) -> Iterator[ast.AST]:
@@ -491,6 +496,10 @@ def test_rule_rejects_the_known_bypasses() -> None:
             "from x import SpendLeaseUnavailable as LeaseError\n"
             "try:\n    f()\nexcept LeaseError:\n    pass\n"
         ),
+        "unaliased psycopg class": (
+            "from psycopg import OperationalError\n"
+            "try:\n    f()\nexcept OperationalError:\n    pass\n"
+        ),
         "qualified HTTPException": (
             "import fastapi as fa\ntry:\n    f()\n"
             "except Exception:\n    raise fa.HTTPException(503)\n"
@@ -522,6 +531,9 @@ def test_rule_rejects_the_known_bypasses() -> None:
         '_logger.error("x")\n'
     )
     assert _violations(annotated)[1] == ["3"]
+    assert _violations(_PRELUDE + 'logging.getLogger(__name__).error("x")\n')[1] == [
+        "3"
+    ]
 
 
 def test_rule_accepts_the_contract_forms() -> None:
