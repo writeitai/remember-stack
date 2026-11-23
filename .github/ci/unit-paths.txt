@@ -119,6 +119,7 @@ src/tests/surfaces/test_remember_facade.py
 src/tests/surfaces/test_remember_mcp.py
 src/tests/surfaces/test_route_scope.py
 src/tests/test_d98_removal_audit.py
+src/tests/test_error_contract.py
 src/tests/test_forget_port_contract.py
 src/tests/test_port_inventory_and_conformance.py
 src/tests/test_port_model_values.py
