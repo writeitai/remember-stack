@@ -181,13 +181,11 @@ until it changes — a headcount, a status, an employment — and a **fixed-peri
 whose truth is scoped to its period — "FY2023 revenue was \$5M". Which shape an observation is
 is the adjudicator's semantic judgment over its statement, exactly as in ordinary supersession
 — the binding rules are `observations_design.md` §3.) The retract action routes through that
-same judgment: for relations and **effective-state** observations
-(headcount, status, employment), cap `valid_until` at the version's `source_modified_at` —
-"held until the source withdrew it" is coherent world-time. For **measurement / fixed-period**
-observations ("FY2023 revenue was \$5M"), capping valid-time would violate the no-cap rule (the
-figure doesn't stop being true *of FY2023*) — retract instead sets `invalidated_at`
-(transaction-time: "we no longer hold this belief; the source withdrew it"). Both record
-`retracted_source_removal`. In every case: other-lineage support → decrement only; and a
+same rule for every shape (D118): retract sets `invalidated_at` (transaction time: "we no
+longer hold this belief; the source withdrew it") and leaves the world-time window as the
+evidence stated it. A source's withdrawal says nothing about when the fact stopped being true
+in the world, so capping `valid_until` would invent a date (and for a fixed-period
+measurement would violate the no-cap rule). Both record `retracted_source_removal`. In every case: other-lineage support → decrement only; and a
 source can always retract *explicitly* by asserting a retraction — a claim, adjudicated like
 any other.
 
@@ -337,9 +335,9 @@ arrives with `b2` deleted:
    `claims.is_current_testimony` → false. `c1` itself is untouched — permanent history.
 3. **Recount**: `r1.evidence_count` recomputes to 0 (distinct lineages with current-testimony
    support).
-4. **Zero-support, source acted** (living mode): `r1` is closed per shape — a relation, so
-   `valid_until` = version 2's `source_modified_at`; a `relation_adjudications` row records
-   outcome `retracted_source_removal`. No flag.
+4. **Zero-support, source acted** (living mode): `r1` is closed as a belief change —
+   `invalidated_at` is set and its world-time window is kept (D118); a `relation_adjudications`
+   row records outcome `retracted_source_removal`. No flag.
 5. **Emit**: `evidence_changed {relations_closed: [r1]}` → K pages citing `r1` recompile;
    default fact queries no longer return it; history queries still do.
 

@@ -33,15 +33,20 @@ A lineage is in one of three states:
 
 - **live** — `archived_at` and `deleted_at` both null;
 - **archived** — `documents.archived_at` set, with `archived_by` = `caller` or `source`
-  (a connector observed the source deletion). Every version that existed at that moment gets
+  (a connector observed the source deletion). A caller's archive takes precedence: archiving
+  a source-archived document sets `archived_by = caller` under the lineage lock (keeping the
+  episode), and connector events never downgrade `caller` to `source`. Every version that existed at that moment gets
   `document_versions.archived_at` too, a durable cutoff: those versions never carry current
   testimony again, even after the lineage comes back. Nothing is tombstoned, so the lineage
   and its versions stay readable as history;
 - **being forgotten / forgotten** — `documents.deleted_at` set (the tombstone every read
   filters) until the row is erased.
 
-A version carries **current testimony** only while its lineage is live and the version itself
-is neither archived nor deleted. Coming back (§2.4) clears the lineage's `archived_at` and
+Every archive and un-archive is also appended, with its belief time, to a small ledger
+(`version_archive_events`: version, `archived_at`, `restored_at`), so reads of belief as of a
+past instant (D140 pinned selection and support) see each version as archived exactly during
+the intervals it was. A version carries **current testimony** only while its lineage is live
+and the version itself is neither archived nor deleted. Coming back (§2.4) clears the lineage's `archived_at` and
 either restores the latest version (its cutoff is lifted) or adds a new version; every earlier
 version keeps its cutoff. D135's late retirement at reconcile keys on the version's own state,
 so work finishing late for an archived version still retires. Everything that decides
@@ -73,6 +78,10 @@ zero counts (the document exists, so it is not 404). A connector-observed source
 an archive episode with D135's per-episode finalization and sync-cycle barrier, so a file
 deleted and recreated within one sync pass still resolves as a support swap. Entity profiles
 whose facts changed are refreshed best-effort after commit, metered as `profile_archive`.
+
+Layer gaps (D143: work a disabled layer has not yet done for a version) are parked, not
+deleted, while the document is archived, and re-armed on un-archive, so enabling a layer later
+still reaches a version that finished while it was off.
 
 The archive request itself starts no pipeline work and is not spend-gated; work the cascade
 queues (D140 window review, corpus folder removal) follows its own ordinary rules.
@@ -231,8 +240,11 @@ gets that for the one document, never for the deployment:
   folders) holds two shared advisory locks with distinct keys (`object-a:<doc_id>` and
   `object-b:<doc_id>`), each on its own database session, acquired in that order, for the
   whole object IO; forget acquires them exclusively in the same order, so neither side can
-  queue behind the other on the second lock while holding the first against it. The writer
-  checks both before every request and releases them only after each request has a terminal result (success, failure, or a confirmed abort
+  queue behind the other on the second lock while holding the first against it. After acquiring
+  them, and before issuing any write, the writer checks that its work attempt is still
+  current and its input version is still live (not tombstoned), so an expired worker that
+  acquires the locks after an erasure writes nothing. The writer checks both locks before
+  every request and releases them only after each request has a terminal result (success, failure, or a confirmed abort
   of a multipart upload). This is D155's two-session publication fence, scoped to one
   document instead of the deployment. Forget's object and corpus steps take both
   exclusively, so every write issued while either session lived has finished. A writer that
@@ -273,7 +285,10 @@ the document hidden and the record `erasing`; nothing reopens.
 1. **Wait for the fence** (§3.3).
 2. **PostgreSQL, one transaction.**
    - *Inventory.* Record the content-free inventory on the forget record before anything is
-     deleted: IDs, hashes, object keys and prefixes, and the K artifact IDs that cite the
+     deleted: row IDs, content hashes, engine-generated object prefixes (`{doc_id}/…`) and
+     staged-object IDs rather than full keys (a raw key ends with the caller's file
+     extension; exact keys are discovered by listing the prefixes during the purge), and the
+     K artifact IDs (not their paths) that cite the
      document's evidence (read from the citation bindings, which the deletes below remove).
      The inventory separates rows to **delete** from rows to **scrub** (kept as content-free
      retired rows, with the fields to clear named), so verification checks each correctly. On
@@ -331,7 +346,11 @@ the document hidden and the record `erasing`; nothing reopens.
    corpus keys for every folder with the document's suffix (including former moved paths and
    interrupted copies), delete them, regenerate affected indexes from the scrubbed database,
    invalidate the deleted and changed paths in controlled mount sessions (§3.7), and verify.
-5. **Knowledge plane (K).** Holding the single-committer lock for the whole step:
+5. **Knowledge plane (K).** Every K publication, ordinary or forget's, is a conditional ref
+   update: it succeeds only if the repository head is still the head its checkout started
+   from, and every purge advances that head. So a stale publisher whose single-committer
+   session was lost cannot restore purged history. Holding the single-committer lock for the
+   whole step:
    - first determine **blocking** paths: authored pages and curation sidecars whose *current*
      file still cites an ID in the inventory. They get the `redaction_required` review flag,
      are listed on the record, and are treated as absent compile inputs until redacted (also
@@ -343,8 +362,12 @@ the document hidden and the record `erasing`; nothing reopens.
      only unrelated facts), and of every page that depends on one of them through the
      compiler's actual inputs, followed transitively: same-scope summaries,
      previous Markdown, and child summaries reached through `parent_artifact_id` links across
-     scopes. Those bodies are gone before the history rewrite re-adds current files, so no
-     contaminated current file is re-added;
+     scopes. A page compiled in agent mode (the writer explored the memory freely, so its
+     inputs are not fully recorded, k_layers §writer runtime) counts as dependent if it was
+     compiled after the forgotten document was first ingested. Writers work in a checkout
+     without Git history, so no writer can read purged history. Those bodies are gone before
+     the history rewrite re-adds current files, so no contaminated current file is
+     re-added;
    - erase every other registered K path from all reachable Git history and re-add its
      current file, including authored and sidecar paths that no longer cite the document but
      may have in older history (D74's conservative rule: current citation bindings cannot
@@ -481,7 +504,8 @@ every `waiting_for_redaction` record, changed or not (so an edit that landed whi
 was being written is not missed), including curation sidecars and deleted files (a deleted
 file cites nothing). When a path's current file no longer cites any inventory ID, the sync erases the path from all
 reachable Git history, re-adds the current file, verifies the rewritten history, and removes
-the path from `blocking_k_paths`; when none remain the record becomes `complete`. This runs
+the path from `blocking_k_paths`; when none remain the record becomes `complete`. Blocking
+paths can carry page titles, so the record holds them only while redaction is pending. This runs
 in the sync itself, not as a re-enqueued work item. The authored-page sync and this
 redaction check keep running when compilation does not (K or the facts layer switched off),
 so a redaction is always finalized. The engine never edits authored prose;
@@ -507,6 +531,12 @@ records. For each record:
   short-circuit;
 - otherwise it re-runs §3.4 steps 3–6.
 
+Compiled K pages are regenerable (D46), so `reapply` does not trust a restored K tree's compiled
+pages to match the inventory (a restored page may predate the compile that dropped its
+citation): it discards every compiled body, summary and previous Markdown in the restored
+repository, erases their history, and lets ordinary K work rebuild them. Authored pages and
+sidecars are checked against every record's inventory as in step 5.
+
 Either way it erases the union of the exported inventory and whatever the restored database
 still holds for the lineage, because a store restored from a different moment than the
 database can hold objects or paths only one of the two knows. A record exported while it
@@ -524,7 +554,10 @@ content-free inventory, outside the database backup (the erasure log any control
 and passes the latest full export (every record, not only those newer than the backup) with
 `--from`. An older export would re-impose a guard a deliberate
 re-add has since released and could erase that re-add, so it must be the latest. Without that export,
-S55 does not survive such a restore; this is the accepted limitation. remember.dev keeps no
+S55 does not survive such a restore; this is the accepted limitation. Likewise, deliberately
+re-adding a forgotten document releases its record, so a backup taken before that forget can
+bring the forgotten version back after a restore: after any release, the operator takes a new
+backup before relying on older ones for erasure. remember.dev keeps no
 database backups.
 
 ### 3.11 Surfaces and errors
@@ -598,8 +631,9 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
    ledger and accounting identifiers; no object or corpus folder is left without its row.
 6. **Never existed.** Every public lookup of the forgotten IDs answers exactly as for a random
    ID.
-7. **No global stop.** While a forget waits on a running work item, ingest, extraction, search
-   and SQL for other documents proceed and complete.
+7. **No global stop.** With a single non-convert worker slot, while a forget waits on a
+   running work item, ingest, extraction, search and SQL for other documents proceed and
+   complete.
 8. **Kill, resume and late writers.** Kill the forget item after each step; the retry
    completes and the canary passes. Work of every stage queued for the document before the
    forget is never claimed. A corpus PUT and an artifact PUT held past their session's death
@@ -644,7 +678,8 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     records the chosen tool's behaviour for already-open handles. A PUT that commits after its
     writer's sessions died and its client timed out is caught by the delayed pass.
 13. **Restore.** Restore the pre-forget database dump and run `reapply --from` the export: the
-    canary passes. Restore only the corpus bucket and run `reapply`: it passes. A stale export
+    canary passes. Restore only the K repository from before a compile that dropped the
+    citation: `reapply` discards the restored compiled pages and the canary passes. Restore only the corpus bucket and run `reapply`: it passes. A stale export
     does not erase another lineage that owns identical bytes. A restore spanning a deliberate
     re-add, with the latest export, neither erases the re-add nor revives its guard. A
     connector document and an upload forgotten with identical bytes: re-adding the connector
@@ -652,8 +687,11 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
 14. **Archive.** Archive closes exclusive facts and keeps shared ones; the document is hidden
     by default and readable with `include_archived`; identical bytes re-sent leave it
     archived; a source delete-and-recreate within one sync pass is a support swap; a source
-    file reappearing in a later cycle revives a source archive; pre-archive versions never
-    testify again after un-archive. Un-archive of a keyed, periodised D140 document restores
+    file reappearing in a later cycle revives a source archive; a caller's archive of a
+    source-archived document is not undone by a resync; after un-archive the latest version
+    testifies again and older editions stay cut off, and a belief-as-of read inside the former
+    archive interval still sees them archived. A version that finished with facts disabled and
+    was archived is reached when facts are enabled after un-archive. Un-archive of a keyed, periodised D140 document restores
     its edition and periods and its pinned references resolve again. A restored claim whose old
     fact survived through another document and whose new application lands elsewhere supports
     only the new fact. Metering: an unsent measurement for a forgotten version is

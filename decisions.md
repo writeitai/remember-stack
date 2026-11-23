@@ -1870,7 +1870,9 @@ coordinate is persisted on occurrence records and currency transitions.
 
 > **Refined by [D135](#d135-a-caller-can-delete-a-document-soft-lineage-grain-finish-or-refuse)
 > (2026-09-23).** Lineage deletion (operator or source-observed) now tombstones every version
-> with the lineage. The identical-byte no-op below therefore never matches a deleted version:
+> with the lineage. (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: archive no longer tombstones; identical bytes re-sent to an
+> archived lineage are a no-op that leaves it archived, and a forgotten lineage is refused by
+> the re-ingest guard.) The identical-byte no-op below therefore never matches a deleted version:
 > bytes that return after a deletion become a new version and are processed afresh, and D56
 > reuse never draws on a deleted version. "Resurrecting" a tombstoned lineage still revives the
 > lineage identity, not its retired testimony. Everything else here remains binding.
@@ -7678,7 +7680,8 @@ deployment's values into another's work.
    `app.dependency_overrides[deployment_context] = resolve` and returns each request's
    own `ApiDeployment` (`SelfHostProfile.api_deployment()`). The D74 admission barrier
    uses the same per-request deployment, and so does the perimeter (item 5). Only the
-   startup readiness check stays composed per app.
+   startup readiness check stays composed per app. (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: the admission barrier and the
+   startup readiness check are removed; the perimeter clause stands.)
 
 4. **What a push-delivery host needs on top (2026-11-06, relaunch designs).**
    - *New work is announced through the context's queue.* Every work row is inserted by

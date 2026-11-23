@@ -447,8 +447,9 @@ still run their own fact updates; they are explicit operator actions.
 Archive and forget (D159) remove a document's contribution from every layer, whatever the
 configuration, through the lineage cascade (forget then erases the document). Late pipeline work
 after an archive reaches a reconcile in either mode, both of which run the D135 deleted-testimony
-path in full (§4.2). Archive also deletes the version's gaps and advances the surviving lineage (§5.2) in the
-same transaction, so a deleted head never blocks its successors; a boundary never records a gap
+path in full (§4.2). Archive parks the version's gaps (they are re-armed on un-archive) and
+advances the surviving lineage (§5.2) in the same transaction, so an archived head never
+blocks its successors; forget deletes the gaps with the version; a boundary never records a gap
 for a deleted version (§4.1).
 
 ## 7. Retrieval

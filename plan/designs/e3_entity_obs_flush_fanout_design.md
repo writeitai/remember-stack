@@ -127,8 +127,11 @@ When claim barrier is ready for version V + normalizer generation N:
 1. If a **non-terminal legacy** version-level `adjudicate_observations` row exists
    for V at a **pre-entity-fanout** component version → **do not fan out**; leave
    legacy to finish (or ops dead-letters legacy first). Mutual exclusion §5.8.
-2. If membership already materialized for (V, N) → do not re-insert units;
-   only ensure barrier evaluation can still fire (idempotent complete path).
+2. If membership already materialized for (V, N, testimony episode) → do not re-insert
+   units; only ensure barrier evaluation can still fire (idempotent complete path). The
+   episode (D159) is part of the key, and commit validation rejects a unit whose episode is
+   no longer the claims' current one, so a pre-archive attempt cannot apply after
+   un-archive.
 3. Else `SELECT DISTINCT subject_entity_id, doc_id …` plus per-entity
    `min(asserted_at)` from staging joined to claims for (V, N). Coordinates
    `representation_id`, `chunker_version`, `extractor_version` come from the

@@ -482,6 +482,17 @@ CREATE TABLE staged_objects (
 );
 CREATE INDEX ix_staged_objects_hash ON staged_objects (deployment_id, content_hash);
 
+-- D159 archive intervals in belief time: one row per archive of a version, closed by unarchive, so
+-- reads of belief as of a past instant (D140 pinned selection and support) see the version as
+-- archived exactly while it was. documents/document_versions.archived_at hold the current state.
+CREATE TABLE version_archive_events (
+  deployment_id   uuid NOT NULL REFERENCES deployments,
+  version_id      uuid NOT NULL,               -- LOGICAL FK → document_versions; erased with the version by forget
+  archived_at     timestamptz NOT NULL,
+  restored_at     timestamptz,                 -- set by unarchive of the latest version; NULL while archived
+  PRIMARY KEY (deployment_id, version_id, archived_at)
+);
+
 -- ─────────────────────────────────────────────────────────────────────────
 -- processing_state — idempotency + status + dead-letter, the D12 spine.
 -- One row per (target, stage, component_version). A worker INSERTs (ON CONFLICT DO NOTHING) this
