@@ -82,4 +82,5 @@ def announce_new_work(*, queue: TaskQueuePort, work: Iterable[NewWork]) -> None:
             _logger.exception(
                 "announcing new work %s failed; the janitor re-announces it",
                 item.processing_id,
+                extra={"error_code": "new_work_announce_failed"},
             )

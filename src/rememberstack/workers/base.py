@@ -259,6 +259,7 @@ class _LeaseRenewal:
                     "lease renewal failed for %s attempt %s",
                     self._work.processing_id,
                     self._work.attempt,
+                    extra={"error_code": "worker_lease_renewal_failed"},
                 )
                 continue
             if not renewed:
@@ -453,6 +454,7 @@ class Worker:
                 "non-retryable failure in stage %s for %s",
                 claimed.stage,
                 claimed.processing_id,
+                extra={"error_code": "worker_item_failed"},
             )
             try:
                 self._ledger.fail(
@@ -488,6 +490,7 @@ class Worker:
                 "retryable failure in stage %s for %s",
                 claimed.stage,
                 claimed.processing_id,
+                extra={"error_code": "worker_item_retry"},
             )
             try:
                 retry_at = self._ledger.fail(
@@ -673,6 +676,7 @@ class Worker:
                 "terminal-failure finalizer failed in stage %s for %s",
                 claimed.stage,
                 claimed.processing_id,
+                extra={"error_code": "worker_finalizer_failed"},
             )
 
     @staticmethod
@@ -694,7 +698,10 @@ class Worker:
                 "failed to persist usage from the failed provider response:"
                 f" {accounting_exception}"
             )
-            _logger.exception("failed to meter a usage-bearing provider exception")
+            _logger.exception(
+                "failed to meter a usage-bearing provider exception",
+                extra={"error_code": "provider_usage_unrecorded"},
+            )
 
     def _export_event(self, *, event: TelemetryEvent) -> None:
         """Export one completed transition when telemetry is configured."""

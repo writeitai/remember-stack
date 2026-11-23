@@ -338,7 +338,10 @@ class PerimeterTrust:
             try:
                 self.refresh()
             except Exception:  # noqa: BLE001 - the loop must outlive one bad cycle
-                logger.exception("perimeter trust refresh failed")
+                logger.exception(
+                    "perimeter trust refresh failed",
+                    extra={"error_code": "perimeter_trust_refresh_failed"},
+                )
             stop.wait(self.refresh_s)
 
     def _refresh_document(self, *, keys: Mapping[str, PyJWK]) -> None:
@@ -373,7 +376,11 @@ class PerimeterTrust:
                 if candidate.seq <= baseline.seq:
                     logger.error(
                         "revocation document rollback attempt rejected",
-                        extra={"seq": candidate.seq, "accepted_seq": baseline.seq},
+                        extra={
+                            "error_code": "revocation_rollback_rejected",
+                            "seq": candidate.seq,
+                            "accepted_seq": baseline.seq,
+                        },
                     )
                     return
             if self._store.save(
@@ -399,6 +406,7 @@ class PerimeterTrust:
         logger.error(
             "no fresh revocation document; every signed credential is refused",
             extra={
+                "error_code": "revocation_document_stale",
                 "accepted_seq": None if document is None else document.seq,
                 "max_age_s": self._max_age_s,
             },

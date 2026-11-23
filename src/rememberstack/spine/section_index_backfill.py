@@ -111,6 +111,7 @@ class SectionIndexBackfill:
             logger.exception(
                 "section index backfill: cannot read blocks for generation %s",
                 generation_id,
+                extra={"error_code": "section_index_blocks_unreadable"},
             )
             return None
         with self._engine.begin() as connection:

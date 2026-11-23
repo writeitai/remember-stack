@@ -158,6 +158,7 @@ class ManagedMeterCatalog:
                     "managed meter measurement quarantined reason=receipt_conflict "
                     "measurement_id=%s",
                     receipt.measurement_id,
+                    extra={"error_code": "meter_measurement_quarantined"},
                 )
                 parked += 1
                 continue
