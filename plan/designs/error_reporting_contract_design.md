@@ -75,12 +75,13 @@ ignores.
 | Expired lease on the last attempt, dead-lettered (`:612`) | `worker_lease_expired` | ERROR |
 | Worker terminal finalizer (`:671`), lease renewal (`:257`), usage persistence (`:692`) | `worker_finalizer_failed`, `worker_lease_renewal_failed`, `provider_usage_unrecorded` | ERROR |
 | HTTP `ProviderCallError` handler (`surfaces/http_api.py:793`) | `provider_call_failed` (same 503) | ERROR |
-| HTTP unmapped exception (new catch-all handler, same 500) | `api_unhandled_exception` | ERROR |
+| HTTP request failure: an exception that propagates out of the served ASGI app (FastAPI's server-error middleware sends the 500, then re-raises), caught by `wrap_asgi_reporting` (§3) | `api_unhandled_exception` | ERROR |
 | Uncaught exception ending a process or thread (`sys.excepthook`, `threading.excepthook`, installed with the handler) | `process_unhandled_exception` | ERROR |
-| API startup or shutdown failure, e.g. the cost-export listener failing to bind. The lifespan wrapper is applied **outermost**, after every other app wrapping including the cost-export listener (`profiles/selfhost.py:1288`), so it sees every inner failure | `api_lifespan_failed` | ERROR |
+| API startup or shutdown failure, e.g. the cost-export listener failing to bind. `wrap_asgi_reporting` is applied **outermost**, to the exact callable Uvicorn serves, after every other wrapping including the cost-export listener (`profiles/selfhost.py:1288`) | `api_lifespan_failed` | ERROR |
 | Expired-lease sweep: a requeue announcement fails (`workers/base.py:627`) | `worker_requeue_announce_failed`. The sweep reports it and continues with the remaining rows, so later dead letters are still finalized and reported | ERROR |
 | Query sandbox: a `SandboxRejection` the bridge raised for an operational cause (`P1_UNAVAILABLE`, embedding provider failure; `surfaces/query_sandbox/bridge.py:369`), consumed at `executor.py:861` | `query_dependency_unavailable`; same wire result | ERROR |
-| Query sandbox: every database error that becomes a query result, in every catch that produces one (`surfaces/query_sandbox/executor.py:837` through `:944`, and the type lookup at `:118`). It is reported **unless** it is positively a caller or budget outcome: SQLSTATE class `22` (data exception) or class `42` (syntax or access rule) other than `42501` (insufficient privilege, an engine grant fault); `57014` raised by the request's own budget timeout; `55P03` (lock not available, a disclosed limit); `54000`-class configuration limits the sandbox disclosed. Everything else is reported: privilege, connection, resource, operator-intervention, system and internal errors, and catalog, manifest (`spine/query_space/manifest.py:886`) and type-lookup failures | `query_database_failed`; same wire result as today | ERROR |
+| Query sandbox: every database error that becomes a query result, in every catch that produces one (`surfaces/query_sandbox/executor.py:837` through `:944`, and the type lookup at `:118`). Only these are not reported: a budget outcome (the existing `budget_exhausted` classifier: request-owned `57014` or `25P04`, or an admission timeout); `55P03` (lock not available) and configuration limits the sandbox already discloses; class `22` (data exception); and class `42` statement errors in the caller's text other than `42501` and `42P01`. Everything else is reported. That includes privilege (`42501`), an allowlisted relation that is missing (`42P01`), and connection, resource, operator-intervention, system and internal errors (`08`, `53`, `57` other than the budget, `58`, `XX`). It also includes every catalog, manifest and type-lookup failure | `query_database_failed` with a `sqlstate` tag; same wire result as today | ERROR |
+| Query-space manifest check (`spine/query_space/manifest.py:962`, run at setup and readiness) | The check verifies that every relation and function the sandbox grammar allowlists exists with the expected signature. A missing engine-owned helper therefore fails readiness with `query_manifest_incomplete`, instead of surfacing later as an ambiguous `42883` in a caller's query | ERROR |
 | Live graph: `GraphHydrationError` (traversal rows disagree with authoritative rows; `surfaces/graph_queries.py:77`), mapped to a quiet 503 at `surfaces/http_api.py:1289` | `graph_hydration_mismatch`; same 503 | ERROR |
 | Live graph: `GraphBusyError` (bounded expansion slots exhausted; `graph_queries.py:73`) | `graph_capacity_exhausted`; same 503 | WARNING |
 | Managed metering: the control plane rejects the producer credential (`MeterReceiptUnauthorized`) on the measurement path (`spine/managed_metering.py:164`) or the outcome path (`:423`) | `meter_receipt_unauthorized`; replay continues | ERROR |
@@ -136,15 +137,17 @@ transport fails, a scope's own earlier reason is kept.
   and the drain calls that flush on the calling thread with the timeout;
   no threads are started at exit. The drain runs from `atexit` (main
   thread) and before the engine's own `os._exit` paths, and embedders call
-  it before theirs (remember.dev's convert route). The built-in OTLP sink
-  doesn't buffer (§4), so only Sentry's transport needs draining, and
-  Sentry's `flush(timeout)` honours its deadline.
-- **`install_asgi_reporting(app)`**, used by the engine API and by
-  embedders' own ASGI apps. It adds the catch-all exception handler
-  (`api_unhandled_exception`) and wraps the app's lifespan **outermost**
-  (`api_lifespan_failed`), so a request failure or a startup/shutdown
-  callback failure is reported once instead of reaching only
-  `uvicorn.error`.
+  it before theirs (remember.dev's convert route). The total wait is bounded
+  by the one deadline, shared across sinks.
+- **`wrap_asgi_reporting(app) -> app`**, a plain ASGI wrapper applied to
+  the exact callable Uvicorn serves. It is used by the engine API and by
+  embedders, including remember.dev's `SharedApi`, which owns its own
+  lifespan and delegates to an inner FastAPI app. An exception that
+  propagates out of a request is reported as `api_unhandled_exception` and
+  re-raised. A lifespan startup or shutdown failure is reported as
+  `api_lifespan_failed`. A route failure is counted once: FastAPI's
+  server-error middleware sends the 500 and re-raises, so only the outer
+  wrapper reports it. Nothing inside the app adds a second report.
   An embedder adds its own namespaces; remember.dev passes
   `("rememberstack", "umc_runtime")`.
 
@@ -160,7 +163,7 @@ handler with each configured sink.
 | Tracker | Configuration | Sink |
 |---|---|---|
 | Sentry, GlitchTip, Bugsink | `REMEMBERSTACK_SENTRY_DSN`, `_ENVIRONMENT`, `_SAMPLE_RATE` (unchanged) | The SDK is initialized with `default_integrations=False` and no integrations, so it captures nothing by itself: no logging, framework, thread or excepthook capture. The sink sends one event per report directly on the adapter's client, `client.capture_event(event, scope=None)`. That bypasses the global, isolation and current scopes, so no ambient tags, contexts, user or breadcrumbs apply. Its `flush` is drained by `drain_error_reporting`. The event holds the exception type, frames, level, the `error_code` tag and the worker tags; in `full`, also the message, exception text and extras (as `extra`). `TelemetryPort` no longer sends exceptions to Sentry, and `before_send` no longer drops worker records. In `metadata`, `before_send` keeps its scrubbing as a backstop. |
-| Any OpenTelemetry backend | Standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`), `OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_SERVICE_NAME` | Exports one OTel log record per report **synchronously**, through a `LoggerProvider(shutdown_on_exit=False)` with a `SimpleLogRecordProcessor` and the OTLP HTTP exporter (HTTP/protobuf, 2-second export timeout; both already in the image). Errors are rare, so no batching, no background queue and nothing to drain at exit. Attributes: `error.code`, `exception.type`, `code.frames` (basename:function:line lines) and the tags. In `full`, the body is the message, plus `exception.message` and one `extra.<name>` attribute per extra. No stock `LoggingHandler` and no root-logger attachment. |
+| Any OpenTelemetry backend | Standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`), `OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_SERVICE_NAME` | One **daemon worker thread**, started when the sink is installed, exports reports from a bounded queue (100 reports; overflow is dropped and counted locally). It uses the OTLP HTTP exporter (HTTP/protobuf) on a `LoggerProvider(shutdown_on_exit=False)` with a `SimpleLogRecordProcessor`, so nothing else registers exit handlers. The caller's thread only enqueues, so a request never waits on the collector. `flush(timeout)` joins the queue with that deadline, and the daemon thread never holds the process open. A slow or stalled collector therefore can't stretch exit beyond the drain deadline. Attributes: `error.code`, `exception.type`, `code.frames` (basename:function:line lines) and the tags. In `full`, the body is the message, plus `exception.message` and one `extra.<name>` attribute per extra. No stock `LoggingHandler` and no root-logger attachment. |
 
 `REMEMBERSTACK_ERROR_DETAIL` = `metadata` (default) | `full` sets the
 handler's detail for the built-in sinks. Any other value refuses to start.
@@ -222,9 +225,17 @@ exporter, and assert on the serialized payload:
   transport.
 - Populated global, isolation and current Sentry scopes (tags, contexts,
   user, breadcrumbs) add nothing to the final payload.
-- With a stalled collector, a subprocess that reports and exits finishes
-  within the 2-second export timeout plus the drain deadline, measured on
-  the real subprocess exit.
+- With the real OTLP exporter and a loopback collector that stalls or
+  dribbles its response, a request that reports returns without waiting.
+  A subprocess that reports and exits finishes within the drain deadline
+  plus 0.5 seconds, measured on the real subprocess exit.
+- A sandbox budget expiry (`57014` and `25P04` from the request's budget)
+  is not reported; an unrelated cancellation, `42501` and `42P01` are.
+- The manifest check fails readiness when an allowlisted function is
+  missing.
+- Through `wrap_asgi_reporting` on a real server: an outer request failure,
+  an inner route failure and a shutdown failure each give exactly one
+  event.
 - An API whose cost-export listener fails to bind delivers
   `api_lifespan_failed` before the process exits.
 - A nested `extras` mapping with an inner `api_token` arrives masked in both
@@ -237,9 +248,10 @@ asserted unchanged.
 
 Analysis §5 is the work list:
 
-- §5.2: 27 sites gain a report, 13 existing ERROR logs gain a code, 7
-  expected outcomes log at WARNING with a code, and 42 ("raised later" and
-  exempt) get their `# error-contract:` comment;
+- §5.2: 25 sites gain a report, 13 existing ERROR logs gain a code, 7
+  expected outcomes log at WARNING with a code, 6 sandbox catches follow
+  the sandbox rule, and 38 ("raised later" and exempt) get their
+  `# error-contract:` comment;
 - §5.3: 14 handlers that raise on only some branches;
 - §5.4: all 18 ERROR calls gain codes;
 - §5.5: three boundaries outside `except`;
@@ -249,7 +261,11 @@ Analysis §5 is the work list:
   rejection;
 - the storage-capture failure code comes only from a declared refusal
   `code` attribute, else `storage_capture_failed`. Arbitrary exception text
-  can no longer become a code.
+  can no longer become a code;
+- `run_storage_capture_batch` takes an optional `on_scope_failure(code)`
+  callback, called the moment a scope fails, before the batch waits for
+  its peers. An embedder that must hand failures across a process boundary
+  streams them from there.
 
 The list is what the scan and review found at design time. A site found
 later, during implementation or afterwards, follows the same rules in the

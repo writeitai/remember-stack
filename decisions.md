@@ -8491,8 +8491,9 @@ and 18 ERROR logs without a code.
 **Consequences.**
 
 - The audit is the work list:
-  - 89 failure-class handlers without a raise: 27 new reports, 13 codes,
-    7 coded warnings, and 42 annotated exemptions or later raises;
+  - 89 failure-class handlers without a raise: 25 new reports, 13 codes,
+    7 coded warnings, 6 sandbox catches under one rule, and 38 annotated
+    exemptions or later raises;
   - 14 handlers that raise on only some branches;
   - 18 ERROR calls gaining codes;
   - 3 boundaries.

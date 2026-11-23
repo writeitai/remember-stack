@@ -158,30 +158,29 @@ per-scope result, is fixed here.
 
 | Disposition | Sites |
 |---|---|
-| Report (new ERROR + code) | 27 |
+| Report (new ERROR + code) | 25 |
 | Already ERROR; add code | 13 |
 | Expected outcome; WARNING + code | 7 |
+| Classified by the sandbox rule (design §2.1) | 6 |
 | Raised later | 13 |
-| Exempt | 29 |
+| Exempt | 25 |
 | **Total** | **89** |
 
 #### Report (new ERROR + code)
 
 | Site | Catches | Disposition |
 |---|---|---|
-| `adapters/vertex.py:561` | `ProviderAccountingError` | `provider_usage_unparsed`, only when the stream supplied usage that could not be parsed; an incomplete stream with no usage (`vertex.py:335`) is already a provider error |
+| `adapters/vertex.py:561` | `ProviderAccountingError` | `provider_usage_unparsed`: usage reported but unreadable, so cost goes unrecorded |
 | `profiles/storage_capture_batch.py:240` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
 | `profiles/storage_capture_batch.py:266` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
 | `profiles/storage_capture_batch.py:268` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
 | `surfaces/http_api.py:3142` | `SpendLeaseUnavailable` | `spend_lease_unavailable` (503) |
 | `surfaces/http_api.py:3161` | `SpendLeaseRefused, SpendLeaseUnavailable` | `spend_lease_commit_failed`: commit after a 2xx; the response is unchanged |
 | `surfaces/query_engine.py:493` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | timeouts: WARNING `query_budget_exceeded`; other database errors: ERROR `query_database_failed` |
-| `surfaces/query_engine.py:1805` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
-| `surfaces/query_engine.py:1834` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
-| `surfaces/query_engine.py:1886` | `DBAPIError, SQLAlchemyTimeoutError, GraphBusyError, GraphHydrationError, TimeoutError` | as above |
-| `surfaces/query_engine.py:1937` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
-| `surfaces/query_sandbox/executor.py:917` | `psycopg.errors.ConfigurationLimitExceeded, psycopg.errors.DiskFull, psycopg.errors.OutOfMemory, psycopg.errors.TooManyConnections` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
-| `surfaces/query_sandbox/executor.py:933` | `psycopg.OperationalError` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
+| `surfaces/query_engine.py:1805` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | timeouts: WARNING `query_budget_exceeded`; other database errors: ERROR `query_database_failed` |
+| `surfaces/query_engine.py:1834` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | timeouts: WARNING `query_budget_exceeded`; other database errors: ERROR `query_database_failed` |
+| `surfaces/query_engine.py:1886` | `DBAPIError, SQLAlchemyTimeoutError, GraphBusyError, GraphHydrationError, TimeoutError` | timeouts: WARNING `query_budget_exceeded`; `GraphBusyError`: WARNING `graph_capacity_exhausted`; `GraphHydrationError`: ERROR `graph_hydration_mismatch`; other database errors: ERROR `query_database_failed` |
+| `surfaces/query_engine.py:1937` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | timeouts: WARNING `query_budget_exceeded`; other database errors: ERROR `query_database_failed` |
 | `workers/base.py:485` | `Exception` | retry scheduled: WARNING `worker_item_retry`; no retry left (dead letter): ERROR `worker_item_failed` |
 | `workers/e0.py:1701` | `ProviderCallError` | `structure_fallback` |
 | `workers/e0.py:1715` | `Exception` | `structure_fallback` |
@@ -213,7 +212,7 @@ per-scope result, is fixed here.
 | `workers/base.py:451` | `NonRetryableHandlerError, ProviderAccountingError` | `worker_item_failed` (terminal) |
 | `workers/base.py:671` | `Exception` | `worker_finalizer_failed` |
 | `workers/base.py:692` | `Exception` | `provider_usage_unrecorded` |
-| `workers/e3.py:484` | `ProviderInvalidResponseError` | `e3_claim_normalize_failed` (logged once, at `:492`) |
+| `workers/e3.py:484` | `ProviderInvalidResponseError` | `e3_provider_invalid_response` |
 
 #### Expected outcome; WARNING + code
 
@@ -221,11 +220,22 @@ per-scope result, is fixed here.
 |---|---|---|
 | `adapters/managed/perimeter_trust.py:315` | `Exception` | `perimeter_refresh_failed`; keeps the last good key set |
 | `adapters/managed/perimeter_trust.py:328` | `Exception` | `perimeter_refresh_failed`; keeps the last accepted document |
-| `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried. The sibling `MeterReceiptUnauthorized` branch at `:164` is ERROR `meter_receipt_unauthorized` (design §2.1) |
-| `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnauthorized` (a `MeterReceiptUnavailable` subclass): ERROR `meter_receipt_unauthorized`; other `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues with capped backoff in both cases |
+| `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried |
+| `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues with capped backoff in both cases |
 | `surfaces/query_engine.py:1798` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary in the response |
-| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; the additive profile channel is skipped and fact search answers alone (no boundary in the response) |
+| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
 | `surfaces/query_engine.py:4576` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
+
+#### Classified by the sandbox rule (design §2.1)
+
+| Site | Catches | Disposition |
+|---|---|---|
+| `surfaces/query_sandbox/executor.py:872` | `psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout` | the caller's statement hit its disclosed timeout (`statement_timeout` result) |
+| `surfaces/query_sandbox/executor.py:884` | `psycopg.errors.LockNotAvailable` | the caller's statement hit its disclosed lock timeout |
+| `surfaces/query_sandbox/executor.py:895` | `psycopg.errors.InvalidParameterValue` | the caller's parameter was invalid |
+| `surfaces/query_sandbox/executor.py:917` | `psycopg.errors.ConfigurationLimitExceeded, psycopg.errors.DiskFull, psycopg.errors.OutOfMemory, psycopg.errors.TooManyConnections` | `ConfigurationLimitExceeded` stays the caller's disclosed cap; `DiskFull`, `OutOfMemory`, `TooManyConnections`: ERROR `query_database_resource_exhausted` |
+| `surfaces/query_sandbox/executor.py:933` | `psycopg.OperationalError` | `query_database_unavailable`; same `pg_unavailable` result |
+| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | a statement error in the caller's SQL, returned as `execution_error` |
 
 #### Raised later
 
@@ -272,10 +282,6 @@ per-scope result, is fixed here.
 | `spine/readiness.py:690` | `SQLAlchemyError` | cleanup: `RESET ROLE` |
 | `surfaces/http_api.py:3168` | `SpendLeaseRefused, SpendLeaseUnavailable` | lease release after a non-2xx; the hold expires on its TTL (D42) |
 | `surfaces/mcp.py:550` | `LayerUnavailableError` | a layer the deployment does not serve, returned as `layer_unavailable` (D143) |
-| `surfaces/query_sandbox/executor.py:872` | `psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
-| `surfaces/query_sandbox/executor.py:884` | `psycopg.errors.LockNotAvailable` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
-| `surfaces/query_sandbox/executor.py:895` | `psycopg.errors.InvalidParameterValue` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
-| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | Report `query_database_failed` unless positively a caller or budget outcome (design §2.1, sandbox row). Same `execution_error` result |
 | `workers/e0_summary.py:694` | `Exception` | cache corruption is a cache miss |
 | `workers/e0_summary.py:724` | `Exception` | cache corruption is a cache miss |
 
@@ -323,7 +329,20 @@ All 18 get an `error_code`:
 
 ### 5.6 Failures returned as values
 
-Also on the list, found in review: the live-graph errors
+Also on the list, found in review and specified in the design (§2.1, §3,
+§4):
+
+- Sentry's capture and scrubber (`adapters/sentry.py:128`, `:141`);
+- self-host startup and lifespan wiring, including `meter-receipts`
+  (`profiles/selfhost.py:2008`, `:1288`, `surfaces/cost_export_api.py:153`);
+- the lease reaper and requeue wake (`workers/base.py:612`, `:627`);
+- the sandbox bridge (`surfaces/query_sandbox/bridge.py:369`);
+- the declared storage refusals (`profiles/managed_storage_capture.py:105`,
+  `adapters/fsit_storage_capture_transport.py:378`) and the batch's
+  per-scope callback (`profiles/storage_capture_batch.py:263`);
+- the query-space manifest check (`spine/query_space/manifest.py:886`,
+  `:962`);
+- the live-graph errors
 (`surfaces/graph_queries.py:73`, `:77`; quiet 503 at `surfaces/http_api.py:1289`)
 and every sandbox catch that produces a query result (`executor.py:837`
 through `:944`), both classified in design §2.1.
