@@ -8484,7 +8484,7 @@ catches a failure class, and on every ERROR log.
 vendor handlers would leak messages and extras past the metadata rule,
 per-vendor adapters grow without end, and extending `TelemetryPort` would
 reach workers only. Nightly storage capture failed silently for days
-because a per-scope result was `None`. The audit found 28 more sites that
+because a per-scope result was `None`. The audit found 26 more sites that
 hide failures (including a dropped embedding and a lost spend-lease commit),
 and 18 ERROR logs without a code.
 
