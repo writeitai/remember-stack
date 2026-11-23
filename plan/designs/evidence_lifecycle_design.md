@@ -446,7 +446,9 @@ nor deleted.
   lineage and **every one of its versions** ends together and `documents.archived_at` is
   set; nothing is tombstoned. Re-sending identical bytes later leaves it archived (below).
 - **Source-observed deletion**: the connector finds the file deleted at its source (a trashed
-  Drive file) — treated as an archive of the lineage through the same cascade (every
+  Drive file). The absence is pending until the sync cycle ends (no tombstone, no ended
+  testimony meanwhile); if the file is still absent then, it is treated as an archive of the
+  lineage through the same cascade (every
   version's testimony ended, T4 anchors cleared in the same transaction), stamped with the
   observing sync cycle. The file existed and said what it said, so this is history, not
   erasure. Finalization settles each archive **episode** against its archived versions, not
@@ -528,7 +530,7 @@ The cascade contract below was first designed for D135's public delete, which D1
 - **Coming back.** Whatever would be a no-op for a live document is a no-op for an archived
   one (D55: identical bytes on the latest version with the same version metadata, including
   the D140 version key and effective periods): the document stays archived, so a full resync
-  never undoes a caller's archive. `unarchive` restores the latest version (its archive cutoff
+  never undoes a caller's archive. `unarchive` restores the newest surviving (not tombstoned) version (its archive cutoff
   and the lineage's mark are cleared; no new version, no reading). Anything that would record
   a new version (changed bytes, a new D140 edition) records it and clears the lineage's mark;
   that version runs the ordinary pipeline, and D56 reuse may draw on archived versions. Either

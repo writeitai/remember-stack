@@ -7748,7 +7748,9 @@ deployment's values into another's work.
      memory. Bytes in memory keep the previous behaviour exactly. D74 admission, MIME
      validation, versioning and D55 deduplication are exactly those of `ingest`. The raw
      object stays at `key`, which becomes the version's raw object; the engine neither
-     copies nor moves it. `key` must be `uploads/<id>` with an opaque id of 16–128
+     copies nor moves it. (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: there is no D74 admission; the re-ingest guard applies
+     instead. A deliberate re-add of a forgotten lineage copies the upload into its
+     generation prefix and deletes the upload rather than keeping the key.) `key` must be `uploads/<id>` with an opaque id of 16–128
      characters from `[A-Za-z0-9_-]`, because hard forget purges a version's raw key in
      every store and its manifests are immutable. Each content keeps one raw object, the
      first one recorded, and only that one is purged by hard forget; so when identical
@@ -8508,7 +8510,7 @@ contribution, both on the API, SDK, CLI and MCP:
   facts only the document supported close with `retracted_source_removal`), but the
   document and its stored original stay readable as history, hidden from default reads and
   returned with `include_archived=true`. Identical bytes re-sent leave it archived; `unarchive`
-  restores its latest version and a changed version brings it back too. Restored claims start
+  restores its newest surviving version and a changed version brings it back too. Restored claims start
   a new testimony episode (old fact links stay as history; closed facts stay closed), and D56
   reuse may draw on archived versions, so neither path re-reads unchanged text. A connector that observes a source deletion
   archives.

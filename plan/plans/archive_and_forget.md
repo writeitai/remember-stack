@@ -41,8 +41,8 @@ Python surface (D141), because the parity check compares that inventory with the
 - Tests: whole-database canary, schema coverage, every table seeded, nothing extra removed, no
   orphans, never existed, no global stop, kill/resume/late writers, concurrent forgets,
   authored pages, mounts, restore without re-adds, large document, and the refusal half of
-  re-ingest (design §5 tests 1–8, 10, 12 and 16, test 9 except its re-add and testimony-episode
-  cases, test 13 except its re-add cases, and test 11 without the flag).
+  re-ingest (design §5 tests 1–8, 10, 12 and 16, test 9 except its re-add, testimony-episode,
+  archived-owner and D135-upgrade cases, test 13 except its re-add cases, and test 11 without the flag).
 
 ## 2. Forget on every surface, the re-ingest guard and `allow_forgotten`
 
@@ -71,7 +71,8 @@ Python surface (D141), because the parity check compares that inventory with the
   and `DocumentDeletion`.
 - The upgrade migration converting D135 tombstones to caller or source archives (design §4),
   tested by upgrading from the previous release.
-- Tests: archive and Rule 4 (design §5 tests 14 and 15, the testimony-episode cases of test 9, and test 11's archive and unarchive cases): un-archiving identical bytes makes
+- Tests: archive and Rule 4 (design §5 tests 14 and 15, the testimony-episode, archived-owner
+  and D135-upgrade cases of test 9, and test 11's archive and unarchive cases): un-archiving identical bytes makes
   no Selection, Claimify or embedding call, and a one-section edit of an archived document pays
   only for that section.
 

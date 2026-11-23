@@ -469,8 +469,10 @@ CREATE INDEX ix_forgets_source ON forgets (deployment_id, source_identity_hash)
 CREATE INDEX ix_forgets_content ON forgets USING gin (content_hashes);
 
 -- D159 staged objects: every engine write path records a key (and, for multipart, the upload ID
--- before the first part) before writing. The row is deleted only once the key is adopted as a
--- version's original or the object (a refused or duplicate copy) is deleted and verified absent,
+-- before the first part) before writing. The row is deleted only once the object is published
+-- in its store (a version's original, an artifact or a corpus copy) or deleted and verified
+-- absent (a refused or duplicate copy); the janitor's ownership check runs under the same lock as
+-- publication, so it never deletes a published object,
 -- so a crash never leaves an untracked object or upload. Forget sweeps its own lineage and
 -- generation's staged objects and aborts their uploads by ID; only unadopted raw originals are
 -- swept by content hash. The janitor deletes rows older than the request bound.
@@ -2865,7 +2867,7 @@ runs in one transaction under the lineage row lock:
    `authored_review` flags on **authored** pages that cited it (a review flag, not a redaction
    flag; D45/D46). Doing this first ensures the links are still present to discover.
 2. **Objects stay.** The document's raw and artifact objects are kept: an archived document is
-   readable as history and `unarchive` restores its latest version.
+   readable as history and `unarchive` restores its newest surviving version.
 3. **`documents` + `document_versions`** (D55 grains): archiving the **lineage** sets
    `documents.archived_at`; nothing is tombstoned. Version rows, sections, artifact URIs and
    crossrefs are **kept**, so the document, its versions and its stored original stay readable.

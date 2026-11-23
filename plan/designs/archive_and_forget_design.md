@@ -47,7 +47,7 @@ Every archive and un-archive is also appended, with its belief time, to a small 
 past instant (D140 pinned selection and support) see each version as archived exactly during
 the intervals it was. A version carries **current testimony** only while its lineage is live
 and the version itself is neither archived nor deleted. Coming back (§2.4) clears the lineage's `archived_at` and
-either restores the latest version (its cutoff is lifted) or adds a new version; every earlier
+either restores the newest surviving version (its cutoff is lifted) or adds a new version; every earlier
 version keeps its cutoff. D135's late retirement at reconcile keys on the version's own state,
 so work finishing late for an archived version still retires. Everything that decides
 currency, support counting and claim publication uses that rule; everything that decides whether a row may be *shown* uses the visibility rules in
@@ -109,6 +109,10 @@ for declared periods use D140 effective periods.
   version key; a D140 correction of effective periods alone is metadata and also leaves it
   archived). It answers `created=false` with `archived_at`, and the document stays archived.
   A full resync therefore never undoes a caller's archive.
+- **A source absence is pending until its sync cycle ends.** A connector that observes a file
+  missing records the absence as pending, with no tombstone and no ended testimony; the
+  archive is applied only at the end of the sync cycle if the file is still absent, so reads
+  in between see the document unchanged and a same-cycle recreation never archives.
 - **A source reappearing undoes a source archive.** When `archived_by = source`, a connector
   observing the file again un-archives it: identical bytes restore the latest version as
   `unarchive` does, changed bytes record a new version. The connector's unchanged-revision
@@ -344,7 +348,11 @@ the document hidden and the record `erasing`; nothing reopens.
      and rationales for entities resolved from the document and for decisions in which a
      changed entity was a supplied candidate.
    - *Ledger and deployment-wide derived data.* Clear `last_error` on the document's work
-     items (tracebacks may quote content); payloads carry IDs only. Clear, deployment-wide,
+     items and on every other work item whose inputs included the document's claims, facts
+     or changed entities (shared-fact, resolver and profile work), since tracebacks may quote
+     content; status, receipts and costs stay. A late failure write is fenced like any other
+     write: it records only an error code when its inputs' generation is stale. Payloads
+     carry IDs only. Clear, deployment-wide,
      planner audit transcripts and legacy eval fixtures, which carry no reliable document
      provenance, and record that step 5 must sweep the K session-transcript prefixes.
 3. **Objects.** Under the content-hash lock, decide raw-object ownership by physical
@@ -357,7 +365,8 @@ the document hidden and the record `erasing`; nothing reopens.
    adopting it meanwhile. Otherwise delete the object and its `content_objects` row together (so a later deliberate re-add writes a fresh original
    instead of pointing at a purged key). Delete every key under the document's prefix
    (`{doc_id}/…`: originals, artifacts, media, source maps, checkpoints) except a shared
-   original another lineage still uses, the lineage's own staged objects and uploads, unadopted
+   original or a shared conversion (a representation or artifact of identical bytes) that a
+   retained version of any lineage, live or archived, still references, the lineage's own staged objects and uploads, unadopted
    raw originals carrying a forgotten hash (aborting tracked multipart uploads by ID), assets and transcripts. Missing keys count as success.
    Retained object versions follow E0 §6.7 (versioning off, or enumerate and purge every
    version). Forget does not depend on listing a provider's unfinished uploads: every
@@ -373,7 +382,10 @@ the document hidden and the record `erasing`; nothing reopens.
 5. **Knowledge plane (K).** Every K publication, ordinary or forget's, is a conditional ref
    update: it succeeds only if the repository head is still the head its checkout started
    from, and every purge advances that head. So a stale publisher whose single-committer
-   session was lost cannot restore purged history. The single-committer lock is held only in
+   session was lost cannot restore purged history. A publisher's objects are fetched into a
+   quarantine (reachable only from a temporary ref) and imported into the repository only
+   when its conditional update succeeds; on rejection the quarantine is pruned, so purged
+   blobs cannot re-enter through a rejected fetch. The single-committer lock is held only in
    short, deadline-bounded holds: model outputs and history rewrites are prepared outside it,
    and each hold revalidates and publishes conditionally; forget tries the lock and
    reschedules on contention. The step, in order:
@@ -388,9 +400,11 @@ the document hidden and the record `erasing`; nothing reopens.
      of the document's evidence, of every compiled page that read a blocking sidecar or
      authored page as input, and of every compiled page that read any sidecar or authored
      page at a revision which cited the document (each compile records the revision of every
-     such input it was given, so a sidecar the owner already redacted before the forget still
-     counts through the older revision the page was compiled from; a page whose input
-     revisions are not recorded is treated as dependent) (its body may already hold that prose even if it cites
+     such input it was given together with the evidence IDs that revision cited, so a sidecar
+     the owner already redacted, or a revision an unrelated forget has since pruned from
+     history, still counts through what the page was actually compiled from; the same
+     provenance travels through previous Markdown and child summaries, and a page whose input
+     provenance is not recorded is treated as dependent) (its body may already hold that prose even if it cites
      only unrelated facts), and of every page that depends on one of them through the
      compiler's actual inputs, followed transitively: same-scope summaries,
      previous Markdown, and child summaries reached through `parent_artifact_id` links across
@@ -403,7 +417,9 @@ the document hidden and the record `erasing`; nothing reopens.
      they read anything; the forget request advances it at hide, and a session whose stamp is
      older is refused, under the fence, when it tries to write a transcript, an audit row or
      a publication, so a session that read the document before the hide can never write
-     afterwards, in any scope. Those bodies are gone before
+     afterwards, in any scope. And no new unrestricted K session starts while any forget is
+     still `erasing` (K compilation waits; reads, ingest and processing do not), so no
+     session can start from a checkout that still holds the material being erased. Those bodies are gone before
      the history rewrite re-adds current files, so no contaminated current file is
      re-added;
    - erase every other registered K path from all reachable Git history and re-add its
@@ -492,7 +508,10 @@ checked by the guard at registration and swept by the existing unregistered-uplo
 
 **One gate for every ingest path.** `ingest`, `ingest_observed`, `ingest_stored`, connectors
 take session-scoped advisory locks, held across the staging, write and registration
-transactions and released after registration or refusal cleanup, in one common order: first
+transactions and released after registration or refusal cleanup, each hold bounded by a
+deadline independent of any worker lease (a synchronous HTTP ingest has none); the holder
+re-checks it still owns the locks before registering, and the forget request waits at most
+that bound for them before answering 409 `document_busy` (retry), in one common order: first
 the lineage identity (keyed by the deterministic `doc_id` E0 derives from the source identity,
 or from the content for an upload without one, so the lock exists before the row does), then
 the content hashes in sorted order. Row locks are taken only inside transactions, after
@@ -540,7 +559,10 @@ deployment or project setting.
   call is retryable after a crash at any point, and forget releases the publication and
   navigation locks before waiting for the acknowledgement. The adapter must remove those entries from every open session's
   listings, drop cached data for them, make later reads on already-open handles of erased
-  paths fail, and acknowledge; it never stops a session. Step 6 requires the
+  paths fail, and acknowledge; it never stops a session. The client enforces a cache expiry
+  bound of its own, and a session that reconnects after a disconnect must replay pending
+  invalidations before it serves any cached read, so a disconnected client cannot keep
+  serving warm entries for an erased path. Step 6 requires the
   acknowledgement. The cloud repository implements the adapter.
 - **Operator-managed S3 FUSE mounts** (self-host): the objects are deleted, and new listings
   and opens stop showing them when the tool's metadata cache expires; the filesystem-view
@@ -566,7 +588,9 @@ every `waiting_for_redaction` record, changed or not (so an edit that landed whi
 was being written is not missed), including curation sidecars and deleted files (a deleted
 file cites nothing). When a path's current file no longer cites any inventory ID, the sync erases the path from all
 reachable Git history, re-adds the current file, verifies the rewritten history, and removes
-the path from `blocking_k_paths`; when none remain the record becomes `complete`. Blocking
+the path from `blocking_k_paths`; when none remain the record becomes `complete`. It uses
+the same bounded holds, conditional publication, reflog expiry, pruning and fresh-checkout
+check as step 5. Blocking
 paths can carry page titles, so the record holds them only while redaction is pending. This runs
 in the sync itself, not as a re-enqueued work item. The authored-page sync and this
 redaction check keep running when compilation does not (K or the facts layer switched off),
@@ -606,8 +630,10 @@ with no ownership marker (a revision from before markers existed) is neither dis
 served: it is moved out of the served tree and flagged for owner review. Authored pages and
 sidecars are checked against every record's inventory as in step 5.
 
-Either way it erases the union of the exported inventory and whatever the restored database
-still holds for the lineage, because a store restored from a different moment than the
+Either way, before scrubbing anything, it stores on the record (whose membership the export
+decides) the union of the exported inventory and whatever the restored database still holds
+for the lineage, so a crash and retry never loses a restore-only locator. It erases that
+union, because a store restored from a different moment than the
 database can hold objects or paths only one of the two knows. A record exported while it
 was still `erasing` has no inventory yet, and an older database cannot stand in for it (a
 newer store can hold keys that database never knew), so reapply reports every such record as
@@ -670,7 +696,11 @@ operations, parameters, answers and errors (D141 parity); `reapply` is CLI-only.
 - The permanent re-ingest guard.
 - The stop-and-remount rule for mounts.
 
-The migration from the D135/D74 release also converts existing tombstones: a lineage a caller
+The migration from the D135/D74 release first classifies existing D74 records: a `complete`
+manifest becomes a `complete` forget; a `preparing` or `accepted` one becomes an `erasing`
+forget with its work item enqueued, so a partially completed D74 erasure finishes as an
+ordinary forget; the tombstones of those lineages stay tombstones. Only then does it convert
+the remaining tombstones: a lineage a caller
 deleted becomes a caller archive and one a connector observed deleted becomes a source archive
 (versions get the archive cutoff, `deleted_at` is cleared); internal version tombstones stay
 as they are. So no lineage is left "being forgotten" without a forget record. The
