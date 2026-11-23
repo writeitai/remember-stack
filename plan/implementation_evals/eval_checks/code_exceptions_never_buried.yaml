@@ -5,7 +5,8 @@ description: Exceptions are never buried or trimmed — failures stay visible (f
 tags: [code, core-values]
 instructions: |
   You are judging whether this repository's IMPLEMENTATION honors a binding rule.
-  Read implementation_core_values.md (repo root), value 6 — the binding source — then
+  Read implementation_core_values.md (repo root), value 6 — the binding source, as refined
+  by D158 (decisions.md; plan/designs/error_reporting_contract_design.md) — then
   inspect the Python source under the package (production code; test files are exempt from
   these rules where they intentionally provoke exceptions, e.g. pytest.raises).
 
@@ -20,14 +21,18 @@ instructions: |
      error (`pass`, `continue`, bare `return`) without logging the full traceback AND
      recording the failure.
   2. No trimmed tracebacks: no handler whose only trace of the error is a message string
-     (f-string with `{e}`, `str(e)`, `repr(e)` into a plain log call). Boundary handlers use
+     (f-string with `{e}`, `str(e)`, `repr(e)` into a plain log call). Exception (D158
+     Rule 4): where exception text can carry customer input (the query sandbox), the
+     record omits `exc_info` and carries `exception_type`, `sqlstate` and a fixed message. Boundary handlers use
      `logger.exception(...)` (or `traceback.print_exc()` where no logging is configured) so
      the complete traceback is emitted.
   3. Chains preserved: re-wrapping uses `raise NewError(...) from err` — no re-raise sites
      that discard the original cause.
   4. No fabricated success values: no handler that converts a failure into a value
      indistinguishable from success for the caller (returning [], {}, None-as-data, or a
-     default object on error without any failure signal). Contained per-item failures must
+     default object on error without any failure signal). Under D158 a degraded outcome
+     (a fallback, a skipped item) is acceptable when the failure is logged once at ERROR
+     with a stable `error_code`; that log record is the failure signal. Contained per-item failures must
      leave a record (failed status / processing state / dead letter) and be visible in the
      unit's result.
   5. Catch-to-log lives at explicit boundaries only (worker/CLI top level; per-item

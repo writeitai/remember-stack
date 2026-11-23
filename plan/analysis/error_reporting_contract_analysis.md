@@ -295,7 +295,7 @@ All 18 get an `error_code`:
 |---|---|---|
 | `surfaces/http_api.py:793` `ProviderCallError` handler | Quiet 503 | ERROR `provider_call_failed`, same 503 |
 | Unmapped exception in a route; API lifespan failure | Propagate to the server | Unchanged: handed to the host, which reports it (design Rule 1) |
-| `surfaces/http_api.py:1293` graph `TimeoutError`/`OperationalError` | Quiet 503 | ERROR `graph_query_failed`, same 503 |
+| `surfaces/http_api.py:1293` graph `TimeoutError`/`OperationalError`, and the sibling `InternalError` (`25P04`) at `:1297` | Quiet 503 | ERROR `graph_query_failed`, same 503 |
 | `profiles/storage_capture_batch.py:142` `_failure_code` | Any code-shaped message, else the type name (`TimeoutError`) | Only an engine refusal's declared `code`, else `storage_capture_failed` |
 
 ### 5.6 Failures returned as values
