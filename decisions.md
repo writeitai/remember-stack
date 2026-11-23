@@ -8469,7 +8469,8 @@ WARNING with a code.
 One engine handler turns coded records into an allowlisted error report
 for each sink:
 
-- the existing Sentry-protocol adapter, now one path per failure;
+- the existing Sentry-protocol adapter, now one path per failure (SDK
+  autocapture off);
 - an OTLP log sink enabled by the standard `OTEL_EXPORTER_OTLP_*` variables,
   for every OpenTelemetry backend including PostHog Logs;
 - for embedders such as remember.dev, any callable through
@@ -8483,14 +8484,18 @@ catches a failure class, and on every ERROR log.
 vendor handlers would leak messages and extras past the metadata rule,
 per-vendor adapters grow without end, and extending `TelemetryPort` would
 reach workers only. Nightly storage capture failed silently for days
-because a per-scope result was `None`. The audit found 23 more sites that
-hide failures, and 13 ERROR logs without a code.
+because a per-scope result was `None`. The audit found 28 more sites that
+hide failures (including a dropped embedding and a lost spend-lease commit),
+and 18 ERROR logs without a code.
 
 **Consequences.**
 
-- The audit (82 failure-class handlers) is the work list: 23 new reports,
-  13 codes, 8 coded warnings, 38 annotated exemptions or later raises, and
-  3 boundaries.
+- The audit is the work list:
+  - 89 failure-class handlers without a raise: 27 new reports, 13 codes,
+    7 coded warnings, and 42 annotated exemptions or later raises;
+  - 13 handlers that raise on only some branches;
+  - 18 ERROR calls gaining codes;
+  - 3 boundaries.
 - Sentry gets one path per failure.
 - The observability docs and the configuration reference document the
   contract, both sinks and the switch.

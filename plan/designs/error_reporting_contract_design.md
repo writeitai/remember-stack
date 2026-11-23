@@ -69,15 +69,29 @@ ignores.
 
 | Boundary | Code | Level |
 |---|---|---|
-| Worker item, retry scheduled (`workers/base.py:485`) | `worker_item_retry` | WARNING |
-| Worker item, dead letter or non-retryable (`:451`) | `worker_item_failed`, or the exception's declared `code` | ERROR |
+| Worker item fails and `ledger.fail()` schedules a retry (`workers/base.py:485`) | `worker_item_retry` | WARNING |
+| Worker item fails with no retry left (`:485`, dead letter) or non-retryable (`:451`) | `worker_item_failed`, or the exception's declared `code` | ERROR |
+| Expired lease requeued by the reaper (`:612`) | `worker_lease_expired_retry` | WARNING |
+| Expired lease on the last attempt, dead-lettered (`:612`) | `worker_lease_expired` | ERROR |
 | Worker terminal finalizer (`:671`), lease renewal (`:257`), usage persistence (`:692`) | `worker_finalizer_failed`, `worker_lease_renewal_failed`, `provider_usage_unrecorded` | ERROR |
 | HTTP `ProviderCallError` handler (`surfaces/http_api.py:793`) | `provider_call_failed` (same 503) | ERROR |
 | HTTP unmapped exception (new catch-all handler, same 500) | `api_unhandled_exception` | ERROR |
+| Uncaught exception ending a process or thread (`sys.excepthook`, `threading.excepthook`, installed with the handler) | `process_unhandled_exception` | ERROR |
 | MCP tool unexpected failure (`_internal_error`, `surfaces/mcp.py:568`) | `mcp_tool_failed` (same wire response) | ERROR |
 | Storage capture, per failed scope (`profiles/storage_capture_batch.py`) | the engine refusal's declared `code`, else `storage_capture_failed` | ERROR |
 
-Worker reports carry the tags `stage`, `lane` and `processing_id`.
+Worker reports carry the tags `stage`, `lane` and `processing_id`. Every
+boundary passes the caught exception explicitly
+(`exc_info=(type, value, traceback)`), so synchronous handlers run in a
+thread pool keep their traceback.
+
+Storage capture's declared codes are the fixed reason strings its refusals
+already use: `NativeStorageCaptureRefused`, the managed capture refusals in
+`profiles/managed_storage_capture.py`, and the batch admission errors. Each
+of those exception classes gains a `code` attribute, set from the same
+literal it puts in its message today, such as
+`capture_writer_class_unknown`. The existing test stays: when the batch
+transport fails, a scope's own earlier reason is kept.
 
 ## 3. The handler and the error report
 
@@ -89,7 +103,11 @@ Worker reports carry the tags `stage`, `lane` and `processing_id`.
   - `frames`: (file basename, function, line) for the traceback, or a single
     call-site frame when there is no exception;
   - `tags`, allowlisted: `stage`, `lane`, `processing_id`;
-  - in `full` detail only, `message` and `extras`.
+  - in `full` detail only: `message` (the formatted log message),
+    `exception_text` (`str()` of the exception) and `extras` (the record's
+    non-standard attributes). Values of keys whose name contains `token`,
+    `secret`, `password`, `key`, `authorization` or `cookie` are replaced by
+    `[masked]`. There are no local variables in either detail.
 - **`ErrorReportHandler(sinks, detail)`**, a `logging.Handler` at ERROR,
   attached to the `rememberstack` logger. It accepts records with or
   without an exception. A record without `error_code` gets
@@ -97,9 +115,12 @@ Worker reports carry the tags `stage`, `lane` and `processing_id`.
   code. The handler builds one `ErrorReport` and calls each sink with it. A
   sink exception is caught and logged at WARNING on
   `rememberstack.error_reporting`, which the handler ignores.
-- **`install_error_reporting(sink, *, detail="metadata", service)`**, the
-  embedder entry point. It attaches one handler with the caller's sink, a
-  callable that takes an `ErrorReport`.
+- **`install_error_reporting(sink, *, detail="metadata", service,
+  loggers=("rememberstack",))`**, the embedder entry point. It attaches one
+  handler with the caller's sink, a callable that takes an `ErrorReport`, to
+  each named logger, and installs the process and thread excepthooks.
+  An embedder adds its own namespaces; remember.dev passes
+  `("rememberstack", "umc_runtime")`.
 
 Sinks never see the raw `LogRecord`, so what leaves the process is exactly
 what `ErrorReport` allows.
@@ -112,8 +133,8 @@ handler with each configured sink.
 
 | Tracker | Configuration | Sink |
 |---|---|---|
-| Sentry, GlitchTip, Bugsink | `REMEMBERSTACK_SENTRY_DSN`, `_ENVIRONMENT`, `_SAMPLE_RATE` (unchanged) | Builds one Sentry event per report: type, frames, level, `error_code` tag, the worker tags. The SDK's logging integration is set to `event_level=None` (breadcrumbs stay off). `TelemetryPort` no longer sends exceptions to Sentry and `before_send` no longer drops worker records, so each failure has exactly one path. `before_send` keeps its scrubbing as a backstop. |
-| Any OpenTelemetry backend | Standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`), `OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_SERVICE_NAME` | Emits one OTel log record per report through a `LoggerProvider` and the OTLP HTTP exporter (both already in the image). Attributes: `error.code`, `exception.type`, `code.frames` (basename:function:line lines), the tags, and in `full` the message. No stock `LoggingHandler` and no root-logger attachment. |
+| Sentry, GlitchTip, Bugsink | `REMEMBERSTACK_SENTRY_DSN`, `_ENVIRONMENT`, `_SAMPLE_RATE` (unchanged) | The SDK is initialized with `default_integrations=False` and no integrations, so it captures nothing by itself: no logging, framework, thread or excepthook capture. The sink sends one event per report with `capture_event`. The event holds the exception type, frames, level, the `error_code` tag and the worker tags; in `full`, also the message, exception text and extras (as `extra`). `TelemetryPort` no longer sends exceptions to Sentry, and `before_send` no longer drops worker records. In `metadata`, `before_send` keeps its scrubbing as a backstop. |
+| Any OpenTelemetry backend | Standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`), `OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_SERVICE_NAME` | Emits one OTel log record per report through a `LoggerProvider` and the OTLP HTTP exporter (HTTP/protobuf; both already in the image). Attributes: `error.code`, `exception.type`, `code.frames` (basename:function:line lines) and the tags. In `full`, the body is the message, plus `exception.message` and one `extra.<name>` attribute per extra. No stock `LoggingHandler` and no root-logger attachment. |
 
 `REMEMBERSTACK_ERROR_DETAIL` = `metadata` (default) | `full` sets the
 handler's detail for the built-in sinks. Any other value refuses to start.
@@ -123,49 +144,58 @@ documented as content-bearing.
 ## 5. Enforcement in CI
 
 **Contract check** (a test parsing `src/rememberstack` with `ast`). Every
-`except` handler that catches a failure class (analysis §5.1) must do one
-of these:
+`except` handler that catches a failure class (analysis §5.1) passes only
+in one of these ways:
 
-- contain `raise`;
-- call `report_failure(...)`;
-- call `logger.error` or `logger.exception` with an `extra` dict literal
-  containing `"error_code"`;
-- carry a `# error-contract: <reason>` comment on the `except` line. The
-  reason starts with `raised later`, `expected` or `exempt`. This covers the
-  analysis's "raised later", "expected" and "exempt" rows; expected rows
-  also log at WARNING with their code.
+- its last statement is `raise`;
+- a top-level statement of its body calls a reporter. The reporters are
+  `report_failure` and `_internal_error`, which calls `report_failure`;
+- a top-level statement calls `logger.error` or `logger.exception` with an
+  `extra` dict literal containing `"error_code"`;
+- the `except` line carries `# error-contract: <reason>`, where the reason
+  starts with `raised later`, `expected` or `exempt`.
+
+A conditional `raise` therefore needs the comment or a report on its other
+branch. The analysis rows marked "raised later", "expected" and "exempt"
+(§5.2, §5.3) carry the comment; expected rows also log at WARNING with
+their code.
 
 Separately, every `.error`, `.exception` and `.critical` call in
-`src/rememberstack` passes `error_code`, and every literal code matches
-Rule 3.
+`src/rememberstack` passes `error_code` (analysis §5.4), and every literal
+code matches Rule 3.
 
-**Handler and sink tests** raise an error whose message, locals and extras
-carry a marker. They feed it through `ErrorReportHandler` into a fake
-Sentry transport and a fake OTLP exporter, and assert:
+**Handler and sink tests** raise an error whose message, exception text
+and extras carry a marker, plus an extra named `api_token`. They feed it
+through `ErrorReportHandler` into a fake Sentry transport and a fake OTLP
+exporter, and assert on the serialized payload:
 
-- `metadata`: the marker never appears in the serialized payload; code,
-  type and frames do.
-- `full`: the message and extras appear.
+- `metadata`: the marker never appears; code, type and frames do.
+- `full`: the message, exception text and extras appear in both sinks;
+  `api_token` is `[masked]`.
 - Not configured: nothing is sent.
 - A record without an exception is reported with its call-site frame.
 - A raising sink doesn't break the other sink or the caller.
 - An invalid detail value refuses to start.
 - A failed worker item yields exactly one Sentry event with its code and
   worker tags.
+- An HTTP 500, both in a synchronous and in an async route, yields exactly
+  one coded event with the route's traceback.
+- An uncaught exception in a thread yields one `process_unhandled_exception`
+  event.
 
 The existing wire responses (HTTP 503/500, the MCP tool error) are
 asserted unchanged.
 
 ## 6. Fixes in scope
 
-Analysis §5.2 and §5.3 are the work list:
+Analysis §5 is the work list:
 
-- 23 sites gain a report;
-- 13 existing ERROR logs gain a code;
-- 8 expected outcomes log at WARNING with a code;
-- 38 sites ("raised later" and exempt) get their `# error-contract:`
-  comment;
-- the three boundaries outside `except` (§5.3) change as listed;
+- §5.2: 27 sites gain a report, 13 existing ERROR logs gain a code, 7
+  expected outcomes log at WARNING with a code, and 42 ("raised later" and
+  exempt) get their `# error-contract:` comment;
+- §5.3: 13 handlers that raise on only some branches;
+- §5.4: all 18 ERROR calls gain codes;
+- §5.5: three boundaries outside `except`;
 - the storage-capture failure code comes only from a declared refusal
   `code` attribute, else `storage_capture_failed`. Arbitrary exception text
   can no longer become a code.
