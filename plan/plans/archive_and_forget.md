@@ -29,7 +29,9 @@ Python surface (D141), because the parity check compares that inventory with the
   without its replacement in place. Only the `allow_forgotten` override waits for slice 2.
 - Mount invalidation (§3.7): `invalidate(doc_suffix)` on the corpus purge port, the in-repo
   test adapter, acknowledgement in step 6, and the S3 FUSE cache-bound documentation. The
-  cloud repository's controlled-session adapter must ship before remember.dev deploys this
+  cloud repository's controlled-session adapter, qualified by running the warmed-handle test
+  through `remember mount` with the real Mountable client (the in-repo adapter cannot exercise
+  the client and kernel caches), must ship before remember.dev deploys this
   slice; the pin PR waits for it.
 - Remove in the same change: `ForgetManifestPort` and both implementations,
   `forget_manifest_root`, `forget_manifest_bucket_name`, the startup readiness replay

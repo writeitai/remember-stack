@@ -323,7 +323,12 @@ pre-computed list of versions and never a filter on finished top-k:
   check (the D94 rule used by the `documents` filter; executed per D142). The scope adds one probe per
   candidate: `EXISTS (SELECT 1 FROM document_version_scope s WHERE s.deployment_id = … AND
   s.version_id = candidate.version_id AND s.selectable AND s.in_force && :window)` via the
-  primary key. Undeclared lineages have their served version in the projection with an
+  primary key. `selectable` is archive-aware (it is false for a D159-archived version), and
+  paged browse and cursor continuations evaluate archive eligibility from the archive ledger
+  at the cursor's belief watermark, so an archive landing between pages never changes what
+  the cursor selects. An `include_archived=true` read probes a historical projection that also
+  holds archived editions, with their interval ends derived from the archived declarations
+  too. Undeclared lineages have their served version in the projection with an
   unbounded range, so one predicate covers every lineage and ranked results are never dropped
   by a later filter.
 - Filter-only listings (paged `search_documents`) never enumerate candidates through the scope.

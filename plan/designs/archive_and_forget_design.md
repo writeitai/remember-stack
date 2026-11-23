@@ -225,7 +225,9 @@ gets that for the one document, never for the deployment:
   ending does not by itself release PostgreSQL session locks, so the dedicated lock sessions
   are bounded too: a worker terminates its own lock sessions when its lease lapses, and the
   janitor terminates (`pg_terminate_backend`) any lock session whose attempt's lease has
-  expired. Forget never blocks on a lock: it tries it and, on contention, reschedules
+  expired. Work that belongs to the document through its payload rather than its target (a
+  corpus publication event, whose target is an event ID and whose `doc_id` is in the payload)
+  is included in the skip at hide and in the claim and renewal refusals. Forget never blocks on a lock: it tries it and, on contention, reschedules
   itself; the job
   proceeds once each such item has finished or its lease has expired (an expired attempt's
   token is stale and cannot publish). The forget job never blocks a worker slot while it
@@ -340,7 +342,7 @@ the document hidden and the record `erasing`; nothing reopens.
    - *Ledger and deployment-wide derived data.* Clear `last_error` on the document's work
      items (tracebacks may quote content); payloads carry IDs only. Clear, deployment-wide,
      planner audit transcripts and legacy eval fixtures, which carry no reliable document
-     provenance.
+     provenance, and record that step 5 must sweep the K session-transcript prefixes.
 3. **Objects.** Under the content-hash lock, decide raw-object ownership by physical
    reference: a content object stays while any version row, of any lineage, still references
    it. When two forgets share a hash, whichever deletes the last referencing version deletes
@@ -383,7 +385,14 @@ the document hidden and the record `erasing`; nothing reopens.
    - erase every other registered K path from all reachable Git history and re-add its
      current file, including authored and sidecar paths that no longer cite the document but
      may have in older history (D74's conservative rule: current citation bindings cannot
-     prove a page never cited it), and archived planner and writer transcripts;
+     prove a page never cited it);
+   - delete every K session transcript (planner and writer) in the deployment by sweeping
+     their dedicated object prefixes, which needs no per-row locator; transcript uploads use
+     the same conditional-publication rule as Git, so a stale session cannot upload after the
+     sweep;
+   - retire or recompute every planner-generated registration (a page path, a routing rule)
+     whose text came from a forgotten or renamed entity, before anything is rebuilt, so the
+     next compile cannot publish the forgotten name again;
    - publish once, verify the rewritten history, and leave the deleted compiled pages to be
      rebuilt by ordinary K work from clean inputs (when K or the facts layer is switched off,
      they stay absent).
@@ -474,8 +483,10 @@ written before a refusal are deleted through their staged row.
   identities and hashes. A pending authored-page wait for a deleted record ends; those pages
   keep their review flag. A re-added lineage keeps its deterministic `doc_id` but writes its
   objects under a new generation prefix (`{doc_id}/r<n>/…`, `n` stored on the documents row),
-  so a delete issued by a stalled eraser of the earlier forget, which only ever targets the
-  forgotten generation's locators, can never remove the re-added copy. Erasers also take the
+  and its corpus folders under a generation-specific suffix (`corpus_suffix(doc_id)` followed
+  by `-r<n>`, E0 §6), so a delete issued by a stalled eraser of the earlier forget, which only
+  ever targets the forgotten generation's locators and suffix, can never remove the re-added
+  copy. Erasers also take the
   lineage-identity lock (shared with ingest and re-add) around each mutation batch and
   re-check their record and attempt under it. The person chose to have the content back, so its history in those pages is
   no longer an erasure obligation.
@@ -552,10 +563,13 @@ Compiled K pages are regenerable (D46), so `reapply` does not trust a restored K
 pages to match the inventory (a restored page may predate the compile that dropped its
 citation): it discards every compiled body, summary and previous Markdown in the restored
 repository, erases their history, and lets ordinary K work rebuild them. It identifies
-compiled files from the restored revision itself: every compiled page carries its ownership
-(`page_kind: compiled` and its artifact ID) in its own frontmatter, so a compiled page
-restored under a path it has since moved from is still recognized and discarded rather than
-adopted as an authored page. Authored pages and
+compiled files from the restored revision itself: every page carries its ownership
+(`page_kind` and its artifact ID) in its own frontmatter, committed together with every
+ownership change (a compiled page adopted as authored is re-committed with
+`page_kind: authored`), so a compiled page restored under a path it has since moved from is
+still recognized and discarded, and an adopted page keeps its authored edits. A restored file
+with no ownership marker (a revision from before markers existed) is neither discarded nor
+served: it is moved out of the served tree and flagged for owner review. Authored pages and
 sidecars are checked against every record's inventory as in step 5.
 
 Either way it erases the union of the exported inventory and whatever the restored database
@@ -566,7 +580,10 @@ newer store can hold keys that database never knew), so reapply reports every su
 unverifiable and exits with an error rather than certify an incomplete replay; the operator
 takes a new full export once the forget has erased.
 
-It prints what it erased. The operator runs it before the restored deployment takes traffic;
+Store steps are batched across the whole record set: reapply collects every record's
+corpus suffixes, locators and K work first, then scans the corpus once, sweeps objects once
+and rewrites K history once, rather than repeating deployment-wide work per record. It prints
+what it erased. The operator runs it before the restored deployment takes traffic;
 the engine does not run it at start and never refuses to start because of it.
 
 A database restored from before a forget no longer contains that forget's record, so the
@@ -578,7 +595,8 @@ re-add has since released and could erase that re-add, so it must be the latest.
 S55 does not survive such a restore; this is the accepted limitation. Likewise, deliberately
 re-adding a forgotten document releases its record, so a backup taken before that forget can
 bring the forgotten version back after a restore: after any release, the operator takes a new
-backup before relying on older ones for erasure. remember.dev keeps no
+backup, and that backup replaces the pre-release ones for recovery; the older backups stay
+outside the erasure guarantee. remember.dev keeps no
 database backups.
 
 ### 3.11 Surfaces and errors
@@ -627,7 +645,7 @@ using that store's export.
 Run against real PostgreSQL and MinIO with deterministic providers and no hosted model calls.
 
 1. **Whole-database canary.** Plant a unique token in one document A (body, title, file name,
-   metadata, extracted claims, a fact statement and entity alias it alone contributed, the
+   metadata, extracted claims, a planner-generated page path and routing rule, a fact statement and entity alias it alone contributed, the
    name of an entity that another document B also relates to, a reclustering cost-ledger
    call key,
    a compiled K page, the corpus folder); forget it; `pg_dump` the whole database, read
@@ -677,7 +695,10 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
    on a shared fact discards its stale label. A forget racing a full corpus reconcile completes
    without deadlock. A resolver decision whose candidates included the forgotten entity
    publishes no stale rationale. A stalled eraser's delete issued after a deliberate re-add
-   leaves the re-added copy intact. A writer that stalls while holding both object locks
+   leaves the re-added copy intact, in object storage and in the corpus. A corpus publisher
+   that stalls mid-PUT while its heartbeat still runs is refused renewal and the forget
+   proceeds. Restore only the artifact bucket against the post-forget database: K session
+   transcripts are swept. A writer that stalls while holding both object locks
    loses them when its lease lapses, and the forget proceeds without occupying a worker slot.
    A bundle-mode writer cannot reach the memory CLI or mounts. An edited version whose flush
    unit holds both fresh claims (episode 1) and reused claims (episode 2) applies each
@@ -711,7 +732,8 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     export: the canary passes. Restore only the raw bucket against the post-forget database:
     a registered `uploads/<id>` original and a deduplicated original are erased from their
     locators. Restore only the K repository from before a page moved: the compiled page under
-    its old path is discarded, not adopted. Restore only the K repository from before a compile that dropped the
+    its old path is discarded, not adopted; restore it from after a compiled page was adopted
+    as authored: the authored edits are kept; a markerless legacy file is quarantined. Restore only the K repository from before a compile that dropped the
     citation: `reapply` discards the restored compiled pages and the canary passes. Restore only the corpus bucket and run `reapply`: it passes. A stale export
     does not erase another lineage that owns identical bytes. A restore spanning a deliberate
     re-add, with the latest export, neither erases the re-add nor revives its guard. A

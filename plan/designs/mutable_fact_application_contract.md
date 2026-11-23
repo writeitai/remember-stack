@@ -52,7 +52,9 @@ it cannot propagate one claim date indiscriminately to every extracted assertion
 
 ## 2. Admission and work completion
 
-Keep existing claim/version barriers and entity units. Extend
+Keep existing claim/version barriers and entity units; entity units and their readiness are
+keyed by the version's processing run (D159), and each application is validated against its
+own claim's testimony episode. Extend
 `normalize_observation_staging` with `application_id` and use
 `(deployment_id, version_id, application_id)` as its primary key; retain its
 existing routing columns. Stage every accepted resolved output, including

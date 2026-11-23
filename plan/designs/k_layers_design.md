@@ -618,8 +618,13 @@ requirement), so citing is *copying an ID it already has*, never reconstructing 
 directory — `bundle/` (the pre-hydrated rule-matched candidate evidence, IDs inline), the
 curation sidecar, child page summaries, the scope's shared model page, the previous page
 version, and instructions rendered from the registry (the D15 pattern) — and always launches
-one session in it. "Bundle mode" vs "agent mode" is an instruction + model-tier choice per
-page, not two runtimes: a leaf entity page gets *"compile from `bundle/` only"* and a small
+one session in it. "Bundle mode" vs "agent mode" is a model-tier and access choice per
+page. A bundle-mode session runs in a sandbox that contains only its working directory (no
+memory CLI credentials, no mounts, no Git history), so its recorded inputs are exactly what it
+read; D159 forget relies on this. An agent-mode session may explore freely, so its inputs are
+not established, and a compiled page whose isolation cannot be proven (any agent-mode page,
+and any page compiled before sandboxing existed) is treated by forget as possibly dependent on
+every document that was live when it was compiled. The instructions differ too: a leaf entity page gets *"compile from `bundle/` only"* and a small
 model; a high-stakes scope page gets *"explore the memory freely"* and a frontier model.
 (Fact-sheet-only pages skip the writer entirely — §5.)
 

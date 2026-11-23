@@ -334,7 +334,8 @@ Steps, in this order:
    **Discharge follows the layer dependency:** discharging a version's claims gap also records its
    facts gap as discharged (it will never extract, so it can never reach a facts boundary).
 3. Choose the **target**: for a living lineage its current version, if it has an open unentered gap;
-   for a snapshot lineage the oldest version with an open unentered gap.
+   for a snapshot lineage the oldest version with an open unentered gap. Parked gaps (of
+   D159-archived versions) are never targets; un-archive re-arms them and runs advance.
 4. Decide whether the target is **admitted**:
    - its sources layer is complete (otherwise its own claims boundary will record its gap and run
      advance again; a target whose sources work failed terminally stays unprocessed and visible in

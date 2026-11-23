@@ -8526,8 +8526,8 @@ re-ingest guard and verification; there is no second store and nothing runs at s
 of forgotten content is refused with `document_forgotten` unless that one request sets
 `allow_forgotten=true`, which ingests it as an ordinary ingest would and, on commit, deletes
 only the record whose lineage identity matches the request; other forgets of the same bytes
-keep guarding. There is no deployment-wide setting. After restoring a backup the operator runs `remember forget
-reapply --from` the latest full export of forget records before the deployment takes
+keep guarding. There is no deployment-wide setting. After restoring a backup the operator runs `remember ops
+forget-reapply --from` the latest full export of forget records before the deployment takes
 traffic. Ingest and forget share content-hash and source-identity locks, so
 nothing can register forgotten content mid-check. Forget keeps the existing cascades for
 exclusively owned children, deletes logically referenced rows explicitly, and a

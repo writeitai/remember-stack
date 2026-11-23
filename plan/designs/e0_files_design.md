@@ -898,7 +898,9 @@ normalization, a 60-byte cap and `untitled` fallback, including titles with no
 ASCII form. For example, `Smlouva o dílo – Žluťoučký kůň 2024` becomes
 `smlouva-o-dilo-zlutoucky-kun-2024`. Define
 `corpus_suffix(doc_id) = sha256(doc_id.bytes).hexdigest()[:24]`, using the UUID's
-16 canonical bytes. Its 24 lowercase hex characters carry 96 bits: the accidental
+16 canonical bytes. A lineage deliberately re-added after a forget (D159) appends its
+generation, `-r<n>`, so its folders never share a key with the forgotten generation's and a
+late delete from that forget cannot reach them. Its 24 lowercase hex characters carry 96 bits: the accidental
 collision probability n(n−1)/(2 × 2^96) is below 6.4 × 10^-14 even for 100 million
 lineages, comfortably beyond the required millions. No suffix allocation,
 reservation, uniqueness table or collision-extension protocol is needed. The
