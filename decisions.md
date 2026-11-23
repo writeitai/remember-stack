@@ -8457,56 +8457,46 @@ and do not become PostgreSQL 18 qualification evidence.
 **Rejected.** Remaining on 19 for a removed feature, supporting two server
 majors, adding compatibility shims, or opening a PG19 data directory on 18.
 
-## D158. Errors reach any tracker through Python logging with a stable code
+## D158. Engine failures are raised or logged at ERROR with a stable code; delivery is the operator's
 
 **Decision (2026-11-23, owner requirements; proposed until review).** The
-engine reports failures through one contract: a failure is raised, or
-reported once at ERROR on a `rememberstack.*` logger with a stable
-`error_code`. It is never hidden behind `pass`, a counter or a bare return
-value. Expected outcomes (retries, disclosed query boundaries, parks) are
-WARNING with a code.
+engine's only obligation is a contract: an unexpected failure is raised, or
+logged once at ERROR through standard Python `logging` on a
+`rememberstack.*` logger, with a stable `error_code` in `extra`. It is never
+hidden behind `pass`, a counter or a bare return value. Expected outcomes
+(retries, disclosed boundaries, parks) log at WARNING with a code.
 
-One engine handler turns coded records into an allowlisted error report
-for each sink:
+The engine owns **no delivery**: no tracker sinks, queues, exit drains or
+detail switch. Operators attach Sentry (its logging integration; the
+existing `REMEMBERSTACK_SENTRY_DSN` adapter stays unchanged), PostHog (a
+short handler calling its SDK) or OpenTelemetry (its logging handler or
+zero-code agent). The engine docs show each in a few lines.
 
-- the existing Sentry-protocol adapter, now one path per failure (SDK
-  autocapture off);
-- an OTLP log sink enabled by the standard `OTEL_EXPORTER_OTLP_*` variables,
-  for every OpenTelemetry backend including PostHog Logs;
-- for embedders such as remember.dev, any callable through
-  `install_error_reporting`.
+One CI rule checks that every `except` catching a failure class raises,
+logs at ERROR with a code, or carries an explicit `# error-contract:`
+comment.
 
-`REMEMBERSTACK_ERROR_DETAIL` (`metadata` default, or `full`) sets what a
-report contains. A CI check enforces the contract on every `except` that
-catches a failure class, and on every ERROR log.
-
-**Why.** Python logging is the one interface every error tool reads. Stock
-vendor handlers would leak messages and extras past the metadata rule,
-per-vendor adapters grow without end, and extending `TelemetryPort` would
-reach workers only. Nightly storage capture failed silently for days
-because a per-scope result was `None`. The audit found 26 more sites that
-hide failures (including a dropped embedding and a lost spend-lease commit),
+**Why.** Python logging is the one interface every error tool reads. Seven
+review rounds of an engine-owned delivery design kept finding drain,
+exporter, scope and exit-ordering defects in code the engine doesn't need
+to own. Nightly storage capture failed silently for days because a
+per-scope result was `None`. The audit found more sites that hide failures,
 and 18 ERROR logs without a code.
 
 **Consequences.**
 
-- The audit is the work list:
-  - 89 failure-class handlers without a raise: 25 new reports, 13 codes,
-    7 coded warnings, 6 sandbox catches under one rule, and 38 annotated
-    exemptions or later raises;
-  - 14 handlers that raise on only some branches;
-  - 18 ERROR calls gaining codes;
-  - 3 boundaries.
-- Sentry gets one path per failure.
-- The observability docs and the configuration reference document the
-  contract, both sinks and the switch.
+- The audit (analysis §5) is the implementation backlog.
+- The boundaries log with codes: workers, HTTP and its lifespan, MCP, the
+  sandbox, the live graph, metering and storage capture.
+- The sandbox logs every database error that becomes a query result, with
+  `sqlstate`, unless the request's deadline had passed.
+- `capture_storage_batch` gains an `on_scope_failure` callback.
 - Codes become part of the public surface; renaming one is a changelog
   entry.
-- Container logs are unchanged.
 
 **Analysis.** [Error reporting contract](plan/analysis/error_reporting_contract_analysis.md).
 **Design.** [Error reporting contract](plan/designs/error_reporting_contract_design.md).
 
-**Rejected.** Stock vendor logging handlers; vendor SDKs per tracker;
-extending `TelemetryPort` to every failure; OpenTelemetry tracing; a
-central code registry; always-metadata without a switch.
+**Rejected.** Engine-owned delivery (report builder, sinks, drains,
+detail switch); vendor SDKs per tracker; extending `TelemetryPort` to
+every failure; a central code registry.

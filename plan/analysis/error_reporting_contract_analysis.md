@@ -19,9 +19,9 @@ Owner requirements (2026-11-23):
    same hook.
 3. Failures come out as exceptions or ERROR logs with a stable code. They
    are never swallowed or turned into bare return values.
-4. Content restriction is controlled by an environment variable. The default
-   is metadata only; setting it enables full detail for testing and
-   debugging.
+4. Content restriction is controlled by an environment variable, metadata
+   by default. Since the engine only logs (§3), this lives with whoever
+   forwards records: remember.dev's `OBS_ERROR_DETAIL` (UMC D107).
 
 ## 2. What exists today
 
@@ -59,68 +59,38 @@ Owner requirements (2026-11-23):
 
 ## 3. Options for the hook
 
-| Option | What a self-hoster does | Covers | Engine cost |
-|---|---|---|---|
-| A. **Python logging with coded records**, plus one engine-owned handler that builds an allowlisted report and hands it to sinks | Set a Sentry DSN or an OTLP endpoint; embedders pass any callable | Sentry, GlitchTip, Bugsink; every OTLP backend (Grafana, Datadog, Honeycomb, New Relic, Elastic, PostHog Logs); any tool an embedder can call | One handler, two small sinks, codes at the audited sites |
-| B. Stock vendor handlers on the root logger (Sentry `LoggingIntegration`, OTel `LoggingHandler`) | Same variables | Same | Smallest code, but a stock handler copies extras, file paths, messages and formatted tracebacks, so the metadata rule can't hold. The root logger also admits dependency and exporter logs (OTel 1.44 `LoggingHandler`, [source](https://github.com/open-telemetry/opentelemetry-python/blob/v1.44.0/opentelemetry-sdk/src/opentelemetry/sdk/_logs/_internal/__init__.py#L539-L563)) |
-| C. Extend `TelemetryPort` to every failure | Implement a port adapter | Embedders only | Every failure site needs the port injected; the API, MCP and profile code have none |
-| D. Vendor SDKs (PostHog, Datadog, …) | Pick one | One vendor each | Violates requirement 1 and grows forever |
+| Option | What an operator does | Engine cost |
+|---|---|---|
+| A. **Contract only**: failures are raised, or logged once at ERROR through Python `logging` with a stable `error_code`. Delivery is the operator's | Attach the tracker's logging handler or SDK (a few lines); compose users keep `REMEMBERSTACK_SENTRY_DSN` | Codes at the audited sites, a handful of boundary log calls, one CI rule |
+| B. A, plus engine-owned delivery: an allowlisted report builder, built-in Sentry and OTLP sinks, a queue, exit drain, ASGI wrapper and detail switch | Set variables only | Large. Seven review rounds of a design with engine-owned delivery kept finding drain deadlines, exporter stalls, scope leaks and exit ordering, all of it delivery code the engine doesn't need to own |
+| C. Extend `TelemetryPort` to every failure | Implement a port adapter | Every failure site needs the port injected; workers only today |
+| D. Vendor SDKs (PostHog, Datadog, ...) | Pick one | Violates the owner requirement and grows forever |
 
-**Choice: A.** Python logging is the one interface every tool already reads.
-One engine-owned handler converts a coded record into an allowlisted
-**error report**:
+**Choice: A** (owner direction, 2026-11-23: "keep it simple"). Python logging
+is the one interface every tool already reads, so the engine only has to
+produce good records:
 
-- code, logger name, exception type, stack frames (basename, function,
-  line) and a few allowlisted tags;
-- the message and extras only in `full` detail.
-
-The sinks never see the raw record, so the metadata rule holds no matter
-which sink is used. It also gives Sentry a single path, which removes the
-dropped-duplicate problem.
-
-Sources, retrieved 2026-11-23:
-
-- Sentry's default integrations capture ERROR log records and unhandled
-  exceptions in web frameworks and threads, each as its own event. The
-  engine initializes the SDK with `default_integrations=False` and sends
-  only its own events.
+- **Sentry**'s logging integration turns ERROR records into events by
+  default.
   [Sentry Python logging](https://docs.sentry.io/platforms/python/integrations/logging/);
   pinned SDK 2.66.1 default `event_level=ERROR`
   ([source](https://github.com/getsentry/sentry-python/blob/2.66.1/sentry_sdk/integrations/logging.py#L22-L23)).
-- OpenTelemetry's standard exporter settings (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
-  `_HEADERS`) are read by the OTLP HTTP exporter itself. The engine
-  constructs that exporter, so the transport is HTTP/protobuf whatever
-  `OTEL_EXPORTER_OTLP_PROTOCOL` says.
-  [OTLP exporter specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/),
-  [OTel Python zero-code](https://opentelemetry.io/docs/zero-code/python/).
-- PostHog accepts OTLP logs at `/i/v1/logs` with the project token as
-  bearer. That feeds PostHog **Logs**. PostHog **Error Tracking** issues
-  need exception events (`$exception`), which an embedder sends with the
-  PostHog SDK.
-  [PostHog Python logs](https://posthog.com/docs/logs/installation/python),
-  [Error Tracking](https://posthog.com/docs/error-tracking/issues-and-exceptions).
+- **OpenTelemetry**'s Python SDK exports `logging` records over OTLP, and
+  the zero-code agent configures that automatically.
+  [OTel Python zero-code](https://opentelemetry.io/docs/zero-code/python/),
+  [logs example](https://opentelemetry.io/docs/zero-code/python/logs-example/).
+- **PostHog** Error Tracking takes exceptions through its SDK's
+  `capture_exception`, which a short logging handler can call. PostHog Logs
+  accepts OTLP at `/i/v1/logs`.
+  [Error Tracking](https://posthog.com/docs/error-tracking/issues-and-exceptions),
+  [PostHog Python logs](https://posthog.com/docs/logs/installation/python).
 
-B fails the metadata rule. C reaches workers only. D is ruled out by the
-owner.
+All sources retrieved 2026-11-23.
 
-## 4. Content switch
-
-`REMEMBERSTACK_ERROR_DETAIL` = `metadata` (default) | `full` governs what the
-handler puts in a report, for every sink:
-
-- **`metadata`** keeps code, logger, exception type, frames and allowlisted
-  tags. The message becomes `[redacted]`. There are no locals, source
-  lines, breadcrumbs, request data or extras.
-- **`full`** adds the formatted message, the exception's text and the
-  record's extras, with values of secret-named keys masked. No local
-  variables: the report carries what the code chose to log, which is enough
-  for debugging and keeps both sinks identical.
-
-Container logs are not affected; they are documented as content-bearing.
-Embedders pass their own detail to the same handler.
-
-Alternatives: a per-field allowlist (nobody needs it), or always-metadata
-(blocks debugging, which the owner wants to allow).
+The existing Sentry-protocol adapter stays as it is; it is not extended.
+What a handler forwards (message, extras, locals) is the handler owner's
+policy. remember.dev forwards metadata only (UMC D107). So the engine needs
+no detail switch.
 
 ## 5. Audit: where failures are hidden today
 
@@ -170,7 +140,7 @@ per-scope result, is fixed here.
 
 | Site | Catches | Disposition |
 |---|---|---|
-| `adapters/vertex.py:561` | `ProviderAccountingError` | `provider_usage_unparsed`: usage reported but unreadable, so cost goes unrecorded |
+| `adapters/vertex.py:561` | `ProviderAccountingError` | `provider_usage_unparsed`, only when the stream supplied usage that could not be parsed; an incomplete stream with no usage (`vertex.py:335`) is already a provider error |
 | `profiles/storage_capture_batch.py:240` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
 | `profiles/storage_capture_batch.py:266` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
 | `profiles/storage_capture_batch.py:268` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
@@ -212,7 +182,7 @@ per-scope result, is fixed here.
 | `workers/base.py:451` | `NonRetryableHandlerError, ProviderAccountingError` | `worker_item_failed` (terminal) |
 | `workers/base.py:671` | `Exception` | `worker_finalizer_failed` |
 | `workers/base.py:692` | `Exception` | `provider_usage_unrecorded` |
-| `workers/e3.py:484` | `ProviderInvalidResponseError` | `e3_provider_invalid_response` |
+| `workers/e3.py:484` | `ProviderInvalidResponseError` | `e3_claim_normalize_failed` (logged once, at `:492`) |
 
 #### Expected outcome; WARNING + code
 
@@ -220,22 +190,22 @@ per-scope result, is fixed here.
 |---|---|---|
 | `adapters/managed/perimeter_trust.py:315` | `Exception` | `perimeter_refresh_failed`; keeps the last good key set |
 | `adapters/managed/perimeter_trust.py:328` | `Exception` | `perimeter_refresh_failed`; keeps the last accepted document |
-| `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried |
-| `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues with capped backoff in both cases |
+| `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried. The sibling `MeterReceiptUnauthorized` catch at `:164` logs ERROR `meter_receipt_unauthorized` first |
+| `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnauthorized` (a `MeterReceiptUnavailable` subclass): ERROR `meter_receipt_unauthorized`; other `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues in every case |
 | `surfaces/query_engine.py:1798` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary in the response |
-| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
+| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; the additive profile channel is skipped and fact search answers alone (no boundary in the response) |
 | `surfaces/query_engine.py:4576` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
 
 #### Classified by the sandbox rule (design §2.1)
 
 | Site | Catches | Disposition |
 |---|---|---|
-| `surfaces/query_sandbox/executor.py:872` | `psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout` | the caller's statement hit its disclosed timeout (`statement_timeout` result) |
-| `surfaces/query_sandbox/executor.py:884` | `psycopg.errors.LockNotAvailable` | the caller's statement hit its disclosed lock timeout |
-| `surfaces/query_sandbox/executor.py:895` | `psycopg.errors.InvalidParameterValue` | the caller's parameter was invalid |
-| `surfaces/query_sandbox/executor.py:917` | `psycopg.errors.ConfigurationLimitExceeded, psycopg.errors.DiskFull, psycopg.errors.OutOfMemory, psycopg.errors.TooManyConnections` | `ConfigurationLimitExceeded` stays the caller's disclosed cap; `DiskFull`, `OutOfMemory`, `TooManyConnections`: ERROR `query_database_resource_exhausted` |
-| `surfaces/query_sandbox/executor.py:933` | `psycopg.OperationalError` | `query_database_unavailable`; same `pg_unavailable` result |
-| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | a statement error in the caller's SQL, returned as `execution_error` |
+| `surfaces/query_sandbox/executor.py:872` | `psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout` | logged as `query_database_failed` with `sqlstate`, unless the request deadline had passed (design §2.1); same wire result |
+| `surfaces/query_sandbox/executor.py:884` | `psycopg.errors.LockNotAvailable` | logged as `query_database_failed` with `sqlstate`, unless the request deadline had passed (design §2.1); same wire result |
+| `surfaces/query_sandbox/executor.py:895` | `psycopg.errors.InvalidParameterValue` | logged as `query_database_failed` with `sqlstate`, unless the request deadline had passed (design §2.1); same wire result |
+| `surfaces/query_sandbox/executor.py:917` | `psycopg.errors.ConfigurationLimitExceeded, psycopg.errors.DiskFull, psycopg.errors.OutOfMemory, psycopg.errors.TooManyConnections` | logged as `query_database_failed` with `sqlstate`, unless the request deadline had passed (design §2.1); same wire result |
+| `surfaces/query_sandbox/executor.py:933` | `psycopg.OperationalError` | logged as `query_database_failed` with `sqlstate`, unless the request deadline had passed (design §2.1); same wire result |
+| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | logged as `query_database_failed` with `sqlstate`, unless the request deadline had passed (design §2.1); same wire result |
 
 #### Raised later
 
@@ -324,24 +294,24 @@ All 18 get an `error_code`:
 | Site | Today | Fix |
 |---|---|---|
 | `surfaces/http_api.py:793` `ProviderCallError` handler | Quiet 503 | ERROR `provider_call_failed`, same 503 |
-| Unmapped exception in a route | Logged by `uvicorn.error` only | Catch-all handler: ERROR `api_unhandled_exception`, same 500 |
+| Unmapped exception in a route | Logged by `uvicorn.error` only | Catch-all exception handler logs ERROR `api_unhandled_exception`, same 500 |
+| API lifespan failure | Logged by `uvicorn.error` only | The lifespan logs ERROR `api_lifespan_failed`, then re-raises |
 | `profiles/storage_capture_batch.py:142` `_failure_code` | Any code-shaped message, else the type name (`TimeoutError`) | Only an engine refusal's declared `code`, else `storage_capture_failed` |
 
 ### 5.6 Failures returned as values
 
-Also on the list, found in review and specified in the design (§2.1, §3,
-§4):
+Also on the list, found in review and specified in the design (§2.1):
 
-- Sentry's capture and scrubber (`adapters/sentry.py:128`, `:141`);
-- self-host startup and lifespan wiring, including `meter-receipts`
-  (`profiles/selfhost.py:2008`, `:1288`, `surfaces/cost_export_api.py:153`);
+- the API lifespan, including the cost-export listener
+  (`profiles/selfhost.py:1288`, `surfaces/cost_export_api.py:153`);
 - the lease reaper and requeue wake (`workers/base.py:612`, `:627`);
 - the sandbox bridge (`surfaces/query_sandbox/bridge.py:369`);
 - the declared storage refusals (`profiles/managed_storage_capture.py:105`,
   `adapters/fsit_storage_capture_transport.py:378`) and the batch's
   per-scope callback (`profiles/storage_capture_batch.py:263`);
-- the query-space manifest check (`spine/query_space/manifest.py:886`,
-  `:962`);
+- the sandbox's `budget_exhausted` classifier (`query_sandbox/nomination.py:870`),
+  which stays for wire results; reporting uses the request deadline
+  instead;
 - the live-graph errors
 (`surfaces/graph_queries.py:73`, `:77`; quiet 503 at `surfaces/http_api.py:1289`)
 and every sandbox catch that produces a query result (`executor.py:837`
