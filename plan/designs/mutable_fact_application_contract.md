@@ -259,7 +259,8 @@ labels/vectors/profile/K inputs derived from it. This conservative action does n
 claim the surviving evidence is false. Retain shared fact identity and independent
 support according to the forget contract (D159); erase source-derived statement text through its existing
 purge/reconstruction contract as well. Positive current support from a surviving
-lineage is required to retain a shared source-derived assertion; a contradiction
+lineage, current or historical (an archived document's evidence counts), is required to
+retain a shared source-derived assertion; a contradiction
 alone cannot preserve the forgotten wording. Reconstruct a shared observation
 from a surviving supporting original normalization output. Never adopt counterevidence as the
 fact's replacement statement. Recompute exclusivity when `remember forget reapply`

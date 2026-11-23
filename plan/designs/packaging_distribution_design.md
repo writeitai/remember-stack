@@ -331,8 +331,10 @@ The portable restore order is deliberately small and fail-closed:
 2. Restore Postgres, raw/artifact objects, and the K repository with their native tools, then run
    normal schema migrations.
 3. Run `remember forget reapply [--from forgets.json]` before the restored deployment takes
-   traffic. It re-runs the erasure for every forget record in the restored database and in the
-   latest exported file, which supplies forgets made after the backup was taken. It matches a
+   traffic. With `--from`, the latest exported file is the authoritative record set (it
+   replaces the restored database's records rather than merging with them, and supplies forgets
+   made after the backup); without it, the database's records are used. For each record it
+   erases the union of the exported inventory and what the restored stores still hold. It matches a
    restored document by its exact `doc_id`, never by hash, so another lineage owning identical
    bytes is untouched ([archive and forget §3.10](archive_and_forget_design.md#310-after-a-restore)).
 4. Rebuild P1 and P3 through their normal production builders, ensure the live graph catalog

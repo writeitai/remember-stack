@@ -439,7 +439,8 @@ separate layers is what makes the information survive its source's reorganizatio
 A lineage is **live**, **archived** (`documents.archived_at`; nothing is tombstoned, so it and
 its versions stay readable) or **being forgotten** (`documents.deleted_at`, the tombstone every
 read filters). Throughout this section a **live version** is one carrying current testimony:
-its lineage is live and the version itself is not deleted.
+its lineage is live and the version itself is neither archived (the D159 per-version cutoff)
+nor deleted.
 
 - **Retire a version** (internal operation, not on the public surface): that version's
   testimony ends (`version_archived`); the lineage continues; its stored bytes stay.

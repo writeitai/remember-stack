@@ -768,9 +768,14 @@ The deletion cascade (requirements; E0 §2) reaches plane K mechanically through
   forget's K step is a history-erasure step (rewrite of the affected paths' history, e.g.
   `git filter-repo`, then the current files are re-added). Every registered K path that does not
   block is nominated, because current citation bindings cannot prove a page never cited the
-  document in older history. Forget holds the single-committer lock across the rebuild, the
-  history rewrite and one publish, and advances the input generation of every K scope it
-  touches, so a compile prepared before the forget is discarded at publication. The forget record lists those paths, so `remember forget reapply`
+  document in older history. Forget holds the single-committer lock across the whole step: it
+  first lists blocking authored pages and sidecars, then deletes the compiled bodies, cached
+  summaries and previous Markdown of every affected page and of every page that depends on one
+  through the compiler's actual inputs (followed transitively, including child summaries
+  through `parent_artifact_id` across scopes), then rewrites history, publishes once, and
+  leaves rebuilding to ordinary K work from clean inputs. It advances the input generation of
+  every K scope it touches, so a compile prepared before the forget is discarded at
+  publication. The forget record lists those paths, so `remember forget reapply`
   erases a restored K remote again after a restore; backup schedules and physical expiry belong
   to the operator/cloud under D60. Authored pages and compiled-page curation sidecars that still
   cite the document get the `redaction_required` flag and are listed on the forget record;

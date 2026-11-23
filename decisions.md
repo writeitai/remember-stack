@@ -8521,9 +8521,9 @@ contribution, both on the API, SDK, CLI and MCP:
 The forget record is one content-free PostgreSQL row (`forgets`). It drives the job, the
 re-ingest guard and verification; there is no second store and nothing runs at start. Ingest
 of forgotten content is refused with `document_forgotten` unless that one request sets
-`allow_forgotten=true`, which ingests it as an ordinary ingest would and releases only the
-hash and source identity it matched (a record left with neither is deleted); there is no
-deployment-wide setting. After restoring a backup the operator runs `remember forget
+`allow_forgotten=true`, which ingests it as an ordinary ingest would and, on commit, deletes
+only the record whose lineage identity matches the request; other forgets of the same bytes
+keep guarding. There is no deployment-wide setting. After restoring a backup the operator runs `remember forget
 reapply` (with an exported record list for forgets newer than the backup) before the
 deployment takes traffic. Ingest and forget share content-hash and source-identity locks, so
 nothing can register forgotten content mid-check. Forget keeps the existing cascades for

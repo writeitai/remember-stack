@@ -36,8 +36,9 @@ Python surface (D141), because the parity check compares that inventory with the
   the permanent ingest guard and the stop-and-remount rule.
 - Tests: whole-database canary, schema coverage, every table seeded, nothing extra removed, no
   orphans, never existed, no global stop, kill/resume/late writers, concurrent forgets,
-  authored pages, mounts, restore, large document, and the refusal half of re-ingest
-  (design §5 tests 1–10, 12, 13 and 16, and test 11 without the flag).
+  authored pages, mounts, restore without re-adds, large document, and the refusal half of
+  re-ingest (design §5 tests 1–10, 12 and 16, test 13 except its re-add cases, and test 11
+  without the flag).
 
 ## 2. Forget on every surface, the re-ingest guard and `allow_forgotten`
 
@@ -47,7 +48,8 @@ Python surface (D141), because the parity check compares that inventory with the
   with `confirm` and `destructiveHint: true`; TypeScript parity.
 - The per-request `allow_forgotten` flag (HTTP, SDK, `remember ingest --allow-forgotten`, MCP
   `ingest`) releasing exactly one record, with 409 `forget_in_progress` while erasing.
-- Tests: re-ingest with the flag (design §5 test 11) and the surface contract tests.
+- Tests: re-ingest with the flag (design §5 test 11), the restore cases that span a deliberate
+  re-add (test 13), and the surface contract tests.
 
 ## 3. Archive, un-archive and the removal of the public delete
 

@@ -109,8 +109,13 @@ for declared periods use D140 effective periods.
 - **Anything that would record a new version** (changed bytes, or a new D140 edition) records
   it and clears `archived_at` in the same transaction; the document is live again.
 - **`POST /documents/{doc_id}/unarchive`** restores the latest version: it clears the
-  lineage's `archived_at` and that version's cutoff in one transaction, so no new version, no
-  D140 edition key and no reading is involved. The version's D140 declared periods and
+  lineage's `archived_at` and that version's cutoff in one transaction, so no new version and
+  no D140 edition key is involved. It is a state change on this lineage, not an ingest: it
+  checks only this lineage's own state under its lock, so a forget of a different lineage that
+  shared these bytes does not block it. If the archive landed while the version was still
+  being processed (its claim publication was then refused), unarchive re-enqueues the
+  version's pipeline from the first stage that did not complete; D56 reuse means completed
+  paid work is not repeated. The version's D140 declared periods and
   edition key take part in interval derivation again, and pinned references to it resolve
   again. Earlier versions stay cut off. The fact application it queues for the restored
   claims is ordinary metered work. Answer: `doc_id`, `version_id`, and how many claims were
@@ -163,9 +168,9 @@ cost ledger, and metering receipts detached from the erased version.
 
 ### 3.2 The request: hide at once
 
-`POST /documents/{doc_id}/forget` takes its locks in the common order of §3.6 (source
-identity, then the lineage row, then the content hashes of the versions it then enumerates;
-holding the lineage row means no version can be added meanwhile), then in one transaction:
+`POST /documents/{doc_id}/forget` takes its locks in the common order of §3.6 (the lineage
+identity, then the content hashes of the versions it then enumerates, sorted; holding the
+lineage identity means no version can be added meanwhile), then in one transaction:
 
 1. runs the lineage cascade of §2.2, or finishes it idempotently through D135's
    finish-or-refuse rerun when an archive (a source archive awaiting finalization, say) has
@@ -177,7 +182,10 @@ holding the lineage row means no version can be added meanwhile), then in one tr
    claimable work never includes a tombstoned document);
 4. inserts the forget record with status `erasing`, the source-identity hash and every
    version's content hash, so the re-ingest guard (§3.6) is active from this commit;
-5. enqueues one `forget` work item for the document.
+5. enqueues one `forget` work item whose target is the forget record (`forget_id`), not the
+   document, so a later forget of a re-added lineage that reuses the deterministic `doc_id`
+   never collides with an earlier forget's finished item. The job re-reads its record and
+   checks its attempt is current before every destructive step.
 
 After commit, synchronously (as D155's normal removal does): remove the document's recorded
 corpus folders, regenerate the affected `_index.md` and root `llms.txt`, and send controlled
@@ -223,10 +231,16 @@ gets that for the one document, never for the deployment:
   them only after each request has a terminal result (success, failure, or a confirmed abort
   of a multipart upload). This is D155's two-session publication fence, scoped to one
   document instead of the deployment. Forget's object and corpus steps take the lock
-  exclusively, so every write issued while either session lived has finished. If both
-  sessions die while the process still has a request in flight, that request may still
-  commit; the job therefore verifies once more after a delay (starting value 15 minutes, to be
-  measured) and the record reaches `erased_at` only after that pass is clean.
+  exclusively, so every write issued while either session lived has finished. A writer that
+  loses both sessions issues nothing further, waits for the terminal result of the request it
+  has in flight, and deletes the object if that request succeeded. If the writer's process
+  dies instead, its connection closes: a provider stores a PUT only once it has received the
+  whole body, and that happens while the server is still handling the request. The job
+  therefore verifies once more after a delay (starting value 15 minutes, to be measured) and
+  the record reaches `erased_at` only after that pass is clean. The residual, a provider that
+  stores a fully received PUT later than that delay, is accepted and stated in the public
+  docs; S3-compatible providers give no enforceable server-side completion bound to do
+  better.
 - **Shared navigation files have their own fence.** Corpus index files (`_index.md`,
   `llms.txt`) list many documents, so a publisher for document B can render an index that
   still lists A. Index writes therefore hold the deployment's navigation lock on a second,
@@ -276,9 +290,12 @@ the document hidden and the record `erasing`; nothing reopens.
      and structural links, as D74's scrub did, because merge logs and exclusions reference
      them by restrictive foreign keys); their names, aliases and profile text are deleted. For surviving shared facts and
      entities, recompute stored wording, canonical names, aliases and validity from the
-     surviving provenance (or clear them until recomputed), invalidate entity profile caches
-     (D95–D96) and clear derived embeddings whose input text changed; ordinary work
-     recomputes them. Content-clear
+     surviving provenance (or clear them until recomputed). Then clear every persisted
+     dependant of a changed name or fact: entity profile caches (D95–D96), the stored labels
+     and vectors of every fact whose own wording or endpoint names changed (a relation
+     supported only by another document still carries the forgotten entity name in its label),
+     and add the K pages that cite those facts to the inventory's K list; ordinary work
+     recomputes the labels, vectors and profiles. Content-clear
      entity-resolution audit payloads for entities resolved from the document.
    - *Ledger and deployment-wide derived data.* Clear `last_error` on the document's work
      items (tracebacks may quote content); payloads carry IDs only. Clear, deployment-wide,
@@ -306,9 +323,11 @@ the document hidden and the record `erasing`; nothing reopens.
      are listed on the record, and are treated as absent compile inputs until redacted, so
      no compile can copy their text into a compiled page;
    - delete the compiled body, cached model summaries and kept previous Markdown of every
-     page in the inventory's K artifact list and of every compiled page in a scope that
-     contains one of them (the compiler reads same-scope summaries and previous Markdown, so
-     the whole scope is the dependency set);
+     page in the inventory's K artifact list and of every page that depends on one of them
+     through the compiler's actual inputs, followed transitively: same-scope summaries,
+     previous Markdown, and child summaries reached through `parent_artifact_id` links across
+     scopes. Those bodies are gone before the history rewrite re-adds current files, so no
+     contaminated current file is re-added;
    - erase every other registered K path from all reachable Git history and re-add its
      current file, including authored and sidecar paths that no longer cite the document but
      may have in older history (D74's conservative rule: current citation bindings cannot
@@ -316,9 +335,11 @@ the document hidden and the record `erasing`; nothing reopens.
    - publish once, verify the rewritten history, and leave the deleted compiled pages to be
      rebuilt by ordinary K work from clean inputs (when K or the facts layer is switched off,
      they stay absent).
-6. **Verify.** Mechanically check every inventory ID, hash, object key and prefix, every
-   corpus copy and index entry, controlled-session acknowledgements, and every non-blocking
-   K path are absent from their stores. Set `erased_at`. With no blocking paths set status
+6. **Verify.** Mechanically check that every inventory row ID is absent from PostgreSQL;
+   every object selected for deletion in step 3 (not a shared original that stays) is absent,
+   with no retained version or open multipart upload; every corpus copy and stale index entry
+   is gone; every controlled session acknowledged; and every retained K path's reachable
+   history contains no reference to an inventory ID and no deleted compiled body. Set `erased_at`. With no blocking paths set status
    `complete`; otherwise `waiting_for_redaction`.
 
 ### 3.5 The forget record
@@ -356,8 +377,11 @@ only forget state; there is no second store and nothing reads it at start. `GET 
 
 ### 3.6 Re-ingest guard and adding a document back
 
-**Staged originals.** E0 writes an original before registering it. It first records the
-key, content hash and (for a multipart upload) upload ID in `staged_objects` in the
+**Staged objects.** Every engine write path that starts a multipart upload (originals,
+artifacts, corpus copies) records the key and upload ID in `staged_objects` before sending the
+first part, and forget aborts those uploads by ID and verifies the abort; it never relies on a
+provider listing unfinished uploads or on its expiry policy. E0 writes an original before
+registering it. It first records the key and content hash in `staged_objects` in the
 transaction that checks the guard (below), then writes the bytes, then registers. The staged
 row is deleted only when its key has been adopted as the version's original or the object has
 been deleted and its absence verified (a duplicate of bytes already stored is deleted after
@@ -368,10 +392,12 @@ janitor deletes staged objects older than the request bound. Client uploads to
 checked by the guard at registration and swept by the existing unregistered-upload janitor.
 
 **One gate for every ingest path.** `ingest`, `ingest_observed`, `ingest_stored`, connectors
-and `unarchive` take session-scoped advisory locks (held across the staging, write and
-registration transactions, released after registration or refusal cleanup) in one common
-order: the source identity when there is one, then the lineage row when it exists, then the
-content hash. They check the guard before E0 writes any bytes and again at registration. The forget request (§3.2) and step 3 take the same locks for every hash on the
+take session-scoped advisory locks, held across the staging, write and registration
+transactions and released after registration or refusal cleanup, in one common order: first
+the lineage identity (keyed by the deterministic `doc_id` E0 derives from the source identity,
+or from the content for an upload without one, so the lock exists before the row does), then
+the content hashes in sorted order. Row locks are taken only inside transactions, after
+those. They check the guard before E0 writes any bytes and again at registration. The forget request (§3.2) and step 3 take the same locks for every hash on the
 record, in the same order. So no ingest can register forgotten content between the guard
 check and its commit, no lineage can adopt a raw object forget is deciding about, and bytes
 written before a refusal are deleted through their staged row.
@@ -453,8 +479,14 @@ records. For each record:
   lineage that owns identical bytes is untouched), reapply hides it and runs the whole
   erasure (§3.2 steps 1–5 and §3.4) under that record, ignoring the request's idempotent
   short-circuit;
-- otherwise it re-runs §3.4 steps 3–6 from the record's inventory, which also re-scrubs a
-  separately restored object store, corpus bucket or K repository.
+- otherwise it re-runs §3.4 steps 3–6.
+
+Either way it erases the union of the exported inventory and whatever the restored database
+still holds for the lineage, because a store restored from a different moment than the
+database can hold objects or paths only one of the two knows. A record exported while it was
+still `erasing` has no inventory yet; if its lineage is also absent from the restored
+database, reapply reports it as unverifiable and exits with an error rather than certify an
+incomplete replay.
 
 It prints what it erased. The operator runs it before the restored deployment takes traffic;
 the engine does not run it at start and never refuses to start because of it.
@@ -563,15 +595,22 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
    written, and a sidecar deleted by its owner, both complete the forget on the next sync.
 11. **Re-ingest.** Refused without the flag (`document_forgotten`) for an upload without a
     source identity, a stored-object ingest (refused object deleted) and a connector resync;
-    refused while erasing (`forget_in_progress`); with the flag, accepted as a new `doc_id`,
-    the record deleted, and a later `reapply` leaves the copy alone.
+    refused while erasing (`forget_in_progress`); with the flag, accepted under the same
+    deterministic `doc_id`, the identity-matched record deleted, and a later `reapply` with
+    the latest export leaves the copy alone. Archive B, forget A with identical bytes, then
+    unarchive B: it succeeds. Archive while extraction is in flight, then unarchive: the
+    unfinished stages resume and completed paid work is reused. A second forget of a re-added
+    document while a delayed delivery of the first forget's item arrives: the stale item does
+    nothing and the second forget completes.
 12. **Mounts.** A controlled session open during the forget stops listing the document, and a
     handle opened before the forget fails its next read, without the session restarting;
     changed index files show the regenerated content. A crash after the corpus deletion and
     before the acknowledgement is retried by suffix and still invalidates a warmed handle and
     a warmed, since-pruned index file. A multipart upload interrupted mid-write for the
     document is aborted by its tracked ID even where the provider cannot list uploads. An S3 FUSE mount with bounded caches
-    stops listing it within its cache bound.
+    stops listing it within its cache bound, and a fresh open fails after the bound; the test
+    records the chosen tool's behaviour for already-open handles. A PUT that commits after its
+    writer's sessions died and its client timed out is caught by the delayed pass.
 13. **Restore.** Restore the pre-forget database dump and run `reapply --from` the export: the
     canary passes. Restore only the corpus bucket and run `reapply`: it passes. A stale export
     does not erase another lineage that owns identical bytes. A restore spanning a deliberate

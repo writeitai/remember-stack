@@ -1151,9 +1151,11 @@ Archive (D159, [archive and forget design](archive_and_forget_design.md) §2) ru
 cascade and marks the lineage (`documents.archived_at`) without tombstoning anything; the
 cascade's internal version grain tombstones one version (`document_versions.deleted_at`), and
 forget tombstones the lineage and its versions until it erases them. In this design a
-**deleted** version is a tombstoned one. A version carries current testimony only while its
-lineage is live and it is not deleted, so an archived lineage's versions are readable as
-history but take no part in current belief. Rows stay until forget erases them. D140 therefore
+**deleted** version is a tombstoned one, and an **archived** version is one with the D159
+cutoff (`document_versions.archived_at`). A version carries current testimony, and takes part
+in interval derivation and floating-reference selection, only while its lineage is live and
+the version is neither archived nor deleted. So when a lineage comes back, only the restored
+latest version or the new version takes part; older archived editions stay out of scope. Rows stay until forget erases them. D140 therefore
 specifies visibility, not cascades:
 
 - **Version retired.** Its declarations stop taking part in interval derivation (§2.2 joins

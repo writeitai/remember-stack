@@ -191,10 +191,10 @@ covers:
   Rejected.
 - **Chosen: refuse by default, allow per request.** Ingest of a forgotten source identity or
   content hash is refused with `document_forgotten` (409), naming when it was forgotten. A
-  request that sets `allow_forgotten=true` is ingested as an ordinary ingest would be, and
-  the matching record loses the hash and source identity that request matched (deleted when
-  nothing is left), so a later `reapply` cannot erase the copy someone deliberately added
-  back, while a different forget that shared one hash keeps the rest of its guard. Syncs never set the flag. Erasure law concerns what is stored now; storing
+  request that sets `allow_forgotten=true` is ingested as an ordinary ingest would be, and on
+  commit the one record whose lineage identity matches the request is deleted, so a later
+  `reapply` with the latest export cannot erase the copy someone deliberately added back,
+  while a different forget that shared the bytes keeps its whole guard. Syncs never set the flag. Erasure law concerns what is stored now; storing
   the data again later is a new, deliberate decision, which the flag makes explicit.
 
 ### 3.7 Authored knowledge pages
@@ -241,9 +241,10 @@ to be remounted.
 
 A deleted PostgreSQL row is invisible to every snapshot taken after the delete commits (a
 dump already running keeps its earlier snapshot), but its old row version stays in the table file until vacuum marks the space reusable and later writes
-overwrite it, and it stays in write-ahead-log segments until they are recycled. Only
-`VACUUM FULL` rewrites a table, and it takes an exclusive lock that would stop the
-deployment, which is the cost this design removes. The design therefore promises logical
+overwrite it, and it stays in write-ahead-log segments until they are recycled. Rewriting
+a table (`VACUUM FULL`, `CLUSTER`) takes an exclusive lock that would stop work on that
+table, which is the cost this design removes; online rewrite tools still leave the old files
+to the filesystem, so none of them is a secure overwrite either. The design therefore promises logical
 erasure (no later query, export or dump can return the content), states that autovacuum
 and WAL recycling are not a secure overwrite, and says so in the public docs rather than
 implying more.

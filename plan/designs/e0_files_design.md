@@ -691,7 +691,10 @@ No rename, directory API, distributed transaction, CAS, or mandatory provider-si
 copy is needed. Copy across independently configured raw/artifact/corpus endpoints
 by streaming GET to replacement upload. Use multipart upload for large objects,
 complete only after successful input/hash validation and abort own failed uploads.
-On repair/forget, enumerate, abort and verify matching abandoned uploads when the
+Forget never relies on this listing: every engine multipart upload is recorded with its
+upload ID in `staged_objects` before the first part, and forget aborts and verifies those by
+ID ([archive and forget §3.6](archive_and_forget_design.md#36-re-ingest-guard-and-adding-a-document-back)).
+On ordinary repair, enumerate, abort and verify matching abandoned uploads when the
 provider serves `ListMultipartUploads`. If that listing returns `NotImplemented`/501,
 leave unfinished parts to the qualified provider's cleanup policy and return
 `multipart_uploads="provider_managed"` evidence plus a warning. This verifies
@@ -997,7 +1000,10 @@ and that the work claim is still live; abort further mutations on loss.
 
 Beside it, hold forget's **per-document object lock** — a shared advisory lock
 keyed by the document — on an independent PostgreSQL session through all issued
-requests and own-upload cleanup, acquiring it before the publication lock, and
+requests and own-upload cleanup. One lock order holds everywhere: the publication lock,
+then the navigation lock, then per-document object locks (full reconcile visits documents
+in that order, and forget's corpus step takes them in that order too); writers that touch no
+corpus object take only the per-document lock. Acquire it after the publication lock, and
 check that session's identity and lock ownership too
 ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)).
 Every handler that writes objects for a document holds the same lock. Forget's

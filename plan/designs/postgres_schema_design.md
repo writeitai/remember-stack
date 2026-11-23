@@ -467,9 +467,11 @@ CREATE INDEX ix_forgets_source ON forgets (deployment_id, source_identity_hash)
   WHERE source_identity_hash IS NOT NULL;
 CREATE INDEX ix_forgets_content ON forgets USING gin (content_hashes);
 
--- D159 staged originals: E0 records a key before writing an original and deletes the row when
--- the version registers, so a crash never leaves an untracked object. Forget deletes staged
--- objects carrying a forgotten hash; the janitor deletes rows older than the request bound.
+-- D159 staged objects: every engine write path records a key (and, for multipart, the upload ID
+-- before the first part) before writing. The row is deleted only once the key is adopted as a
+-- version's original or the object (a refused or duplicate copy) is deleted and verified absent,
+-- so a crash never leaves an untracked object or upload. Forget deletes staged objects carrying a
+-- forgotten hash and aborts their uploads by ID; the janitor deletes rows older than the request bound.
 CREATE TABLE staged_objects (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   object_key      text NOT NULL,
@@ -499,7 +501,7 @@ CREATE INDEX ix_staged_objects_hash ON staged_objects (deployment_id, content_ha
 CREATE TABLE processing_state (
   processing_id   uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  target_kind     processing_target NOT NULL,  -- forget reuses document; no deletion-only target kind
+  target_kind     processing_target NOT NULL,  -- forget targets its forgets row (target_kind forget, target_id = forget_id), so a re-added lineage's later forget never collides
   target_id       uuid NOT NULL,               -- LOGICAL FK → target PK; corpus_publication is an event UUID with payload doc_id (§10)
   stage           pipeline_stage NOT NULL,     -- the processing stage (see pipeline_stage enum, §1)
   component_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions(version); the version this attempt ran
@@ -1259,7 +1261,7 @@ CREATE TABLE document_versions (
   error           text,
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- system-time origin for everything derived from this version
   superseded_at   timestamptz,                 -- set when a newer version becomes current (lineage pointer moved)
-  archived_at     timestamptz,                 -- D159 testimony cutoff: set on every version that existed when the lineage was archived; never cleared, so pre-archive versions never testify again
+  archived_at     timestamptz,                 -- D159 testimony cutoff: set on every version that existed when the lineage was archived; cleared only by unarchive, and only on the latest version, so older pre-archive versions never testify again
   deleted_at      timestamptz,                 -- version tombstone: internal version retirement (§13.1) or forget (§13.2); archive never sets it
   version_key     text,                        -- D140: optional caller-chosen version address, assigned only at creation (a new key always creates a version; an existing key on any other observation is rejected); unique per lineage; NOT the mutable source_version_ref cursor
   UNIQUE (deployment_id, doc_id, version_no),   -- no per-lineage content uniqueness: A→B→A is a third version sharing one content object (migration p3_01_0008)
@@ -2896,8 +2898,8 @@ runs in one transaction under the lineage row lock:
 **[Archive and forget §3](archive_and_forget_design.md#3-forget) is authoritative for the
 request, the per-document fence, the background erasure job, the `forgets` record (DDL in §2), the
 re-ingest guard and `remember forget reapply` after a restore.** This
-section owns only the PostgreSQL part. The request runs §13.1's cascade (unless the document is
-already archived), sets `deleted_at` on the lineage and its versions, marks the document's
+section owns only the PostgreSQL part. The request runs §13.1's cascade, or finishes a pending
+archive cascade idempotently through D135's finish-or-refuse rerun, sets `deleted_at` on the lineage and its versions, marks the document's
 pending and failed work items `skipped` and inserts the `forgets` row in one transaction.
 The job then, in one transaction, records the content-free inventory, detaches what must
 survive (the current-version and current-representation pointers, incoming D140
