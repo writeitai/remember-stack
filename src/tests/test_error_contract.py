@@ -3,20 +3,31 @@
 One AST rule over ``src/rememberstack`` (D158 design §4):
 
 * every ``except`` that catches a failure class must re-raise (not
-  ``raise HTTPException``), log at ERROR with a literal or ``.code``
-  ``error_code``, call a reporter, or carry ``# error-contract: <reason>``;
-* every ``.error`` / ``.exception`` / ``.critical`` logging call passes such an
-  ``error_code``.
+  ``raise HTTPException``), log at ERROR (``.error`` or ``.exception`` on a
+  ``rememberstack`` module logger) with a literal or ``<name>.code``
+  ``error_code``, call ``_internal_error``, or carry
+  ``# error-contract: <reason>`` on its ``except`` line;
+* every ERROR-or-above logging call (``.error``, ``.exception``,
+  ``.critical`` on a logger, or the ``logging`` module functions) passes
+  such an ``error_code``.
 
-``BASELINE`` lists the backlog sites (analysis §5) not yet converted. Each
-implementation PR removes the entries it fixes; a stale entry fails the test.
+Code inside a nested function, lambda or class does not run when the handler
+does, so it never satisfies the enclosing handler.
+
+``BASELINE`` counts, per function, the backlog handlers (analysis §5) not yet
+converted. A new violating handler raises its function's count and fails;
+each implementation PR lowers the counts it fixes, and a stale count fails.
 """
 
 from __future__ import annotations
 
 import ast
+from collections import Counter
+from collections.abc import Iterator
+import io
 from pathlib import Path
 import re
+import tokenize
 
 ROOT = Path(__file__).resolve().parents[1] / "rememberstack"
 CODE = re.compile(r"[a-z][a-z0-9_]{2,63}")
@@ -25,8 +36,6 @@ FAILURE_CLASSES = {
     "BaseException",
     "ProviderCallError",
     "ProviderAccountingError",
-    "ProviderInvalidResponseError",
-    "OpenRouterProviderError",
     "MistralOcrProviderError",
     "DBAPIError",
     "SQLAlchemyError",
@@ -37,69 +46,108 @@ FAILURE_CLASSES = {
     "subprocess.TimeoutExpired",
     "RuntimeError",
 }
-REPORTERS = {"report_failure", "_internal_error"}
-LOG_LEVELS = {"error", "exception", "critical"}
-REASONS = ("raised later", "expected", "exempt", "mixed")
+REPORTERS = {"_internal_error"}
+HANDLER_LEVELS = {"error", "exception"}
+ERROR_LEVELS = {"error", "exception", "critical"}
+SUPPRESSION = re.compile(
+    r"#\s*error-contract:\s*(raised later|expected|exempt|mixed)\b"
+)
+DEFERRED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
-# Backlog (analysis §5): "relative/path.py::qualified.function" for handlers not
-# yet converted. Remove entries as they are fixed.
-BASELINE: set[str] = {
-    "adapters/codex_writer.py::CodexCLIAgentAdapter.run_session",
-    "adapters/codex_writer.py::_declared_outputs",
-    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_description",
-    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_missing_lanes",
-    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_ocr",
-    "adapters/converters/pdf.py::_Sink.write",
-    "adapters/converters/time_limit.py::run_with_time_limit._target",
-    "adapters/fsit_storage_capture_transport.py::_PendingProviderCapture.discard",
-    "adapters/generation_recorder.py::OtelSpanRecorder.flush",
-    "adapters/generation_recorder.py::OtelSpanRecorder.record",
-    "adapters/managed/composite_auth.py::CompositeAuth.authenticate",
-    "adapters/managed/perimeter_trust.py::PerimeterTrust.refresh",
-    "adapters/openrouter.py::OpenRouterModelProvider._record_generation",
-    "adapters/openrouter.py::OpenRouterModelProvider._resolve_provider_host",
-    "adapters/openrouter.py::OpenRouterModelProvider._write_invalid_capture",
-    "adapters/openrouter.py::OpenRouterModelProvider.generate",
-    "adapters/openrouter.py::recover_completion_usage",
-    "adapters/postgres_p1.py::PostgresP1Index.entity_semantic_ready",
-    "adapters/selfhost/object_store.py::LocalFSObjectStore._prune_parents",
-    "adapters/selfhost/queue.py::SelfHostWorkerLoop._slot",
-    "adapters/selfhost/telemetry.py::FanoutTelemetry.export_event",
-    "adapters/selfhost/telemetry.py::FanoutTelemetry.export_exception",
-    "adapters/sentry.py::SentryTelemetry.export_exception",
-    "adapters/vertex.py::VertexModelProvider._record_generation",
-    "adapters/vertex.py::_error_preview",
-    "adapters/vertex.py::_try_usage",
-    "core/content_detection.py::_office_zip_mime",
-    "profiles/storage_capture_batch.py::capture_storage_batch",
-    "spine/corpus_publication.py::CorpusPublicationCatalog.locked",
-    "spine/managed_metering.py::ManagedMeterCatalog._deliver_measurements",
-    "spine/managed_metering.py::ManagedMeterCatalog._deliver_outcomes",
-    "spine/readiness.py::_live_graph_status",
-    "surfaces/http_api.py::_authenticate",
-    "surfaces/http_api.py::_graph_errors",
-    "surfaces/http_api.py::_install_spend_lease.spend_lease_middleware",
-    "surfaces/mcp.py::OperationMcpServer.call_tool",
-    "surfaces/query_engine.py::QueryEngine._embedding_resolve_hits",
-    "surfaces/query_engine.py::QueryEngine._nominate_facts_context",
-    "surfaces/query_engine.py::QueryEngine.default_facts_context",
-    "surfaces/query_engine.py::QueryEngine.default_facts_context.confirmed_facts",
-    "surfaces/query_engine.py::_with_fact_snapshot.wrapped",
-    "surfaces/query_sandbox/executor.py::QuerySandboxExecutor._execute",
-    "workers/e0.py::StructureHandler._assign_roles",
-    "workers/e0.py::StructureHandler._check",
-    "workers/e0.py::StructureHandler._fallback",
-    "workers/e0_summary.py::SectionSummarizer._invoke_final",
-    "workers/e0_summary.py::SectionSummarizer._invoke_summary",
-    "workers/e0_summary.py::SectionSummarizer._load_cache",
-    "workers/knowledge_driver.py::KnowledgeCommitDriver._collect_parallel_wave",
-    "workers/knowledge_driver.py::KnowledgeCommitDriver._record_aborted_wave",
-    "workers/reconcile.py::DocumentDeleter.delete_document",
-    "workers/sync.py::SyncCycleRunner.run_cycle",
+# Backlog (analysis §5): violating handlers per "relative/path.py::function".
+# Lower a count (or drop the entry) as handlers are fixed; never raise one.
+BASELINE: dict[str, int] = {
+    "adapters/codex_writer.py::CodexCLIAgentAdapter.run_session": 1,
+    "adapters/codex_writer.py::_declared_outputs": 1,
+    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_description": 3,
+    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_missing_lanes": 1,
+    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_ocr": 1,
+    "adapters/converters/pdf.py::_Sink.write": 1,
+    "adapters/converters/time_limit.py::run_with_time_limit._target": 1,
+    "adapters/fsit_storage_capture_transport.py::_PendingProviderCapture.discard": 1,
+    "adapters/generation_recorder.py::OtelSpanRecorder.flush": 1,
+    "adapters/generation_recorder.py::OtelSpanRecorder.record": 1,
+    "adapters/managed/composite_auth.py::CompositeAuth.authenticate": 1,
+    "adapters/managed/perimeter_trust.py::PerimeterTrust.refresh": 2,
+    "adapters/openrouter.py::OpenRouterModelProvider._record_generation": 1,
+    "adapters/openrouter.py::OpenRouterModelProvider._resolve_provider_host": 1,
+    "adapters/openrouter.py::OpenRouterModelProvider._write_invalid_capture": 2,
+    "adapters/openrouter.py::OpenRouterModelProvider.generate": 1,
+    "adapters/openrouter.py::recover_completion_usage": 1,
+    "adapters/postgres_p1.py::PostgresP1Index.entity_semantic_ready": 1,
+    "adapters/selfhost/object_store.py::LocalFSObjectStore._prune_parents": 1,
+    "adapters/selfhost/queue.py::SelfHostWorkerLoop._slot": 1,
+    "adapters/selfhost/telemetry.py::FanoutTelemetry.export_event": 1,
+    "adapters/selfhost/telemetry.py::FanoutTelemetry.export_exception": 1,
+    "adapters/sentry.py::SentryTelemetry.export_exception": 1,
+    "adapters/vertex.py::VertexModelProvider._record_generation": 1,
+    "adapters/vertex.py::_error_preview": 1,
+    "adapters/vertex.py::_try_usage": 1,
+    "core/content_detection.py::_office_zip_mime": 1,
+    "profiles/storage_capture_batch.py::capture_storage_batch": 3,
+    "spine/corpus_publication.py::CorpusPublicationCatalog.locked": 2,
+    "spine/managed_metering.py::ManagedMeterCatalog._deliver_measurements": 1,
+    "spine/managed_metering.py::ManagedMeterCatalog._deliver_outcomes": 1,
+    "spine/readiness.py::_live_graph_status": 2,
+    "surfaces/http_api.py::_authenticate": 1,
+    "surfaces/http_api.py::_graph_errors": 1,
+    "surfaces/http_api.py::_install_spend_lease.spend_lease_middleware": 3,
+    "surfaces/mcp.py::OperationMcpServer.call_tool": 1,
+    "surfaces/query_engine.py::QueryEngine._embedding_resolve_hits": 1,
+    "surfaces/query_engine.py::QueryEngine._nominate_facts_context": 1,
+    "surfaces/query_engine.py::QueryEngine.default_facts_context": 3,
+    "surfaces/query_engine.py::QueryEngine.default_facts_context.confirmed_facts": 2,
+    "surfaces/query_engine.py::_with_fact_snapshot.wrapped": 1,
+    "surfaces/query_sandbox/executor.py::QuerySandboxExecutor._execute": 6,
+    "workers/e0.py::StructureHandler._assign_roles": 2,
+    "workers/e0.py::StructureHandler._check": 3,
+    "workers/e0.py::StructureHandler._fallback": 2,
+    "workers/e0_summary.py::SectionSummarizer._invoke_final": 2,
+    "workers/e0_summary.py::SectionSummarizer._invoke_summary": 2,
+    "workers/e0_summary.py::SectionSummarizer._load_cache": 2,
+    "workers/knowledge_driver.py::KnowledgeCommitDriver._collect_parallel_wave": 1,
+    "workers/knowledge_driver.py::KnowledgeCommitDriver._record_aborted_wave": 1,
+    "workers/reconcile.py::DocumentDeleter.delete_document": 1,
+    "workers/sync.py::SyncCycleRunner.run_cycle": 1,
 }
 
 
-def _failure_types(handler: ast.ExceptHandler) -> bool:
+def _package() -> list[tuple[str, str, ast.Module]]:
+    """(relative path, source, tree) for every engine module."""
+    modules = []
+    for path in sorted(ROOT.rglob("*.py")):
+        source = path.read_text()
+        modules.append((path.relative_to(ROOT).as_posix(), source, ast.parse(source)))
+    return modules
+
+
+def _failure_classes(modules: list[tuple[str, str, ast.Module]]) -> set[str]:
+    """The declared failure classes plus every engine subclass of one."""
+    bases: dict[str, set[str]] = {}
+    for _, _, tree in modules:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                bases.setdefault(node.name, set()).update(
+                    ast.unparse(base).rsplit(".", 1)[-1] for base in node.bases
+                )
+    failures = {name.rsplit(".", 1)[-1] for name in FAILURE_CLASSES} - {
+        "Exception",
+        "BaseException",
+        "RuntimeError",
+        "OSError",
+        "TimeoutError",
+    }
+    grown = True
+    while grown:
+        grown = False
+        for name, parents in bases.items():
+            if name not in failures and parents & failures:
+                failures.add(name)
+                grown = True
+    return FAILURE_CLASSES | failures
+
+
+def _catches_failure(handler: ast.ExceptHandler, failures: set[str]) -> bool:
     """Whether the handler catches a failure class (analysis §5.1)."""
     if handler.type is None:
         return True
@@ -107,7 +155,8 @@ def _failure_types(handler: ast.ExceptHandler) -> bool:
     for node in nodes:
         name = ast.unparse(node)
         if (
-            name in FAILURE_CLASSES
+            name in failures
+            or name.rsplit(".", 1)[-1] in failures
             or name.startswith("psycopg.")
             or name.endswith(("Unavailable", "UnavailableError"))
         ):
@@ -115,58 +164,125 @@ def _failure_types(handler: ast.ExceptHandler) -> bool:
     return False
 
 
-def _module_loggers(tree: ast.Module) -> set[str]:
-    """Names bound at module level to ``logging.getLogger(...)``."""
+def _engine_loggers(tree: ast.Module) -> set[str]:
+    """Module names bound to ``logging.getLogger(__name__ | "rememberstack...")``."""
     names: set[str] = set()
     for node in tree.body:
-        if (
+        if not (
             isinstance(node, ast.Assign)
             and isinstance(node.value, ast.Call)
             and ast.unparse(node.value.func) in {"logging.getLogger", "getLogger"}
+            and len(node.value.args) == 1
+        ):
+            continue
+        argument = node.value.args[0]
+        if (isinstance(argument, ast.Name) and argument.id == "__name__") or (
+            isinstance(argument, ast.Constant)
+            and isinstance(argument.value, str)
+            and argument.value.split(".")[0] == "rememberstack"
         ):
             names.update(t.id for t in node.targets if isinstance(t, ast.Name))
     return names
 
 
+def _http_exceptions(tree: ast.Module) -> set[str]:
+    """Local names of ``HTTPException`` (FastAPI or Starlette), aliases included."""
+    names = {"HTTPException"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in {
+            "fastapi",
+            "fastapi.exceptions",
+            "starlette.exceptions",
+        }:
+            names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "HTTPException"
+            )
+    return names
+
+
 def _coded(call: ast.Call) -> bool:
-    """``extra={"error_code": <literal matching the pattern> | <name>.code, ...}``."""
+    """``extra={"error_code": <literal matching the pattern> | <name>.code}``."""
     for keyword in call.keywords:
         if keyword.arg != "extra" or not isinstance(keyword.value, ast.Dict):
             continue
+        if any(key is None for key in keyword.value.keys):
+            return False  # a ``**mapping`` could overwrite the code
         for key, value in zip(keyword.value.keys, keyword.value.values, strict=True):
             if isinstance(key, ast.Constant) and key.value == "error_code":
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
                     return bool(CODE.fullmatch(value.value))
-                return isinstance(value, ast.Attribute) and value.attr == "code"
+                return (
+                    isinstance(value, ast.Attribute)
+                    and value.attr == "code"
+                    and isinstance(value.value, ast.Name)
+                )
     return False
 
 
-def _error_log(node: ast.AST, loggers: set[str]) -> ast.Call | None:
-    """The node, if it is an ERROR-level call on a module logger."""
+def _log_level(node: ast.AST, loggers: set[str]) -> str | None:
+    """The method name, if the node calls an engine module logger."""
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr in LOG_LEVELS
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id in loggers
     ):
-        return node
+        return node.func.attr
     return None
 
 
-def _satisfied(handler: ast.ExceptHandler, loggers: set[str], line: str) -> bool:
-    """Raise, coded ERROR log, reporter, or an explicit reason comment."""
-    if "# error-contract:" in line:
-        reason = line.split("# error-contract:", 1)[1].strip()
-        return reason.startswith(REASONS)
-    for node in (n for stmt in handler.body for n in ast.walk(stmt)):
+def _error_call(node: ast.AST, loggers: set[str]) -> bool:
+    """An ERROR-or-above call on an engine logger or the ``logging`` module."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    if node.func.attr not in ERROR_LEVELS or not isinstance(node.func.value, ast.Name):
+        return False
+    return node.func.value.id in loggers or node.func.value.id == "logging"
+
+
+def _executed(nodes: list[ast.stmt]) -> Iterator[ast.AST]:
+    """Every node that runs with these statements; deferred bodies excluded."""
+    stack: list[ast.AST] = [node for node in nodes if not isinstance(node, DEFERRED)]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(
+            child
+            for child in ast.iter_child_nodes(node)
+            if not isinstance(child, DEFERRED)
+        )
+
+
+def _suppressed(handler: ast.ExceptHandler, comments: dict[int, str]) -> bool:
+    """A ``# error-contract: <reason>`` comment on the ``except`` header."""
+    last = handler.body[0].lineno - 1
+    return any(
+        SUPPRESSION.match(comments.get(line, ""))
+        for line in range(handler.lineno, max(handler.lineno, last) + 1)
+    )
+
+
+def _satisfied(
+    handler: ast.ExceptHandler,
+    *,
+    loggers: set[str],
+    http_exceptions: set[str],
+    comments: dict[int, str],
+) -> bool:
+    """Raise, coded ERROR log, ``_internal_error``, or an explicit reason."""
+    if _suppressed(handler, comments):
+        return True
+    for node in _executed(handler.body):
         if isinstance(node, ast.Raise):
             raised = node.exc
-            target = raised.func if isinstance(raised, ast.Call) else raised
-            if raised is None or "HTTPException" not in ast.unparse(target or node):
+            if raised is None:
                 return True
-        call = _error_log(node, loggers)
-        if call is not None and _coded(call):
+            target = raised.func if isinstance(raised, ast.Call) else raised
+            if ast.unparse(target) not in http_exceptions:
+                return True
+        if _log_level(node, loggers) in HANDLER_LEVELS and _coded(node):  # type: ignore[arg-type]
             return True
         if (
             isinstance(node, ast.Call)
@@ -177,16 +293,25 @@ def _satisfied(handler: ast.ExceptHandler, loggers: set[str], line: str) -> bool
     return False
 
 
-def _scan() -> tuple[set[str], list[str]]:
-    """(handler keys violating the rule, uncoded ERROR calls as path:line)."""
-    handlers: set[str] = set()
+def _comments(source: str) -> dict[int, str]:
+    """Line number to comment text, from the tokenizer (never string contents)."""
+    return {
+        token.start[0]: token.string
+        for token in tokenize.generate_tokens(io.StringIO(source).readline)
+        if token.type == tokenize.COMMENT
+    }
+
+
+def _scan() -> tuple[Counter[str], list[str]]:
+    """(violating handlers per function, uncoded ERROR calls as path:line)."""
+    modules = _package()
+    failures = _failure_classes(modules)
+    handlers: Counter[str] = Counter()
     calls: list[str] = []
-    for path in sorted(ROOT.rglob("*.py")):
-        source = path.read_text()
-        lines = source.splitlines()
-        tree = ast.parse(source)
-        loggers = _module_loggers(tree)
-        relative = path.relative_to(ROOT).as_posix()
+    for relative, source, tree in modules:
+        loggers = _engine_loggers(tree)
+        http_exceptions = _http_exceptions(tree)
+        comments = _comments(source)
         scopes: list[tuple[ast.AST, str]] = [(tree, "")]
         while scopes:
             scope, prefix = scopes.pop()
@@ -196,31 +321,136 @@ def _scan() -> tuple[set[str], list[str]]:
                     node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
                 ):
                     name = f"{prefix}.{node.name}" if prefix else node.name
-                if isinstance(node, ast.ExceptHandler) and _failure_types(node):
-                    if not _satisfied(node, loggers, lines[node.lineno - 1]):
-                        handlers.add(f"{relative}::{name or '<module>'}")
-                call = _error_log(node, loggers)
-                if call is not None and not _coded(call):
-                    calls.append(f"{relative}:{call.lineno}")
+                if (
+                    isinstance(node, ast.ExceptHandler)
+                    and _catches_failure(node, failures)
+                    and not _satisfied(
+                        node,
+                        loggers=loggers,
+                        http_exceptions=http_exceptions,
+                        comments=comments,
+                    )
+                ):
+                    handlers[f"{relative}::{name or '<module>'}"] += 1
+                if _error_call(node, loggers) and not _coded(node):  # type: ignore[arg-type]
+                    calls.append(f"{relative}:{node.lineno}")  # type: ignore[attr-defined]
                 scopes.append((node, name))
     return handlers, calls
 
 
 def test_failure_handlers_raise_or_report_with_a_code() -> None:
-    """Every failure-class handler outside the backlog follows the contract."""
+    """No function has more violating handlers than its backlog count."""
     handlers, _ = _scan()
-    new = sorted(handlers - BASELINE)
+    new = sorted(
+        f"{key} ({count} > {BASELINE.get(key, 0)})"
+        for key, count in handlers.items()
+        if count > BASELINE.get(key, 0)
+    )
     assert new == [], f"handlers that neither raise nor log a coded ERROR: {new}"
 
 
 def test_baseline_has_no_fixed_entries() -> None:
-    """Remove a backlog entry once its handler is fixed."""
+    """Lower a backlog count once its handlers are fixed."""
     handlers, _ = _scan()
-    stale = sorted(BASELINE - handlers)
-    assert stale == [], f"fixed, remove from BASELINE: {stale}"
+    stale = sorted(
+        f"{key} ({handlers.get(key, 0)} < {count})"
+        for key, count in BASELINE.items()
+        if handlers.get(key, 0) < count
+    )
+    assert stale == [], f"fixed, lower in BASELINE: {stale}"
 
 
 def test_every_error_log_has_a_stable_code() -> None:
     """ERROR-level logging always carries a literal or declared ``error_code``."""
     _, calls = _scan()
     assert calls == [], f"ERROR logs without a stable error_code: {calls}"
+
+
+def _violations(source: str) -> tuple[Counter[str], list[str]]:
+    """Scan one synthetic module, for the rule's own tests."""
+    tree = ast.parse(source)
+    failures = _failure_classes([("m.py", source, tree)])
+    loggers = _engine_loggers(tree)
+    handlers: Counter[str] = Counter()
+    calls = [
+        str(node.lineno)  # type: ignore[attr-defined]
+        for node in ast.walk(tree)
+        if _error_call(node, loggers) and not _coded(node)  # type: ignore[arg-type]
+    ]
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ExceptHandler)
+            and _catches_failure(node, failures)
+            and not _satisfied(
+                node,
+                loggers=loggers,
+                http_exceptions=_http_exceptions(tree),
+                comments=_comments(source),
+            )
+        ):
+            handlers["m.py"] += 1
+    return handlers, calls
+
+
+_PRELUDE = "import logging\n_logger = logging.getLogger(__name__)\n"
+
+
+def test_rule_rejects_the_known_bypasses() -> None:
+    """Deferred code, wrong loggers or levels, aliases and fake comments fail."""
+    cases = {
+        "deferred raise": "try:\n    f()\nexcept Exception:\n    def g():\n        raise\n",
+        "deferred log": (
+            "try:\n    f()\nexcept Exception:\n    h = lambda: _logger.error("
+            '"x", extra={"error_code": "some_code"})\n'
+        ),
+        "critical": (
+            'try:\n    f()\nexcept Exception:\n    _logger.critical("x", '
+            'extra={"error_code": "some_code"})\n'
+        ),
+        "vendor logger": (
+            'other = logging.getLogger("vendor")\ntry:\n    f()\n'
+            'except Exception:\n    other.error("x", extra={"error_code": "some_code"})\n'
+        ),
+        "aliased HTTPException": (
+            "from fastapi import HTTPException as HTTPError\ntry:\n    f()\n"
+            "except Exception:\n    raise HTTPError(503)\n"
+        ),
+        "provider subclass": (
+            "class ProviderCallError(Exception): ...\n"
+            "class VendorError(ProviderCallError): ...\n"
+            "try:\n    f()\nexcept VendorError:\n    pass\n"
+        ),
+        "marker in a string": (
+            'try:\n    f()\nexcept Exception:  # noqa\n    s = "# error-contract: expected"\n'
+        ),
+        "lookalike reason": (
+            "try:\n    f()\nexcept Exception:  # error-contract: expectedly fine\n    pass\n"
+        ),
+        "overwritable code": (
+            'try:\n    f()\nexcept Exception:\n    _logger.error("x", '
+            'extra={"error_code": "some_code", **details})\n'
+        ),
+        "call result code": (
+            'try:\n    f()\nexcept Exception:\n    _logger.error("x", '
+            'extra={"error_code": make().code})\n'
+        ),
+    }
+    passing = [
+        name for name, body in cases.items() if not _violations(_PRELUDE + body)[0]
+    ]
+    assert passing == []
+    assert _violations(_PRELUDE + 'logging.error("x")\n')[1] == ["3"]
+
+
+def test_rule_accepts_the_contract_forms() -> None:
+    """A re-raise, a coded ERROR, ``.code``, and a multiline suppression pass."""
+    cases = [
+        "try:\n    f()\nexcept Exception:\n    raise\n",
+        'try:\n    f()\nexcept Exception:\n    _logger.exception("x", '
+        'extra={"error_code": "some_code"})\n',
+        'try:\n    f()\nexcept Exception as error:\n    _logger.error("x", '
+        'extra={"error_code": error.code})\n',
+        "try:\n    f()\nexcept (\n    OSError,\n    TimeoutError,\n"
+        "):  # error-contract: expected retry\n    pass\n",
+    ]
+    assert [body for body in cases if _violations(_PRELUDE + body)[0]] == []
