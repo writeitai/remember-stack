@@ -21645,6 +21645,21 @@ published as `rememberstack`.
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
 
+## 0.21.1 (November 2026)
+
+**Managed storage capture failure codes.** `capture_storage_batch` now returns
+a failure code for every scope it could not capture, such as
+`capture_writer_class_unknown`, instead of an empty result. Free-text error
+messages never leave: such failures report only the exception type.
+
+**Benchmark harness.** LoCoMo answers can be graded again from saved runs with
+a Mem0-style judge, using frozen ablation inputs. The published LoCoMo results
+now report both judges: 94.09% with the Mem0-style judge and 90.26% with the
+native one.
+
+**Documentation.** The cloud pages now state the hosted file formats, limits
+and available tools as remember.dev actually serves them.
+
 ## 0.21.0 (November 2026)
 
 **Action needed (self-hosted): PostgreSQL 18.** PostgreSQL 18 is now the
