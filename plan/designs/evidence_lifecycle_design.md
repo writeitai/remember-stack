@@ -528,15 +528,15 @@ The cascade contract below was first designed for D135's public delete, which D1
 - **Coming back.** Whatever would be a no-op for a live document is a no-op for an archived
   one (D55: identical bytes on the latest version with the same version metadata, including
   the D140 version key and effective periods): the document stays archived, so a full resync
-  never undoes an archive. Anything that would record a new version (changed bytes, a new
-  D140 edition), and `unarchive` (which records a new version from the latest stored
-  original), records it and clears the archive mark in the same transaction. The version runs
-  the ordinary pipeline, and D56 reuse may draw on archived versions: unchanged chunks reuse
-  their embeddings and their Selection and Claimify results, so un-archiving identical bytes
-  makes no extraction or embedding call. A reused claim becomes current again through a
-  `version_restored` currency transition and is applied to facts like a new claim. The facts
-  the archive closed stay closed as history; nothing is reopened. Forgotten versions are
-  never reuse candidates, because their rows are erased.
+  never undoes a caller's archive. `unarchive` restores the latest version (its archive cutoff
+  and the lineage's mark are cleared; no new version, no reading). Anything that would record
+  a new version (changed bytes, a new D140 edition) records it and clears the lineage's mark;
+  that version runs the ordinary pipeline, and D56 reuse may draw on archived versions. Either
+  way the returning claims start a new testimony episode: `version_restored`, a fresh fact
+  application, and support links scoped to the episode, so the facts the archive closed stay
+  closed as history and nothing is reopened
+  ([archive and forget §2.4](archive_and_forget_design.md#24-coming-back)). Tombstoned
+  versions are never reuse candidates.
 - **Grain.** Archive and forget act on whole lineages. The version grain above stays an
   internal operation: a caller-facing version archive would need its own contract for
   ending the last live version, and forgetting one version is a documented non-goal

@@ -474,6 +474,7 @@ CREATE TABLE staged_objects (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   object_key      text NOT NULL,
   content_hash    text NOT NULL,
+  multipart_upload_id text,                    -- set while a multipart upload is open, so forget can abort it by ID without provider listing
   staged_at       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (deployment_id, object_key)
 );
@@ -2843,7 +2844,7 @@ runs in one transaction under the lineage row lock:
    `authored_review` flags on **authored** pages that cited it (a review flag, not a redaction
    flag; D45/D46). Doing this first ensures the links are still present to discover.
 2. **Objects stay.** The document's raw and artifact objects are kept: an archived document is
-   readable as history and `unarchive` records a new version from its latest stored original.
+   readable as history and `unarchive` restores its latest version.
 3. **`documents` + `document_versions`** (D55 grains): archiving the **lineage** sets
    `documents.archived_at`; nothing is tombstoned. Version rows, sections, artifact URIs and
    crossrefs are **kept**, so the document, its versions and its stored original stay readable.

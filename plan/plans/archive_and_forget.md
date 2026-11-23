@@ -22,6 +22,13 @@ Python surface (D141), because the parity check compares that inventory with the
   work, input generations for profiles and K) and the background erasure job (§3.4), driven
   through the existing internal entry point so the job can be tested before any public route.
 - `remember forget reapply [--from]` and `remember forget list --json` (§3.10).
+- The re-ingest gate with its default refusal (§3.6: common lock order, staged originals,
+  409 `document_forgotten`) on every ingest path, so the old permanent guard is never removed
+  without its replacement in place. Only the `allow_forgotten` override waits for slice 2.
+- Mount invalidation (§3.7): `invalidate(doc_suffix)` on the corpus purge port, the in-repo
+  test adapter, acknowledgement in step 6, and the S3 FUSE cache-bound documentation. The
+  cloud repository's controlled-session adapter must ship before remember.dev deploys this
+  slice; the pin PR waits for it.
 - Remove in the same change: `ForgetManifestPort` and both implementations,
   `forget_manifest_root`, `forget_manifest_bucket_name`, the startup readiness replay
   (API and `project --plane p3`), the deployment-wide admission barrier and drain with its
@@ -29,7 +36,8 @@ Python surface (D141), because the parity check compares that inventory with the
   the permanent ingest guard and the stop-and-remount rule.
 - Tests: whole-database canary, schema coverage, every table seeded, nothing extra removed, no
   orphans, never existed, no global stop, kill/resume/late writers, concurrent forgets,
-  authored pages, restore and large document (design §5 tests 1–10, 13 and 16).
+  authored pages, mounts, restore, large document, and the refusal half of re-ingest
+  (design §5 tests 1–10, 12, 13 and 16, and test 11 without the flag).
 
 ## 2. Forget on every surface, the re-ingest guard and `allow_forgotten`
 
@@ -37,16 +45,16 @@ Python surface (D141), because the parity check compares that inventory with the
   `MemoryClient.forget_document`, `list_forgets`, `get_forget`; CLI
   `remember documents forget` and `remember forget list|status`; the `forget_document` MCP tool
   with `confirm` and `destructiveHint: true`; TypeScript parity.
-- The one re-ingest gate on every ingest path (design §3.6), 409 `document_forgotten`, and
-  the per-request `allow_forgotten` flag (HTTP, SDK, `remember ingest --allow-forgotten`, MCP
-  `ingest`) with 409 `forget_in_progress` while erasing.
-- Tests: re-ingest (design §5 test 11) and the surface contract tests.
+- The per-request `allow_forgotten` flag (HTTP, SDK, `remember ingest --allow-forgotten`, MCP
+  `ingest`) releasing exactly one record, with 409 `forget_in_progress` while erasing.
+- Tests: re-ingest with the flag (design §5 test 11) and the surface contract tests.
 
 ## 3. Archive, un-archive and the removal of the public delete
 
-- `documents.archived_at`, the three lineage states and the current-testimony rule (design
-  §2.1); the `version_deleted` currency reason renamed `version_archived`, and the new
-  `version_restored` transition for reused claims of a returning version (§2.4).
+- `documents.archived_at` and `archived_by`, the per-version cutoff
+  (`document_versions.archived_at`), the three lineage states and the current-testimony rule
+  (design §2.1); the `version_deleted` currency reason renamed `version_archived`; testimony
+  episodes with the `version_restored` transition and episode-scoped support links (§2.4).
 - `POST /documents/{doc_id}/archive|unarchive`, `MemoryClient.archive_document` and
   `unarchive_document`, CLI `remember documents archive|unarchive`, MCP `archive_document` and
   `unarchive_document`, and `include_archived` on `GET /documents`, search and the context
@@ -59,15 +67,7 @@ Python surface (D141), because the parity check compares that inventory with the
   no Selection, Claimify or embedding call, and a one-section edit of an archived document pays
   only for that section.
 
-## 4. Mount invalidation
-
-- Add `invalidate(doc_id, paths)` to the corpus purge port and require its acknowledgement in
-  the forget job's verification (design §3.7). The cloud repository implements the
-  controlled-session adapter in its own PR; this repository ships the port, the in-repo test
-  adapter and the S3 FUSE cache-bound documentation.
-- Tests: mounts (design §5 test 12).
-
-## 5. Public documentation
+## 4. Public documentation
 
 Not a separate PR: each slice above updates the public docs for what it ships, in the same PR
 (D66). After slice 3 the docs describe archive and forget only; delete, hard-forget manifests

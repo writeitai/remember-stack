@@ -117,13 +117,17 @@ covers:
   version). Simple, but it breaks Rule 4: un-archiving identical bytes, or a one-section
   edit to an archived document, would pay to extract and embed the whole document again.
   Rejected in review round 1.
-- **Chosen: coming back is a new observation that reuses paid work.** Un-archiving records a
-  new version from the latest stored original. D56 reuse may draw on archived versions, so
-  unchanged chunks reuse their embeddings and Selection/Claimify results. D135 forbade this
-  because a reused claim kept its ended testimony and silently supported nothing; the fix
-  is a `version_restored` currency transition that makes the reused claim current again,
-  after which ordinary fact application finds or creates a live fact for it. Closed facts
-  stay closed as history, so no reopening outcome is needed.
+- **Un-archive as a new version reusing paid work** (review round 1). Breaks for documents
+  with D140 editions: the returning version has no edition key or in-force period of its own,
+  and copying the old ones violates their uniqueness (review round 3).
+- **Chosen: un-archive restores the latest version.** It lifts that version's cutoff and the
+  lineage's archive mark; no new version, no reading, no edition problem. Its claims start a
+  new testimony episode: D135 rejected undelete because a reused claim kept its ended
+  testimony and old fact links. Episode-scoped support links fix that: links from the ended
+  episode stay as history, the restored claims are applied to facts afresh, and closed facts
+  stay closed, so no reopening outcome is needed. A changed version of an archived document
+  is an ordinary new version whose D56 reuse may draw on archived versions, with reused
+  claims starting a new episode the same way.
 - **Identical bytes re-sent to an archived document.** Under D135 a re-sent identical
   upload resurrected a deleted lineage. For archive that would let a full resync silently
   undo every archive and pay to reprocess it. Chosen: identical bytes to the archived
@@ -140,9 +144,9 @@ covers:
      work item's lease bounds the wait), its queued ones find nothing left when they run,
      and a late writer cannot attach rows because every writer re-checks its version under
      a share lock that forget's delete transaction excludes. Object writers hold a
-     per-document advisory lock for their IO, and forget waits the maximum request duration
-     after taking it, which covers a request still in flight from a dead session (the same
-     reasoning D155 used for its two publication locks). Foreign keys cannot do this job:
+     per-document advisory lock on two independent sessions for their IO (D155's
+     two-session publication fence, scoped to one document), and forget verifies again after
+     a delay to catch a request still in flight from a process whose sessions both died. Foreign keys cannot do this job:
      most document-derived tables use logical references PostgreSQL does not enforce. Forget
      therefore keeps the existing cascades for children the document exclusively owns,
      deletes logically referenced rows explicitly, and relies on a schema-coverage test plus

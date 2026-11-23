@@ -1021,8 +1021,9 @@ window is one in-flight request, not fenced external IO. This rare race can leav
 stale complete bytes (or a missing object after a late delete) even after a newer
 publication set its marker. This is accepted for ordinary publication: prevent
 further requests cheaply and repair by digest, without a fence, journal or extra
-coordination tables. Erasure handles the same window separately: forget waits the
-maximum object request duration before it verifies (§6.7).
+coordination tables. Erasure handles the same window separately: object writers hold the
+document's two-session object lock, index writers the two-session navigation lock, and forget
+verifies again after a delay before it counts the store erased (§6.7).
 
 For each publish:
 
@@ -1154,11 +1155,13 @@ historic titles, paths, suffix reservations or a corpus-wide purge scope.
 2. The background job's corpus step runs after the document's running work has finished
    and its PostgreSQL rows are erased
    ([archive and forget §3.3–3.4](archive_and_forget_design.md#34-the-erasure-job)). It takes
-   the publication lock and the document's object lock exclusively (§6.5), so every issued
-   write has finished, then waits the maximum object request duration for a request whose
-   session died. It pages through corpus keys and deletes **only** folders with the
+   the publication, navigation and document object locks exclusively (§6.5), so every write
+   issued while either of a writer's two sessions lived has finished; a request from a process
+   whose two sessions both died is caught by the delayed re-verification
+   ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)). It pages through corpus keys and deletes **only** folders with the
    forgotten document's suffix, including former moved folders and interrupted unindexed
-   copies. Handle abandoned multipart uploads under §5's provider rule. Clear that
+   copies. Abort the document's tracked multipart uploads by ID (`staged_objects`); forget
+   never relies on a provider listing unfinished uploads. Clear that
    document's publication marker. Never empty the corpus store or recopy surviving
    documents' originals/derivatives.
 3. Regenerate affected navigation `_index.md` and root `llms.txt` from scrubbed DB

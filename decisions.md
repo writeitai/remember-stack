@@ -6185,7 +6185,7 @@ evidence; a second projection duplicates navigation and deletion responsibilitie
 **Consequences.** Retained unsupported files occupy storage and one parked work row;
 conversion creates no usage merely by waiting. Projection adds latest-version and
 work-state reads. Managed admission/classification remain authoritative, and
-unaccepted staged bytes are not advertised as raw objects. D51/D116 read-only mounts and backend audit semantics, D74 barriers and purge, D55 currency and existing snapshot freshness remain
+unaccepted staged bytes are not advertised as raw objects. D51/D116 read-only mounts and backend audit semantics, D74 purge (its barriers removed by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)), D55 currency and existing snapshot freshness remain
 binding. This is engine behavior, not evidence of production SeaweedFS provisioning
 or changed cloud billing policy.
 
@@ -6929,7 +6929,8 @@ chose between deployment and control tokens against a hard-coded
 **Decision.**
 1. **One catalogue.** `remember.mcp_tools` is the public, versioned module
    that defines every memory tool (`ingest`, `pipeline_readiness`,
-   `delete_document`, the four assured operations, `source_open`, the seven SQL tools):
+   `delete_document` (**replaced by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: `archive_document`, `unarchive_document`,
+   `forget_document`), the four assured operations, `source_open`, the seven SQL tools):
    names, descriptions, input schemas, validation, error envelopes, required
    permission, and a per-tool version. Every MCP host imports it; the engine
    registry generates `GET /operations`' agent-facing fields from it; each
@@ -7627,6 +7628,7 @@ fact child).
 > **Extended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Corpus publication is engine-owned work
 > invoked through the same explicit context, `run_task` and delivery collector.
 > D74's per-document corpus erasure/replay uses the separately durable manifest store.
+> (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: no manifest store or replay; forget's corpus step and `remember forget reapply`.)
 > No hosted scheduler or correctness authority is added to this repository.
 
 **Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c). Merged
@@ -7786,7 +7788,7 @@ deployment's values into another's work.
    included routers, returns the deployment that was authenticated. It then authenticates
    against that deployment, admits under its limits, and the spend
    lease middleware uses its lease. Without an override the composed deployment applies,
-   exactly as before. Routes, the D74 barrier, the scope check, ingest attribution and
+   exactly as before. Routes, the D74 barrier (removed by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)), the scope check, ingest attribution and
    open-query principal forwarding all read the same resolved deployment, and every route
    is built held so per-request admission keeps its slot accounting.
    `install_browser_origins(app=…, origins=…)` is public for a host composing its own app.
@@ -8034,6 +8036,8 @@ against the new identities; unchanged profiles are not a prerequisite. Keep
 same-name distinct referents possible. No provider call holds a database lock,
 no global serial worker requirement is introduced, and no retry/DLQ failure is
 hidden. Hard forget's ordinary-work drain and active barrier remain mandatory.
+(**Superseded by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: there is no global drain or barrier; identity commits re-check their
+input versions under the per-document forget fence.)
 
 **Rationale and tradeoff.** Broad snapshot equality made normal enrichment
 invalidate paid decisions and caused observed retries/DLQ under parallel
@@ -8080,6 +8084,7 @@ retained. The provider boundary and closed content-free engine records are
 specified in the design, including native filesystem identity distinctions.
 The provider captures a nonempty exact same-organisation/cell filesystem set;
 the managed adapter independently keeps its four distinct role binding.
+(**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: three roles, raw, artifacts and corpus; the forget-record role is gone with its store.)
 
 **Alternatives.** Counter sums conflate canonical, staged and replicated data;
 processing sequence prefixes admit uncommitted holes; row-byte estimates change
@@ -8499,9 +8504,10 @@ contribution, both on the API, SDK, CLI and MCP:
 - **Archive** — "this no longer holds". The existing lineage cascade runs (testimony ends,
   facts only the document supported close with `retracted_source_removal`), but the
   document and its stored original stay readable as history, hidden from default reads and
-  returned with `include_archived=true`. Identical bytes re-sent leave it archived; a changed
-  version or `unarchive` brings it back as new testimony; D56 reuse may draw on archived
-  versions, so unchanged chunks cost nothing. A connector that observes a source deletion
+  returned with `include_archived=true`. Identical bytes re-sent leave it archived; `unarchive`
+  restores its latest version and a changed version brings it back too. Restored claims start
+  a new testimony episode (old fact links stay as history; closed facts stay closed), and D56
+  reuse may draw on archived versions, so neither path re-reads unchanged text. A connector that observes a source deletion
   archives.
 - **Forget** — "this should not be here". The request hides the document at once (the
   lineage cascade plus the tombstone every read filters) and records the forget; one
