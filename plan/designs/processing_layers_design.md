@@ -161,8 +161,10 @@ and its component versions are unchanged.
 1. If the layer is **disabled**: do not enter. Record a gap (at the claims boundary a claims gap
    and a facts gap) unless the version or its lineage is deleted. The facts boundary opens the
    **claims tail** (§4.2).
-2. If the version or its lineage is **deleted**: enter as today, so the chain's reconcile retires
-   the late work (D135); record no gap.
+2. If the version or its lineage is **archived**: enter as today, so the chain's reconcile
+   retires the late work (D135); record no gap. If it is **deleted** (tombstoned by forget or
+   internal version retirement): enter nothing and record no gap; forget has already marked
+   the version's queued work `skipped`.
 3. Otherwise record a gap for the version (lane `steady`, or the lane of the completing work)
    and run **advance** for the lineage (§5.2) in the same transaction. Advance either enters this
    version — stamping its gap entered — or leaves it waiting behind a predecessor that has not
@@ -565,9 +567,11 @@ or function of a disabled or excluded layer is refused with the existing `relati
 
 ### 7.6 Plane K and P3
 
-Plane K compiles pages about entities and predicates from facts, so it runs only while facts are
-served; the page views are facts views (§7.5), and the knowledge mount is not published while facts
-are not served.
+Plane K compiles pages about entities and predicates from facts, so compilation runs only while
+facts are served; the page views are facts views (§7.5), and the knowledge mount is not published
+while facts are not served. The authored-page sync and forget's redaction check are not
+compilation and keep running regardless, so an owner's redaction always finalizes a waiting
+forget (D159).
 
 P3 is the sources-only mutable document tree defined by [D155 in E0 §6](e0_files_design.md#6-the-corpus-filesystem--a-mutable-p3-tree-d155).
 It has no `entities/`, fact metadata or K links under any layer configuration, so

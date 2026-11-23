@@ -1011,9 +1011,11 @@ object and corpus steps take it exclusively, so every issued write has finished.
 If the publication backend dies, the per-document lock still makes forget wait for
 IO; if the per-document lock's backend dies, the publication lock still keeps the
 corpus erasure from completing before IO returns. If both sessions die while one
-request is still in flight, forget waits the configured maximum object request
-duration (the bounded timeouts below, with no automatic retries) before it
-verifies. No coordination table is needed.
+request is still in flight, the writer cleans up only what it owns (never deleting a
+shared navigation file, which it regenerates instead), and forget's delayed
+re-verification catches a request that lands later
+([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)).
+No coordination table is needed.
 
 Check both locks and the live claim before each multipart request too, so one
 bounded part is the largest upload

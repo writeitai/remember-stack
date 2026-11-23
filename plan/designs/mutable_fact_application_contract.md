@@ -26,9 +26,11 @@ Two new internal tables have distinct purposes:
   uses the same response and dispositions, including empty responses; later
   predicate changes cannot silently change which outputs that receipt admitted.
 - `fact_applications`: one resolved output's staging, prepared inference and
-  completion receipt. The natural unique key is deployment, claim, normalizer
-  generation, output shape (relation/observation), zero-based output ordinal and
-  adjudicator generation. A UUID application ID addresses the row; text, triples
+  completion receipt. The natural unique key is deployment, claim, the claim's
+  testimony episode (D159: a claim whose testimony was restored is applied afresh
+  rather than answered from its old receipt), normalizer generation, output shape
+  (relation/observation), zero-based output ordinal and adjudicator generation.
+  Normalization stays keyed by claim, so a restored claim reuses it. A UUID application ID addresses the row; text, triples
   and dates never establish retry identity.
 
 The only new fact data are `valid_precision` and `window_claim_ids`: the latter

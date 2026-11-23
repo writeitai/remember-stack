@@ -48,7 +48,7 @@ Python surface (D141), because the parity check compares that inventory with the
   with `confirm` and `destructiveHint: true`; TypeScript parity.
 - The per-request `allow_forgotten` flag (HTTP, SDK, `remember ingest --allow-forgotten`, MCP
   `ingest`) releasing exactly one record, with 409 `forget_in_progress` while erasing.
-- Tests: re-ingest with the flag (design §5 test 11), the restore cases that span a deliberate
+- Tests: re-ingest with the flag (design §5 test 11, except its archive and unarchive cases, which move to slice 3), the restore cases that span a deliberate
   re-add (test 13), and the surface contract tests.
 
 ## 3. Archive, un-archive and the removal of the public delete
@@ -65,7 +65,7 @@ Python surface (D141), because the parity check compares that inventory with the
 - Remove in the same change: `DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
   `remember documents delete`, the `delete_document` MCP tool, their TypeScript counterparts
   and `DocumentDeletion`.
-- Tests: archive and Rule 4 (design §5 tests 14 and 15): un-archiving identical bytes makes
+- Tests: archive and Rule 4 (design §5 tests 14 and 15, and test 11's archive and unarchive cases): un-archiving identical bytes makes
   no Selection, Claimify or embedding call, and a one-section edit of an archived document pays
   only for that section.
 

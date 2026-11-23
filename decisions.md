@@ -3033,8 +3033,7 @@ restore canary is green; design resolution alone does not pretend the runtime co
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** There is no hard-forget manifest root to transfer
 > first and no readiness replay: every clause below about transferring or verifying the
 > manifest root and running the hard-forget readiness pass is history. A restore ends with
-> `remember forget reapply` (with an exported record list for forgets newer than the backup)
-> before traffic. The state-and-ordering contract for the other stores stands.
+> `remember forget reapply --from` the latest full export of forget records before traffic. The state-and-ordering contract for the other stores stands.
 
 **Decision.** The OSS library defines which deployment state is authoritative and the only safe
 restore order; it does not implement `remember export` / `remember import`, a universal archive
@@ -6823,8 +6822,9 @@ are what sources declare, not verified facts.
 > **Superseded by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** The public delete surface (`DELETE /documents/{doc_id}`,
 > `MemoryClient.delete_document`, `remember documents delete`, the `delete_document` MCP tool)
 > is removed with no deprecation period. Its lineage cascade, episode identity,
-> finish-or-refuse rerun, in-flight retirement at reconcile and no-reuse-from-ended-testimony
-> rule survive as archive's cascade and forget's first step. Re-sent identical bytes now
+> finish-or-refuse rerun and in-flight retirement at reconcile survive as archive's cascade
+> and forget's first step. The no-reuse rule narrows to tombstoned versions: archived
+> versions are reuse candidates, and reused claims start a new testimony episode. Re-sent identical bytes now
 > leave an archived document archived instead of re-adding it. The D74 fence clauses are gone.
 
 **Note (D133, withdrawn by D138).** D133 briefly extended this entry to container members; D138
@@ -8524,8 +8524,8 @@ of forgotten content is refused with `document_forgotten` unless that one reques
 `allow_forgotten=true`, which ingests it as an ordinary ingest would and, on commit, deletes
 only the record whose lineage identity matches the request; other forgets of the same bytes
 keep guarding. There is no deployment-wide setting. After restoring a backup the operator runs `remember forget
-reapply` (with an exported record list for forgets newer than the backup) before the
-deployment takes traffic. Ingest and forget share content-hash and source-identity locks, so
+reapply --from` the latest full export of forget records before the deployment takes
+traffic. Ingest and forget share content-hash and source-identity locks, so
 nothing can register forgotten content mid-check. Forget keeps the existing cascades for
 exclusively owned children, deletes logically referenced rows explicitly, and a
 schema-coverage test classifies every column that references document data.

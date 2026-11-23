@@ -210,7 +210,7 @@ CREATE TYPE pipeline_component     AS ENUM (
   'extractor','grounder','resolver','normalizer','adjudicator','embedder','fact_labeler',
   'profile_summarizer','corpus_publisher','knowledge_planner',
   'knowledge_writer','knowledge_reflector','knowledge_linter','judge','forgetter');
-CREATE TYPE processing_target      AS ENUM ('document','document_section','chunk','claim','relation','observation','entity','knowledge_artifact','document_version','knowledge_dispatch','corpus_publication');
+CREATE TYPE processing_target      AS ENUM ('forget','document','document_section','chunk','claim','relation','observation','entity','knowledge_artifact','document_version','knowledge_dispatch','corpus_publication');
 CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','publish_corpus','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','forget','review_fact_windows');
 CREATE TYPE processing_status      AS ENUM ('pending','running','succeeded','failed','dead_letter','skipped');
 -- D67: only plane-E routes use operational lanes. K/P (and other scheduled aggregate) jobs
@@ -2069,7 +2069,8 @@ CREATE TABLE relation_evidence (
   stance          evidence_stance NOT NULL,    -- supports | contradicts (concepts §3/§4)
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions; which normalizer linked them
   created_at      timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (relation_id, claim_id)          -- evidence-once, DB-enforced (partition key relation_id is included); re-link via ON CONFLICT DO NOTHING is a no-op
+  testimony_episode smallint NOT NULL DEFAULT 1, -- D159: the claim's testimony episode that created this link; current support counts only links from the claim's current episode
+  PRIMARY KEY (relation_id, claim_id, testimony_episode) -- evidence-once per episode, DB-enforced (partition key relation_id is included); re-link via ON CONFLICT DO NOTHING is a no-op
 ) PARTITION BY HASH (relation_id);
 COMMENT ON TABLE relation_evidence IS
   'Many-to-many evidence links (D2). Corpus redundancy collapses here into relations.evidence_count. Partitioned by HASH(relation_id) so relation hydration prunes to one partition and PRIMARY KEY (relation_id, claim_id) enforces evidence-once in-DB (D23; §17 item 1 resolved). claim_id reverse lookup scans all partitions (cold path). Logical FKs (D23).';
@@ -2236,7 +2237,8 @@ CREATE TABLE observation_evidence (
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the claim's lineage, write-once) — D54 recount without cross-partition claim joins (F7)
   created_at      timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (observation_id, claim_id)       -- evidence-once, DB-enforced; re-link via ON CONFLICT DO NOTHING is a no-op
+  testimony_episode smallint NOT NULL DEFAULT 1, -- D159: see relation_evidence
+  PRIMARY KEY (observation_id, claim_id, testimony_episode) -- evidence-once per episode, DB-enforced; re-link via ON CONFLICT DO NOTHING is a no-op
 ) PARTITION BY HASH (observation_id);
 -- 64 static hash children created by the migration, same as relation_evidence (§9):
 DO $$ BEGIN
@@ -2850,8 +2852,10 @@ runs in one transaction under the lineage row lock:
 3. **`documents` + `document_versions`** (D55 grains): archiving the **lineage** sets
    `documents.archived_at`; nothing is tombstoned. Version rows, sections, artifact URIs and
    crossrefs are **kept**, so the document, its versions and its stored original stay readable.
-   A version carries current testimony only while its lineage is live and the version itself is
-   not deleted, so an archived lineage's versions carry none. Retiring **one version** (an internal operation, not on the
+   Every existing version also gets `document_versions.archived_at` (the D159 cutoff). A version
+   carries current testimony only while its lineage is live and the version itself is neither
+   archived nor deleted, so an archived lineage's versions carry none, and after the lineage
+   comes back only its restored or new version does. Retiring **one version** (an internal operation, not on the
    public surface) sets only that version's `deleted_at` (its claims' currency ends,
    `version_archived` — the lineage continues). The archive also deletes every
    `document_entity_bindings` row for that `doc_id` in the same transaction. The table is
@@ -2874,11 +2878,13 @@ runs in one transaction under the lineage row lock:
    retained as historical links (their claims are non-current, so counts exclude them).
 6. **`relations`**: **not** deleted with one document's claims — a relation is a *shared* fact. The
    cascade recomputes `evidence_count`/`contradict_count` (the D54 rule: `COUNT(DISTINCT doc_id)` over
-   evidence rows whose claims are current testimony, per stance — the write-once `doc_id` on evidence
+   evidence rows whose claims are current testimony and whose `testimony_episode` is the claim's
+   current episode, per stance — the write-once `doc_id` on evidence
    rows makes this a single-table scan per fact; so duplicates
    cannot inflate it). A relation whose **current** support drops to zero via archive is
-   **closed** per the D54 source-acted rule (states: `valid_until` cap; measurements:
-   `invalidated_at`; recorded `retracted_source_removal` adjudication — the `support_withdrawn`
+   **closed** per the D54 source-acted rule, as a belief change: `invalidated_at` is set and
+   world-time `valid_until` is left as the evidence said (D118); recorded
+   `retracted_source_removal` adjudication — the `support_withdrawn`
    flag is exclusively the re-extraction path, never archive). Where closure sets
    `invalidated_at`, the generated `status` becomes `invalidated` and the projection stops
    emitting it — it is **not physically deleted**, because `relation_adjudications` and

@@ -251,9 +251,9 @@ they always assumed.
 - **The source or a curator acted** — a living document's edit removed the content (§2), the
   document was deleted at its source, or a caller archived or forgot it
   (§8). These events carry a decision ("this is withdrawn" / "this no longer belongs in the
-  memory"), so the system acts on it: solely-supported facts are **closed, per shape**
-  (states: `valid_until` capped; fixed-period measurements: `invalidated_at` — the D43 no-cap
-  rule), recorded as a `retracted_source_removal` adjudication. Loud, attributed, reversible —
+  memory"), so the system acts on it: solely-supported facts are **closed as a belief
+  change** — `invalidated_at` is set and world-time `valid_until` is left as the evidence said
+  (D118) — recorded as a `retracted_source_removal` adjudication. Loud, attributed, reversible —
   **no flag, no queue, no limbo.**
 - **Only our transcription changed** — a new toolchain generation (an extractor bump, or for
   media the common case: a converter — ASR/VLM — upgrade) re-read the *unchanged* file and
@@ -463,8 +463,9 @@ nor deleted.
   cycle barrier still applies, so a delete-and-recreate or a split-then-delete within one
   sync pass resolves as support swaps, not close-then-reopen; a cross-cycle split leaves a
   brief, visible, self-healing gap).
-- **Forget**: spans all versions of the selected lineage. It first runs this cascade (unless
-  the document is already archived), then tombstones the document (`documents.deleted_at`,
+- **Forget**: spans all versions of the selected lineage. It first runs this cascade, or
+  finishes it idempotently through the finish-or-refuse rerun when an archive (a source
+  archive awaiting finalization, say) has already started it, then tombstones the document (`documents.deleted_at`,
   which every read filters), erases it from every engine-controlled store in a background
   job and verifies the erasure
   ([archive and forget §3](archive_and_forget_design.md#3-forget)). Ending currency alone is

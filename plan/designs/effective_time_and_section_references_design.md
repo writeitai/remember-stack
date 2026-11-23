@@ -128,7 +128,9 @@ withdrawn and later put back into force by declaration rather than re-ingest).
 The engine never stores a derived end. Declarations are evaluated **as known at a belief
 instant `b`** (by default the request's evaluation instant): a declaration is *known at `b`*
 when `declared_at <= b AND (retracted_at IS NULL OR retracted_at > b)`. Among the declarations
-of one lineage known at `b` and belonging to non-deleted versions, the **in-force interval** of
+of one lineage known at `b` and belonging to **testifying** versions (neither deleted nor, under
+D159, archived; for a read of belief as of a past instant `b`, a version archived after `b`
+still testified then), the **in-force interval** of
 a declaration `p` is:
 
 - start = `p.effective_from`;

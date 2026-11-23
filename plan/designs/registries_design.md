@@ -179,7 +179,8 @@ the vector used to reconsider it. The row remains excluded from public entity re
 triggered refresh repairs raw endpoints, every retained merged intermediate, and the terminal
 active survivor, so later lifecycle changes cannot strand evidence behind a redirect;
 forget refreshes shared survivor ids after the
-lineage erasure and before projection rebuild/verification. When no supported fact remains, the
+lineage erasure and before projection rebuild/verification; forget's verification accepts a
+cleared profile with its refresh queued. When no supported fact remains, the
 summary, vector, and complete attestation clear together. The resolver independently loads the
 current salient facts and reconstructs the expected summary/hash. A mismatch makes T3 see a
 missing profile and makes T4 rely on the current facts rather than stale cached prose. Thus a
