@@ -169,7 +169,7 @@ per-scope result, is fixed here.
 
 | Site | Catches | Disposition |
 |---|---|---|
-| `adapters/vertex.py:561` | `ProviderAccountingError` | `provider_usage_unparsed`: usage reported but unreadable, so cost goes unrecorded |
+| `adapters/vertex.py:561` | `ProviderAccountingError` | `provider_usage_unparsed`, only when the stream supplied usage that could not be parsed; an incomplete stream with no usage (`vertex.py:335`) is already a provider error |
 | `profiles/storage_capture_batch.py:240` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
 | `profiles/storage_capture_batch.py:266` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
 | `profiles/storage_capture_batch.py:268` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
@@ -180,8 +180,8 @@ per-scope result, is fixed here.
 | `surfaces/query_engine.py:1834` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
 | `surfaces/query_engine.py:1886` | `DBAPIError, SQLAlchemyTimeoutError, GraphBusyError, GraphHydrationError, TimeoutError` | as above |
 | `surfaces/query_engine.py:1937` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
-| `surfaces/query_sandbox/executor.py:917` | `psycopg.errors.ConfigurationLimitExceeded, psycopg.errors.DiskFull, psycopg.errors.OutOfMemory, psycopg.errors.TooManyConnections` | `ConfigurationLimitExceeded` stays the caller's disclosed cap; `DiskFull`, `OutOfMemory`, `TooManyConnections`: ERROR `query_database_resource_exhausted` |
-| `surfaces/query_sandbox/executor.py:933` | `psycopg.OperationalError` | `query_database_unavailable`; same `pg_unavailable` result |
+| `surfaces/query_sandbox/executor.py:917` | `psycopg.errors.ConfigurationLimitExceeded, psycopg.errors.DiskFull, psycopg.errors.OutOfMemory, psycopg.errors.TooManyConnections` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
+| `surfaces/query_sandbox/executor.py:933` | `psycopg.OperationalError` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
 | `workers/base.py:485` | `Exception` | retry scheduled: WARNING `worker_item_retry`; no retry left (dead letter): ERROR `worker_item_failed` |
 | `workers/e0.py:1701` | `ProviderCallError` | `structure_fallback` |
 | `workers/e0.py:1715` | `Exception` | `structure_fallback` |
@@ -272,10 +272,10 @@ per-scope result, is fixed here.
 | `spine/readiness.py:690` | `SQLAlchemyError` | cleanup: `RESET ROLE` |
 | `surfaces/http_api.py:3168` | `SpendLeaseRefused, SpendLeaseUnavailable` | lease release after a non-2xx; the hold expires on its TTL (D42) |
 | `surfaces/mcp.py:550` | `LayerUnavailableError` | a layer the deployment does not serve, returned as `layer_unavailable` (D143) |
-| `surfaces/query_sandbox/executor.py:872` | `psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout` | the caller's statement hit its disclosed timeout (`statement_timeout` result) |
-| `surfaces/query_sandbox/executor.py:884` | `psycopg.errors.LockNotAvailable` | the caller's statement hit its disclosed lock timeout |
-| `surfaces/query_sandbox/executor.py:895` | `psycopg.errors.InvalidParameterValue` | the caller's parameter was invalid |
-| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | SQLSTATE class `XX` or `58`: ERROR `query_database_internal_error`; any other class is the caller's SQL (exempt). Same `execution_error` result in both cases (design §2.1) |
+| `surfaces/query_sandbox/executor.py:872` | `psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
+| `surfaces/query_sandbox/executor.py:884` | `psycopg.errors.LockNotAvailable` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
+| `surfaces/query_sandbox/executor.py:895` | `psycopg.errors.InvalidParameterValue` | Per the design's sandbox rule (§2.1): reported as `query_database_failed` unless positively a caller or budget outcome; same wire result |
+| `surfaces/query_sandbox/executor.py:944` | `psycopg.Error` | Report `query_database_failed` unless positively a caller or budget outcome (design §2.1, sandbox row). Same `execution_error` result |
 | `workers/e0_summary.py:694` | `Exception` | cache corruption is a cache miss |
 | `workers/e0_summary.py:724` | `Exception` | cache corruption is a cache miss |
 
@@ -290,7 +290,7 @@ This includes handlers whose last statement is `raise` but which can
 | `adapters/systemone.py:42` | Primary decision provider unavailable without usage | Expected: WARNING `systemone_backup_used`; the backup provider answers |
 | `core/file_card.py:174`, `:229` | Unreadable image or archive bytes | Exempt: input classification |
 | `surfaces/query_engine.py:1012`, `:1366`, `:2118`, `:2542`, `:2592`, `:2667`, `:2783` | The request deadline expired | Expected: WARNING `query_budget_exceeded`; a disclosed boundary in the response |
-| `surfaces/query_sandbox/executor.py:118` | Type-name lookup failed within budget | Exempt: falls back to the type oid in a column label |
+| `surfaces/query_sandbox/executor.py:118` | Type-name lookup failed within budget | Report `query_database_failed` (engine-owned SQL; design §2.1); the oid fallback label stays |
 | `workers/e1.py:470` | A single chunk fails embedding (not an outage) and is skipped as poison | Report: ERROR `embedding_chunk_skipped` (`mixed`) |
 | `spine/fact_adjudication.py:501` | Ends in `raise`, but with `fallback_to_prompt` set it returns the prompt adjudication first | Expected: WARNING `fact_adjudication_prompt_fallback` on the fallback branch (`mixed`) |
 
@@ -322,6 +322,11 @@ All 18 get an `error_code`:
 | `profiles/storage_capture_batch.py:142` `_failure_code` | Any code-shaped message, else the type name (`TimeoutError`) | Only an engine refusal's declared `code`, else `storage_capture_failed` |
 
 ### 5.6 Failures returned as values
+
+Also on the list, found in review: the live-graph errors
+(`surfaces/graph_queries.py:73`, `:77`; quiet 503 at `surfaces/http_api.py:1289`)
+and every sandbox catch that produces a query result (`executor.py:837`
+through `:944`), both classified in design §2.1.
 
 Found by review; no scan finds these:
 
