@@ -2265,6 +2265,11 @@ inside the PostgreSQL transaction, not through a separate adapter. Every
 serving readiness pass re-honors every manifest; local completion is progress,
 never permission to skip a separately restored store or database.
 
+> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** `ForgetManifestPort`, the dedicated manifest root/store
+> in the port table row above, and the readiness re-honor are removed: forget records live in
+> PostgreSQL and `remember forget reapply` runs after a restore. The object, corpus and K
+> purge capabilities stay (the corpus port gains mount-session invalidation).
+
 ---
 
 > **D62 provenance.** D62 formalizes the packaging/distribution brainstorm (July 2026, user +
@@ -2305,7 +2310,9 @@ adapters/llm/workers/surfaces/eval/profiles`; core is pure and infra-free; SQL o
 `spine/`; vendor SDKs only in `adapters/`; **import-linter contracts fail CI on illegal
 imports** (architecture erosion fails loudly); profiles are explicit composition roots — no DI
 framework. **Portability rides rebuild-first (D7, refined by D75)**: portable state = Postgres +
-raw/artifact objects + the K repo + the separately durable D74 manifest root; native operator tools
+raw/artifact objects + the K repo + the separately durable D74 manifest root (**D159**: no
+manifest root; `remember forget reapply` runs after a restore instead of a readiness
+re-honor); native operator tools
 move the authoritative stores, readiness re-honors deletion before serving, and projections rebuild
 after restore — the cloud↔self-host migration path in both directions without a transport subsystem.
 
@@ -3026,8 +3033,10 @@ restore canary is green; design resolution alone does not pretend the runtime co
 ## D75. Portability is a state-and-ordering contract; operators move bytes (refines D60, D62, D74)
 
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** There is no hard-forget manifest root to transfer
-> first and no readiness replay. A restore ends with `remember forget reapply` (with an
-> exported record list for forgets newer than the backup) before traffic. The rest stands.
+> first and no readiness replay: every clause below about transferring or verifying the
+> manifest root and running the hard-forget readiness pass is history. A restore ends with
+> `remember forget reapply` (with an exported record list for forgets newer than the backup)
+> before traffic. The state-and-ordering contract for the other stores stands.
 
 **Decision.** The OSS library defines which deployment state is authoritative and the only safe
 restore order; it does not implement `remember export` / `remember import`, a universal archive
@@ -8493,8 +8502,9 @@ contribution, both on the API, SDK, CLI and MCP:
   facts only the document supported close with `retracted_source_removal`), but the
   document and its stored original stay readable as history, hidden from default reads and
   returned with `include_archived=true`. Identical bytes re-sent leave it archived; a changed
-  version or `unarchive` brings it back as new testimony, processed in full. A connector that
-  observes a source deletion archives.
+  version or `unarchive` brings it back as new testimony; D56 reuse may draw on archived
+  versions, so unchanged chunks cost nothing. A connector that observes a source deletion
+  archives.
 - **Forget** — "this should not be here". The request hides the document at once (the
   lineage cascade plus the tombstone every read filters) and records the forget; one
   background work item then erases it from PostgreSQL, object storage, the corpus filesystem
@@ -8510,8 +8520,10 @@ of forgotten content is refused with `document_forgotten` unless that one reques
 `allow_forgotten=true`, which ingests it as a new document and deletes the record; there is
 no deployment-wide setting. After restoring a backup the operator runs `remember forget
 reapply` (with an exported record list for forgets newer than the backup) before the
-deployment takes traffic. Forget deletes in an explicit order and never relies on a cascade;
-a schema-coverage test classifies every column that references document data.
+deployment takes traffic. Ingest and forget share content-hash and source-identity locks, so
+nothing can register forgotten content mid-check. Forget keeps the existing cascades for
+exclusively owned children, deletes logically referenced rows explicitly, and a
+schema-coverage test classifies every column that references document data.
 
 **Why.** D135's delete was neither archive (it hid the document from reads) nor erasure (it
 kept every byte). D74's erasure was correct but disproportionate: a deployment-wide outage
@@ -8530,16 +8542,20 @@ transfer duty. D147's `forget_manifest_bucket_name` setting. D155's forget barri
 restore replay and stop-and-remount clauses (its per-document suffix erasure survives).
 
 **Rejected.** Keeping delete beside archive and forget; archive as a tag or a read-time
-filter; back-dated or scheduled archive; reopening facts on un-archive; keeping the global
+filter; back-dated or scheduled archive; reopening facts on un-archive; reprocessing an
+un-archived document in full; keeping the global
 barrier; a separate record store with on-demand replay; a permanent guard, no guard, or a
 deployment-wide re-ingest switch; machine redaction of authored prose; `VACUUM FULL` after
 each forget.
 
-**Consequences.** Rule 4: un-archive and a changed version of an archived document are read
-in full (D135's no-reuse-from-ended-testimony rule stays); no reuse key changes. PostgreSQL
-erasure is logical (no query, export or dump returns the content); physical row versions
-are overwritten by autovacuum and WAL recycling, and the public docs say so. The cloud
-repository implements mount-session invalidation through the corpus purge port.
+**Consequences.** Rule 4: D135's "reuse never draws on a deleted version" becomes "never on a
+forgotten version"; un-archive and a changed version of an archived document reuse unchanged
+embeddings and Selection/Claimify results, and reused claims become current again through a
+`version_restored` transition and fact application (closed facts are never reopened). No reuse
+key changes. PostgreSQL erasure is logical (no snapshot taken after the commit returns the
+content); physical row versions are not securely overwritten, and the public docs say so.
+Controlled mount sessions drop the paths without restarting (the cloud repository implements
+the adapter); operator FUSE mounts follow their bounded caches.
 
 **Design.** [Archive and forget](plan/designs/archive_and_forget_design.md).
 **Analysis.** [Archive and forget](plan/analysis/archive_and_forget.md).

@@ -113,10 +113,17 @@ covers:
 - **Reopen the old claims and facts.** Needs a reopening outcome for
   `retracted_source_removal` closures that D118's fact windows do not have (the same reason
   D135 rejected undelete). Rejected.
-- **Chosen: coming back is a new observation.** Un-archiving creates a new version from the
-  latest stored original and runs the pipeline, as D135's re-add did. It costs a full read of
-  the document. That is a declared cost: un-archive is rare and explicit, and a document
-  that changed while archived would need reading anyway.
+- **Coming back as a full re-read** (D135's re-add, where reuse never drew on a deleted
+  version). Simple, but it breaks Rule 4: un-archiving identical bytes, or a one-section
+  edit to an archived document, would pay to extract and embed the whole document again.
+  Rejected in review round 1.
+- **Chosen: coming back is a new observation that reuses paid work.** Un-archiving records a
+  new version from the latest stored original. D56 reuse may draw on archived versions, so
+  unchanged chunks reuse their embeddings and Selection/Claimify results. D135 forbade this
+  because a reused claim kept its ended testimony and silently supported nothing; the fix
+  is a `version_restored` currency transition that makes the reused claim current again,
+  after which ordinary fact application finds or creates a live fact for it. Closed facts
+  stay closed as history, so no reopening outcome is needed.
 - **Identical bytes re-sent to an archived document.** Under D135 a re-sent identical
   upload resurrected a deleted lineage. For archive that would let a full resync silently
   undo every archive and pay to reprocess it. Chosen: identical bytes to the archived
@@ -132,11 +139,15 @@ covers:
   2. Only work for that document is held: its running work items are allowed to finish (a
      work item's lease bounds the wait), its queued ones find nothing left when they run,
      and a late writer cannot attach rows because every writer re-checks its version under
-     a share lock that forget's delete transaction excludes. Foreign keys cannot do this
-     job: most document-derived tables use logical references PostgreSQL does not enforce,
-     and the real ones in the document subtree cascade today. Forget therefore deletes in
-     an explicit order, those cascades become non-cascading so a missed table fails loudly,
-     and a schema-coverage test classifies every column that references document data.
+     a share lock that forget's delete transaction excludes. Object writers hold a
+     per-document advisory lock for their IO, and forget waits the maximum request duration
+     after taking it, which covers a request still in flight from a dead session (the same
+     reasoning D155 used for its two publication locks). Foreign keys cannot do this job:
+     most document-derived tables use logical references PostgreSQL does not enforce. Forget
+     therefore keeps the existing cascades for children the document exclusively owns,
+     deletes logically referenced rows explicitly, and relies on a schema-coverage test plus
+     a fixture that seeds every table. Turning the cascades off was considered and dropped
+     in review: it adds schema churn without proving more than the seeded test does.
   3. The erasure runs as one ordinary resumable work item. Everything else keeps serving
      and processing.
 
@@ -214,26 +225,31 @@ to be remounted.
   invalidation for the document's paths through the existing corpus purge port and must drop
   them (and their cached bytes) without being stopped. An operator-managed FUSE mount sees
   the deletion when its metadata cache expires; the filesystem-view docs already require
-  bounded caches, and that bound is the stated guarantee. Bytes a client copied out of a
-  mount are outside the engine's boundary, as downloads always were.
+  bounded caches, and that bound is the stated guarantee. A process that already opened and
+  read a file through such a tool may keep those bytes, and some tools serve an open handle
+  until it closes; the engine cannot revoke them, so the docs say so rather than promise
+  more. Controlled sessions are held to the stronger rule: reads on already-open handles of
+  erased paths fail. Bytes a client copied out of a mount are outside the engine's
+  boundary, as downloads always were.
 
 ### 3.9 Physical residue in PostgreSQL
 
-A deleted PostgreSQL row is gone from every query and every dump at once, but its old row
-version stays in the table file until vacuum marks the space reusable and later writes
+A deleted PostgreSQL row is invisible to every snapshot taken after the delete commits (a
+dump already running keeps its earlier snapshot), but its old row version stays in the table file until vacuum marks the space reusable and later writes
 overwrite it, and it stays in write-ahead-log segments until they are recycled. Only
 `VACUUM FULL` rewrites a table, and it takes an exclusive lock that would stop the
 deployment, which is the cost this design removes. The design therefore promises logical
-erasure (no query, export or dump can return the content), relies on autovacuum and WAL
-recycling for physical overwrite, and says so in the public docs rather than implying
-more.
+erasure (no later query, export or dump can return the content), states that autovacuum
+and WAL recycling are not a secure overwrite, and says so in the public docs rather than
+implying more.
 
 ## 4. Rule 4 (a new version costs only its edit)
 
 Forget and archive do not change any reuse key. Two declared costs:
 
-- Un-archive, and a new version of an archived document, are processed in full: D135's rule
-  that reuse never draws on a version whose testimony was ended stays.
+- Un-archive, and a new version of an archived document, reuse unchanged embeddings and
+  Selection/Claimify results from archived versions (§3.3); only forgotten versions, whose
+  rows are erased, are never reuse candidates.
 - Forget clears derived embeddings on surviving shared rows whose input text changed, as
   D74 already did; they are recomputed by ordinary work.
 
