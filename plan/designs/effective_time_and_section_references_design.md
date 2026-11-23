@@ -904,7 +904,10 @@ excludes that edition. The gate closes this without touching fact windows:
   that the scope selects (§3.2) **or** an occurrence in a live version of an undeclared lineage
   (whose evidence is not time-restricted by D140). The occurrence must lie in its version's
   **current reading** (the D65 current representation): an occurrence left behind in a
-  replaced reading, or only in a deleted version, is not evidence.
+  replaced reading, or only in a deleted version, is not evidence. The supporting link must
+  also belong to the claim's testimony episode current at the scope's belief instant (D159):
+  after un-archive, a new occurrence cannot make an ended episode's link qualify the old fact,
+  and evidence hydration applies the same predicate.
 - **A fact with no supporting evidence at all** — D54's zero-support case, typically a fact
   that only contradicting claims still mention, which D54 *flags* rather than hides — passes
   the gate when it has an in-scope occurrence of **either** stance. Requiring support would

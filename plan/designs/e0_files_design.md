@@ -1107,7 +1107,10 @@ a matching marker never skips verification.
 ### 6.6 Repair, readiness and processing layers
 
 `run_projection(plane="p3")` reconciles this same live tree using the lock,
-selectors, renderer and publisher above. Stream DB lineages and paged key listings;
+selectors, renderer and publisher above. Discovery (streaming DB lineages and paged key
+listings) runs outside the publication lock; mutations are applied in bounded batches, each
+re-checking authority under the lock with a hold deadline independent of the work heartbeat,
+so a healthy reconcile cannot hold up a forget's corpus step (D159). Stream DB lineages and paged key listings;
 delete unknown/orphan objects, render all current navigation indexes from the DB,
 and prune obsolete index keys even if no document folder remains there. Share
 one full-store discovery pass across the run; ordinary publication never does
@@ -1165,12 +1168,15 @@ historic titles, paths, suffix reservations or a corpus-wide purge scope.
    background job; the document is already hidden.
 2. The background job's corpus step runs after the document's running work has finished
    and its PostgreSQL rows are erased
-   ([archive and forget §3.3–3.4](archive_and_forget_design.md#34-the-erasure-job)). It takes
-   the publication, navigation and document object locks exclusively (§6.5), so every write
+   ([archive and forget §3.3–3.4](archive_and_forget_design.md#34-the-erasure-job)). It
+   first pages through corpus keys outside every shared lock to discover the folders with the
+   forgotten generation's suffix. It then deletes them, and regenerates indexes (step 3), in
+   bounded batches, each under the publication, navigation and document object locks taken
+   exclusively in that order (§6.5) with try-and-reschedule and a hold deadline, so every write
    issued while either of a writer's two sessions lived has finished; a request from a process
    whose two sessions both died is caught by the delayed re-verification
-   ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)). It pages through corpus keys and deletes **only** folders with the
-   forgotten document's suffix, including former moved folders and interrupted unindexed
+   ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)). It
+   deletes **only** folders with the forgotten generation's suffix, including former moved folders and interrupted unindexed
    copies. Abort the document's tracked multipart uploads by ID (`staged_objects`); forget
    never relies on a provider listing unfinished uploads. Clear that
    document's publication marker. Never empty the corpus store or recopy surviving

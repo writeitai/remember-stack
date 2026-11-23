@@ -773,7 +773,7 @@ The deletion cascade (requirements; E0 §2) reaches plane K mechanically through
   forget's K step is a history-erasure step (rewrite of the affected paths' history, e.g.
   `git filter-repo`, then the current files are re-added). Every registered K path that does not
   block is nominated, because current citation bindings cannot prove a page never cited the
-  document in older history. Forget holds the single-committer lock across the whole step: it
+  document in older history. Forget works through short, deadline-bounded holds of the single-committer lock (model outputs and history rewrites are prepared outside it; each hold revalidates and publishes conditionally on the expected head, then reflogs are expired and unreachable objects pruned): it
   first lists blocking authored pages and sidecars, then deletes the compiled bodies, cached
   summaries and previous Markdown of every affected page and of every page that depends on one
   through the compiler's actual inputs (followed transitively, including child summaries

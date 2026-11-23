@@ -384,6 +384,10 @@ its survivor endpoints pass `entities_current`.
 Redefine `v_memory_fact_visible` on this helper plus exactly this endpoint rule:
 subject must match `entities_current` by deployment and survivor ID; for a
 relation the object must match too, while an observation needs no object.
+`facts_visible_history` and the runtime builder of historical fact reads use the
+historical endpoint eligibility instead (an entity whose evidence is only in archived
+documents, D159, still qualifies there), so an entity that leaves current retrieval
+when its sole source is archived keeps its closed facts readable in history.
 Keep the existing first fourteen columns and append the four presentation
 columns listed above. Rewrite `memory_v1.facts_visible_history` as an explicit
 projection of these eighteen columns, removing its superseded inline count/

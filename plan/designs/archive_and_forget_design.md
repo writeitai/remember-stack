@@ -117,8 +117,10 @@ for declared periods use D140 effective periods.
   archives at all: D135's cycle barrier resolves it as a support swap.
 - **Anything that would record a new version** (changed bytes, or a new D140 edition) records
   it and clears `archived_at` in the same transaction; the document is live again.
-- **`POST /documents/{doc_id}/unarchive`** restores the latest version: it clears the
-  lineage's `archived_at` and that version's cutoff in one transaction, so no new version and
+- **`POST /documents/{doc_id}/unarchive`** restores the newest version that is not
+  tombstoned (an internally retired version is skipped); if none survives it is refused with
+  409 `nothing_to_restore` and the document stays archived. It clears the lineage's
+  `archived_at` and that version's cutoff in one transaction, so no new version and
   no D140 edition key is involved. It is a state change on this lineage, not an ingest: it
   checks only this lineage's own state under its lock, so a forget of a different lineage that
   shared these bytes does not block it. If the archive landed while the version was still
@@ -348,7 +350,10 @@ the document hidden and the record `erasing`; nothing reopens.
 3. **Objects.** Under the content-hash lock, decide raw-object ownership by physical
    reference: a content object stays while any version row, of any lineage, still references
    it. When two forgets share a hash, whichever deletes the last referencing version deletes
-   the object; the other finds a reference and leaves it. The guard keeps any new lineage from
+   the object; the other finds a reference and leaves it. Conversions follow the same rule:
+   a representation or artifact that versions of several lineages share (E0 converts
+   identical bytes once per toolchain) is deleted only when no retained version references
+   it, and step 2 deletes only the forgotten versions' own representation rows. The guard keeps any new lineage from
    adopting it meanwhile. Otherwise delete the object and its `content_objects` row together (so a later deliberate re-add writes a fresh original
    instead of pointing at a purged key). Delete every key under the document's prefix
    (`{doc_id}/…`: originals, artifacts, media, source maps, checkpoints) except a shared
@@ -368,8 +373,10 @@ the document hidden and the record `erasing`; nothing reopens.
 5. **Knowledge plane (K).** Every K publication, ordinary or forget's, is a conditional ref
    update: it succeeds only if the repository head is still the head its checkout started
    from, and every purge advances that head. So a stale publisher whose single-committer
-   session was lost cannot restore purged history. Holding the single-committer lock for the
-   whole step:
+   session was lost cannot restore purged history. The single-committer lock is held only in
+   short, deadline-bounded holds: model outputs and history rewrites are prepared outside it,
+   and each hold revalidates and publishes conditionally; forget tries the lock and
+   reschedules on contention. The step, in order:
    - first determine **blocking** paths: authored pages and curation sidecars whose *current*
      file still cites an ID in the inventory. They get the `redaction_required` review flag,
      are listed on the record, and are treated as absent compile inputs until redacted (also
@@ -379,7 +386,11 @@ the document hidden and the record `erasing`; nothing reopens.
      page in the inventory's K artifact list, of every compiled page whose recorded inputs
      (its bundle, not only its citations: a writer can copy uncited bundle text) contained any
      of the document's evidence, of every compiled page that read a blocking sidecar or
-     authored page as input (its body may already hold that prose even if it cites
+     authored page as input, and of every compiled page that read any sidecar or authored
+     page at a revision which cited the document (each compile records the revision of every
+     such input it was given, so a sidecar the owner already redacted before the forget still
+     counts through the older revision the page was compiled from; a page whose input
+     revisions are not recorded is treated as dependent) (its body may already hold that prose even if it cites
      only unrelated facts), and of every page that depends on one of them through the
      compiler's actual inputs, followed transitively: same-scope summaries,
      previous Markdown, and child summaries reached through `parent_artifact_id` links across
@@ -387,7 +398,12 @@ the document hidden and the record `erasing`; nothing reopens.
      directory (no memory CLI credentials, no mounts, no Git history), so its recorded
      bundle is exactly what it read. A page compiled in agent mode (the writer explored the
      memory freely, so its inputs are not established) counts as dependent if it was compiled
-     after the forgotten document was first ingested. Those bodies are gone before
+     after the forgotten document was first ingested. Unrestricted K sessions (agent-mode
+     writers and planners) are stamped with the deployment's **erasure generation** before
+     they read anything; the forget request advances it at hide, and a session whose stamp is
+     older is refused, under the fence, when it tries to write a transcript, an audit row or
+     a publication, so a session that read the document before the hide can never write
+     afterwards, in any scope. Those bodies are gone before
      the history rewrite re-adds current files, so no contaminated current file is
      re-added;
    - erase every other registered K path from all reachable Git history and re-add its
@@ -404,7 +420,9 @@ the document hidden and the record `erasing`; nothing reopens.
      whose text came from a forgotten or renamed entity or from the forgotten document's own
      title or names, before anything is rebuilt, so the
      next compile cannot publish the forgotten name again;
-   - publish once, verify the rewritten history, and leave the deleted compiled pages to be
+   - publish once, then expire every reflog and prune unreachable objects in each engine
+     repository (as the existing purge does), and verify both the rewritten history and that a
+     fresh local checkout cannot read any old blob; leave the deleted compiled pages to be
      rebuilt by ordinary K work from clean inputs (when K or the facts layer is switched off,
      they stay absent).
 6. **Verify.** Mechanically check that every inventory row marked delete is absent from
@@ -462,8 +480,10 @@ or on its expiry policy. Only an unadopted raw original, which no lineage owns y
 by its content hash, so a forget never touches another lineage's copy of the same bytes. E0 writes an original before
 registering it. It first records the key and content hash in `staged_objects` in the
 transaction that checks the guard (below), then writes the bytes, then registers. The staged
-row is deleted only when its key has been adopted as the version's original or the object has
-been deleted and its absence verified (a duplicate of bytes already stored is deleted after
+row is deleted only when its object has been published (adopted as a version's original, or
+published as an artifact or corpus copy, in whichever store it lives) or deleted and its
+absence verified; the janitor re-checks ownership before deleting any staged object's bytes, so
+a published object is never removed as stale (a duplicate of bytes already stored is deleted after
 registration, and its staged row with it). A crash at any point leaves a staged row, never an
 untracked object: forget's step 3 deletes staged objects carrying a forgotten hash, and the
 janitor deletes staged objects older than the request bound. Client uploads to
@@ -664,7 +684,7 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
 
 1. **Whole-database canary.** Plant a unique token in one document A (body, title, file name,
    metadata, extracted claims (and uncited bundle text a writer copied), a planner-generated
-   page path and routing rule, a fact statement and entity alias it alone contributed, the
+   page path and routing rule, a curation sidecar the owner redacted before the forget, a fact statement and entity alias it alone contributed, the
    name of an entity that another document B also relates to, a reclustering cost-ledger
    call key,
    a compiled K page, the corpus folder); forget it; `pg_dump` the whole database, read
@@ -721,7 +741,12 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
    delayed pass. A stored-object re-add whose earlier upload key receives a late DELETE after
    registration keeps its copy. Two lineages staging the same bytes: forgetting one never
    aborts the other's upload. A stalled full reconcile with a running heartbeat does not stop a
-   forget. Restore only the corpus bucket from between a re-add and its second forget: the
+   forget, and a full reconcile holding the publication lock with a healthy heartbeat yields
+   within its hold deadline. A planner in an untouched scope that read the document before the
+   hide cannot write a transcript afterwards. After the K purge, a fresh local checkout cannot
+   read any old blob. A published artifact is never deleted by the staging janitor. Forgetting
+   one of two lineages that share identical bytes keeps the other's conversion. Restore only the
+   corpus bucket from between a re-add and its second forget: the
    second forget's generation is erased. Upgrade from the D135 release: deleted lineages
    become archives. A writer that stalls while holding both object locks
    loses them when its lease lapses, and the forget proceeds without occupying a worker slot.
@@ -770,7 +795,10 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     file reappearing in a later cycle revives a source archive; a caller's archive of a
     source-archived document is not undone by a resync; after un-archive the latest version
     testifies again and older editions stay cut off, and a belief-as-of read inside the former
-    archive interval still sees them archived. A version that finished with facts disabled and
+    archive interval still sees them archived. Fetch page one of a paged browse, archive (and
+    separately un-archive) a lineage due on page two, and the continuation still answers by the
+    original belief watermark. Un-archive skips an internally retired newest version, and is
+    refused with `nothing_to_restore` when no version survives. A version that finished with facts disabled and
     was archived is reached when facts are enabled after un-archive. Un-archive of a keyed, periodised D140 document restores
     its edition and periods and its pinned references resolve again. A restored claim whose old
     fact survived through another document and whose new application lands elsewhere supports
