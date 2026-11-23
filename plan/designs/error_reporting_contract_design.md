@@ -72,7 +72,7 @@ forwards metadata only (UMC D107). The engine has no detail switch.
 | HTTP `ProviderCallError` handler (`surfaces/http_api.py:793`) | `provider_call_failed`; same 503 | ERROR |
 | Live graph route: `TimeoutError` or `OperationalError` turned into a 503 (`surfaces/http_api.py:1293`) | `graph_query_failed`; same 503 | ERROR |
 | MCP tool unexpected failure (`_internal_error`, `surfaces/mcp.py:568`) | `mcp_tool_failed`; same tool error | ERROR |
-| Query sandbox: a failure that becomes a query result, logged once by the executor on the **original cause**, unwrapping `SandboxRejection` and chained causes. That covers database errors in `surfaces/query_sandbox/executor.py:118`, `:837`–`:944` and operational bridge rejections from `bridge.py:369`. The one exemption: the cause is a budget timeout (the existing `budget_exhausted` classifier: `57014`/`25P04` or an admission timeout) **and** the request's deadline has passed. Any other cause is logged, even after the deadline. The record has a fixed message, `sqlstate` and `exception_type`, and no `exc_info` (Rule 4) | `query_database_failed` (database cause) or `query_dependency_unavailable` (bridge provider or projection cause); same wire result | ERROR |
+| Query sandbox: a failure that becomes a query result, logged once by the executor on the **original cause**, unwrapping `SandboxRejection` and chained causes. That covers database errors in `surfaces/query_sandbox/executor.py:118`, `:837`–`:944` and operational bridge rejections from `bridge.py:369`. The one exemption: the cause is a budget timeout (the existing `budget_exhausted` classifier: `57014`/`25P04` or an admission timeout) **and** the request's deadline had passed **when the error was first observed**. The executor captures that bit at the first catch, before transaction cleanup. If it is unknown, or the deadline had not passed, the failure is logged. Any other cause is logged, even after the deadline. The record has a fixed message, `sqlstate` and `exception_type`, and no `exc_info` (Rule 4) | `query_database_failed` (database cause) or `query_dependency_unavailable` (bridge provider or projection cause); same wire result | ERROR |
 | Live graph: `GraphHydrationError` (`graph_queries.py:77`, quiet 503 at `http_api.py:1289`); `GraphBusyError` (`:73`) | `graph_hydration_mismatch` (ERROR); `graph_capacity_exhausted` (WARNING) | as listed |
 | Managed metering: producer credential rejected (`MeterReceiptUnauthorized`, `spine/managed_metering.py:164`, `:423`) | `meter_receipt_unauthorized`; replay continues | ERROR |
 | Storage capture, per failed scope (`profiles/storage_capture_batch.py`) | the refusal's declared `code`, else `storage_capture_failed` | ERROR |
@@ -107,6 +107,10 @@ and shows a few lines of setup for each tool:
   `rememberstack` logger. For a record without an exception it passes
   `RuntimeError(error_code)`. The page also shows OTLP logs to PostHog Logs
   (`/i/v1/logs`), noting that this feeds Logs, not Error Tracking.
+- **Where setup runs.** In Compose, a short bootstrap module, set as the
+  service's command wrapper, attaches the handler and then starts the API
+  or worker. The engine's own entrypoint logs on `rememberstack.*` rather
+  than `__main__`, so setup errors reach the same handler.
 - **OpenTelemetry.** Run under `opentelemetry-instrument` (zero-code logs),
   or attach `opentelemetry.sdk._logs.LoggingHandler` to `rememberstack` in
   a few lines.
@@ -119,7 +123,9 @@ keep a stderr handler so container logs continue.
 **One rule** (a test parsing `src/rememberstack` with `ast`). Every `except`
 that catches a failure class (analysis §5.1) must do one of these:
 
-- contain a `raise`;
+- contain a `raise` that propagates an exception. `raise HTTPException(...)`
+  doesn't count: FastAPI turns it into a response, which is a conversion
+  that needs a coded log;
 - contain a logging call at ERROR (`.error` or `.exception` on a module
   logger) whose `extra` includes `"error_code"` set to a literal matching
   Rule 3, or to `<name>.code`;
@@ -133,9 +139,10 @@ not by the rule.
 Boundary tests assert the code and level for each row of §2.1, and that
 wire responses are unchanged. That includes:
 
-- a sandbox budget timeout after the deadline is not logged; any other
-  cause, including after the deadline, is logged once, without exception
-  text;
+- a sandbox budget timeout whose deadline had passed at first observation
+  is not logged; a `57014` observed before the deadline is logged, even if
+  cleanup finishes after it; any other cause is logged once, without
+  exception text;
 - a failed requeue wake doesn't stop the sweep;
 - a scope's ERROR is logged before a peer scope finishes;
 - an unhandled route exception is not logged by the engine.
