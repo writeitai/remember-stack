@@ -52,7 +52,13 @@ ERROR_LEVELS = {"error", "exception", "critical"}
 SUPPRESSION = re.compile(
     r"#\s*error-contract:\s*(raised later|expected|exempt|mixed)\b"
 )
-DEFERRED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+DEFERRED = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.Lambda,
+    ast.ClassDef,
+    ast.GeneratorExp,
+)
 
 # Backlog (analysis §5): violating handlers per "relative/path.py::function".
 # Lower a count (or drop the entry) as handlers are fixed; never raise one.
@@ -130,12 +136,14 @@ def _failure_classes(modules: list[tuple[str, str, ast.Module]]) -> set[str]:
                 bases.setdefault(node.name, set()).update(
                     ast.unparse(base).rsplit(".", 1)[-1] for base in node.bases
                 )
+    # Engine subclasses of these broad bases are mostly domain outcomes (a
+    # conflict, a contended refresh, a too-broad scope), not failures; the
+    # failure-to-response boundaries among them are held by the §2.1
+    # boundary tests instead.
     failures = {name.rsplit(".", 1)[-1] for name in FAILURE_CLASSES} - {
         "Exception",
         "BaseException",
         "RuntimeError",
-        "OSError",
-        "TimeoutError",
     }
     grown = True
     while grown:
@@ -147,16 +155,31 @@ def _failure_classes(modules: list[tuple[str, str, ast.Module]]) -> set[str]:
     return FAILURE_CLASSES | failures
 
 
-def _catches_failure(handler: ast.ExceptHandler, failures: set[str]) -> bool:
+def _aliases(tree: ast.Module) -> dict[str, str]:
+    """Local name to imported name, for ``from x import Name as Alias``."""
+    return {
+        alias.asname: alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.asname
+    }
+
+
+def _catches_failure(
+    handler: ast.ExceptHandler, failures: set[str], aliases: dict[str, str]
+) -> bool:
     """Whether the handler catches a failure class (analysis §5.1)."""
     if handler.type is None:
         return True
     nodes = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
     for node in nodes:
         name = ast.unparse(node)
+        short = name.rsplit(".", 1)[-1]
         if (
             name in failures
-            or name.rsplit(".", 1)[-1] in failures
+            or short in failures
+            or aliases.get(short) in failures
             or name.startswith("psycopg.")
             or name.endswith(("Unavailable", "UnavailableError"))
         ):
@@ -168,21 +191,40 @@ def _engine_loggers(tree: ast.Module) -> set[str]:
     """Module names bound to ``logging.getLogger(__name__ | "rememberstack...")``."""
     names: set[str] = set()
     for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
         if not (
-            isinstance(node, ast.Assign)
-            and isinstance(node.value, ast.Call)
-            and ast.unparse(node.value.func) in {"logging.getLogger", "getLogger"}
-            and len(node.value.args) == 1
+            isinstance(value, ast.Call)
+            and ast.unparse(value.func) in {"logging.getLogger", "getLogger"}
+            and len(value.args) == 1
         ):
             continue
-        argument = node.value.args[0]
+        argument = value.args[0]
         if (isinstance(argument, ast.Name) and argument.id == "__name__") or (
             isinstance(argument, ast.Constant)
             and isinstance(argument.value, str)
             and argument.value.split(".")[0] == "rememberstack"
         ):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            names.update(t.id for t in targets if isinstance(t, ast.Name))
     return names
+
+
+def _reporters(tree: ast.Module, loggers: set[str]) -> set[str]:
+    """``REPORTERS`` defined in this module that themselves log a coded ERROR."""
+    return {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in REPORTERS
+        and any(
+            _log_level(call, loggers) in HANDLER_LEVELS and _coded(call)  # type: ignore[arg-type]
+            for call in _executed(node.body)
+        )
+    }
 
 
 def _http_exceptions(tree: ast.Module) -> set[str]:
@@ -256,11 +298,11 @@ def _executed(nodes: list[ast.stmt]) -> Iterator[ast.AST]:
 
 
 def _suppressed(handler: ast.ExceptHandler, comments: dict[int, str]) -> bool:
-    """A ``# error-contract: <reason>`` comment on the ``except`` header."""
-    last = handler.body[0].lineno - 1
+    """A ``# error-contract: <reason>`` comment on the ``except`` header lines."""
+    last = handler.type.end_lineno or handler.lineno if handler.type else handler.lineno
     return any(
         SUPPRESSION.match(comments.get(line, ""))
-        for line in range(handler.lineno, max(handler.lineno, last) + 1)
+        for line in range(handler.lineno, last + 1)
     )
 
 
@@ -269,6 +311,7 @@ def _satisfied(
     *,
     loggers: set[str],
     http_exceptions: set[str],
+    reporters: set[str],
     comments: dict[int, str],
 ) -> bool:
     """Raise, coded ERROR log, ``_internal_error``, or an explicit reason."""
@@ -280,14 +323,17 @@ def _satisfied(
             if raised is None:
                 return True
             target = raised.func if isinstance(raised, ast.Call) else raised
-            if ast.unparse(target) not in http_exceptions:
+            converted = ast.unparse(target) in http_exceptions or (
+                isinstance(target, ast.Attribute) and target.attr == "HTTPException"
+            )
+            if not converted:
                 return True
         if _log_level(node, loggers) in HANDLER_LEVELS and _coded(node):  # type: ignore[arg-type]
             return True
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id in REPORTERS
+            and node.func.id in reporters
         ):
             return True
     return False
@@ -311,6 +357,8 @@ def _scan() -> tuple[Counter[str], list[str]]:
     for relative, source, tree in modules:
         loggers = _engine_loggers(tree)
         http_exceptions = _http_exceptions(tree)
+        reporters = _reporters(tree, loggers)
+        aliases = _aliases(tree)
         comments = _comments(source)
         scopes: list[tuple[ast.AST, str]] = [(tree, "")]
         while scopes:
@@ -323,11 +371,12 @@ def _scan() -> tuple[Counter[str], list[str]]:
                     name = f"{prefix}.{node.name}" if prefix else node.name
                 if (
                     isinstance(node, ast.ExceptHandler)
-                    and _catches_failure(node, failures)
+                    and _catches_failure(node, failures, aliases)
                     and not _satisfied(
                         node,
                         loggers=loggers,
                         http_exceptions=http_exceptions,
+                        reporters=reporters,
                         comments=comments,
                     )
                 ):
@@ -380,11 +429,12 @@ def _violations(source: str) -> tuple[Counter[str], list[str]]:
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.ExceptHandler)
-            and _catches_failure(node, failures)
+            and _catches_failure(node, failures, _aliases(tree))
             and not _satisfied(
                 node,
                 loggers=loggers,
                 http_exceptions=_http_exceptions(tree),
+                reporters=_reporters(tree, loggers),
                 comments=_comments(source),
             )
         ):
@@ -430,6 +480,26 @@ def test_rule_rejects_the_known_bypasses() -> None:
             'try:\n    f()\nexcept Exception:\n    _logger.error("x", '
             'extra={"error_code": "some_code", **details})\n'
         ),
+        "aliased failure class": (
+            "from sqlalchemy.exc import DBAPIError as DbError\n"
+            "try:\n    f()\nexcept DbError:\n    pass\n"
+        ),
+        "qualified HTTPException": (
+            "import fastapi as fa\ntry:\n    f()\n"
+            "except Exception:\n    raise fa.HTTPException(503)\n"
+        ),
+        "unverified reporter": (
+            "def _internal_error():\n    logging.exception('x')\n"
+            "try:\n    f()\nexcept Exception:\n    _internal_error()\n"
+        ),
+        "comment in the body": (
+            "try:\n    f()\nexcept Exception:\n"
+            "    # error-contract: expected\n    pass\n"
+        ),
+        "discarded generator": (
+            "try:\n    f()\nexcept Exception:\n    (_logger.error("
+            '"x", extra={"error_code": "some_code"}) for _ in ())\n'
+        ),
         "call result code": (
             'try:\n    f()\nexcept Exception:\n    _logger.error("x", '
             'extra={"error_code": make().code})\n'
@@ -440,12 +510,20 @@ def test_rule_rejects_the_known_bypasses() -> None:
     ]
     assert passing == []
     assert _violations(_PRELUDE + 'logging.error("x")\n')[1] == ["3"]
+    annotated = (
+        "import logging\n_logger: logging.Logger = logging.getLogger(__name__)\n"
+        '_logger.error("x")\n'
+    )
+    assert _violations(annotated)[1] == ["3"]
 
 
 def test_rule_accepts_the_contract_forms() -> None:
     """A re-raise, a coded ERROR, ``.code``, and a multiline suppression pass."""
     cases = [
         "try:\n    f()\nexcept Exception:\n    raise\n",
+        "def _internal_error():\n    _logger.exception("
+        '"x", extra={"error_code": "some_code"})\n'
+        "try:\n    f()\nexcept Exception:\n    _internal_error()\n",
         'try:\n    f()\nexcept Exception:\n    _logger.exception("x", '
         'extra={"error_code": "some_code"})\n',
         'try:\n    f()\nexcept Exception as error:\n    _logger.error("x", '

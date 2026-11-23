@@ -78,7 +78,9 @@ from rememberstack.spine.work_ledger import WorkLedgerSettings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
-_logger = logging.getLogger(__name__)
+# A fixed name: this module runs as ``python -m`` (``__main__``), and its
+# records must still reach handlers attached to ``rememberstack`` (D158).
+_logger = logging.getLogger("rememberstack.profiles.selfhost")
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
