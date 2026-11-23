@@ -2,7 +2,7 @@
 
 Status: analysis (non-binding). Decision: [D158](../../decisions.md). Binding
 design: [error reporting contract](../designs/error_reporting_contract_design.md).
-Date: 2026-11-23.
+Date: 2026-11-23. Code references are main `2d7855bc` (v0.21.1).
 
 ## 1. The question
 
@@ -23,148 +23,262 @@ Owner requirements (2026-11-23):
    is metadata only; setting it enables full detail for testing and
    debugging.
 
-## 2. What exists today (main `2d7855bc`, v0.21.1)
+## 2. What exists today
 
-- **Python logging.** 37 modules use `logging.getLogger(__name__)` under the
-  `rememberstack.*` namespace. There are 25 `.error`/`.exception` calls and 36
-  warnings. No log record carries a stable code; the message text is the
-  only identifier.
+- **Python logging.** Modules log on `logging.getLogger(__name__)` under
+  `rememberstack.*`. There are 25 `.error`/`.exception` calls and no stable
+  codes: the message is the only identifier.
 - **Worker telemetry seam.** `TelemetryPort` (`ports/telemetry.py`, D61)
-  exports one structured event per worker run and the real exception object
-  on failure. The default sink writes JSON lines to stdout.
+  exports one structured event per worker run, and the exception object on
+  failure. The default sink writes JSON lines to stdout.
 - **Sentry-protocol adapter** (`adapters/sentry.py`). Opt-in with
-  `REMEMBERSTACK_SENTRY_DSN` for Sentry, GlitchTip or Bugsink. Metadata only:
-  the message becomes `[redacted]`, and locals, breadcrumbs, request bodies
-  and extras are removed. Worker exceptions are captured through
-  `TelemetryPort` with `stage`, `lane` and `processing_id` tags. The SDK's
-  default logging integration also turns other ERROR records into events;
-  the adapter drops its duplicate of the worker record.
+  `REMEMBERSTACK_SENTRY_DSN`; works with Sentry, GlitchTip and Bugsink.
+  Metadata only: the message becomes `[redacted]`, and locals, breadcrumbs,
+  bodies and extras are removed. Events arrive by two paths:
+  - worker exceptions through `TelemetryPort`, tagged with `stage`, `lane`
+    and `processing_id`;
+  - every other ERROR record through the SDK's logging integration.
+
+  To avoid duplicates, `before_send` drops every record from
+  `rememberstack.workers.base`. That also drops failures that never take
+  the `TelemetryPort` path, such as the terminal-failure finalizer at
+  `workers/base.py:671`.
+- **HTTP API.** `ProviderCallError` becomes a quiet 503
+  (`surfaces/http_api.py:793`). An exception no handler maps is logged only
+  by the server (`uvicorn.error`).
+- **MCP.** The in-process tool server logs unexpected failures through
+  `_internal_error` (`surfaces/mcp.py:568`) without a code. The
+  `remember mcp` dispatcher (`src/remember/mcp_engine.py`) is part of the
+  client CLI: it runs on the user's machine and calls the HTTP API, which
+  reports server-side failures itself.
 - **Docs.** [`self-hosting/observability`](../../website/src/app/docs/self-hosting/observability/page.mdx)
   documents container logs, the Sentry variables and the cost export.
-- **`observability` extra** (installed in the release image): `sentry-sdk`,
-  `opentelemetry-sdk` and `opentelemetry-exporter-otlp-proto-http`.
-
-So the pieces exist. Missing are a stable code on every reported failure,
-a path for tools that don't speak the Sentry protocol, a content switch, and
-reporting for the sites in §5 that swallow failures.
+- **The `observability` extra**, which the release image installs, holds
+  `sentry-sdk`, `opentelemetry-sdk` and
+  `opentelemetry-exporter-otlp-proto-http`.
 
 ## 3. Options for the hook
 
 | Option | What a self-hoster does | Covers | Engine cost |
 |---|---|---|---|
-| A. **Python logging records** (ERROR + `exc_info` + `error_code` field) as the one contract, with built-in sinks | Set a DSN (Sentry protocol) or an OTLP endpoint; an embedding app attaches any `logging.Handler` | Sentry, GlitchTip, Bugsink; every OTLP backend (Grafana, Datadog, Honeycomb, New Relic, Elastic, PostHog Logs); anything with a Python logging handler | Small: codes at ~20 sites, one OTLP handler, one switch |
-| B. Extend `TelemetryPort` to all failures | Implement a port adapter in Python | Only embedders | Every failure site needs the port injected; API, MCP and profile code have no port today |
-| C. OpenTelemetry-native (spans/events) | Run an OTel collector | OTLP backends | Larger: tracing model, context propagation; the engine doesn't trace today |
-| D. Vendor SDKs (PostHog, Datadog, …) | Pick one | One vendor each | Violates requirement 1; grows forever |
+| A. **Python logging with coded records**, plus one engine-owned handler that builds an allowlisted report and hands it to sinks | Set a Sentry DSN or an OTLP endpoint; embedders pass any callable | Sentry, GlitchTip, Bugsink; every OTLP backend (Grafana, Datadog, Honeycomb, New Relic, Elastic, PostHog Logs); any tool an embedder can call | One handler, two small sinks, codes at the audited sites |
+| B. Stock vendor handlers on the root logger (Sentry `LoggingIntegration`, OTel `LoggingHandler`) | Same variables | Same | Smallest code, but a stock handler copies extras, file paths, messages and formatted tracebacks, so the metadata rule can't hold. The root logger also admits dependency and exporter logs (OTel 1.44 `LoggingHandler`, [source](https://github.com/open-telemetry/opentelemetry-python/blob/v1.44.0/opentelemetry-sdk/src/opentelemetry/sdk/_logs/_internal/__init__.py#L539-L563)) |
+| C. Extend `TelemetryPort` to every failure | Implement a port adapter | Embedders only | Every failure site needs the port injected; the API, MCP and profile code have none |
+| D. Vendor SDKs (PostHog, Datadog, …) | Pick one | One vendor each | Violates requirement 1 and grows forever |
 
-**Choice: A.** Python logging is the one interface every error tool already
-reads:
+**Choice: A.** Python logging is the one interface every tool already reads.
+One engine-owned handler converts a coded record into an allowlisted
+**error report**:
 
-- Sentry's logging integration turns ERROR records into error events by
-  default (`event_level`, default ERROR). Source: [Sentry Python logging
-  integration](https://docs.sentry.io/platforms/python/integrations/logging/),
-  retrieved 2026-11-23.
-- OpenTelemetry's Python SDK exports `logging` records as OTLP log records,
-  and its zero-code agent configures that handler automatically. Sources:
-  [OTel Python zero-code](https://opentelemetry.io/docs/zero-code/python/)
-  and [logs example](https://opentelemetry.io/docs/zero-code/python/logs-example/),
-  retrieved 2026-11-23.
-- PostHog accepts OpenTelemetry logs over OTLP at `/i/v1/logs`, authorized
-  with the project token. Its Python SDK's `capture_exception` is how an
-  embedding application turns a record into an error-tracking event.
-  Sources: [PostHog Python logs](https://posthog.com/docs/logs/installation/python),
-  [PostHog error tracking capture](https://posthog.com/docs/error-tracking/capture),
-  retrieved 2026-11-23.
+- code, logger name, exception type, stack frames (basename, function,
+  line) and a few allowlisted tags;
+- the message and extras only in `full` detail.
 
-B fits workers but not the API, MCP or profile code, and every embedder
-would need engine-specific glue. C is the right tool for traces, which
-nobody asked for. D is ruled out by the owner.
+The sinks never see the raw record, so the metadata rule holds no matter
+which sink is used. It also gives Sentry a single path, which removes the
+dropped-duplicate problem.
 
-### Built-in sinks under A
+Sources, retrieved 2026-11-23:
 
-1. **Sentry protocol.** It already exists; keep it and add `error_code` as a
-   tag.
-2. **OTLP logs.** The SDK and exporter are already in the image. When the
-   standard variable `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or
-   `OTEL_EXPORTER_OTLP_ENDPOINT`) is set, the engine attaches an OTLP
-   `LoggingHandler` for ERROR records. It reuses the standard OTel variables
-   for endpoint, headers and protocol and adds no `REMEMBERSTACK_*` ones.
-   Running under the zero-code agent would need `opentelemetry-distro` and an
-   entrypoint change. Attaching the handler in-process is ~20 lines and
-   works with the existing image.
-3. **Embedders.** Any program that imports the engine (remember.dev's
-   runtime) attaches its own `logging.Handler` to the `rememberstack`
-   logger. That needs no engine code beyond the contract.
+- Sentry's logging integration turns ERROR records into events by default.
+  The engine turns that off (`event_level=None`) and sends its own events.
+  [Sentry Python logging](https://docs.sentry.io/platforms/python/integrations/logging/);
+  pinned SDK 2.66.1 default `event_level=ERROR`
+  ([source](https://github.com/getsentry/sentry-python/blob/2.66.1/sentry_sdk/integrations/logging.py#L22-L23)).
+- OpenTelemetry's standard exporter settings (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+  `_HEADERS`, `_PROTOCOL`) are read by the OTLP exporter itself. The
+  installed exporter speaks `http/protobuf`.
+  [OTLP exporter specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/),
+  [OTel Python zero-code](https://opentelemetry.io/docs/zero-code/python/).
+- PostHog accepts OTLP logs at `/i/v1/logs` with the project token as
+  bearer. That feeds PostHog **Logs**. PostHog **Error Tracking** issues
+  need exception events (`$exception`), which an embedder sends with the
+  PostHog SDK.
+  [PostHog Python logs](https://posthog.com/docs/logs/installation/python),
+  [Error Tracking](https://posthog.com/docs/error-tracking/issues-and-exceptions).
+
+B fails the metadata rule. C reaches workers only. D is ruled out by the
+owner.
 
 ## 4. Content switch
 
-The two built-in sinks run in the operator's own environment, but an error
-tracker is usually a third-party SaaS. Today the Sentry adapter is always
-metadata only, and container logs always carry full detail. One switch,
-`REMEMBERSTACK_ERROR_DETAIL` = `metadata` (default) | `full`, governs both
-built-in sinks:
+`REMEMBERSTACK_ERROR_DETAIL` = `metadata` (default) | `full` governs what the
+handler puts in a report, for every sink:
 
-- **`metadata`** sends the exception type, `error_code`, logger name, the
-  allowlisted tags, and stack frames (file basename, function, line) without
-  locals or source lines. The message becomes `[redacted]`.
-- **`full`** sends the message, the record's extra fields and, for Sentry,
-  local variables. Use it for testing and debugging.
+- **`metadata`** keeps code, logger, exception type, frames and allowlisted
+  tags. The message becomes `[redacted]`. There are no locals, source
+  lines, breadcrumbs, request data or extras.
+- **`full`** adds the message and the record's extras. Sentry also gets
+  local variables, with the SDK's default secret masking.
 
-It does not touch container logs, which are documented as
-content-bearing. Embedders apply their own policy; remember.dev uses its own
-switch with the same two values.
+Container logs are not affected; they are documented as content-bearing.
+Embedders pass their own detail to the same handler.
 
-Alternatives: a per-field allowlist (more flexible, nobody needs it), or
-always-metadata (blocks debugging, which the owner wants to allow).
+Alternatives: a per-field allowlist (nobody needs it), or always-metadata
+(blocks debugging, which the owner wants to allow).
 
 ## 5. Audit: where failures are hidden today
 
-Method: every `except` handler in `src/rememberstack` that does not
-re-raise, classified by reading the code (`git grep`, main `2d7855bc`). 45
-handlers don't re-raise: 9 already log at ERROR, 12 log below ERROR, and 24
-log nothing. Each one is below.
+### 5.1 Scope
 
-### 5.1 Must report (ERROR with a code), outcome unchanged
+`ast` finds **190** `except` handlers in `src/rememberstack` whose own body
+doesn't raise. Most catch input-shaped exceptions as normal control flow:
+`ValueError`, `KeyError`, `TypeError`, `JSONDecodeError`, not-found and
+refusal types. The contract governs handlers that catch a **failure class**:
 
-| Site | Today | Code to add |
+- a bare `except`, `Exception` or `BaseException`;
+- provider errors (`ProviderCallError` and its named subclasses,
+  `ProviderAccountingError`);
+- database errors (`DBAPIError`, `SQLAlchemyError`,
+  `SQLAlchemyTimeoutError`);
+- I/O errors (`OSError`, `TimeoutError`, `httpx.HTTPError`,
+  `subprocess.TimeoutExpired`);
+- `RuntimeError`, and engine errors named `*Unavailable` or
+  `*UnavailableError`.
+
+**82** handlers do; each is classified below by reading the code. The other
+108 are input handling and stay outside the CI check (design §5).
+
+The audit also covers the 25 existing `.error`/`.exception` calls, which
+gain codes, and two boundaries outside `except` blocks:
+
+- **HTTP:** the `ProviderCallError` 503 handler and unmapped exceptions;
+- **storage capture:** a failure code that can be arbitrary text.
+
+Failures returned as values outside `except` blocks can't be found
+mechanically. Reviews cover them, and the known one, storage capture's
+per-scope result, is fixed here.
+
+### 5.2 Classification
+
+| Disposition | Sites |
+|---|---|
+| Report (new ERROR + code) | 23 |
+| Already ERROR; add code | 13 |
+| Expected outcome; WARNING + code | 8 |
+| Raised later | 13 |
+| Exempt | 25 |
+| **Total** | **82** |
+
+#### Report (new ERROR + code)
+
+| Site | Catches | Disposition |
 |---|---|---|
-| `profiles/storage_capture_batch.py:240,266,268` | Per-scope failure code returned; no log (the case that hid nightly capture failures) | one ERROR per failed scope, `error_code` = the returned failure code |
-| `surfaces/mcp.py:494,510,554` | Returns a generic internal error to the MCP client; nothing logged | `mcp_tool_failed` |
-| `workers/e0.py:1715` | Structuring failure falls back to a plain skeleton silently | `structure_fallback` |
-| `workers/e0.py:1791` | Skeleton-check provider error recorded as an outcome only | `skeleton_check_failed` |
-| `workers/e0.py:1875` | Section-role classification failure: `pass` | `section_roles_failed` |
-| `workers/e0_summary.py:644,680` | Summary call failure: `pass` | `summary_failed` |
-| `workers/sync.py:98` | Per-item sync failure counted only | `sync_item_failed` |
-| `workers/reconcile.py:751` | Profile refresh after delete fails: WARNING | `profile_refresh_failed` |
+| `adapters/vertex.py:561` | `ProviderAccountingError` | `provider_usage_unparsed`: usage reported but unreadable, so cost goes unrecorded |
+| `profiles/storage_capture_batch.py:240` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
+| `profiles/storage_capture_batch.py:266` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
+| `profiles/storage_capture_batch.py:268` | `Exception` | per-scope ERROR with the declared refusal code (§4.4) |
+| `surfaces/http_api.py:3142` | `SpendLeaseUnavailable` | `spend_lease_unavailable` (503) |
+| `surfaces/query_engine.py:493` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | timeouts: WARNING `query_budget_exceeded`; other database errors: ERROR `query_database_failed` |
+| `surfaces/query_engine.py:1805` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
+| `surfaces/query_engine.py:1834` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
+| `surfaces/query_engine.py:1886` | `DBAPIError, SQLAlchemyTimeoutError, GraphBusyError, GraphHydrationError, TimeoutError` | as above |
+| `surfaces/query_engine.py:1937` | `DBAPIError, SQLAlchemyTimeoutError, TimeoutError` | as above |
+| `workers/e0.py:1701` | `ProviderCallError` | `structure_fallback` |
+| `workers/e0.py:1715` | `Exception` | `structure_fallback` |
+| `workers/e0.py:1777` | `ProviderInvalidResponseError, ValueError` | `skeleton_check_failed` |
+| `workers/e0.py:1787` | `ProviderCallError` | `skeleton_check_failed` |
+| `workers/e0.py:1791` | `Exception` | `skeleton_check_failed` |
+| `workers/e0.py:1867` | `ProviderCallError` | `section_roles_failed` |
+| `workers/e0.py:1875` | `Exception` | `section_roles_failed` |
+| `workers/e0_summary.py:634` | `ProviderCallError` | `summary_failed` |
+| `workers/e0_summary.py:644` | `Exception` | `summary_failed` |
+| `workers/e0_summary.py:666` | `ProviderCallError` | `summary_failed` |
+| `workers/e0_summary.py:680` | `Exception` | `summary_failed` |
+| `workers/reconcile.py:751` | `Exception` | `profile_refresh_failed` |
+| `workers/sync.py:98` | `Exception` | `sync_item_failed` |
 
-### 5.2 Correct as is (not swallowed)
+#### Already ERROR; add code
 
-| Site | Why |
-|---|---|
-| `adapters/converters/time_limit.py:31`, `adapters/selfhost/queue.py:210` | Collected and re-raised in the calling thread |
-| `workers/knowledge_driver.py:441,482,510`, `workers/knowledge_writer.py:247` | Recorded in the compilation ledger, then re-raised (single error or `ExceptionGroup`) |
-| `adapters/converters/image_ocr_description.py:465` | Lane error kept in the outcome and raised by `_lane_failure` |
-| `adapters/openrouter.py:422`, `adapters/typesafe.py:107` | A parsing fallback or retry loop that raises when exhausted |
-| `surfaces/http_api.py:2880` | Turns an `HTTPException` into its HTTP response (a client error) |
-| `workers/e0_summary.py:694,724` | Cache corruption is a cache miss by design |
-| `adapters/managed/perimeter_trust.py:315,328` | Keeps the last good key set (WARNING); `_log_if_not_fresh` logs ERROR once data is stale |
+| Site | Catches | Disposition |
+|---|---|---|
+| `adapters/managed/perimeter_trust.py:340` | `Exception` | `perimeter_trust_refresh_failed` |
+| `profiles/selfhost.py:1152` | `Exception` | `section_index_backfill_failed` |
+| `spine/new_work.py:81` | `Exception` | `new_work_announce_failed` |
+| `spine/section_index_backfill.py:110` | `Exception` | `section_index_blocks_unreadable` |
+| `spine/surface_cost.py:196` | `Exception` | `surface_cost_record_failed` |
+| `surfaces/mcp.py:494` | `Exception` | `mcp_tool_failed` via `_internal_error` |
+| `surfaces/mcp.py:510` | `Exception` | `mcp_tool_failed` via `_internal_error` |
+| `surfaces/mcp.py:554` | `Exception` | `mcp_tool_failed` via `_internal_error` |
+| `workers/base.py:257` | `Exception` | `worker_lease_renewal_failed` |
+| `workers/base.py:451` | `NonRetryableHandlerError, ProviderAccountingError` | `worker_item_failed` (terminal) |
+| `workers/base.py:671` | `Exception` | `worker_finalizer_failed` |
+| `workers/base.py:692` | `Exception` | `provider_usage_unrecorded` |
+| `workers/e3.py:484` | `ProviderInvalidResponseError` | `e3_provider_invalid_response` |
 
-### 5.3 Exempt, with a reason in code
+#### Expected outcome; WARNING + code
 
-| Site | Reason |
-|---|---|
-| `adapters/sentry.py:113`, `adapters/selfhost/telemetry.py:67,78`, `adapters/generation_recorder.py:262,269`, `adapters/openrouter.py:535`, `adapters/vertex.py:460` | Failure of the reporting path itself. Reporting it at ERROR to the same sink would loop or flood; it stays a WARNING |
-| `adapters/managed/composite_auth.py:50` | An adapter declining a credential is the expected path (DEBUG) |
-| `adapters/converters/office.py:312` | Malformed document metadata becomes a conversion warning shown to the user |
+| Site | Catches | Disposition |
+|---|---|---|
+| `adapters/managed/perimeter_trust.py:315` | `Exception` | `perimeter_refresh_failed`; keeps the last good key set |
+| `adapters/managed/perimeter_trust.py:328` | `Exception` | `perimeter_refresh_failed`; keeps the last accepted document |
+| `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried |
+| `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `meter_receipt_retry`; ERROR `meter_receipt_failed` when attempts are exhausted |
+| `surfaces/query_engine.py:1798` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary in the response |
+| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
+| `surfaces/query_engine.py:4576` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
+| `workers/base.py:485` | `Exception` | `worker_item_retry` (WARNING); a later dead letter is ERROR `worker_item_failed` |
 
-Bare-value failures outside `except` blocks aren't found by this scan. The
-CI check in the design (§5 there) covers new code; the implementation PR
-re-runs the scan.
+#### Raised later
+
+| Site | Catches | Disposition |
+|---|---|---|
+| `adapters/codex_writer.py:75` | `subprocess.TimeoutExpired` | returned as a timed-out session; the knowledge driver records it and raises |
+| `adapters/converters/image_ocr_description.py:465` | `Exception` | lane error kept in the outcome and raised by `_lane_failure` |
+| `adapters/converters/image_ocr_description.py:485` | `MistralOcrProviderError, ProviderCallError` | same lane outcome, raised by `_lane_failure` |
+| `adapters/converters/image_ocr_description.py:549` | `httpx.HTTPError` | same lane outcome, raised by `_lane_failure` |
+| `adapters/converters/image_ocr_description.py:611` | `ProviderAccountingError` | same lane outcome, raised by `_lane_failure` |
+| `adapters/converters/image_ocr_description.py:618` | `ConversionError, ProviderCallError` | same lane outcome, raised by `_lane_failure` |
+| `adapters/converters/pdf.py:376` | `OSError` | stored on the writer and raised by its caller |
+| `adapters/converters/time_limit.py:31` | `BaseException` | re-raised in the calling thread |
+| `adapters/openrouter.py:422` | `Exception` | parse fallback; `_capture_invalid_completion` raises |
+| `adapters/openrouter.py:1489` | `httpx.HTTPError, OpenRouterProviderError, ProviderAccountingError` | retry loop; raises the last error when exhausted |
+| `adapters/selfhost/queue.py:210` | `BaseException` | re-raised by `run_forever` |
+| `workers/knowledge_driver.py:482` | `Exception` | collected and raised (single error or `ExceptionGroup`) |
+| `workers/knowledge_driver.py:510` | `Exception` | collected and raised with the compile errors |
+
+#### Exempt
+
+| Site | Catches | Disposition |
+|---|---|---|
+| `adapters/codex_writer.py:153` | `OSError, UnicodeError, ValueError` | missing declared output is rejected by the compiler, which records it in the ledger |
+| `adapters/fsit_storage_capture_transport.py:271` | `ProviderScopeUnavailable` | draining a scope the provider already closed; the capture result carries the failure |
+| `adapters/generation_recorder.py:262` | `Exception` | reporting path: generation recorder |
+| `adapters/generation_recorder.py:269` | `Exception` | reporting path: generation recorder |
+| `adapters/managed/composite_auth.py:50` | `Exception` | an adapter declining a credential is the expected path |
+| `adapters/openrouter.py:535` | `Exception` | reporting path: generation record |
+| `adapters/openrouter.py:618` | `OSError, TypeError, ValueError` | temporary-file cleanup |
+| `adapters/openrouter.py:622` | `OSError` | temporary-file cleanup |
+| `adapters/openrouter.py:826` | `OpenRouterProviderError` | optional provider-name enrichment; usage is still recorded |
+| `adapters/postgres_p1.py:1907` | `P1SearchUnavailableError` | availability probe returns False |
+| `adapters/selfhost/object_store.py:258` | `FileNotFoundError, OSError` | idempotent delete |
+| `adapters/selfhost/telemetry.py:67` | `Exception` | reporting path: telemetry sink |
+| `adapters/selfhost/telemetry.py:78` | `Exception` | reporting path: telemetry sink |
+| `adapters/sentry.py:113` | `Exception` | reporting path: Sentry sink |
+| `adapters/vertex.py:460` | `Exception` | reporting path: generation record |
+| `adapters/vertex.py:589` | `httpx.HTTPError` | best-effort error preview; the call already failed |
+| `core/content_detection.py:401` | `OSError, ValueError, zipfile.BadZipFile, RuntimeError` | input sniffing fallback |
+| `spine/corpus_publication.py:292` | `DBAPIError` | cleanup: invalidates a broken connection |
+| `spine/corpus_publication.py:303` | `DBAPIError` | cleanup: invalidates a broken connection |
+| `spine/readiness.py:682` | `SQLAlchemyError` | readiness reports the reason to its caller |
+| `spine/readiness.py:690` | `SQLAlchemyError` | cleanup: `RESET ROLE` |
+| `surfaces/http_api.py:3161` | `SpendLeaseRefused, SpendLeaseUnavailable` | lease release on a request that already failed |
+| `surfaces/http_api.py:3168` | `SpendLeaseRefused, SpendLeaseUnavailable` | lease release on a request that already failed |
+| `workers/e0_summary.py:694` | `Exception` | cache corruption is a cache miss |
+| `workers/e0_summary.py:724` | `Exception` | cache corruption is a cache miss |
+
+### 5.3 Boundaries outside `except`
+
+| Site | Today | Fix |
+|---|---|---|
+| `surfaces/http_api.py:793` `ProviderCallError` handler | Quiet 503 | ERROR `provider_call_failed`, same 503 |
+| Unmapped exception in a route | Logged by `uvicorn.error` only | Catch-all handler: ERROR `api_unhandled_exception`, same 500 |
+| `profiles/storage_capture_batch.py:142` `_failure_code` | Any code-shaped message, else the type name (`TimeoutError`) | Only an engine refusal's declared `code`, else `storage_capture_failed` |
 
 ## 6. Cost of getting it wrong
 
 A swallowed failure costs days: nightly storage capture failed for four
 nights before anyone could name the reason, because the per-scope result was
-`None`. Over-reporting costs noise. The ERROR-only rule and the exemption
-list keep expected outcomes (retries, parks, cache misses, client errors)
-out of the tracker.
+`None`. Over-reporting costs noise. Keeping expected outcomes (retries,
+disclosed query boundaries, parks, cache misses, client errors) at WARNING
+keeps the tracker to real failures.

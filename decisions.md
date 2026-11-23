@@ -8460,35 +8460,47 @@ majors, adding compatibility shims, or opening a PG19 data directory on 18.
 ## D158. Errors reach any tracker through Python logging with a stable code
 
 **Decision (2026-11-23, owner requirements; proposed until review).** The
-engine reports failures through one contract: a failure is either raised, or
-logged once at ERROR on a `rememberstack.*` logger with `exc_info` and a
-stable `error_code`. It is never hidden behind `pass`, a counter or a bare
-return value. Trackers connect without engine code for each vendor:
+engine reports failures through one contract: a failure is raised, or
+reported once at ERROR on a `rememberstack.*` logger with a stable
+`error_code`. It is never hidden behind `pass`, a counter or a bare return
+value. Expected outcomes (retries, disclosed query boundaries, parks) are
+WARNING with a code.
 
-- the existing Sentry-protocol adapter (now tagging `error_code`);
-- a built-in OTLP log handler enabled by the standard
-  `OTEL_EXPORTER_OTLP_*` variables, for every OpenTelemetry backend,
-  PostHog Logs included;
-- for embedders such as remember.dev, any `logging.Handler`.
+One engine handler turns coded records into an allowlisted error report
+for each sink:
 
-`REMEMBERSTACK_ERROR_DETAIL` (`metadata` default, or `full`) controls what
-the built-in sinks send. A CI check enforces the contract on every `except`
-handler.
+- the existing Sentry-protocol adapter, now one path per failure;
+- an OTLP log sink enabled by the standard `OTEL_EXPORTER_OTLP_*` variables,
+  for every OpenTelemetry backend including PostHog Logs;
+- for embedders such as remember.dev, any callable through
+  `install_error_reporting`.
 
-**Why.** Python logging is the one interface Sentry, OpenTelemetry and
-PostHog all read. A per-vendor adapter would grow without end, and extending
-`TelemetryPort` would reach workers only. Nightly storage capture failed
-silently for days because a per-scope result was `None`. The audit found
-eight more sites that hide failures.
+`REMEMBERSTACK_ERROR_DETAIL` (`metadata` default, or `full`) sets what a
+report contains. A CI check enforces the contract on every `except` that
+catches a failure class, and on every ERROR log.
 
-**Consequences.** Eight sites gain ERROR records with codes, with outcomes
-unchanged. The observability docs and configuration reference document the
-contract, both sinks and the switch. Codes become part of the public
-surface; renaming one is a changelog entry. Container logs are unchanged.
+**Why.** Python logging is the one interface every error tool reads. Stock
+vendor handlers would leak messages and extras past the metadata rule,
+per-vendor adapters grow without end, and extending `TelemetryPort` would
+reach workers only. Nightly storage capture failed silently for days
+because a per-scope result was `None`. The audit found 23 more sites that
+hide failures, and 13 ERROR logs without a code.
+
+**Consequences.**
+
+- The audit (82 failure-class handlers) is the work list: 23 new reports,
+  13 codes, 8 coded warnings, 38 annotated exemptions or later raises, and
+  3 boundaries.
+- Sentry gets one path per failure.
+- The observability docs and the configuration reference document the
+  contract, both sinks and the switch.
+- Codes become part of the public surface; renaming one is a changelog
+  entry.
+- Container logs are unchanged.
 
 **Analysis.** [Error reporting contract](plan/analysis/error_reporting_contract_analysis.md).
 **Design.** [Error reporting contract](plan/designs/error_reporting_contract_design.md).
 
-**Rejected.** Vendor SDKs per tracker; extending `TelemetryPort` to every
-failure; OpenTelemetry tracing; a central code registry; always-metadata
-without a switch.
+**Rejected.** Stock vendor logging handlers; vendor SDKs per tracker;
+extending `TelemetryPort` to every failure; OpenTelemetry tracing; a
+central code registry; always-metadata without a switch.
