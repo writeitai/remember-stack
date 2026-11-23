@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.21.0](https://github.com/writeitai/remember-stack/releases/tag/v0.21.0)
-([on PyPI](https://pypi.org/project/remember/0.21.0/)).
+[v0.21.1](https://github.com/writeitai/remember-stack/releases/tag/v0.21.1)
+([on PyPI](https://pypi.org/project/remember/0.21.1/)).
 
 ## 3. Point the client at your endpoint
 
@@ -7176,8 +7176,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.21.0` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.0` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.21.1` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.1` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -7368,7 +7368,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.21.0
+git checkout v0.21.1
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -7380,7 +7380,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.21.0`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.21.1`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -10150,7 +10150,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.0/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.1/openapi.json).
 
 ## Base URL
 
@@ -19125,7 +19125,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.21.0), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.21.1), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -21644,6 +21644,21 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## 0.21.1 (November 2026)
+
+**Managed storage capture failure codes.** `capture_storage_batch` now returns
+a failure code for every scope it could not capture, such as
+`capture_writer_class_unknown`, instead of an empty result. Free-text error
+messages never leave: such failures report only the exception type.
+
+**Benchmark harness.** LoCoMo answers can be graded again from saved runs with
+a Mem0-style judge, using frozen ablation inputs. The published LoCoMo results
+now report both judges: 94.09% with the Mem0-style judge and 90.26% with the
+native one.
+
+**Documentation.** The cloud pages now state the hosted file formats, limits
+and available tools as remember.dev actually serves them.
 
 ## 0.21.0 (November 2026)
 
