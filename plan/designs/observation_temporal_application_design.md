@@ -5,6 +5,11 @@
 > authority. The text
 > below is historical rationale, including any old “binding” or “required” labels.
 
+> **D159 (2026-11-23).** The D74 forget machinery this historical text relies on — accepted
+> portable manifests, the deployment-wide intake fence and work drain, and the replay of
+> manifests before serving — no longer exists. Erasing a document is now the per-document
+> forget of the [archive and forget design](archive_and_forget_design.md).
+
 Historical status: superseded by D118. This formerly completed D110 §2's
 observation prepare/apply storage contract and amends D90's detailed locking and
 staging rules. It does not establish implementation or release readiness.

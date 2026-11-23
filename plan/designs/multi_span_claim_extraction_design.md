@@ -193,9 +193,9 @@ Reused occurrences recompute these labels/locators for their target representati
 Missing/corrupt declared provenance follows existing retry/dead-letter behavior;
 it cannot be silently relabeled direct source content.
 
-Normal version withdrawal preserves D55 currency semantics. Hard forget removes
+Normal version withdrawal and archive preserve D55 currency semantics. Forget removes
 all source occurrences, span metadata and any source-bearing prepared/decision/
-transcript/projection copies according to D74. No in-flight extraction or stale
+transcript/projection copies according to D159. No in-flight extraction or stale
 reuse result may republish forgotten evidence. Include secondary spans in reuse,
 projection and forget tests. Same-version support keeps the dependency source-owned
 without introducing cross-document claim authority.
@@ -240,7 +240,7 @@ semantic improvement. No dollar target or score gain is claimed by this decision
 This decision amends D31/D32's maximal decomposition and single complete-evidence
 anchor assumptions, D56 occurrence remapping and D65 source-map aggregation for
 multi-span occurrences. It retains D31's two model calls, D33 loss accounting,
-D41 temporal semantics, D55 testimony currency, D56 content-based reuse, D74 forget,
+D41 temporal semantics, D55 testimony currency, D56 content-based reuse, D159 forget,
 D80 source-only grounding and D118 mutable facts. Broader context, cross-document
 claim synthesis, extraction-stage fusion and adjudication batching are outside
 this contract. Implementation-facing schema details must follow these semantics.

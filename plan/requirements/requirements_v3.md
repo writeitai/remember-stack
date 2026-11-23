@@ -114,7 +114,7 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   out. Deterministic type first, optional model-chosen topic below it, readable
   title plus a deterministic suffix derived from `doc_id`, which survives path
   moves. Idempotent publication, DB-derived bounded member indexes/root `llms.txt`,
-  full repair and per-document D74 erasure without wiping surviving folders
+  full repair and per-document forget erasure (D159) without wiping surviving folders
   are required. Raw stays source of truth. K repos are standalone (D155).
 
 ## Knowledge lifecycle

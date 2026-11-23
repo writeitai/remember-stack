@@ -79,10 +79,14 @@ For byte-authoritative ingest MIME and explicit classes on every object write,
 see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--object-storage-holds-bodies-postgres-holds-the-index)
 and the [analysis](analysis/content_detection_and_object_classes_20260923.md).
 
-For deleting a document through the API, SDK, CLI or MCP, see D135 in the
-[evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
-and the [analysis](analysis/public_document_deletion.md). Erasure remains
-[D74 hard-forget](designs/hard_forget_design.md).
+For removing a document through the API, SDK, CLI or MCP, see D159's
+[archive and forget design](designs/archive_and_forget_design.md) and its
+[analysis](analysis/archive_and_forget.md). **Archive** ("this no longer holds")
+ends the document's testimony and keeps it readable as history; **forget** ("this
+should not be here") erases it and everything derived only from it, one document at
+a time, without stopping the deployment. The lineage cascade both verbs use is
+[evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly).
+The [delivery order](plans/archive_and_forget.md) sequences the change.
 
 For documents whose versions are in force for declared periods (policies, price
 lists, standards editions, contract amendments, statutes), stable section keys,

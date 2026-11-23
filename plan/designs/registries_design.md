@@ -169,7 +169,7 @@ refresh, avoiding a paid normalizer replay/DLQ loop. Setup and operator surfaces
 exhaustion.
 
 New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
-merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same
+merge/un-merge, terminal human review, archive, and forget (D159) invoke the same
 refresher. A survivor profile includes evidence anchored to every entity in its complete redirect
 closure. A merged row retains a separately attested member-local/subtree profile solely for joint
 neighborhood re-decision. Relation prose names an endpoint inside that subtree as the local
@@ -178,8 +178,8 @@ rewrites a sibling to their shared outer survivor. Thus a previous merge cannot 
 the vector used to reconsider it. The row remains excluded from public entity resolution and search. Fact-
 triggered refresh repairs raw endpoints, every retained merged intermediate, and the terminal
 active survivor, so later lifecycle changes cannot strand evidence behind a redirect;
-hard-forget refreshes shared survivor ids after the
-lineage scrub and before projection rebuild/verification. When no supported fact remains, the
+forget refreshes shared survivor ids after the
+lineage erasure and before projection rebuild/verification. When no supported fact remains, the
 summary, vector, and complete attestation clear together. The resolver independently loads the
 current salient facts and reconstructs the expected summary/hash. A mismatch makes T3 see a
 missing profile and makes T4 rely on the current facts rather than stale cached prose. Thus a
@@ -196,7 +196,7 @@ The hard policy cut vacates every legacy name-only vector. Deployment setup firs
 idempotent registry and saved-query seeds, then scans active and merged entity ids in bounded keyset pages
 through this same idempotent refresher before marking the entity semantic channel ready. A
 provider failure leaves only that channel unavailable; rerunning setup resumes safely because
-already-attested profiles debounce. Setup, human-review, and hard-forget-readiness embeddings are
+already-attested profiles debounce. Setup and human-review embeddings are
 attributed to the operational surface-cost ledger; worker-triggered refreshes stay on the worker
 attempt ledger.
 
@@ -248,8 +248,8 @@ list globally; D102 permits only the T4-backed document-local replay below.
   never accept, and a different document never inherits the binding.
 - Human re-decision and unmerge restoration use the same transactional binding
   writer before exposing changed membership. Merge status filters inactive
-  rows. Normal deletion of a version or lineage clears the entire document
-  binding prefix; hard forget additionally residual-verifies it. Setup and
+  rows. Archive (or retiring one version) clears the entire document
+  binding prefix; forget additionally verifies it is gone. Setup and
   repair clear deployment generation readiness before rebuilding.
 - Coreference (D19) is resolved *inside the E2 extraction call* (all languages) so mentions
   arrive with referents already grounded — no dedicated coref model. Likewise, each mention's

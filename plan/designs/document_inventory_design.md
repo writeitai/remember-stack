@@ -40,9 +40,11 @@ Deleting a version sets `deleted_at` and leaves `status` alone, so a
 tombstoned snapshot still reads `ready`. The newest version is therefore the
 newest **surviving** one: reporting a tombstone would show somebody a document
 they had asked to have removed, labelled as fine. A lineage with no surviving
-version is not listed; a lineage the customer asked to forget is not listed,
-though its tombstone stays in the spine so an audit can tell "forgotten" from
-"never existed".
+version is not listed. An archived lineage is listed only when the caller asks
+for archived material (`include_archived=true`, with its `archived_at`); a
+lineage the customer asked to forget is never listed, and once its erasure
+completes nothing distinguishes it from one that never existed (S55,
+[archive and forget design](archive_and_forget_design.md)).
 
 ## 3. The order must be immutable
 

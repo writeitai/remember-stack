@@ -186,7 +186,7 @@ statements (versioned vector cache; ordering only).
 5. Invalid vectors never cached.  
 6. `observations_design.md` §3 prose updated.  
 7. No separate durable rank-cache table is created; row-vector write-through
-   obeys the observation transaction and hard-forget behavior.
+   obeys the observation transaction and forget behavior.
 
 ## 10. Review disposition
 

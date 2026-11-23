@@ -276,7 +276,7 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 | --- | --- |
 | Readiness | Join `obs_flush_entity_units` → `processing_state` by `unit_id` for the version; empty completion signal reports succeeded for obs stage |
 | Lifecycle / connector-cycle | Wait on unit rows for the version (include DLQ); not only document_version work |
-| Forget | Scrub **units and processing rows for forgotten versions** via membership `version_id` / `doc_id`. Do **not** null payloads or kill units solely because `target_id` equals a canonical entity id that appears in a forgotten document’s entity set (that strand unrelated versions). Staging delete-by-doc remains. |
+| Forget | Scrub **units and processing rows for forgotten versions** via membership `version_id` / `doc_id`. A unit whose membership names a forgotten version counts as work for that document under forget's per-document fence ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)): forget waits for it while it runs, and its writing transaction share-locks the member version and writes nothing for a version that is gone. Do **not** null payloads or kill units solely because `target_id` equals a canonical entity id that appears in a forgotten document’s entity set (that strand unrelated versions). Staging delete-by-doc remains. |
 
 ### 5.9 Workers and indexes
 

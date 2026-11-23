@@ -110,8 +110,8 @@ CREATE INDEX ix_effective_periods_lineage
 
 The composite foreign key uses the existing `UNIQUE (deployment_id, doc_id, version_id)` on
 `document_versions`, so a period for lineage A can never name a version of lineage B. There
-is no `ON DELETE` action: versions and lineages are soft-deleted (D135, §9), and periods are
-removed only by hard forget (D74), which deletes them explicitly.
+is no `ON DELETE` action: archive keeps version and lineage rows (§9), and periods are
+removed only by forget (D159), which deletes them explicitly.
 
 Rows are a ledger: a correction sets `retracted_at` on the old row and inserts the new one in
 the same transaction. The lineage's mode is a second, tiny ledger
@@ -184,7 +184,7 @@ Consequences a reader should check against the example:
   declared start, the two versions are both in force in the overlap (a transition period).
   Overlap is legal; two live declarations of one lineage with the same start are not (the
   unique index). §3.2 and §6.2 say how readers see the overlap.
-- Soft-deleting a version (D135) removes its declarations from evaluation; its neighbours'
+- Retiring a version (the lineage cascade's internal version grain, §9) removes its declarations from evaluation; its neighbours'
   derived ends recompute from the remaining declarations.
 
 ### 2.3 Writing periods
@@ -554,9 +554,10 @@ reuse_identity_hash)`.
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the
 origin version later does not change it on descendant chunks or on reused claims — those
-claims were already stamped with it and D135 retires testimony, not timestamps. Chunks created
-*after* a deletion never draw from deleted versions (step 2), so reuse never draws on retired
-testimony (D55's refinement).
+claims were already stamped with it and the lineage cascade ends testimony, not timestamps.
+Chunks created *after* a version is deleted or forgotten never draw from it (step 2). Archived
+versions are not deleted and stay reuse candidates
+([archive and forget §2.4](archive_and_forget_design.md#24-coming-back)).
 
 Because the parser, blockizer, structurer and extractor versions are part of the identity, a
 toolchain change is a reuse boundary exactly as D56/D65 define: a chunk under a new toolchain
@@ -1048,8 +1049,8 @@ application would ever reach the adjudicator again. A **window review** closes t
      change that made such a fact stale queued its review.
 - **The period fence.** Every certifier (ordinary apply and review apply) takes a
   per-deployment advisory lock *shared*. It takes it after the entity adjudication lock and
-  before its final validation, and holds it through commit. Lock order: hard-forget fence,
-  identity epoch, entity lock, period fence, then row locks.
+  before its final validation, and holds it through commit. Lock order: the per-document forget
+  fence (a share lock on the source versions, D159), identity epoch, entity lock, period fence, then row locks.
 
   A lineage fan-out takes the same lock *exclusively* before its first page. It holds no
   other lock while doing so, and it reads stored and current bases in one statement.
@@ -1063,11 +1064,11 @@ application would ever reach the adjudicator again. A **window review** closes t
   that writer's fan-out could see the still-stored A and skip the fact, and only then would
   the review commit B's window.
 - **Triggers.** A lineage *review request* is queued — only for a lineage that has ever
-  recorded an effective-time event, and never while a hard forget is honored (D74 scrubs the
-  touched facts itself) — in the transaction of the change: a period write that changed
+  recorded an effective-time event, and never for a lineage being forgotten (forget deletes the
+  touched facts' review rows itself) — in the transaction of the change: a period write that changed
   anything, `clear`, an ingest that declares or corrects a period on an existing version (a D55
-  no-op ingest, which no processing follows), an operator version deletion, a lineage
-  deletion (public delete, operator delete, source-deletion finalisation), and late testimony
+  no-op ingest, which no processing follows), a version retirement, a lineage
+  archive (public archive, source-deletion finalisation), and late testimony
   retired from a deleted version. A **new** version declared at ingest is reviewed when its
   processing completes (the reconcile stage), not at ingest: until then its reused claims have
   no occurrences in it, so the predecessor's facts would look closed and be reviewed twice. A
@@ -1132,7 +1133,7 @@ application would ever reach the adjudicator again. A **window review** closes t
     not spend its retries. It reschedules itself as a new job that becomes due when that claim
     goes stale. A claim older than 15 minutes (a starting value) may be taken over.
 
-  The row is deleted when its answer is applied. Hard forget deletes the rows of the facts it
+  The row is deleted when its answer is applied. Forget deletes the rows of the facts it
   touches and clears their `period_basis`.
 - **Cost.** A fact whose basis did not move is never reviewed, and a review of a fact whose
   stored basis already matches returns without a model call, so duplicate triggers are free.
@@ -1146,24 +1147,31 @@ so open PR #486's belief-time rule applies without special cases.
 
 ## 9. Deletion and forgetting
 
-D135 deletes by soft tombstone (`document_versions.deleted_at`, `documents.deleted_at`,
-`lifecycle.py` `_TOMBSTONE_VERSION` / `_TOMBSTONE_LINEAGE_BY_ID`); rows stay. D140 therefore
+Archive (D159, [archive and forget design](archive_and_forget_design.md) §2) runs the lineage
+cascade and marks the lineage (`documents.archived_at`) without tombstoning anything; the
+cascade's internal version grain tombstones one version (`document_versions.deleted_at`), and
+forget tombstones the lineage and its versions until it erases them. In this design a
+**deleted** version is a tombstoned one. A version carries current testimony only while its
+lineage is live and it is not deleted, so an archived lineage's versions are readable as
+history but take no part in current belief. Rows stay until forget erases them. D140 therefore
 specifies visibility, not cascades:
 
-- **Version deleted.** Its declarations stop taking part in interval derivation (§2.2 joins
+- **Version retired.** Its declarations stop taking part in interval derivation (§2.2 joins
   non-deleted versions); neighbours' derived ends recompute. Its chunks, claim occurrences,
   reference generations and outgoing references stop being readable (every read joins non-deleted
   versions). Incoming references whose pinned `version_key` named it return
   `pinned_version_unavailable`; floating references simply stop selecting it. The declaration
-  ledger rows remain as history, as D135 retains all version rows.
-- **Lineage deleted.** Everything above for all its versions; incoming references return
-  `target_unavailable`. `to_doc_id` is kept: if the lineage is revived (D55/D135 resurrection of
-  a tombstoned lineage), resolution works again without re-binding.
-- **Hard forget (D74).** The forget worker explicitly deletes the lineage's period rows,
+  ledger rows remain as history, as archive retains all version rows.
+- **Lineage archived.** Its versions stop carrying current testimony, so they leave current
+  belief (`document_version_scope.selectable`) as deleted versions do; incoming references
+  return `target_unavailable`. `to_doc_id` is kept: if the lineage comes back (a changed version or
+  `unarchive`), resolution works again without re-binding.
+- **Forget (D159).** The forget job explicitly deletes the lineage's period rows,
   effective-time events, `document_version_scope` rows, reference generations and artifacts, and the references it made; for references *to* it made by
   other lineages it sets `to_doc_id = NULL, resolved = false` and keeps the source-named target
   (it is the source's content, like `raw_citation`), so a re-ingest can re-bind it. Deleting
-  the chunk and section rows follows D74 unchanged; `text_origin_at` values on other lineages
+  the chunk and section rows follows forget's explicit erasure order
+  ([archive and forget §3.4](archive_and_forget_design.md#34-the-erasure-job)); `text_origin_at` values on other lineages
   are unaffected (they never cross lineages).
 
 ## 10. Non-goals and scope boundaries

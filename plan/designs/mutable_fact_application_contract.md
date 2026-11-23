@@ -96,9 +96,12 @@ retire by verifying its receipt, without relinking evidence.
 
 Use READ COMMITTED transactions with this acquisition order:
 
-1. Shared transaction advisory lock on `hard-forget:<deployment UUID>`; verify the
-   existing forget/availability fence while holding it. Forget preparation takes
-   this lock exclusively. No payload publication bypasses this check.
+1. Share-lock (`FOR SHARE`) the document version rows of the consumed source claims
+   and require each version to exist and not be tombstoned: the per-document forget
+   fence ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)).
+   Forget's delete transaction locks those rows `FOR UPDATE`, so a write either
+   commits before it (and is in its inventory) or finds its source gone. No payload
+   publication bypasses this check.
 2. Shared identity lock `<deployment UUID>:identity-epoch`. Merge/unmerge retain
    their existing exclusive form. Resolve subject and object redirects before choosing
    canonical blocks; release/retry if the required subject set changes.
@@ -132,8 +135,8 @@ and infer from the new input. Equal complete domain inputs permit reuse; there i
 no new per-endpoint ownership or operation-sequence authority. All fact-creation,
 identity/support movement and legacy direct-write entry points use this block
 protocol. Lifecycle currency updates lock claims; its fact changes and evidence
-recounts lock fact rows and cannot bypass the guarded re-read. Forget drains
-ordinary work and holds its existing fence through scrubbing/recovery.
+recounts lock fact rows and cannot bypass the guarded re-read. Forget waits only for
+running work on its own document and excludes later writers through step 1.
 
 Source withdrawal changes testimony currency and system belief only. Remove
 `lifecycle._CAP_RELATION`: zero-support relations use `invalidated_at`, like
@@ -254,13 +257,13 @@ A current whole-window witness intersecting erased claims loses its chosen dates
 set endpoints NULL, precision unknown and witness array empty, and invalidate all
 labels/vectors/profile/K inputs derived from it. This conservative action does not
 claim the surviving evidence is false. Retain shared fact identity and independent
-support according to D74; erase source-derived statement text through its existing
+support according to the forget contract (D159); erase source-derived statement text through its existing
 purge/reconstruction contract as well. Positive current support from a surviving
 lineage is required to retain a shared source-derived assertion; a contradiction
 alone cannot preserve the forgotten wording. Reconstruct a shared observation
 from a surviving supporting original normalization output. Never adopt counterevidence as the
-fact's replacement statement. Recompute exclusivity for older portable manifests
-without changing their bytes. Existing NULL profile input hashes permit bounded
+fact's replacement statement. Recompute exclusivity when `remember forget reapply`
+re-runs an older forget record, without changing its stored inventory. Existing NULL profile input hashes permit bounded
 repair discovery on retry. Evidence aggregates must agree with remaining
 application pointers. No prepared fingerprint, cited UUID array,
 cache or restored backup may reintroduce erased content. Verification includes

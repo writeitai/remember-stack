@@ -382,8 +382,8 @@ keeps its bounded batches and one shared operation deadline at every depth.
 Ending a fact's world-valid interval does not delete its label from P1: an
 ended-but-still-believed fact remains searchable for `at`, `overlap`, and
 `history`. Invalidation updates the proposal status so ordinary nomination can
-avoid it, while PostgreSQL still makes the authoritative decision. D74 hard
-forget purges the row rather than relying on that status filter.
+avoid it, while PostgreSQL still makes the authoritative decision. Forget
+(D159) purges the row rather than relying on that status filter.
 
 Coverage count is also a pre-depth ranking key, not merely a final reranker:
 the scoped nomination orders higher coverage before relevance and applies
@@ -1506,7 +1506,7 @@ never grants raw tables or bypasses deployment/time/provenance predicates.
 | P1 state and authority disagree | For chunks, authority confirmation in the request's snapshot (D142) rejects an ineligible `chunk_search` row; the rejection is counted in the invocation's drop disclosure. For in-row targets, null/stale embedding attestation makes the semantic row unready. Authorization uncertainty always fails the invocation. |
 | Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch marks the chunk channel unready and schedules repair |
 | Runtime public interface shape disagrees with the manifest | Open SQL and saved queries fail `schema_version_mismatch`. Exact semantic view-definition disagreement fails the deploy/CI same-server comparison. The four core operations remain available only if their own descriptors/invariants verify |
-| Forget is pending or incomplete | Live SQL/core lineage and graph paths fail closed under D48/D74; no copied graph or older generation exists to retain forgotten content |
+| A forget is still erasing | The document is already tombstoned, so live SQL/core lineage and graph paths exclude it under D48; no copied graph or older generation exists to retain forgotten content |
 
 ## 8. Pre-release surface cut and terminal criteria
 

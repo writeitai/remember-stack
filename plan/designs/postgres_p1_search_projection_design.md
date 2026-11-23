@@ -214,7 +214,7 @@ only when its non-null vector attestation matches the deployment's active
 embedding configuration.
 
 Projection lag may reduce recall; it must never expose an ineligible record.
-Deletion, invalidation, supersession, and hard-forget are enforced by the
+Archive, forget, invalidation and supersession are enforced by the
 authority confirmation of every nomination in the operation's ranked-read
 context (§8.2–§8.3). Cleanup then removes or
 clears disposable search state through the normal lifecycle transaction or
