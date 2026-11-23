@@ -907,7 +907,11 @@ excludes that edition. The gate closes this without touching fact windows:
   replaced reading, or only in a deleted version, is not evidence. The supporting link must
   also belong to the claim's testimony episode current at the scope's belief instant (D159):
   after un-archive, a new occurrence cannot make an ended episode's link qualify the old fact,
-  and evidence hydration applies the same predicate.
+  and evidence hydration applies the same predicate for current reads. History reads (the
+  facts a source once supported, D153's history views) instead use each link's recorded
+  episode with that episode's occurrences and historical endpoint eligibility, so an
+  archive-closed fact keeps its old evidence visible in history while that link contributes
+  nothing to current support.
 - **A fact with no supporting evidence at all** — D54's zero-support case, typically a fact
   that only contradicting claims still mention, which D54 *flags* rather than hides — passes
   the gate when it has an in-scope occurrence of **either** stance. Requiring support would

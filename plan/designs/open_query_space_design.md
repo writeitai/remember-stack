@@ -329,7 +329,8 @@ instant; the non-parameterized view would choose a new statement timestamp.
 They
 do not call the current-only public `semantic_facts` SRF and do not reuse
 `facts_as_of` accidentally. The operation returns supporting and contradicting
-current testimony, explicit `fact_evidence[]`, exact `evidence_totals[]`,
+current testimony (for `history`, the evidence of each link's recorded testimony episode,
+D159), explicit `fact_evidence[]`, exact `evidence_totals[]`,
 contradiction co-members and support state in every mode. The evidence-association
 budget is max(60, 2*k), allocated in rounds across facts and both stances, so
 every selected fact can retain one available supporting and contradicting claim

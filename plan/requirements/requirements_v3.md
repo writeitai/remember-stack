@@ -40,8 +40,8 @@ truth, and rebuild semantics. L-numbers from earlier drafts survive as shorthand
   documents (every version stays independent testimony) from **living** documents (the latest
   version is the source's standing statement, and removing content **retracts** beliefs it
   solely supported — recorded and reversible, never silent). Confidence signals count **distinct
-  sources**, never versions, re-processings, or repetition. **Deleting a document** (at the
-  source or by an operator) removes its contribution — facts it alone supported are closed,
+  sources**, never versions, re-processings, or repetition. **Archiving a document** (at the
+  source or by an operator, D159) removes its contribution — facts it alone supported are closed,
   recorded and reversibly, while facts other documents also support live on. Re-ingesting an
   edited document must cost **proportional to the edit, not the document**.
 - **E1 — Chunks** *(formerly L1)*: retrieval-sized units that preserve their surrounding

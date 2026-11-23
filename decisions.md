@@ -7752,7 +7752,9 @@ deployment's values into another's work.
      instead. A deliberate re-add of a forgotten lineage copies the upload into its
      generation prefix and deletes the upload rather than keeping the key.) `key` must be `uploads/<id>` with an opaque id of 16–128
      characters from `[A-Za-z0-9_-]`, because hard forget purges a version's raw key in
-     every store and its manifests are immutable. Each content keeps one raw object, the
+     every store and its manifests are immutable (**D159**: the reason is now that object keys
+     must be opaque, carrying no caller text, since a forget record stores content-free
+     locators). Each content keeps one raw object, the
      first one recorded, and only that one is purged by hard forget; so when identical
      bytes are already stored under another key, that version answers and every ingest
      path (`ingest`, `ingest_observed`, `ingest_stored`) deletes the copy it wrote or was

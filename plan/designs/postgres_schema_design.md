@@ -1163,7 +1163,8 @@ sub-worker (ingest → convert → structure → crossref, D36) is **separately 
 idempotent on `content_hash + its own version`.
 
 **Three identities (D55).** A **content object** = immutable bytes (`content_hash` — the
-idempotency/dedup key, stored and converted once even across lineages); a **document lineage**
+idempotency/dedup key, stored once even across lineages; every reading of it belongs to one
+version, D159); a **document lineage**
 (`doc_id`) = the logical document over time, identified by connector-native
 `(source_kind, source_ref)` (a Drive file ID, a message ID — renames/moves are metadata over a
 stable ref); a **document version** = one observed immutable snapshot of a lineage pointing at
@@ -1175,9 +1176,9 @@ anchors on the lineage; per-snapshot state lives on the version. Full design:
 -- ─────────────────────────────────────────────────────────────────────────
 -- content_objects — immutable bytes, deduplicated (D55/D56). One row per distinct byte content
 -- per deployment; two lineages carrying identical bytes (the same PDF in two Drive folders)
--- share one object — stored once; converted once PER TOOLCHAIN (D65): one byte object can own
--- several representation generations (document_representations below) — a new ASR/VLM re-reads
--- the same bytes into a new immutable representation beside the old one, never over it.
+-- share one object — stored once. Readings are owned by versions (document_representations
+-- below: a representation reads one snapshot), so a new ASR/VLM re-reads a version into a new
+-- immutable representation beside the old one, never over it.
 -- NEVER dedup across deployments (D37/D16).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE content_objects (
@@ -1191,7 +1192,7 @@ CREATE TABLE content_objects (
   PRIMARY KEY (deployment_id, content_hash)
 );
 COMMENT ON TABLE content_objects IS
-  'Deduplicated immutable bytes (D55/D56): one row per distinct content per deployment; versions reference these, so identical bytes across lineages are stored and converted once. content_hash idempotency (D12) lives here.';
+  'Deduplicated immutable bytes (D55/D56): one row per distinct content per deployment; versions reference these, so identical bytes across lineages are stored once (each version owns its own readings). content_hash idempotency (D12) lives here.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- documents — one row per DOCUMENT LINEAGE (D55): the logical document over time, identified

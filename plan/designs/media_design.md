@@ -501,8 +501,8 @@ version, stamped with the route + full component versions and the manifest's out
 re-conversion of unchanged bytes **cannot overwrite** the coordinate system that historical
 claims' spans and locators resolve against (schema: a `document_representations` table; the
 version's `current_representation_id` points at the live one). One byte object, several
-readings: `content_objects`' "converted once" is per *(bytes, route, component versions)* —
-identical bytes are never re-converted under the same toolchain, and a new toolchain is a new
+readings: each reading belongs to one version, and a version is never re-converted under
+the same toolchain (*(version, route, component versions)*), and a new toolchain is a new
 representation object beside the old one, never in place of it.
 
 **An ASR/VLM upgrade** creates a new representation → new blocks → reuse keys miss →

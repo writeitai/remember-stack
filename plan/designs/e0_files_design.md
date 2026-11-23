@@ -143,7 +143,7 @@ documents(          -- the LINEAGE (D55): the logical document over time
   origin, current_version_id, title, first_seen_at, last_observed_at)
 
 document_versions(  -- append-only observed snapshots of a lineage
-  version_id, doc_id, content_hash → content_objects,  -- bytes deduplicated (stored once; converted once per toolchain, D65)
+  version_id, doc_id, content_hash → content_objects,  -- bytes deduplicated (stored once; each version owns its readings, D65/D159)
   version_no, source_version_ref, source_modified_at,  -- → derived claims' asserted_at (D41/D55)
   current_representation_id → document_representations, -- the LIVE reading (swap-on-completion, D65)
   status, ingested_at, superseded_at)
