@@ -8456,3 +8456,39 @@ and do not become PostgreSQL 18 qualification evidence.
 
 **Rejected.** Remaining on 19 for a removed feature, supporting two server
 majors, adding compatibility shims, or opening a PG19 data directory on 18.
+
+## D158. Errors reach any tracker through Python logging with a stable code
+
+**Decision (2026-11-23, owner requirements; proposed until review).** The
+engine reports failures through one contract: a failure is either raised, or
+logged once at ERROR on a `rememberstack.*` logger with `exc_info` and a
+stable `error_code`. It is never hidden behind `pass`, a counter or a bare
+return value. Trackers connect without engine code for each vendor:
+
+- the existing Sentry-protocol adapter (now tagging `error_code`);
+- a built-in OTLP log handler enabled by the standard
+  `OTEL_EXPORTER_OTLP_*` variables, for every OpenTelemetry backend,
+  PostHog Logs included;
+- for embedders such as remember.dev, any `logging.Handler`.
+
+`REMEMBERSTACK_ERROR_DETAIL` (`metadata` default, or `full`) controls what
+the built-in sinks send. A CI check enforces the contract on every `except`
+handler.
+
+**Why.** Python logging is the one interface Sentry, OpenTelemetry and
+PostHog all read. A per-vendor adapter would grow without end, and extending
+`TelemetryPort` would reach workers only. Nightly storage capture failed
+silently for days because a per-scope result was `None`. The audit found
+eight more sites that hide failures.
+
+**Consequences.** Eight sites gain ERROR records with codes, with outcomes
+unchanged. The observability docs and configuration reference document the
+contract, both sinks and the switch. Codes become part of the public
+surface; renaming one is a changelog entry. Container logs are unchanged.
+
+**Analysis.** [Error reporting contract](plan/analysis/error_reporting_contract_analysis.md).
+**Design.** [Error reporting contract](plan/designs/error_reporting_contract_design.md).
+
+**Rejected.** Vendor SDKs per tracker; extending `TelemetryPort` to every
+failure; OpenTelemetry tracing; a central code registry; always-metadata
+without a switch.
