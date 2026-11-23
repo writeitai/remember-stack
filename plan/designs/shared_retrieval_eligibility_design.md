@@ -397,8 +397,9 @@ sets where extra columns would change a public row or JSON payload. This is
 not permission to expose a changed public column set.
 
 The runtime builder reads only the source-qualified helper and authoritative
-`entities_current` for current reads; for history reads it uses the historical endpoint
-eligibility and the evidence of the episode recorded on each link (D159), so an
+`entities_current` for current reads; for belief-as-of reads it uses the historical endpoint
+eligibility and the evidence of the links whose episode was current at the belief instant
+(D159), so an
 archive-closed fact and its evidence stay readable in history after un-archive without
 counting toward current support. Its **only independently assembled eligibility rule** is
 the endpoint conjunction above. That small rule is pinned structurally and by

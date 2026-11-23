@@ -72,9 +72,9 @@ Python surface (D141), because the parity check compares that inventory with the
 - The upgrade migration converting D135 tombstones to caller or source archives (design §4),
   tested by upgrading from the previous release.
 - Tests: archive and Rule 4 (design §5 tests 14 and 15, the testimony-episode, archived-owner
-  and D135-upgrade cases of test 9, and test 11's archive and unarchive cases): un-archiving identical bytes makes
-  no Selection, Claimify or embedding call, and a one-section edit of an archived document pays
-  only for that section.
+  and D135-upgrade cases of test 9, and test 11's archive and unarchive cases): un-archiving a
+  fully processed version makes no Selection, Claimify or source-embedding call, and an edit of
+  an archived document costs what the same edit of a live lineage costs.
 
 ## 4. Public documentation
 

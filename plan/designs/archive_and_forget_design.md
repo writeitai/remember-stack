@@ -363,7 +363,11 @@ the document hidden and the record `erasing`; nothing reopens.
    suffix taken from the caller's file name); a retained legacy original whose key still
    carries the forgotten lineage's prefix or file-name suffix is first copied, under the hash
    lock, to an engine-generated key of a surviving owner and `content_objects.raw_uri` is
-   updated, so nothing of the forgotten lineage survives in a key. When two forgets share a hash, whichever deletes the last referencing version deletes
+   updated, so nothing of the forgotten lineage survives in a key. Before purging any old key,
+   it verifies under the hash lock that the surviving owner's current key holds the bytes (by
+   hash); if that copy is missing (a raw-only restore can bring back the old key while the
+   database points at the relocated one), it recovers it from a hash-verified restored copy
+   first, and if it cannot, the forget or reapply fails rather than delete the only copy. When two forgets share a hash, whichever deletes the last referencing version deletes
    the object; the other finds a reference and leaves it. Conversions are owned by one
    version (a representation reads exactly one snapshot), so the forgotten versions'
    representations and artifacts are always deleted, and a surviving version keeps its own
@@ -424,8 +428,10 @@ the document hidden and the record `erasing`; nothing reopens.
      older is refused, under the fence, when it tries to write a transcript, an audit row or
      a publication, so a session that read the document before the hide can never write
      afterwards, in any scope. While any forget is still `erasing`, K sessions run only in the
-     bundle sandbox, whose inputs are verified against the live, scrubbed database when the
-     bundle is prepared (no memory CLI, no mounts); compilation continues everywhere, and only
+     bundle sandbox (no memory CLI, no mounts), and a bundle admits only inputs established as
+     clean: no fact or entity text that has evidence from a tombstoned document (step 2 may
+     not have scrubbed it yet), and no previous Markdown, child summary or sidecar whose
+     recorded provenance includes such evidence or is not recorded; compilation continues everywhere, and only
      the freedom to explore is suspended until the erasure finishes. Paths pending redaction
      are excluded from every planner and writer input. Those bodies are gone before
      the history rewrite re-adds current files, so no contaminated current file is
@@ -458,8 +464,10 @@ the document hidden and the record `erasing`; nothing reopens.
    is gone; every controlled session acknowledged, or the client-enforced cache-expiry
    bound has passed since the invalidation was issued (a disconnected client cannot serve
    from cache past that bound and must replay invalidations before reading again, so it
-   cannot hold the forget open); and every retained K path's reachable
-   history contains no reference to an inventory ID and no deleted compiled body. Set `erased_at`. With no blocking paths set status
+   cannot hold the forget open); and every retained K path other than the pending blocking
+   paths (verified later, §3.9) has reachable history containing no reference to an ID in the
+   inventory's delete set (citations to surviving shared facts stay valid) and no deleted
+   compiled body. Set `erased_at`. With no blocking paths set status
    `complete`; otherwise `waiting_for_redaction`.
 
 ### 3.5 The forget record
@@ -570,7 +578,8 @@ deployment or project setting.
   call is retryable after a crash at any point, and forget releases the publication and
   navigation locks before waiting for the acknowledgement. The adapter must remove those entries from every open session's
   listings, drop cached data for them, make later reads on already-open handles of erased
-  paths fail, and acknowledge; it never stops a session. The client enforces a cache expiry
+  paths fail, and acknowledge (or, for a disconnected client, let its own cache-expiry bound
+  pass; see below); it never stops a session. The client enforces a cache expiry
   bound of its own, and a session that reconnects after a disconnect must replay pending
   invalidations before it serves any cached read, so a disconnected client cannot keep
   serving warm entries for an erased path. Step 6 accepts either the acknowledgement or the
@@ -715,7 +724,9 @@ The migration from the D135/D74 release first classifies existing D74 records: a
 manifest becomes a `complete` forget, and its retired placeholder rows are removed so a
 flagged re-add can register; a `preparing` or `accepted` one, whose document may still be
 live, gets the D159 hide transaction (§3.2 steps 1–4) inside the migration and becomes an
-`erasing` forget with its work item enqueued, so a partially completed D74 erasure finishes as
+`erasing` forget with its work item enqueued; its D74 manifest's purge inventory (object keys,
+including opaque `uploads/<id>` locators the D74 scrub may already have replaced in
+`raw_uri`) is translated into the new inventory before the manifest is dropped, so a partially completed D74 erasure finishes as
 an ordinary forget. Only then does it convert
 the remaining tombstones: a lineage a caller
 deleted becomes a caller archive and one a connector observed deleted becomes a source archive
@@ -826,7 +837,9 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     document while a delayed delivery of the first forget's item arrives: the stale item does
     nothing and the second forget completes.
 12. **Mounts.** A controlled session open during the forget stops listing the document, and a
-    handle opened before the forget fails its next read, without the session restarting;
+    handle opened before the forget fails its next read, without the session restarting; a
+    client that disconnects with a warmed handle lets the forget complete once its cache bound
+    passes, and on reconnect replays the invalidation before serving any cached read;
     changed index files show the regenerated content. A crash after the corpus deletion and
     before the acknowledgement is retried by suffix and still invalidates a warmed handle and
     a warmed, since-pruned index file. A multipart upload interrupted mid-write for the
@@ -839,7 +852,12 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     a registered `uploads/<id>` original and a deduplicated original are erased from their
     locators. Restore only the K repository from before a page moved: the compiled page under
     its old path is discarded, not adopted; restore it from after a compiled page was adopted
-    as authored: the authored edits are kept; a markerless legacy file is quarantined. Restore only the K repository from before a compile that dropped the
+    as authored: the authored edits are kept; a markerless legacy file is erased when the
+    catalogue of the restored revision establishes it as compiled, and `forget-reapply`
+    reports the restore unverifiable when ownership cannot be established. Restore only the raw
+    bucket after a shared original was relocated: the surviving owner's copy is verified (and
+    recovered if needed) before the old key is purged. Upgrade after a D74 scrub but before its
+    purge: the old `uploads/<id>` locator is erased. Restore only the K repository from before a compile that dropped the
     citation: `reapply` discards the restored compiled pages and the canary passes. Restore only the corpus bucket and run `reapply`: it passes. A stale export
     does not erase another lineage that owns identical bytes. A restore spanning a deliberate
     re-add, with the latest export, neither erases the re-add nor revives its guard. A
@@ -860,9 +878,11 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     fact survived through another document and whose new application lands elsewhere supports
     only the new fact. Metering: an unsent measurement for a forgotten version is
     cancelled and an approval racing the purge keeps its terminal accounting.
-15. **Rule 4.** Provider calls are counted: un-archiving a fully processed version makes no
-    Selection, Claimify or embedding call; a changed version of an archived document with one edited
-    section pays only for that section, per the CLAUDE.md Rule 4 test. Restored claims get a
+15. **Rule 4.** Provider calls are counted, source embeddings separately from metered fact
+    reapplication: un-archiving a fully processed version makes no Selection, Claimify or
+    source-embedding call; a changed version of an archived document costs exactly what the
+    same edit to a live lineage costs, per the CLAUDE.md Rule 4 test, with its known-gap
+    expected failures carried over. Restored claims get a
     fresh fact application: the old fact stays closed and the new support is visible.
 16. **Large document.** Forget of a document with thousands of chunks completes while other
     documents' reads stay within their normal latency; the duration is recorded.

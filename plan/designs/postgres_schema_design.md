@@ -531,7 +531,7 @@ CREATE TABLE processing_state (
   defer_reason    processing_defer_reason,      -- scheduled | retry_backoff | budget; constrained to the corresponding status below
   attempts        smallint NOT NULL DEFAULT 0, -- handler executions actually begun; delivery attempts and budget parking do not increment it
   max_attempts    smallint NOT NULL DEFAULT 3, -- total handler-attempt limit; starting point = initial + D12's two retries
-  last_error      text,                        -- full traceback + cause chain for the most recent handler failure; failures never disappear
+  last_error      text,                        -- exception types, content-free error codes and stack frames of the most recent failure and its cause chain, never exception messages (D159: no source text); failures never disappear
   payload         jsonb,                       -- open-ended handler input for DLQ inspection/replay; never route, due, retry, budget, or DLQ state
   enqueued_at     timestamptz NOT NULL DEFAULT now(),
   started_at      timestamptz,
@@ -1186,9 +1186,9 @@ CREATE TABLE content_objects (
   content_hash    text NOT NULL,               -- sha256 of raw bytes — THE idempotency key (D12)
   mime            text NOT NULL,               -- detected MIME, drives the conversion router (D38)
   byte_size       bigint,
-  raw_uri         text NOT NULL,               -- gs://…-raw/<doc_id-of-first-observer>/<content_hash>/original.<ext> (D155 private source store; corpus serves copies)
+  raw_uri         text NOT NULL,               -- engine-generated, extension-free: gs://…-raw/<doc_id-of-owner>/<generation>/<content_hash>/original (D159; legacy keys are relocated when their owner is forgotten)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
-  purged_at       timestamptz,                 -- forget: bytes erased when no live version references this object (§13.2)
+  purged_at       timestamptz,                 -- forget: bytes erased when no version of any lineage, live or archived, references this object (§13.2)
   PRIMARY KEY (deployment_id, content_hash)
 );
 COMMENT ON TABLE content_objects IS
@@ -2952,8 +2952,9 @@ schema-coverage test fails when a new column that references document data is no
   cleared until recomputed), their profile cache is invalidated and derived embeddings whose
   input text changed are cleared;
 - K refresh/compile/plan payloads and transcript URIs tied to the affected evidence (the objects
-  themselves are deleted by the job's object step), and `last_error` on the document's work
-  items (tracebacks may quote content; payloads carry IDs only); and
+  themselves are deleted by the job's object step), and, on the first forget, every legacy
+  `last_error` written before diagnostics became content-free, deployment-wide (statuses,
+  receipts and costs stay; payloads carry IDs only); and
 - eval/golden/canary payloads derived from the forgotten lineage, and deployment-wide planner
   audit transcripts and legacy eval fixtures that carry no reliable document provenance.
 

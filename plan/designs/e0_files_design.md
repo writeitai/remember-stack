@@ -42,9 +42,10 @@ storage observation cannot create either.
 
 Three stores per deployment have distinct purposes (D37/D55/D65/D155):
 
-- **raw** holds immutable source-of-truth originals. Ordinary E0 ingestion uses
-  `<doc_id>/<content_hash>/original<suffix>`; D147 registered uploads can retain
-  `uploads/<id>`. Always follow the recorded `raw_uri`, including content shared
+- **raw** holds immutable source-of-truth originals. Ordinary E0 ingestion uses the
+  engine-generated, extension-free key `<doc_id>/<generation>/<content_hash>/original` (D159:
+  no caller text in a key); D147 registered uploads can retain `uploads/<id>` (except a
+  deliberate re-add, which copies into its generation prefix). Always follow the recorded `raw_uri`, including content shared
   with another lineage; never reconstruct it from the document id. Raw remains
   private to the pipeline and API byte/`source_open` access. D51 MIME-based hot/cold
   routing and provider access logging apply. The deployment is one trust domain
@@ -1193,8 +1194,9 @@ historic titles, paths, suffix reservations or a corpus-wide purge scope.
    when the recorded set is empty, including under `remember ops forget-reapply`.
    Any error leaves the forget record `erasing` and retries the same idempotent
    procedure; the document stays hidden and nothing else waits.
-4. Send controlled mount sessions the invalidation for every deleted and regenerated
-   path and require their acknowledgement.
+4. Send controlled mount sessions the invalidation for the document's suffix and every
+   navigation file, and require each session's acknowledgement or the passing of the client's
+   own cache-expiry bound.
 
 After a restore, the operator runs `remember ops forget-reapply` before the restored
 deployment takes traffic; it repeats steps 2–4 for every forget record, including suffix
