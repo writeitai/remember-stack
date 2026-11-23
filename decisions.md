@@ -8347,7 +8347,7 @@ There are no users requiring migration, aliases or a transition layout.
   remnants, and clear `corpus_paths`. An empty set never skips the full scan. Never wipe the corpus or recopy surviving originals/media. The existing
   `doc_id` suffices in immutable intent; no historic friendly paths are needed.
   Re-honor even completed manifests on independent restores; object-version purge
-  requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-hard-forget-and-restore-erase-the-document-regenerate-indexes).
+  requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-forget-erase-the-document-regenerate-indexes).
 
 **Rationale and alternatives.** A copied original makes each folder self-contained;
 a single completed reading avoids pairing v2 bytes with v1 text. Recomputing from
@@ -8555,7 +8555,9 @@ embeddings and Selection/Claimify results, and reused claims become current agai
 key changes. PostgreSQL erasure is logical (no snapshot taken after the commit returns the
 content); physical row versions are not securely overwritten, and the public docs say so.
 Controlled mount sessions drop the paths without restarting (the cloud repository implements
-the adapter); operator FUSE mounts follow their bounded caches.
+the adapter); operator FUSE mounts follow their bounded caches. With no forget store, D152's
+managed storage-capture binding has three role filesystems (raw, artifacts, corpus) instead of
+four; the cloud capture adapter changes with it.
 
 **Design.** [Archive and forget](plan/designs/archive_and_forget_design.md).
 **Analysis.** [Archive and forget](plan/analysis/archive_and_forget.md).

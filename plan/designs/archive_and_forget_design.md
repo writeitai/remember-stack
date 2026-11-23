@@ -85,6 +85,7 @@ for declared periods use D140 effective periods.
 | SQL query space | `documents` lists it with `archived_at`; the current-testimony views exclude it. |
 | Corpus filesystem (P3) | Removed, as D155's normal removal does: the filesystem is the served current corpus. |
 | Tags | Kept; it matches tag filters when archived material is requested. |
+| D140 cross-references to it | Return `target_unavailable`, as for an unavailable target; they resolve again without re-binding when it comes back. |
 
 ### 2.4 Coming back
 
@@ -104,8 +105,9 @@ Selection and Claimify results, so un-archiving identical bytes makes no extract
 embedding call, and a one-section edit pays only for that section. A reused claim whose
 testimony had ended becomes current again through a new currency transition
 (`version_restored`) and is applied to facts like a new claim: E3 finds or creates a live
-fact for it. Facts the archive closed stay closed as history; nothing is reopened. Forgotten
-versions are never reuse candidates, because their rows are erased.
+fact for it. Facts the archive closed stay closed as history; nothing is reopened. A
+tombstoned version (one being forgotten, or deleted at the internal version grain) is never a
+reuse candidate; forgotten versions' rows are erased anyway.
 
 ### 2.5 Surfaces
 
@@ -169,7 +171,10 @@ gets that for the one document, never for the deployment:
 - **Queued work is retired** (§3.2 step 3), and claim queries never hand out work whose
   document is tombstoned.
 - **Running work finishes first.** The forget job waits until no work item for the document
-  other than itself is `running`. Work items for other documents are never waited for.
+  other than itself is `running`. "For the document" means its target is the document, one
+  of its versions, representations, chunks or claims, or an entity whose pending work unit
+  (an E3 flush unit) names one of its versions through its membership row. Work items for
+  other documents are never waited for.
 - **Database writers re-check.** Every handler that writes document-derived rows takes a
   share lock on its version row (`FOR SHARE`, as claim publication and Selection already do)
   in its writing transaction and writes nothing when the version is gone or tombstoned.
@@ -393,7 +398,8 @@ operations, parameters, answers and errors (D141 parity); `reapply` is CLI-only.
   and `DocumentDeletion`. Removed outright; there is no deprecation period.
 - `ForgetManifestPort`, its local-root and object-store implementations,
   `forget_manifest_root`, `forget_manifest_bucket_name` and the operator duty to transfer a
-  manifest root.
+  manifest root. D152's managed storage-capture binding loses its forget role filesystem
+  (three roles remain: raw, artifacts, corpus); the cloud capture adapter changes with it.
 - The startup readiness replay (`HardForgetReadiness` in the API and `project --plane p3`).
 - The deployment-wide admission barrier, the shared advisory fence ordinary work takes for it,
   the global drain, and 503 `forget_in_progress` for ordinary traffic.
