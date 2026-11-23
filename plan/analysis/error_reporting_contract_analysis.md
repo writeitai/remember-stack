@@ -193,7 +193,7 @@ per-scope result, is fixed here.
 | `spine/managed_metering.py:171` | `MeterReceiptUnavailable` | `meter_receipt_retry`; the receipt is retried. The sibling `MeterReceiptUnauthorized` catch at `:164` logs ERROR `meter_receipt_unauthorized` first |
 | `spine/managed_metering.py:423` | `MeterReceiptConflict, MeterReceiptUnavailable` | `MeterReceiptUnauthorized` (a `MeterReceiptUnavailable` subclass): ERROR `meter_receipt_unauthorized`; other `MeterReceiptUnavailable`: WARNING `meter_receipt_retry`; `MeterReceiptConflict`: ERROR `meter_receipt_conflict`. Replay continues in every case |
 | `surfaces/query_engine.py:1798` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary in the response |
-| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | `search_projection_unavailable`; the additive profile channel is skipped and fact search answers alone (no boundary in the response) |
+| `surfaces/query_engine.py:3952` | `P1SearchUnavailableError` | WARNING `search_projection_unavailable` during a routine backfill or policy cut; ERROR `profile_channel_unavailable` when the active profile channel is lost unexpectedly. Fact search answers alone either way |
 | `surfaces/query_engine.py:4576` | `P1SearchUnavailableError` | `search_projection_unavailable`; disclosed boundary |
 
 #### Classified by the sandbox rule (design §2.1)
@@ -294,8 +294,8 @@ All 18 get an `error_code`:
 | Site | Today | Fix |
 |---|---|---|
 | `surfaces/http_api.py:793` `ProviderCallError` handler | Quiet 503 | ERROR `provider_call_failed`, same 503 |
-| Unmapped exception in a route | Logged by `uvicorn.error` only | Catch-all exception handler logs ERROR `api_unhandled_exception`, same 500 |
-| API lifespan failure | Logged by `uvicorn.error` only | The lifespan logs ERROR `api_lifespan_failed`, then re-raises |
+| Unmapped exception in a route; API lifespan failure | Propagate to the server | Unchanged: handed to the host, which reports it (design Rule 1) |
+| `surfaces/http_api.py:1293` graph `TimeoutError`/`OperationalError` | Quiet 503 | ERROR `graph_query_failed`, same 503 |
 | `profiles/storage_capture_batch.py:142` `_failure_code` | Any code-shaped message, else the type name (`TimeoutError`) | Only an engine refusal's declared `code`, else `storage_capture_failed` |
 
 ### 5.6 Failures returned as values
@@ -308,7 +308,7 @@ Also on the list, found in review and specified in the design (§2.1):
 - the sandbox bridge (`surfaces/query_sandbox/bridge.py:369`);
 - the declared storage refusals (`profiles/managed_storage_capture.py:105`,
   `adapters/fsit_storage_capture_transport.py:378`) and the batch's
-  per-scope callback (`profiles/storage_capture_batch.py:263`);
+  per-scope ERROR at first detection (`profiles/storage_capture_batch.py:263`);
 - the sandbox's `budget_exhausted` classifier (`query_sandbox/nomination.py:870`),
   which stays for wire results; reporting uses the request deadline
   instead;

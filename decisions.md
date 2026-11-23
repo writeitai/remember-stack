@@ -8460,9 +8460,10 @@ majors, adding compatibility shims, or opening a PG19 data directory on 18.
 ## D158. Engine failures are raised or logged at ERROR with a stable code; delivery is the operator's
 
 **Decision (2026-11-23, owner requirements; proposed until review).** The
-engine's only obligation is a contract: an unexpected failure is raised, or
-logged once at ERROR through standard Python `logging` on a
-`rememberstack.*` logger, with a stable `error_code` in `extra`. It is never
+engine's only obligation is a contract: an unexpected failure is raised to
+the host, or, when the engine turns it into an outcome, logged once at ERROR
+through standard Python `logging` on a `rememberstack.*` logger, with a
+stable `error_code` in `extra`. It is never
 hidden behind `pass`, a counter or a bare return value. Expected outcomes
 (retries, disclosed boundaries, parks) log at WARNING with a code.
 
@@ -8486,11 +8487,12 @@ and 18 ERROR logs without a code.
 **Consequences.**
 
 - The audit (analysis §5) is the implementation backlog.
-- The boundaries log with codes: workers, HTTP and its lifespan, MCP, the
-  sandbox, the live graph, metering and storage capture.
-- The sandbox logs every database error that becomes a query result, with
-  `sqlstate`, unless the request's deadline had passed.
-- `capture_storage_batch` gains an `on_scope_failure` callback.
+- The boundaries log with codes: workers, MCP, the sandbox, the live
+  graph, metering and storage capture.
+- Unhandled exceptions propagate to the host.
+- The sandbox logs every failure that becomes a query result, once, on
+  its original cause and without exception text, unless the cause is a
+  budget timeout after the deadline.
 - Codes become part of the public surface; renaming one is a changelog
   entry.
 
