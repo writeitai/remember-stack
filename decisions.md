@@ -2310,10 +2310,8 @@ adapters/llm/workers/surfaces/eval/profiles`; core is pure and infra-free; SQL o
 `spine/`; vendor SDKs only in `adapters/`; **import-linter contracts fail CI on illegal
 imports** (architecture erosion fails loudly); profiles are explicit composition roots — no DI
 framework. **Portability rides rebuild-first (D7, refined by D75)**: portable state = Postgres +
-raw/artifact objects + the K repo + the separately durable D74 manifest root (**D159**: no
-manifest root; `remember forget reapply` runs after a restore instead of a readiness
-re-honor); native operator tools
-move the authoritative stores, readiness re-honors deletion before serving, and projections rebuild
+raw/artifact objects + the K repo (**D159**: there is no manifest root); native operator tools
+move the authoritative stores, the operator runs `remember forget reapply` before serving, and projections rebuild
 after restore — the cloud↔self-host migration path in both directions without a transport subsystem.
 
 **Context.** Fills D60's deliverable and D61's profile mechanics. Redis/arq was considered for
@@ -8517,8 +8515,9 @@ contribution, both on the API, SDK, CLI and MCP:
 The forget record is one content-free PostgreSQL row (`forgets`). It drives the job, the
 re-ingest guard and verification; there is no second store and nothing runs at start. Ingest
 of forgotten content is refused with `document_forgotten` unless that one request sets
-`allow_forgotten=true`, which ingests it as a new document and deletes the record; there is
-no deployment-wide setting. After restoring a backup the operator runs `remember forget
+`allow_forgotten=true`, which ingests it as an ordinary ingest would and releases only the
+hash and source identity it matched (a record left with neither is deleted); there is no
+deployment-wide setting. After restoring a backup the operator runs `remember forget
 reapply` (with an exported record list for forgets newer than the backup) before the
 deployment takes traffic. Ingest and forget share content-hash and source-identity locks, so
 nothing can register forgotten content mid-check. Forget keeps the existing cascades for

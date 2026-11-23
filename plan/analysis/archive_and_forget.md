@@ -187,9 +187,10 @@ covers:
   Rejected.
 - **Chosen: refuse by default, allow per request.** Ingest of a forgotten source identity or
   content hash is refused with `document_forgotten` (409), naming when it was forgotten. A
-  request that sets `allow_forgotten=true` is ingested as a new document, and that one
-  forget record is deleted so a later `reapply` cannot erase the copy someone deliberately
-  added back. Syncs never set the flag. Erasure law concerns what is stored now; storing
+  request that sets `allow_forgotten=true` is ingested as an ordinary ingest would be, and
+  the matching record loses the hash and source identity that request matched (deleted when
+  nothing is left), so a later `reapply` cannot erase the copy someone deliberately added
+  back, while a different forget that shared one hash keeps the rest of its guard. Syncs never set the flag. Erasure law concerns what is stored now; storing
   the data again later is a new, deliberate decision, which the flag makes explicit.
 
 ### 3.7 Authored knowledge pages
