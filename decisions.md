@@ -8456,3 +8456,49 @@ and do not become PostgreSQL 18 qualification evidence.
 
 **Rejected.** Remaining on 19 for a removed feature, supporting two server
 majors, adding compatibility shims, or opening a PG19 data directory on 18.
+
+## D158. Engine failures are raised or logged at ERROR with a stable code; delivery is the operator's
+
+**Decision (2026-11-23, owner requirements; proposed until review).** The
+engine's only obligation is a contract: an unexpected failure is raised to
+the host, or, when the engine turns it into an outcome, logged once at ERROR
+through standard Python `logging` on a `rememberstack.*` logger, with a
+stable `error_code` in `extra`. It is never
+hidden behind `pass`, a counter or a bare return value. Expected outcomes
+(retries, disclosed boundaries, parks) log at WARNING with a code.
+
+The engine owns **no delivery**: no tracker sinks, queues, exit drains or
+detail switch. Operators attach Sentry (its logging integration; the
+existing `REMEMBERSTACK_SENTRY_DSN` adapter stays unchanged), PostHog (a
+short handler calling its SDK) or OpenTelemetry (its logging handler or
+zero-code agent). The engine docs show each in a few lines.
+
+One CI rule checks that every `except` catching a failure class raises,
+logs at ERROR with a code, or carries an explicit `# error-contract:`
+comment.
+
+**Why.** Python logging is the one interface every error tool reads. Seven
+review rounds of an engine-owned delivery design kept finding drain,
+exporter, scope and exit-ordering defects in code the engine doesn't need
+to own. Nightly storage capture failed silently for days because a
+per-scope result was `None`. The audit found more sites that hide failures,
+and 18 ERROR logs without a code.
+
+**Consequences.**
+
+- The audit (analysis §5) is the implementation backlog.
+- The boundaries log with codes: workers, MCP, the sandbox, the live
+  graph, metering and storage capture.
+- Unhandled exceptions propagate to the host.
+- The sandbox logs every failure that becomes a query result, once, on
+  its original cause and without exception text, unless the cause is a
+  budget timeout after the deadline.
+- Codes become part of the public surface; renaming one is a changelog
+  entry.
+
+**Analysis.** [Error reporting contract](plan/analysis/error_reporting_contract_analysis.md).
+**Design.** [Error reporting contract](plan/designs/error_reporting_contract_design.md).
+
+**Rejected.** Engine-owned delivery (report builder, sinks, drains,
+detail switch); vendor SDKs per tracker; extending `TelemetryPort` to
+every failure; a central code registry.

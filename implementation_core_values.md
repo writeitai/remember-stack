@@ -36,6 +36,15 @@ reviews all assume these; a PR that violates one is not done, regardless of what
    (worker/CLI top level; per-item boundaries in batch loops) — not at every layer, which
    reports one failure many times. Real exception objects stay reachable for Sentry-class
    capture behind the telemetry port. "Failures never disappear," at code level.
+   **[D158](decisions.md) controls how a handled failure is reported**, and refines this
+   value in two places:
+   - A degraded but successful outcome (a structuring fallback, a missing summary, a
+     skipped poison chunk) is allowed when the failure is logged once at ERROR with a
+     stable `error_code`. That record is the visible failure; the result is not a
+     fabricated success.
+   - Where the exception text can carry customer input (the query sandbox), the record
+     omits `exc_info` and carries `exception_type` and a fixed message instead of the
+     traceback text.
 
 7. **Arguments are passed by name.** Call sites read as documentation:
    `pack(text=body, max_blocks=limit)`, never `pack(body, 512)`.
