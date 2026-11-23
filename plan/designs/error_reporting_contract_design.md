@@ -224,7 +224,7 @@ Analysis §5 is the work list:
 - §5.2: 27 sites gain a report, 13 existing ERROR logs gain a code, 7
   expected outcomes log at WARNING with a code, and 42 ("raised later" and
   exempt) get their `# error-contract:` comment;
-- §5.3: 13 handlers that raise on only some branches;
+- §5.3: 14 handlers that raise on only some branches;
 - §5.4: all 18 ERROR calls gain codes;
 - §5.5: three boundaries outside `except`;
 - §5.6: failures returned as values that review found;

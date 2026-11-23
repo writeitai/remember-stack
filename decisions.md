@@ -8493,7 +8493,7 @@ and 18 ERROR logs without a code.
 - The audit is the work list:
   - 89 failure-class handlers without a raise: 27 new reports, 13 codes,
     7 coded warnings, and 42 annotated exemptions or later raises;
-  - 13 handlers that raise on only some branches;
+  - 14 handlers that raise on only some branches;
   - 18 ERROR calls gaining codes;
   - 3 boundaries.
 - Sentry gets one path per failure.

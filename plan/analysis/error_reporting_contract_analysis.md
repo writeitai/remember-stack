@@ -144,7 +144,7 @@ refusal types. The contract governs handlers that catch a **failure class**:
 The work list has four parts:
 
 - **89** failure-class handlers without a `raise` in their body (§5.2);
-- **13** failure-class handlers that raise only on some branch and consume
+- **14** failure-class handlers that raise only on some branch and consume
   the failure on others (§5.3);
 - all **18** existing `.error`, `.exception` and `.critical` calls, which
   gain codes (§5.4);
