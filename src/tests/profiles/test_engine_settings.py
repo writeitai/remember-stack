@@ -339,24 +339,45 @@ def test_readiness_keeps_its_settings_source_when_settings_are_omitted(
     assert bindings["openrouter_max_completion_tokens"] == "32000"
 
 
-def test_jev_handlers_refuse_an_engine_switched_after_construction(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("before", "after"),
+    (
+        ({"ENGINE": "prompt"}, {"ENGINE": "jev"}),
+        ({"ENGINE": "jev"}, {"ENGINE": "prompt"}),
+        (
+            {"ENGINE": "jev", "FALLBACK_TO_PROMPT": "false"},
+            {"ENGINE": "jev", "FALLBACK_TO_PROMPT": "true"},
+        ),
+    ),
+)
+def test_fact_handlers_refuse_settings_changed_after_construction(
+    monkeypatch: pytest.MonkeyPatch, before: dict[str, str], after: dict[str, str]
 ) -> None:
-    """A profile built in prompt mode never builds unchecked Jev clients."""
+    """Neither fact handler is built on an engine or fallback never checked.
+
+    The routing and zero-data-retention checks ran against the values read at
+    construction; a later change (prompt to jev, jev to prompt, or turning on
+    the prompt fallback) is refused before any client exists.
+    """
     from unittest.mock import MagicMock
 
     import sqlalchemy
 
-    from rememberstack.adapters import OpenRouterModelProvider
     from rememberstack.adapters.typesafe import ConfigurationError
     from rememberstack.model import PipelineStage
 
-    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "prompt")
+    def apply(values: dict[str, str]) -> None:
+        monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", values["ENGINE"])
+        monkeypatch.setenv(
+            "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT",
+            values.get("FALLBACK_TO_PROMPT", "false"),
+        )
+
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
     monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_API_KEY", "process-typesafe-key")
+    apply(before)
     engine = sqlalchemy.create_engine("postgresql+psycopg://unused@127.0.0.1:1/none")
-    provider = OpenRouterModelProvider(
-        settings=OpenRouterSettings(api_key="child-key", zdr=True)
-    )
     try:
         profile = SelfHostProfile(
             settings=SelfHostSettings(deployment_id=UUID(int=151)),
@@ -364,17 +385,17 @@ def test_jev_handlers_refuse_an_engine_switched_after_construction(
             raw_store=MagicMock(),
             artifact_store=MagicMock(),
             corpusfs_store=MagicMock(),
-            model_provider=provider,
+            model_provider=MagicMock(),
+            model_provider_settings=OpenRouterSettings(api_key="child-key", zdr=True),
         )
-        monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+        apply(after)
         for stage in (
             PipelineStage.NORMALIZE_RELATIONS,
             PipelineStage.ADJUDICATE_OBSERVATIONS,
         ):
-            with pytest.raises(ConfigurationError, match="became jev"):
+            with pytest.raises(ConfigurationError, match="changed after this profile"):
                 profile._handler(stage=stage)  # noqa: SLF001
     finally:
-        provider._client.close()  # noqa: SLF001
         engine.dispose()
 
 

@@ -256,11 +256,16 @@ To preserve the strict architectural separation where `spine` never imports
    `FactAdjudicator` raises `ValueError("systemone_provider must be supplied when fact adjudication engine is 'jev'")`.
    Spine imports only from `ports.systemone`, never from `adapters`.
 4. **Composition Root (`src/rememberstack/profiles/selfhost.py`):**
-   When constructing `FactAdjudicator`, if `fact_settings.engine == "jev"`,
-   wires `build_systemone_provider(settings=TypeSafeSettings(),
-   openrouter=<the profile's OpenRouterSettings>)` and passes it as
-   `systemone_provider`. The builder applies the route, ZDR and backup rules
-   above. Missing API keys fail fast at startup via `ConfigurationError`.
+   When the profile is built it reads `FactAdjudicationSettings` and, for
+   `jev`, `TypeSafeSettings`, checks route, ZDR, backup and prompt fallback
+   against the deployment's OpenRouter settings, and keeps those checked
+   settings. Both fact handlers use them: if the engine or the prompt-fallback
+   flag in the environment differs from the checked values, building a
+   handler raises `ConfigurationError`. For `jev` the handler wires
+   `build_systemone_provider(settings=<checked TypeSafeSettings>,
+   openrouter=<the deployment's OpenRouterSettings>)` as `systemone_provider`;
+   the selected route's API key is checked there, when the handler builds the
+   client, not when the profile is built.
 
 ---
 

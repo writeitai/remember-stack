@@ -1007,6 +1007,7 @@ class SelfHostProfile:
         self._systemone_settings: TypeSafeSettings | None = None
         self._systemone_openrouter: OpenRouterSettings | None = None
         fact_settings = FactAdjudicationSettings.model_validate({})
+        self._fact_settings = fact_settings
         if fact_settings.engine == "jev":
             openrouter = _jev_openrouter_settings(
                 model_provider=model_provider,
@@ -1032,6 +1033,29 @@ class SelfHostProfile:
                 )
             self._systemone_settings = systemone_settings
             self._systemone_openrouter = openrouter
+
+    def _checked_fact_settings(self) -> FactAdjudicationSettings:
+        """The fact-adjudication settings checked when the profile was built.
+
+        The engine and the prompt-fallback flag decide where facts and claims
+        are sent, and the routing and zero-data-retention checks ran against
+        the values read at construction. A process whose environment changed
+        either afterwards is refused instead of building handlers on settings
+        that were never checked.
+        """
+        current = FactAdjudicationSettings()
+        checked = self._fact_settings
+        if (
+            current.engine != checked.engine
+            or current.fallback_to_prompt != checked.fallback_to_prompt
+        ):
+            raise ConfigurationError(
+                "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE or"
+                " REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT changed after this profile"
+                " was built; build a new profile so the routing and"
+                " zero-data-retention checks run"
+            )
+        return checked
 
     def _jev_systemone_provider(
         self, *, fact_settings: FactAdjudicationSettings
@@ -1903,7 +1927,7 @@ class SelfHostProfile:
             )
         if stage is PipelineStage.NORMALIZE_RELATIONS:
             observation_settings = ObservationSettings.model_validate({})
-            fact_settings = FactAdjudicationSettings()
+            fact_settings = self._checked_fact_settings()
             return NormalizeRelationsHandler(
                 claim_catalog=claims,
                 chunk_catalog=chunks,
@@ -1930,7 +1954,7 @@ class SelfHostProfile:
                 chunker_version=chunk_generation,
             )
         if stage is PipelineStage.ADJUDICATE_OBSERVATIONS:
-            fact_settings = FactAdjudicationSettings()
+            fact_settings = self._checked_fact_settings()
             return AdjudicateObservationsHandler(
                 facts=facts,
                 observation_adjudicator=FactAdjudicator(
