@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import codecs
-import csv
+from email import policy as email_policy
 from email.parser import BytesHeaderParser
-from email.utils import parseaddr
 import io
 import itertools
 import mmap
@@ -536,9 +535,6 @@ def _ole_office_mime(*, content: Content) -> str | None:
 _RFC822_HEADER = re.compile(rb"[\x21-\x39\x3b-\x7e]+:")
 _RFC822_MAIL_FIELDS = ("To", "Date", "Subject", "Message-ID", "Received")
 """Fields besides ``From`` that mark a header block as an Internet message."""
-_DELIMITERS = (",", "\t", ";", "|")
-_SAMPLE_RECORDS = 20
-"""Complete records the UTF-16 delimited check compares."""
 _UTF16_TEXT_MIMES = frozenset({"text/csv", "text/tab-separated-values"})
 """Text the delimited reader decodes from a UTF-16 byte-order mark."""
 
@@ -566,40 +562,15 @@ def _is_utf16_text(*, content: Content) -> bool:
     )
 
 
-def _looks_like_utf16_text(*, content: Content) -> bool:
-    """Delimited text in UTF-16 with a byte-order mark.
-
-    The whole file decodes as UTF-16 without control characters, and its
-    first complete records (at most :data:`_SAMPLE_RECORDS`) all have the
-    same number of fields, at least two, for one delimiter.
-    """
-    if not _is_utf16_text(content=content):
-        return False
-    head = bytes(content[:SNIFF_BYTES])
-    text = head[: len(head) & ~1].decode("utf-16", errors="ignore")
-    if len(content) > SNIFF_BYTES:
-        text = text[: text.rfind("\n") + 1]  # the sample may cut the last record
-    for delimiter in _DELIMITERS:
-        reader = csv.reader(
-            io.StringIO(text, newline=""), delimiter=delimiter, strict=True
-        )
-        try:
-            rows = [row for row in itertools.islice(reader, _SAMPLE_RECORDS) if row]
-        except csv.Error:
-            continue
-        widths = {len(row) for row in rows}
-        if len(rows) >= 2 and len(widths) == 1 and widths.pop() >= 2:
-            return True
-    return False
-
-
 def _looks_like_rfc822(*, content: Content) -> bool:
     """An Internet message: mail header fields, a blank line, a text body.
 
     For a message whose body is not UTF-8 (an 8-bit transfer encoding); a
-    UTF-8 message is already text. The header block parses as mail headers
-    with a ``From`` mailbox and another non-empty mail field, and the whole
-    body (decoded as Latin-1) has no binary control characters.
+    UTF-8 message is already text. The header block has no binary control
+    characters and parses without defects, with a well-formed ``From``
+    mailbox and another non-empty mail field (To, Date, Subject, Message-ID
+    or Received); the whole body (decoded as Latin-1) has no binary control
+    characters.
     """
     head = bytes(content[:SNIFF_BYTES])
     end = head.find(b"\r\n\r\n")
@@ -612,15 +583,21 @@ def _looks_like_rfc822(*, content: Content) -> bool:
             return False
     if _CONTROL_CHARACTERS.search(block.decode("latin-1")):
         return False
-    headers = BytesHeaderParser().parsebytes(block + b"\n\n")
-    _, sender = parseaddr(str(headers.get("From", "")))
-    local, at, domain = sender.rpartition("@")
-    mailbox = bool(local and at) and (
-        "." in domain or (domain.startswith("[") and domain.endswith("]"))
-    )
-    corroborated = any(
-        str(headers.get(name, "")).strip() for name in _RFC822_MAIL_FIELDS
-    )
+    try:
+        headers = BytesHeaderParser(policy=email_policy.default).parsebytes(
+            block + b"\n\n"
+        )
+        sender = headers["From"]
+        mailbox = (
+            sender is not None
+            and not sender.defects
+            and any(address.username and address.domain for address in sender.addresses)
+        )
+        corroborated = any(
+            str(headers.get(name, "")).strip() for name in _RFC822_MAIL_FIELDS
+        )
+    except (ValueError, TypeError, IndexError, AttributeError):
+        return False  # a header the mail parser cannot read is not a message
     if headers.defects or not (mailbox and corroborated):
         return False
     body_start = end + (4 if head[end : end + 4] == b"\r\n\r\n" else 2)
@@ -634,11 +611,12 @@ def _looks_like_rfc822(*, content: Content) -> bool:
 def sniffed_text_mimes(*, content: Content) -> frozenset[str]:
     """Stored types a non-UTF-8 text body may take, from its bytes alone.
 
-    UTF-16 text (with its byte-order mark) may be a delimited file, which
-    the table reader decodes; an Internet message with an 8-bit body may be
+    UTF-16 text (a byte-order mark, then text without control characters to
+    the end) may be a delimited file, which the table reader decodes; as with
+    UTF-8 text, the name or declaration picks that family within the class; an Internet message with an 8-bit body may be
     an email. Other bytes that are not UTF-8 take none.
     """
-    if _looks_like_utf16_text(content=content):
+    if _is_utf16_text(content=content):
         return _UTF16_TEXT_MIMES
     if _looks_like_rfc822(content=content):
         return frozenset({"message/rfc822"})

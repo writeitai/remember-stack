@@ -6654,10 +6654,12 @@ reads). When they name none, more than one, or the compound file is
 malformed, the upload is `ambiguous_office_format`; a declaration never
 decides it. Two text encodings that are not UTF-8 are admitted
 for the families whose readers decode them: UTF-16 with a byte-order mark,
-clean to the end of the file and with consistent multi-field records, for
-delimited files; and an Internet message (a `From` mailbox and another
-non-empty mail field, a body without binary controls to the end) for email
-with an 8-bit body. Bytes starting with the UTF-16 little-endian
+without control characters to the end of the file, for delimited files (as
+with UTF-8 text, the name or declaration picks the family within the
+class); and an Internet message (a header block without binary controls or
+parse defects, holding a well-formed `From` mailbox and a non-empty To,
+Date, Subject, Message-ID or Received field, and a body without binary
+controls to the end) for email with an 8-bit body. Bytes starting with the UTF-16 little-endian
 byte-order mark (FF FE, also an MPEG-1 Layer I frame sync) are never taken
 for audio. A declaration spelled as a registry alias of the detected
 family (Office templates and slideshows, SVG, XHTML) is compatible. The file

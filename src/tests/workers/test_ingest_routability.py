@@ -515,8 +515,6 @@ def test_registry_family_survives_compatible_byte_class(
         ("mail.eml", b"From: a@example.org\nhello\n\nbody \xff"),
         ("mail.eml", b"Subject: only one field\nX-A: b\n\nbody \xff"),
         ("data.csv", b"\xff\xfe" + b"\x01\x00" * 8),
-        ("prose.csv", "Plain words and no columns.\nMore prose.\n".encode("utf-16")),
-        ("note.csv", "Hi, team.\nSee you tomorrow.\n".encode("utf-16")),
         (
             "long.csv",
             "a,b\n".encode("utf-16") + "1,2\n".encode("utf-16-le") * 20000 + b"\x00",
@@ -528,12 +526,12 @@ def test_registry_family_survives_compatible_byte_class(
             + b"\x00\xd8,\x00",
         ),
         ("ann.eml", b"From: Ann (ask @dev)\r\nSubject:\r\n\r\nCaf\xe9\r\n"),
+        ("dots.eml", b"From: a..b@example.org\r\nTo: b@example.org\r\n\r\n\xe9\r\n"),
         ("late.eml", _LATIN1_EMAIL + b"x" * 70000 + b"\x00"),
         (
             "nul.csv",
             "a,b\n".encode("utf-16") + b"\x00\x00" + "1,2\n".encode("utf-16-le"),
         ),
-        ("cut.csv", 'a,b\nc,"truncated'.encode("utf-16")),
         ("ctl.eml", b"From: a@example.org\r\nSubject: \x01\x02\r\n\r\nCaf\xe9\r\n"),
         (
             "orphan.eml",
@@ -629,14 +627,6 @@ def test_a_declaration_never_decides_an_unreadable_compound_file(
     with pytest.raises(ContentDetectionError) as raised:
         detect_content_mime(content=content, declared_mime=declared)
     assert raised.value.code == "ambiguous_office_format"
-
-
-def test_declared_delimited_prose_in_utf16_is_refused() -> None:
-    """A UTF-16 file without a delimiter is not a table, whatever its type."""
-    content = "Plain words and no columns.\n".encode("utf-16")
-    with pytest.raises(ContentDetectionError) as raised:
-        detect_content_mime(content=content, declared_mime="text/csv")
-    assert raised.value.code == "content_type_mismatch"
 
 
 @pytest.mark.parametrize(

@@ -122,9 +122,12 @@ structural tests a family design may use to recognize or validate its format.
    (D132, the root storage's streams selecting the subtype). An OLE
    container whose streams name no single one of them (an Outlook MSG
    included, which has no reader) is refused as `ambiguous_office_format`.
-4. **Text.** Strict UTF-8 validation as D132 defines it (with its two
-   refinements: UTF-16 delimited text with a byte-order mark, and an
-   Internet message whose body is not UTF-8). Then structural
+4. **Text.** Strict UTF-8 validation as D132 defines it, with its two
+   refinements: UTF-16 text with a byte-order mark and no control
+   characters to the end of the file admits only delimited families, and
+   an Internet message whose body is not UTF-8 (a clean header block with a
+   well-formed `From` mailbox and a non-empty To, Date, Subject, Message-ID
+   or Received field; a body without binary controls) admits only email. Then structural
    tests on the whole file, in order:
    1. **mbox** — the first line starts `From ` and at least one RFC 5322
       header block follows.
