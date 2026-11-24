@@ -244,8 +244,96 @@ def test_injected_openrouter_provider_supplies_the_retention_policy(
         with pytest.raises(ConfigurationError, match="OpenRouter settings"):
             SelfHostProfile(model_provider=MagicMock(), **common)  # type: ignore[arg-type]
         monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+        # Readiness keeps its historical source (the environment) here.
+        monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "env-key")
         profile = SelfHostProfile(model_provider=provider, **common)  # type: ignore[arg-type]
         assert profile._model_bindings()["systemone_route"] == "openrouter"  # noqa: SLF001
     finally:
         provider._client.close()  # noqa: SLF001
         engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "conflict",
+    (
+        {"zdr": False},
+        {"api_key": "other-project-key"},
+        {"base_url": "https://gateway.example/api/v1"},
+    ),
+)
+def test_jev_refuses_settings_that_differ_from_the_injected_provider(
+    monkeypatch: pytest.MonkeyPatch, conflict: dict[str, object]
+) -> None:
+    """Jev never uses another key, base URL or ZDR policy than the provider's."""
+    from unittest.mock import MagicMock
+
+    import sqlalchemy
+
+    from rememberstack.adapters import OpenRouterModelProvider
+    from rememberstack.adapters.typesafe import ConfigurationError
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    engine = sqlalchemy.create_engine("postgresql+psycopg://unused@127.0.0.1:1/none")
+    injected = OpenRouterSettings(api_key="child-key", zdr=True)
+    provider = OpenRouterModelProvider(settings=injected)
+    explicit = injected.model_copy(update=conflict)
+    try:
+        with pytest.raises(ConfigurationError, match="differ from the injected"):
+            SelfHostProfile(
+                settings=SelfHostSettings(deployment_id=UUID(int=149)),
+                engine=engine,
+                raw_store=MagicMock(),
+                artifact_store=MagicMock(),
+                corpusfs_store=MagicMock(),
+                model_provider=provider,
+                model_provider_settings=explicit,
+            )
+    finally:
+        provider._client.close()  # noqa: SLF001
+        engine.dispose()
+
+
+@pytest.mark.parametrize("engine_name", ("prompt", "jev"))
+def test_readiness_keeps_its_settings_source_when_settings_are_omitted(
+    monkeypatch: pytest.MonkeyPatch, engine_name: str
+) -> None:
+    """Omitted settings still report the environment's bindings, as on main.
+
+    Jev routing reads the injected provider's settings, but the serialized
+    readiness bindings for a profile built without explicit settings keep
+    their historical source in both engine modes.
+    """
+    from unittest.mock import MagicMock
+
+    import sqlalchemy
+
+    from rememberstack.adapters import OpenRouterModelProvider
+    from rememberstack.profiles.selfhost import _model_bindings
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", engine_name)
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "env-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS", "32000")
+    engine = sqlalchemy.create_engine("postgresql+psycopg://unused@127.0.0.1:1/none")
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="child-key", max_completion_tokens=8192)
+    )
+    try:
+        profile = SelfHostProfile(
+            settings=SelfHostSettings(deployment_id=UUID(int=150)),
+            engine=engine,
+            raw_store=MagicMock(),
+            artifact_store=MagicMock(),
+            corpusfs_store=MagicMock(),
+            model_provider=provider,
+        )
+        bindings = profile._model_bindings()  # noqa: SLF001
+    finally:
+        provider._client.close()  # noqa: SLF001
+        engine.dispose()
+
+    assert bindings == _model_bindings()
+    assert bindings["openrouter_max_completion_tokens"] == "32000"

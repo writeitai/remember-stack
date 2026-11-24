@@ -146,7 +146,9 @@ OpenRouter serves a TypeSafe-compatible System One endpoint,
 On the `openrouter` route with `OpenRouterSettings.zdr` true, every request
 carries `"provider": {"zdr": true, "data_collection": "deny"}`. OpenRouter lists
 two Jev endpoints, `typesafe` and `typesafe/zdr`; only the second is a
-zero-data-retention endpoint, and the flag makes routing choose it. No `only`
+zero-data-retention endpoint, and the flag makes routing choose it among
+endpoints the account or key policy counts as ZDR (which may also admit Safety
+Retention endpoints unless that policy excludes them; see below). No `only`
 allowlist is sent: Jev has a single provider, so it would restrict nothing that
 `zdr` does not, and it would break if the provider slug changed. Without ZDR no
 `provider` object is sent.
@@ -180,9 +182,10 @@ which one served a call; a rollout check needs evidence that distinguishes the
 two endpoints.
 
 OpenRouter's ZDR policy also describes an exception of its own: it screens
-requests for child sexual abuse material, and flagged content may be retained
-where the law requires review, reporting or preservation, ZDR traffic
-included. No account or request setting removes this, so whether OpenRouter's
+requests for child sexual abuse material, ZDR traffic included. Content
+flagged by that screen may be retained for OpenRouter's human review (a flag
+is not a finding), and material that is reported where the law requires it is
+preserved for the legally required period. No account or request setting removes this, so whether OpenRouter's
 terms for the Project keys meet a deployment's retention requirement is a
 contract question for the operator, checked before customer traffic is
 enabled. Readiness reports `systemone_route` only
@@ -520,8 +523,9 @@ The TypeSafe client constructs the real, canonical `ProviderCallUsage`:
   route, `cost_usd` is instead the billed `usage.cost` OpenRouter reports
   (the same $0.042 per million input tokens in its documented example); a
   missing, negative or non-numeric cost raises `ProviderAccountingError`, as
-  for OpenRouter chat. OpenRouter already names the serving model as
-  `typesafe/<dated id>`, so it is not prefixed twice.
+  for OpenRouter chat. OpenRouter's `model` (for example
+  `typesafe/jev-1.13-20260917`) is recorded verbatim; the direct route keeps
+  the `typesafe/<model>` form.
 
   (TypeSafe pricing table: $0.042 per 1M input tokens, output tokens free).
 - `latency_ms = int(elapsed_s * 1000)`

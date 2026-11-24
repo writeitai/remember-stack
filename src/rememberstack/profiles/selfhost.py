@@ -975,13 +975,15 @@ class SelfHostProfile:
         runs conversion elsewhere. ``forget_manifests`` replaces the local
         ``forget_manifest_root`` store.
 
-        When ``model_provider`` is an ``OpenRouterModelProvider`` and
-        ``model_provider_settings`` is omitted, the provider's own settings are
-        used. When fact adjudication uses Jev, the System One settings are read
-        and checked here (route, ZDR and backup) against those deployment
-        settings, which Jev then requires, so an unsafe combination stops the
-        profile before it serves readiness or takes a task; both Jev stages
-        and the readiness bindings reuse the same checked settings.
+        When fact adjudication uses Jev, the System One settings are read and
+        checked here (route, ZDR and backup) against the deployment's
+        OpenRouter settings, so an unsafe combination stops the profile before
+        it serves readiness or takes a task. For Jev, an injected
+        ``OpenRouterModelProvider``'s own settings are the source of truth:
+        explicit ``model_provider_settings`` that differ are refused, and with
+        neither Jev is refused. Both Jev stages and the readiness bindings
+        reuse the same checked System One settings; the other readiness
+        bindings keep their source (explicit settings, else the environment).
         """
         self._settings = settings
         self._engine = engine
@@ -993,12 +995,7 @@ class SelfHostProfile:
         self._model_provider = model_provider
         self._error_telemetry = error_telemetry
         self._task_queue = task_queue
-        if model_provider_settings is None and isinstance(
-            model_provider, OpenRouterModelProvider
-        ):
-            # An injected OpenRouter provider carries the deployment's settings
-            # (key, base URL, ZDR); never treat them as absent.
-            model_provider_settings = model_provider._settings  # noqa: SLF001
+        # Readiness keeps its historical source: explicit settings, else env.
         self._model_provider_settings = model_provider_settings
         self._work_ledger_settings = work_ledger_settings or WorkLedgerSettings()
         self._conversion_routes = conversion_routes
@@ -1007,18 +1004,18 @@ class SelfHostProfile:
         self._k_git = k_git
         self._knowledge_rebuilder = knowledge_rebuilder
         self._systemone_settings: TypeSafeSettings | None = None
+        self._systemone_openrouter: OpenRouterSettings | None = None
         if FactAdjudicationSettings.model_validate({}).engine == "jev":
-            if self._model_provider_settings is None:
-                raise ConfigurationError(
-                    "Jev fact adjudication needs the deployment's OpenRouter"
-                    " settings (model_provider_settings) so its zero-data-retention"
-                    " policy is known"
-                )
+            openrouter = _jev_openrouter_settings(
+                model_provider=model_provider,
+                model_provider_settings=model_provider_settings,
+            )
             systemone_settings = TypeSafeSettings.model_validate({})
             validate_systemone_routing(
-                settings=systemone_settings, openrouter=self._model_provider_settings
+                settings=systemone_settings, openrouter=openrouter
             )
             self._systemone_settings = systemone_settings
+            self._systemone_openrouter = openrouter
 
     @classmethod
     def from_settings(
@@ -1890,7 +1887,7 @@ class SelfHostProfile:
                     systemone_provider=(
                         build_systemone_provider(
                             settings=self._systemone_settings or TypeSafeSettings(),
-                            openrouter=self._model_provider_settings,
+                            openrouter=self._systemone_openrouter,
                         )
                         if fact_settings.engine == "jev"
                         else None
@@ -1912,7 +1909,7 @@ class SelfHostProfile:
                     systemone_provider=(
                         build_systemone_provider(
                             settings=self._systemone_settings or TypeSafeSettings(),
-                            openrouter=self._model_provider_settings,
+                            openrouter=self._systemone_openrouter,
                         )
                         if fact_settings.engine == "jev"
                         else None
@@ -2221,6 +2218,43 @@ def _build_revision() -> str:
     need provenance treat empty as unknown rather than as agreement.
     """
     return BuildProvenanceSettings().build_revision
+
+
+def _jev_openrouter_settings(
+    *,
+    model_provider: ModelProviderPort,
+    model_provider_settings: OpenRouterSettings | None,
+) -> OpenRouterSettings:
+    """The deployment's OpenRouter settings that govern Jev's key and ZDR.
+
+    An injected ``OpenRouterModelProvider`` is the source of truth: explicit
+    settings that differ from it are refused, because Jev would otherwise
+    use another key, base URL or retention policy than the deployment's chat
+    and embedding calls. Without either, the policy is unknown and Jev is
+    refused.
+    """
+    injected = (
+        model_provider._settings  # noqa: SLF001
+        if isinstance(model_provider, OpenRouterModelProvider)
+        else None
+    )
+    if (
+        injected is not None
+        and model_provider_settings is not None
+        and model_provider_settings != injected
+    ):
+        raise ConfigurationError(
+            "model_provider_settings differ from the injected OpenRouter"
+            " provider's settings; Jev must use the deployment's own key and"
+            " zero-data-retention policy"
+        )
+    settings = injected or model_provider_settings
+    if settings is None:
+        raise ConfigurationError(
+            "Jev fact adjudication needs the deployment's OpenRouter settings"
+            " (model_provider_settings) so its zero-data-retention policy is known"
+        )
+    return settings
 
 
 def _model_bindings(
