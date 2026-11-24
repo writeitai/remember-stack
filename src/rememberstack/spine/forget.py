@@ -1,556 +1,206 @@
-"""PostgreSQL materialization, admission, and inventory for D74."""
+"""D159 forget: the record, the re-ingest guard and the PostgreSQL sweep.
 
-from collections.abc import Iterator
+The forget record (``forgets``) is the only forget state. The hide (in
+``workers.forget``) tombstones the lineage and inserts the record in one
+transaction; this module owns the record and the sweep's PostgreSQL step:
+collect content-free IDs, then delete or clear everything derived from the
+document, in one transaction, treating "already gone" as success.
+"""
+
+from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 import json
 from typing import Any
+from typing import Final
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy import TextClause
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 
 from rememberstack.core import source_identity_hash
-from rememberstack.model import ComponentVersionConflictError
-from rememberstack.model import EnqueueOutcome
+from rememberstack.core.fact_label import deterministic_fact_label
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import EnqueueWork
-from rememberstack.model import ForgetInProgressError
-from rememberstack.model import ForgetManifest
-from rememberstack.model import ForgetManifestConflictError
-from rememberstack.model import ForgetManifestNotFoundError
-from rememberstack.model import ForgetManifestRecord
-from rememberstack.model import ForgetManifestStatus
-from rememberstack.model import ForgetTargetNotFoundError
-from rememberstack.model import ForgottenSourceError
+from rememberstack.model import Forget
+from rememberstack.model import ForgetNotFoundError
+from rememberstack.model import ForgetStatus
 from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
-from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.work_ledger import enqueue_on
+from rememberstack.spine.work_ledger import FORGOTTEN_WORK
 
-HARD_FORGET_COMPONENT_VERSION = "hard-forget-v1"
-"""The deterministic D74 coordinator generation recorded on its one work row."""
+FORGET_COMPONENT_VERSION: Final = "forget-v1"
+"""The sweep generation; each sweep's work row is ``forget-v1/<sweep>``."""
+
+UPLOAD_SOURCE_KIND: Final = "upload"
+"""A one-shot upload's lineage is its bytes; the content hash guards it."""
+
+
+@dataclass(frozen=True)
+class SweepFindings:
+    """What one sweep's PostgreSQL step found and what the later steps act on."""
+
+    removed: bool
+    """The step deleted or cleared residue; the job sweeps again after a quiet period."""
+    object_keys: tuple[ObjectKey, ...]
+    """Opaque original keys to purge (retired raw originals, D147 locators)."""
+    compiled_artifact_ids: tuple[UUID, ...]
+    """Compiled K pages whose citations to the document this step removed."""
+    blocking_k_paths: tuple[str, ...]
+    """Authored pages and curation sidecars whose current file still cites it."""
+    profile_entity_ids: tuple[UUID, ...]
+    """Surviving entities whose profile this step cleared, for a refresh."""
+
+
+def sweep_work(
+    *,
+    deployment_id: UUID,
+    forget_id: UUID,
+    sweep: int,
+    failures: int,
+    not_before: datetime | None,
+    first: bool = False,
+    reapply: bool = False,
+) -> EnqueueWork:
+    """One sweep's work row: it targets the record, one row per sweep (D159 §3.4).
+
+    ``first`` marks the sweep right after a hide or a reapply: it is never the
+    last one, because it does not follow a quiet period. ``reapply`` marks a
+    series ``forget-reapply`` started after a restore.
+    """
+    return EnqueueWork(
+        deployment_id=deployment_id,
+        target_kind=ProcessingTarget.FORGET,
+        target_id=forget_id,
+        stage=PipelineStage.FORGET,
+        component_version=f"{FORGET_COMPONENT_VERSION}/{sweep}",
+        content_hash=str(forget_id),
+        lane=None,
+        payload={
+            "forget_id": str(forget_id),
+            "sweep": sweep,
+            "failures": failures,
+            "first": first,
+            "reapply": reapply,
+        },
+        not_before=not_before,
+    )
 
 
 class ForgetCatalog:
-    """Own local forget admission, inventory, progress, and exact ingest guards."""
+    """Own forget records, the re-ingest guard and the PostgreSQL sweep step."""
 
     def __init__(self, *, engine: Engine) -> None:
-        """Bind the guard catalog to the authoritative spine database."""
+        """Bind the catalog to the authoritative spine database."""
         self._engine = engine
 
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Refuse traffic while a preparing or accepted forget is incomplete."""
-        with self._engine.connect() as connection:
-            forget_id = active_forget_id_on(
-                connection=connection, deployment_id=deployment_id
-            )
-        if forget_id is not None:
-            raise ForgetInProgressError(
-                f"deployment {deployment_id} is honoring forget_id {forget_id}"
-            )
-
-    def prepare(
-        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID
-    ) -> ForgetManifestRecord:
-        """Establish one deployment-wide preparing barrier idempotently."""
-        with self._engine.begin() as connection:
-            connection.execute(_LOCK_DEPLOYMENT, {"deployment_id": deployment_id})
-            active_id = active_forget_id_on(
-                connection=connection, deployment_id=deployment_id
-            )
-            if active_id is not None:
-                active = (
-                    connection.execute(
-                        _SELECT_BY_ID,
-                        {"deployment_id": deployment_id, "forget_id": active_id},
-                    )
-                    .mappings()
-                    .one()
-                )
-                if active["forget_id"] == forget_id and active["doc_id"] == doc_id:
-                    return _record(row=active)
-                raise ForgetInProgressError(
-                    f"deployment {deployment_id} is already honoring forget_id"
-                    f" {active_id}"
-                )
-            existing = (
-                connection.execute(
-                    _SELECT_BY_DOC, {"deployment_id": deployment_id, "doc_id": doc_id}
-                )
-                .mappings()
-                .first()
-            )
-            if existing is not None:
-                if existing["forget_id"] != forget_id:
-                    raise ForgetManifestConflictError(
-                        f"document {doc_id} already belongs to forget_id"
-                        f" {existing['forget_id']}"
-                    )
-                return _record(row=existing)
-            owned = (
-                connection.execute(
-                    _SELECT_DOCUMENT, {"deployment_id": deployment_id, "doc_id": doc_id}
-                )
-                .mappings()
-                .first()
-            )
-            if owned is None:
-                raise ForgetTargetNotFoundError(
-                    f"deployment {deployment_id} does not own document {doc_id}"
-                )
-            row = (
-                connection.execute(
-                    _INSERT_PREPARING,
-                    {
-                        "forget_id": forget_id,
-                        "deployment_id": deployment_id,
-                        "doc_id": doc_id,
-                    },
-                )
-                .mappings()
-                .one()
-            )
-            return _record(row=row)
-
-    def ordinary_work_is_drained(self, *, deployment_id: UUID) -> bool:
-        """Return whether every already-running non-forget handler has finished."""
-        with self._engine.connect() as connection:
-            return bool(
-                connection.execute(
-                    _ORDINARY_WORK_DRAINED, {"deployment_id": deployment_id}
-                ).scalar_one()
-            )
-
-    def record_for_doc(
-        self, *, deployment_id: UUID, doc_id: UUID
-    ) -> ForgetManifestRecord | None:
-        """Return existing local progress for an idempotent request retry."""
+    def record(self, *, deployment_id: UUID, forget_id: UUID) -> Forget:
+        """Return one record, or raise ``ForgetNotFoundError``."""
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
-                    _SELECT_BY_DOC, {"deployment_id": deployment_id, "doc_id": doc_id}
+                    text(_SELECT + " WHERE deployment_id = :d AND forget_id = :f"),
+                    {"d": deployment_id, "f": forget_id},
                 )
-                .mappings()
-                .first()
-            )
-        return _record(row=row) if row is not None else None
-
-    def preparing_record(self, *, deployment_id: UUID) -> ForgetManifestRecord | None:
-        """Return the single crash-recoverable preparing request, when present."""
-        with self._engine.connect() as connection:
-            row = (
-                connection.execute(_SELECT_PREPARING, {"deployment_id": deployment_id})
                 .mappings()
                 .one_or_none()
             )
-        return _record(row=row) if row is not None else None
+        if row is None:
+            raise ForgetNotFoundError(str(forget_id))
+        return _forget(row=row)
 
-    def materialize_portable(self, *, manifest: ForgetManifest) -> None:
-        """Recreate or validate the local barrier from portable restore intent."""
-        parameters = {
-            "forget_id": manifest.forget_id,
-            "deployment_id": manifest.deployment_id,
-            "doc_id": manifest.doc_id,
-            "schema_version": manifest.schema_version,
-            "manifest_hash": manifest.sha256(),
-            "manifest": manifest.canonical_bytes().decode("utf-8"),
-            "source_identity_hash": manifest.source_identity_hash,
-            "content_hashes": list(manifest.content_hashes),
-        }
-        with self._engine.begin() as connection:
+    def records(self, *, deployment_id: UUID) -> tuple[Forget, ...]:
+        """Every record of a deployment, oldest first."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    _SELECT
+                    + " WHERE deployment_id = :d ORDER BY requested_at, forget_id"
+                ),
+                {"d": deployment_id},
+            ).mappings()
+            return tuple(_forget(row=row) for row in rows)
+
+    def record_for_doc_on(
+        self, *, connection: Connection, deployment_id: UUID, doc_id: UUID
+    ) -> Forget | None:
+        """The lineage's record, read in the caller's transaction."""
+        row = (
             connection.execute(
-                _LOCK_DEPLOYMENT, {"deployment_id": manifest.deployment_id}
+                text(_SELECT + " WHERE deployment_id = :d AND doc_id = :doc"),
+                {"d": deployment_id, "doc": doc_id},
             )
-            by_document = (
-                connection.execute(
-                    _SELECT_BY_DOC,
-                    {
-                        "deployment_id": manifest.deployment_id,
-                        "doc_id": manifest.doc_id,
-                    },
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if (
-                by_document is not None
-                and by_document["forget_id"] != manifest.forget_id
-            ):
-                raise ForgetManifestConflictError(
-                    f"document {manifest.doc_id} already belongs to forget_id"
-                    f" {by_document['forget_id']}"
-                )
-            row = (
-                connection.execute(
-                    _SELECT_BY_ID_FOR_UPDATE,
-                    {
-                        "deployment_id": manifest.deployment_id,
-                        "forget_id": manifest.forget_id,
-                    },
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if row is None:
-                connection.execute(_INSERT_PORTABLE, parameters)
-                return
-            if row["doc_id"] != manifest.doc_id:
-                raise ForgetManifestConflictError(
-                    f"forget_id {manifest.forget_id} targets a different document"
-                )
-            if row["manifest"] is not None:
-                _require_same_manifest(row=row, manifest=manifest)
-                connection.execute(
-                    text("""UPDATE forget_manifests SET status = 'accepted',
-                    completed_at = NULL, last_verified_at = NULL WHERE deployment_id = :deployment_id
-                    AND forget_id = :forget_id"""),
-                    parameters,
-                )
-                return
-            connection.execute(_MATERIALIZE_PREPARING, parameters)
+            .mappings()
+            .one_or_none()
+        )
+        return _forget(row=row) if row is not None else None
 
-    def blocking_k_paths(self, *, deployment_id: UUID, doc_id: UUID) -> tuple[str, ...]:
-        """Return owner-controlled paths whose synced citations still reach a lineage."""
-        with self._engine.connect() as connection:
-            values = connection.execute(
-                _BLOCKING_K_PATHS, {"deployment_id": deployment_id, "doc_id": doc_id}
-            ).scalars()
-            return tuple(sorted({str(value) for value in values}))
-
-    def k_paths_for_artifacts(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> tuple[str, ...]:
-        """Return exact body and curation paths nominated for Git history purge."""
-        if not artifact_ids:
-            return ()
-        with self._engine.connect() as connection:
-            values = connection.execute(
-                _K_PATHS_FOR_ARTIFACTS,
-                {"deployment_id": deployment_id, "artifact_ids": list(artifact_ids)},
-            ).scalars()
-            return tuple(sorted({str(value) for value in values if value is not None}))
-
-    def inventory_and_store_manifest(
+    def insert_on(
         self,
         *,
+        connection: Connection,
         deployment_id: UUID,
         doc_id: UUID,
         forget_id: UUID,
-        requested_at: datetime,
-    ) -> ForgetManifest:
-        """Freeze one repeatable-read inventory and commit it before portable append."""
-        with self._engine.connect().execution_options(
-            isolation_level="REPEATABLE READ"
-        ) as connection:
-            with connection.begin():
-                row = (
-                    connection.execute(
-                        _SELECT_BY_ID_FOR_UPDATE,
-                        {"deployment_id": deployment_id, "forget_id": forget_id},
-                    )
-                    .mappings()
-                    .first()
-                )
-                if row is None or row["doc_id"] != doc_id:
-                    raise ForgetManifestNotFoundError(
-                        f"preparing forget_id {forget_id} does not exist"
-                    )
-                if row["manifest"] is not None:
-                    return _manifest(row=row)
-                document = (
-                    connection.execute(
-                        _SELECT_DOCUMENT,
-                        {"deployment_id": deployment_id, "doc_id": doc_id},
-                    )
-                    .mappings()
-                    .first()
-                )
-                if document is None:
-                    raise ForgetTargetNotFoundError(
-                        f"deployment {deployment_id} does not own document {doc_id}"
-                    )
-                manifest = ForgetManifest(
-                    forget_id=forget_id,
-                    deployment_id=deployment_id,
-                    doc_id=doc_id,
-                    requested_at=requested_at,
-                    source_identity_hash=(
-                        source_identity_hash(
-                            deployment_id=deployment_id,
-                            source_kind=str(document["source_kind"]),
-                            source_ref=str(document["source_ref"]),
-                        )
-                        if document["source_ref"] is not None
-                        else None
-                    ),
-                    content_hashes=_text_values(
-                        connection=connection,
-                        statement=_CONTENT_HASHES,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                    chunk_ids=_uuid_values(
-                        connection=connection,
-                        statement=_CHUNK_IDS,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                    claim_ids=_uuid_values(
-                        connection=connection,
-                        statement=_CLAIM_IDS,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                    mention_ids=_uuid_values(
-                        connection=connection,
-                        statement=_MENTION_IDS,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                    resolved_entity_ids=_uuid_values(
-                        connection=connection,
-                        statement=_RESOLVED_ENTITY_IDS,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                    fact_ids=_uuid_values(
-                        connection=connection,
-                        statement=_EXCLUSIVE_FACT_IDS,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                    entity_ids=_uuid_values(
-                        connection=connection,
-                        statement=_EXCLUSIVE_ENTITY_IDS,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                    object_keys=tuple(
-                        ObjectKey(value)
-                        for value in _text_values(
-                            connection=connection,
-                            statement=_OBJECT_KEYS,
-                            deployment_id=deployment_id,
-                            doc_id=doc_id,
-                        )
-                    ),
-                    k_artifact_ids=_uuid_values(
-                        connection=connection,
-                        statement=_K_ARTIFACT_IDS,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                    ),
-                )
-                connection.execute(
-                    _STORE_MANIFEST,
-                    {
-                        "deployment_id": deployment_id,
-                        "forget_id": forget_id,
-                        "schema_version": manifest.schema_version,
-                        "manifest_hash": manifest.sha256(),
-                        "manifest": manifest.canonical_bytes().decode("utf-8"),
-                        "source_identity_hash": manifest.source_identity_hash,
-                        "content_hashes": list(manifest.content_hashes),
-                    },
-                )
-                return manifest
+    ) -> tuple[Forget, bool]:
+        """Insert the record under the lineage row lock the caller holds.
 
-    def cancel_unstored_preparation(
-        self, *, deployment_id: UUID, forget_id: UUID
-    ) -> bool:
-        """Reopen admission only before immutable manifest bytes have been stored."""
-        with self._engine.begin() as connection:
-            return (
-                connection.execute(
-                    _DELETE_UNSTORED_PREPARING,
-                    {"deployment_id": deployment_id, "forget_id": forget_id},
-                ).rowcount
-                == 1
-            )
-
-    def accept_and_enqueue(self, *, manifest: ForgetManifest) -> EnqueueOutcome:
-        """Acknowledge portable append and atomically create the one worker row."""
-        with self._engine.begin() as connection:
-            row = (
-                connection.execute(
-                    _SELECT_BY_ID_FOR_UPDATE,
-                    {
-                        "deployment_id": manifest.deployment_id,
-                        "forget_id": manifest.forget_id,
-                    },
-                )
-                .mappings()
-                .first()
-            )
-            if row is None:
-                raise ForgetManifestNotFoundError(
-                    f"stored forget_id {manifest.forget_id} does not exist"
-                )
-            _require_same_manifest(row=row, manifest=manifest)
+        Returns the record and whether this call created it; a concurrent
+        forget that committed first wins and its record is returned.
+        """
+        document = (
             connection.execute(
-                _REGISTER_FORGETTER,
+                text("""SELECT source_kind, source_ref FROM documents
+                WHERE deployment_id = :d AND doc_id = :doc"""),
+                {"d": deployment_id, "doc": doc_id},
+            )
+            .mappings()
+            .one()
+        )
+        identity = (
+            None
+            if document["source_kind"] == UPLOAD_SOURCE_KIND
+            or document["source_ref"] is None
+            else source_identity_hash(
+                deployment_id=deployment_id,
+                source_kind=str(document["source_kind"]),
+                source_ref=str(document["source_ref"]),
+            )
+        )
+        row = (
+            connection.execute(
+                _INSERT_RECORD,
                 {
-                    "deployment_id": manifest.deployment_id,
-                    "version": HARD_FORGET_COMPONENT_VERSION,
+                    "forget_id": forget_id,
+                    "d": deployment_id,
+                    "doc": doc_id,
+                    "identity": identity,
                 },
             )
-            definition_matches = bool(
-                connection.execute(
-                    _FORGETTER_DEFINITION_MATCHES,
-                    {
-                        "deployment_id": manifest.deployment_id,
-                        "version": HARD_FORGET_COMPONENT_VERSION,
-                    },
-                ).scalar_one()
-            )
-            if not definition_matches:
-                raise ComponentVersionConflictError(
-                    "hard-forget component version has a conflicting definition"
-                )
-            connection.execute(
-                _MARK_ACCEPTED,
-                {
-                    "deployment_id": manifest.deployment_id,
-                    "forget_id": manifest.forget_id,
-                },
-            )
-            return enqueue_on(
-                connection=connection,
-                work=EnqueueWork(
-                    deployment_id=manifest.deployment_id,
-                    target_kind=ProcessingTarget.DOCUMENT,
-                    target_id=manifest.doc_id,
-                    stage=PipelineStage.HARD_FORGET,
-                    component_version=HARD_FORGET_COMPONENT_VERSION,
-                    content_hash=manifest.sha256(),
-                    lane=None,
-                    payload={"forget_id": str(manifest.forget_id)},
-                ),
-            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is not None:
+            return _forget(row=row), True
+        existing = self.record_for_doc_on(
+            connection=connection, deployment_id=deployment_id, doc_id=doc_id
+        )
+        if existing is None:
+            raise RuntimeError(f"forget record for {doc_id} vanished on conflict")
+        return existing, False
 
-    def manifest_for(self, *, deployment_id: UUID, forget_id: UUID) -> ForgetManifest:
-        """Return one accepted worker's exact immutable local manifest."""
-        with self._engine.connect() as connection:
-            row = (
-                connection.execute(
-                    _SELECT_BY_ID,
-                    {"deployment_id": deployment_id, "forget_id": forget_id},
-                )
-                .mappings()
-                .first()
-            )
-        if row is None or row["manifest"] is None:
-            raise ForgetManifestNotFoundError(
-                f"accepted forget_id {forget_id} does not exist"
-            )
-        return _manifest(row=row)
-
-    def scrub_postgres(self, *, manifest: ForgetManifest) -> None:
-        """Idempotently remove lineage-owned source-bearing PostgreSQL payloads."""
-        parameters = {
-            "deployment_id": manifest.deployment_id,
-            "doc_id": manifest.doc_id,
-            "forget_id": manifest.forget_id,
-            "chunk_ids": list(manifest.chunk_ids),
-            "claim_ids": list(manifest.claim_ids),
-            "mention_ids": list(manifest.mention_ids),
-            "resolved_entity_ids": list(manifest.resolved_entity_ids),
-            "fact_ids": list(manifest.fact_ids),
-            "entity_ids": list(manifest.entity_ids),
-            "k_artifact_ids": list(manifest.k_artifact_ids),
-            "content_hashes": list(manifest.content_hashes),
-        }
-        with self._engine.begin() as connection:
-            connection.execute(
-                _LOCK_DEPLOYMENT, {"deployment_id": manifest.deployment_id}
-            )
-            row = (
-                connection.execute(
-                    _SELECT_BY_ID_FOR_UPDATE,
-                    {
-                        "deployment_id": manifest.deployment_id,
-                        "forget_id": manifest.forget_id,
-                    },
-                )
-                .mappings()
-                .first()
-            )
-            if row is None:
-                raise ForgetManifestNotFoundError(
-                    f"forget_id {manifest.forget_id} does not exist"
-                )
-            _require_same_manifest(row=row, manifest=manifest)
-            _scrub_mutable_fact_payloads(connection=connection, parameters=parameters)
-            for statement in _POSTGRES_SCRUB:
-                connection.execute(statement, parameters)
-
-    def profile_repair_batches(
-        self, *, manifest: ForgetManifest
-    ) -> Iterator[tuple[UUID, ...]]:
-        """Find cleared caches by existing hash state, including old-manifest retries."""
-        cursor: UUID | None = None
-        while True:
-            with self._engine.connect() as connection:
-                ids = tuple(
-                    connection.execute(
-                        text("""SELECT entity_id FROM entities
-                  WHERE deployment_id=:dep AND status IN ('active','merged')
-                    AND embedding_text_hash IS NULL
-                    AND (CAST(:cursor AS uuid) IS NULL OR entity_id>:cursor)
-                  ORDER BY entity_id LIMIT 100
-                """),
-                        {"dep": manifest.deployment_id, "cursor": cursor},
-                    ).scalars()
-                )
-            if not ids:
-                return
-            yield ids
-            cursor = ids[-1]
-
-    def verify_postgres_scrubbed(self, *, manifest: ForgetManifest) -> None:
-        """Raise visibly if any nominated source-bearing PostgreSQL row remains."""
-        with self._engine.connect() as connection:
-            remaining = int(
-                connection.execute(
-                    _VERIFY_POSTGRES_SCRUB,
-                    {
-                        "deployment_id": manifest.deployment_id,
-                        "doc_id": manifest.doc_id,
-                        "chunk_ids": list(manifest.chunk_ids),
-                        "claim_ids": list(manifest.claim_ids),
-                        "mention_ids": list(manifest.mention_ids),
-                        "resolved_entity_ids": list(manifest.resolved_entity_ids),
-                        "fact_ids": list(manifest.fact_ids),
-                        "entity_ids": list(manifest.entity_ids),
-                        "k_artifact_ids": list(manifest.k_artifact_ids),
-                        "content_hashes": list(manifest.content_hashes),
-                    },
-                ).scalar_one()
-            )
-        if remaining:
-            raise RuntimeError(
-                f"forget_id {manifest.forget_id} PostgreSQL verification found"
-                f" {remaining} source-bearing row groups"
-            )
-
-    def mark_complete(self, *, manifest: ForgetManifest) -> None:
-        """Open admission only after every store and PostgreSQL verification succeeds."""
-        with self._engine.begin() as connection:
-            updated = connection.execute(
-                _MARK_COMPLETE,
-                {
-                    "deployment_id": manifest.deployment_id,
-                    "forget_id": manifest.forget_id,
-                    "manifest_hash": manifest.sha256(),
-                },
-            ).rowcount
-        if updated != 1:
-            raise ForgetManifestConflictError(
-                f"forget_id {manifest.forget_id} was not accepted with these bytes"
-            )
+    def rearm_on(self, *, connection: Connection, forget: Forget) -> None:
+        """``forget-reapply``: the record is erasing again until its sweeps finish."""
+        connection.execute(
+            text("""UPDATE forgets SET status = 'erasing', completed_at = NULL
+            WHERE deployment_id = :d AND forget_id = :f"""),
+            {"d": forget.deployment_id, "f": forget.forget_id},
+        )
 
     def guard_ingest(
         self,
@@ -560,1573 +210,1254 @@ class ForgetCatalog:
         source_ref: str,
         content_hash: str,
     ) -> None:
-        """Refuse active traffic and any completed manifest's exact identity."""
-        self.assert_available(deployment_id=deployment_id)
-        identity_hash = source_identity_hash(
-            deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
-        )
+        """Refuse forgotten content before any bytes are written (D159 §3.6)."""
         with self._engine.connect() as connection:
-            forget_id = connection.execute(
-                _FORGOTTEN_INGEST,
+            guard_forgotten_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                source_kind=source_kind,
+                source_ref=source_ref,
+                content_hash=content_hash,
+            )
+
+    def sweep_postgres(self, *, forget: Forget) -> SweepFindings:
+        """Collect, then delete or clear, in one transaction (D159 §3.3 steps 0-1)."""
+        with self._engine.begin() as connection:
+            return _Sweep(connection=connection, forget=forget).run()
+
+    def k_paths_for_artifacts(
+        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
+    ) -> tuple[str, ...]:
+        """Exact body and curation paths of K artifacts, for history erasure."""
+        if not artifact_ids:
+            return ()
+        with self._engine.connect() as connection:
+            values = connection.execute(
+                _K_PATHS_FOR_ARTIFACTS,
+                {"deployment_id": deployment_id, "artifact_ids": list(artifact_ids)},
+            ).scalars()
+            return tuple(sorted({str(value) for value in values if value is not None}))
+
+    def still_blocking(self, *, forget: Forget) -> tuple[str, ...]:
+        """The listed authored paths whose current file still cites the document."""
+        with self._engine.connect() as connection:
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+            )
+            return _blocking_paths(
+                connection=connection, forget=forget, collected=collected
+            )
+
+    def authored_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
+        """The authored artifacts collected as citing the document."""
+        with self._engine.connect() as connection:
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+            )
+        return tuple(sorted((UUID(key) for key in collected["authored"]), key=str))
+
+    def finish(
+        self, *, forget: Forget, blocking_k_paths: tuple[str, ...]
+    ) -> ForgetStatus:
+        """A clean sweep after the quiet period: complete, or wait for redaction."""
+        status = (
+            ForgetStatus.WAITING_FOR_REDACTION
+            if blocking_k_paths
+            else ForgetStatus.COMPLETE
+        )
+        with self._engine.begin() as connection:
+            connection.execute(
+                text("""UPDATE forgets SET status = CAST(:status AS forget_status),
+                blocking_k_paths = CAST(:paths AS text[]), last_error = NULL,
+                completed_at = CASE WHEN :status = 'complete'
+                                    THEN COALESCE(completed_at, now()) END
+                WHERE deployment_id = :d AND forget_id = :f"""),
                 {
-                    "deployment_id": deployment_id,
-                    "source_identity_hash": identity_hash,
-                    "content_hash": content_hash,
+                    "d": forget.deployment_id,
+                    "f": forget.forget_id,
+                    "status": status.value,
+                    "paths": sorted(blocking_k_paths),
                 },
-            ).scalar_one_or_none()
-        if forget_id is not None:
-            raise ForgottenSourceError(
-                f"ingest matches irreversible forget_id {forget_id}"
+            )
+        return status
+
+    def live_originals(self, *, forget: Forget) -> frozenset[str]:
+        """Original keys under the document's prefix another lineage still uses."""
+        with self._engine.connect() as connection:
+            return frozenset(
+                str(value)
+                for value in connection.execute(
+                    text("""SELECT raw_uri FROM content_objects
+                    WHERE deployment_id = :d AND purged_at IS NULL
+                      AND (raw_uri LIKE CAST(:doc AS text) || '/%'
+                           OR raw_uri LIKE 'uploads/%')
+                      AND content_hash = ANY(CAST(:hashes AS text[]))"""),
+                    {
+                        "d": forget.deployment_id,
+                        "doc": forget.doc_id,
+                        "hashes": list(forget.content_hashes),
+                    },
+                ).scalars()
+            )
+
+    def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
+        """The compiled K artifacts the record names, for a reapply."""
+        with self._engine.connect() as connection:
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+            )
+        return tuple(UUID(value) for value in collected["k_artifact_ids"])
+
+    def schedule(self, *, work: EnqueueWork) -> None:
+        """Enqueue one sweep outside a handler's completion transaction."""
+        with self._engine.begin() as connection:
+            enqueue_on(connection=connection, work=work)
+
+    def record_error(self, *, forget: Forget, code: str) -> None:
+        """Keep the content-free code of a failed sweep visible on the record."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                text("""UPDATE forgets SET last_error = :code
+                WHERE deployment_id = :d AND forget_id = :f"""),
+                {"d": forget.deployment_id, "f": forget.forget_id, "code": code},
             )
 
 
-def _scrub_mutable_fact_payloads(
-    *, connection: Connection, parameters: dict[str, Any]
+def guard_forgotten_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    source_kind: str,
+    source_ref: str,
+    content_hash: str,
 ) -> None:
-    """Erase consumed source payloads before source cascades remove their inventory."""
-    source_ids = (
+    """Raise ``DocumentForgottenError`` when a record guards this identity or hash.
+
+    Called before bytes are written and again at registration under the
+    lineage row lock. A record's released hash or identity no longer guards
+    (a deliberate re-add); the sweep keys never change.
+    """
+    identity = (
+        None
+        if source_kind == UPLOAD_SOURCE_KIND
+        else source_identity_hash(
+            deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
+        )
+    )
+    row = (
         connection.execute(
-            text(
-                "SELECT claim_id FROM claims WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+            _FORGOTTEN_INGEST,
+            {"d": deployment_id, "identity": identity, "content_hash": content_hash},
+        )
+        .mappings()
+        .first()
+    )
+    if row is not None:
+        raise DocumentForgottenError(
+            forget_id=row["forget_id"], forgotten_at=row["requested_at"]
+        )
+
+
+def retry_delay(*, quiet_period_s: float, failures: int) -> timedelta:
+    """The quiet period, doubled per consecutive failed sweep, capped at 64x."""
+    return timedelta(seconds=quiet_period_s * 2 ** min(failures, 6))
+
+
+def utc_now() -> datetime:
+    """The application clock used to schedule the next sweep."""
+    return datetime.now(timezone.utc)
+
+
+class _Sweep:
+    """One sweep's PostgreSQL step inside one transaction."""
+
+    def __init__(self, *, connection: Connection, forget: Forget) -> None:
+        self._c = connection
+        self._forget = forget
+        self._removed = 0
+
+    def run(self) -> SweepFindings:
+        forget = self._forget
+        self._c.execute(
+            text("""SELECT 1 FROM forgets WHERE deployment_id = :d AND forget_id = :f
+            FOR UPDATE"""),
+            {"d": forget.deployment_id, "f": forget.forget_id},
+        )
+        collected = _collected(
+            connection=self._c,
+            deployment_id=forget.deployment_id,
+            forget_id=forget.forget_id,
+        )
+        p = self._collect(collected=collected)
+        self._c.execute(
+            text("""UPDATE forgets SET collected = CAST(:collected AS jsonb)
+            WHERE deployment_id = :d AND forget_id = :f"""),
+            {
+                "d": forget.deployment_id,
+                "f": forget.forget_id,
+                "collected": json.dumps(collected, sort_keys=True),
+            },
+        )
+        self._exec(_SKIP_DOCUMENT_WORK, p, residue=False)
+        profile_entities = self._shared_wording(p=p)
+        self._exclusive_facts(p=p)
+        self._entities(p=p)
+        compiled = self._knowledge(p=p)
+        for statement in _SUBTREE:
+            self._exec(statement, p)
+        self._retire_originals(p=p, collected=collected)
+        for statement in _DEPLOYMENT_FIXTURES:
+            self._exec(statement, p, residue=False)
+        self._stale_labels(collected=collected)
+        self._c.execute(
+            text("""UPDATE forgets SET collected = CAST(:collected AS jsonb)
+            WHERE deployment_id = :d AND forget_id = :f"""),
+            {
+                "d": forget.deployment_id,
+                "f": forget.forget_id,
+                "collected": json.dumps(collected, sort_keys=True),
+            },
+        )
+        return SweepFindings(
+            removed=self._removed > 0,
+            object_keys=tuple(ObjectKey(key) for key in collected["object_keys"]),
+            compiled_artifact_ids=compiled,
+            blocking_k_paths=_blocking_paths(
+                connection=self._c, forget=forget, collected=collected
             ),
-            parameters,
+            profile_entity_ids=profile_entities,
         )
-        .scalars()
-        .all()
-    )
-    parameters["claim_ids"] = sorted(set(parameters["claim_ids"]) | set(source_ids))
-    connection.execute(
-        text("""UPDATE fact_applications SET
-      prepared=NULL, decision=NULL, attempt_id=NULL, input_hash=NULL,
-      input_claim_ids=ARRAY(SELECT id FROM unnest(input_claim_ids) id WHERE NOT id=ANY(:claim_ids) ORDER BY id)
-      WHERE deployment_id=:deployment_id AND input_claim_ids && CAST(:claim_ids AS uuid[])
-    """),
-        parameters,
-    )
-    # Re-evaluate exclusivity for portable manifests authored before D118.
-    # Counterevidence cannot preserve the forgotten assertion's source wording.
-    exclusive = connection.execute(_EXCLUSIVE_FACT_IDS, parameters).scalars().all()
-    parameters["fact_ids"] = sorted(set(parameters["fact_ids"]) | set(exclusive))
-    connection.execute(
-        text("""WITH replacements AS (
-      SELECT f.observation_id, replacement.statement
-      FROM observations f
-      CROSS JOIN LATERAL (
-        SELECT coalesce(n.output->'observations'->a.output_ordinal->>'statement', c.claim_text) AS statement
-        FROM observation_evidence e
-        JOIN claims c ON c.deployment_id=e.deployment_id AND c.claim_id=e.claim_id
-        JOIN documents d ON d.deployment_id=e.deployment_id AND d.doc_id=e.doc_id
-        LEFT JOIN fact_applications a ON a.deployment_id=e.deployment_id AND a.claim_id=e.claim_id
-          AND a.support_observation_id=e.observation_id AND a.applied_at IS NOT NULL AND a.support_stance='supports'
-        LEFT JOIN normalization_outputs n ON n.deployment_id=a.deployment_id AND n.claim_id=a.claim_id
-          AND n.normalizer_version=a.normalizer_version
-        WHERE e.deployment_id=f.deployment_id AND e.observation_id=f.observation_id
-          AND e.stance='supports' AND c.is_current_testimony AND d.deleted_at IS NULL
-          AND e.doc_id<>:doc_id AND NOT e.claim_id=ANY(:claim_ids)
-        ORDER BY (a.application_id IS NULL),c.asserted_at NULLS LAST,c.claim_id,a.application_id
-        LIMIT 1
-      ) replacement
-      WHERE f.deployment_id=:deployment_id AND NOT f.observation_id=ANY(:fact_ids)
-        AND EXISTS(SELECT 1 FROM observation_evidence e WHERE e.deployment_id=f.deployment_id
-          AND e.observation_id=f.observation_id AND (e.doc_id=:doc_id OR e.claim_id=ANY(:claim_ids)))
-    ) UPDATE observations f SET statement=replacements.statement,obs_label=NULL,
-      embedding=NULL,embedding_model=NULL,embedding_input_policy_version=NULL,embedding_text_hash=NULL,
-      updated_at=now() FROM replacements
-      WHERE f.deployment_id=:deployment_id AND f.observation_id=replacements.observation_id
-    """),
-        parameters,
-    )
-    affected = set(parameters["resolved_entity_ids"])
-    for kind, table in (("relation", "relations"), ("observation", "observations")):
-        object_column = ", f.object_entity_id" if kind == "relation" else ""
-        rows = connection.execute(
-            text(f"""SELECT f.{kind}_id, f.subject_entity_id{object_column}
-          FROM {table} f WHERE f.deployment_id=:deployment_id AND
-          (f.window_claim_ids && CAST(:claim_ids AS uuid[]) OR EXISTS(
-            SELECT 1 FROM {kind}_evidence e WHERE e.deployment_id=f.deployment_id
-            AND e.{kind}_id=f.{kind}_id AND (e.doc_id=:doc_id OR e.claim_id=ANY(:claim_ids))))
-        """),
-            parameters,
-        ).all()
-        for row in rows:
-            affected.update(row[1:])
-        label_clear = (
-            "fact_label=NULL,fact_label_version=NULL,"
-            if kind == "relation"
-            else "obs_label=NULL,"
+
+    def _exec(
+        self, statement: Any, params: dict[str, Any], residue: bool = True
+    ) -> int:  # noqa: ANN401
+        count = self._c.execute(statement, params).rowcount
+        if residue and count > 0:
+            self._removed += count
+        return count
+
+    def _ids(self, statement: str, params: dict[str, Any]) -> list[UUID]:
+        return sorted(
+            {
+                UUID(str(value))
+                for value in self._c.execute(text(statement), params).scalars()
+            },
+            key=str,
         )
-        connection.execute(
-            text(f"""UPDATE {table} SET
-          valid_from=NULL,valid_until=NULL,valid_precision='unknown',window_claim_ids='{{}}'
-          WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
-        """),
-            parameters,
+
+    def _collect(self, *, collected: dict[str, Any]) -> dict[str, Any]:
+        """Step 0: IDs only, gathered before the deletes remove their links."""
+        forget = self._forget
+        p: dict[str, Any] = {
+            "deployment_id": forget.deployment_id,
+            "doc_id": forget.doc_id,
+            "version_ids": list(forget.version_ids),
+            "content_hashes": list(forget.content_hashes),
+        }
+        p["version_ids"] = sorted(
+            set(p["version_ids"])
+            | set(
+                self._ids(
+                    "SELECT version_id FROM document_versions"
+                    " WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
+                    p,
+                )
+            ),
+            key=str,
         )
-        connection.execute(
-            text(f"""UPDATE {table} SET {label_clear}
-          embedding=NULL,embedding_model=NULL,embedding_input_policy_version=NULL,
-          embedding_text_hash=NULL,period_basis=NULL,updated_at=now()
-          WHERE deployment_id=:deployment_id AND {kind}_id=ANY(:affected_fact_ids)
-        """),
-            {**parameters, "affected_fact_ids": [row[0] for row in rows]},
+        p["claim_ids"] = self._ids(
+            "SELECT claim_id FROM claims WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
+            p,
         )
-        # D140 §8.2: a stored review answer may quote forgotten claims
-        connection.execute(
-            text("""DELETE FROM fact_window_review_attempts
-          WHERE deployment_id=:deployment_id AND fact_kind=:kind
-            AND fact_id=ANY(:affected_fact_ids)
-        """),
-            {**parameters, "kind": kind, "affected_fact_ids": [row[0] for row in rows]},
+        p["chunk_ids"] = self._ids(
+            "SELECT chunk_id FROM chunks WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
+            p,
         )
-        connection.execute(
-            text(f"""UPDATE {kind}_adjudications SET
-          triggering_claim_id=NULL, features=NULL, consumed_claim_ids='{{}}'
-          WHERE deployment_id=:deployment_id AND
-            (consumed_claim_ids && CAST(:claim_ids AS uuid[]) OR triggering_claim_id=ANY(:claim_ids))
-        """),
-            parameters,
+        p["mention_ids"] = self._ids(
+            "SELECT mention_id FROM mentions"
+            " WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
+            p,
         )
-    # Old portable manifests predate window witnesses. Recompute the redirect
-    # closure now; NULL input hashes also let retry repair discover these caches.
-    parameters["resolved_entity_ids"] = sorted(affected)
-    connection.execute(
-        text("""WITH RECURSIVE affected(entity_id) AS (
-      SELECT entity_id FROM entities WHERE deployment_id=:deployment_id AND entity_id=ANY(:resolved_entity_ids)
-      UNION
-      SELECT e.merged_into FROM entities e JOIN affected a USING(entity_id)
-      WHERE e.deployment_id=:deployment_id AND e.merged_into IS NOT NULL
-    ) UPDATE entities SET profile_summary=NULL,embedding=NULL,embedding_model=NULL,
-      embedding_input_policy_version=NULL,embedding_text_hash=NULL,updated_at=now()
-      WHERE deployment_id=:deployment_id AND entity_id IN (SELECT entity_id FROM affected)
-    """),
-        parameters,
-    )
+        p["forgotten_doc_ids"] = self._ids(
+            "SELECT doc_id FROM forgets WHERE deployment_id=:deployment_id", p
+        )
+        linked_relations = self._ids(_LINKED_RELATIONS, p)
+        linked_observations = self._ids(_LINKED_OBSERVATIONS, p)
+        p["linked_fact_ids"] = sorted(
+            set(linked_relations) | set(linked_observations), key=str
+        )
+        p["fact_ids"] = sorted(
+            set(p["linked_fact_ids"])
+            | {UUID(value) for value in collected["fact_ids"]},
+            key=str,
+        )
+        p["exclusive_fact_ids"] = self._ids(_EXCLUSIVE_FACTS, p)
+        p["shared_fact_ids"] = sorted(
+            set(p["linked_fact_ids"]) - set(p["exclusive_fact_ids"]), key=str
+        )
+        resolved = self._ids(_RESOLVED_ENTITIES, p)
+        endpoints = self._ids(_FACT_ENDPOINTS, p)
+        p["resolved_entity_ids"] = sorted(set(resolved) | set(endpoints), key=str)
+        p["entity_ids"] = sorted(
+            set(p["resolved_entity_ids"])
+            | {UUID(value) for value in collected["entity_ids"]},
+            key=str,
+        )
+        p["exclusive_entity_ids"] = self._ids(_EXCLUSIVE_ENTITIES, p)
+        compiled = self._ids(
+            _CITING_ARTIFACTS.format(facts="linked_fact_ids")
+            + " AND a.page_kind = 'compiled'",
+            p,
+        )
+        authored = self._ids(
+            _CITING_ARTIFACTS.format(facts="fact_ids")
+            + " AND a.page_kind = 'authored'",
+            p,
+        )
+        p["compiled_artifact_ids"] = compiled
+        for artifact_id in authored:
+            if str(artifact_id) not in collected["authored"]:
+                collected["authored"][str(artifact_id)] = self._c.execute(
+                    text(
+                        "SELECT content_hash FROM knowledge_artifacts"
+                        " WHERE deployment_id=:deployment_id AND artifact_id=:a"
+                    ),
+                    {**p, "a": artifact_id},
+                ).scalar_one_or_none()
+        p["k_artifact_ids"] = sorted(
+            set(compiled) | {UUID(value) for value in collected["k_artifact_ids"]},
+            key=str,
+        )
+        object_keys = {
+            str(value)
+            for value in self._c.execute(_OWNED_ORIGINALS, p).scalars()
+            if value is not None
+        }
+        collected["fact_ids"] = sorted(
+            {*collected["fact_ids"], *map(str, p["fact_ids"])}
+        )
+        collected["entity_ids"] = sorted(
+            {*collected["entity_ids"], *map(str, p["entity_ids"])}
+        )
+        collected["k_artifact_ids"] = sorted(
+            {*collected["k_artifact_ids"], *map(str, p["k_artifact_ids"])}
+        )
+        collected["object_keys"] = sorted({*collected["object_keys"], *object_keys})
+        return p
+
+    def _shared_wording(self, *, p: dict[str, Any]) -> tuple[UUID, ...]:
+        """Recompute or clear wording that came from the document (D159 §3.3)."""
+        self._exec(_CLEAR_APPLICATION_INPUTS, p)
+        self._exec(_REPLACE_SHARED_STATEMENTS, p)
+        for kind, table in (("relation", "relations"), ("observation", "observations")):
+            label_clear = (
+                "fact_label=NULL,fact_label_version=NULL,"
+                if kind == "relation"
+                else "obs_label=NULL,"
+            )
+            self._exec(
+                text(f"""UPDATE {table} SET
+                  valid_from=NULL,valid_until=NULL,valid_precision='unknown',
+                  window_claim_ids='{{}}'
+                  WHERE deployment_id=:deployment_id
+                    AND window_claim_ids && CAST(:claim_ids AS uuid[])"""),
+                p,
+            )
+            self._exec(
+                text(f"""UPDATE {table} SET {label_clear}
+                  embedding=NULL,embedding_model=NULL,embedding_input_policy_version=NULL,
+                  embedding_text_hash=NULL,period_basis=NULL,updated_at=now()
+                  WHERE deployment_id=:deployment_id
+                    AND {kind}_id=ANY(CAST(:shared_fact_ids AS uuid[]))"""),
+                p,
+            )
+            self._exec(
+                text("""DELETE FROM fact_window_review_attempts
+                  WHERE deployment_id=:deployment_id AND fact_kind=:kind
+                    AND fact_id=ANY(CAST(:shared_fact_ids AS uuid[]))"""),
+                {**p, "kind": kind},
+            )
+            self._exec(
+                text(f"""UPDATE {kind}_adjudications SET
+                  triggering_claim_id=NULL, features=NULL, consumed_claim_ids='{{}}'
+                  WHERE deployment_id=:deployment_id AND
+                    (consumed_claim_ids && CAST(:claim_ids AS uuid[])
+                     OR triggering_claim_id=ANY(CAST(:claim_ids AS uuid[])))"""),
+                p,
+            )
+        cleared = self._c.execute(_CLEAR_PROFILES, p).scalars().all()
+        self._removed += len(cleared)
+        return tuple(sorted({UUID(str(value)) for value in cleared}, key=str))
+
+    def _exclusive_facts(self, *, p: dict[str, Any]) -> None:
+        """Delete facts only this document evidenced, with their adjudications."""
+        p["exclusive_predicates"] = list(
+            self._c.execute(
+                text("""SELECT DISTINCT predicate FROM relations
+                WHERE deployment_id=:deployment_id
+                  AND relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))"""),
+                p,
+            ).scalars()
+        )
+        for statement in _EXCLUSIVE_FACT_DELETES:
+            self._exec(statement, p)
+        self._exec(_PRUNE_PREDICATES, p)
+
+    def _entities(self, *, p: dict[str, Any]) -> None:
+        """Retire exclusive entities content-free; repair shared names and aliases."""
+        p["doc_lemmas"] = list(
+            self._c.execute(
+                text("""SELECT DISTINCT lemma FROM mentions m
+                CROSS JOIN LATERAL (VALUES (m.normalized_lemma),
+                  (lower(m.canonical_name_form))) v(lemma)
+                WHERE m.deployment_id=:deployment_id AND m.doc_id=:doc_id
+                  AND v.lemma IS NOT NULL"""),
+                p,
+            ).scalars()
+        )
+        for statement in _ENTITY_STATEMENTS:
+            self._exec(statement, p)
+
+    def _knowledge(self, *, p: dict[str, Any]) -> tuple[UUID, ...]:
+        """Remove compiled-page citations; compiled pages are rebuilt (step 4)."""
+        if not p["compiled_artifact_ids"]:
+            return ()
+        self._exec(_DELETE_COMPILED_CITATIONS, p)
+        for statement in _COMPILED_ARTIFACT_STATEMENTS:
+            self._exec(statement, p)
+        return tuple(p["compiled_artifact_ids"])
+
+    def _retire_originals(
+        self, *, p: dict[str, Any], collected: dict[str, Any]
+    ) -> None:
+        """Retire raw originals no surviving version uses; keep their keys."""
+        hashes = [value for value in p["content_hashes"] if value]
+        if not hashes:
+            return
+        # Lock the content rows first, then re-check in a new statement: an
+        # ingest attaching to a row locks it too, so it either registered its
+        # version before (the hash stays in use) or sees the row retired.
+        self._c.execute(
+            text("""SELECT content_hash FROM content_objects
+            WHERE deployment_id=:deployment_id
+              AND content_hash=ANY(CAST(:hashes AS text[]))
+            ORDER BY content_hash FOR UPDATE"""),
+            {**p, "hashes": hashes},
+        )
+        retired = (
+            self._c.execute(_RETIRE_ORIGINALS, {**p, "hashes": hashes}).scalars().all()
+        )
+        self._removed += len(retired)
+        collected["object_keys"] = sorted(
+            {*collected["object_keys"], *(str(key) for key in retired if key)}
+        )
+
+    def _stale_labels(self, *, collected: dict[str, Any]) -> None:
+        """Clear a collected relation label that no longer matches its parts.
+
+        A label job started before the hide can write the old wording back
+        after a sweep. Labels are deterministic, so a label that differs from
+        the one its current names would give is residue; an ordinary relabel
+        is not.
+        """
+        rows = self._c.execute(
+            text("""SELECT r.relation_id, r.fact_label, r.predicate,
+                   s.canonical_name AS subject, o.canonical_name AS object
+            FROM relations r
+            JOIN entities s ON s.entity_id = r.subject_entity_id
+            JOIN entities o ON o.entity_id = r.object_entity_id
+            WHERE r.deployment_id=:d AND r.fact_label IS NOT NULL
+              AND r.relation_id=ANY(CAST(:ids AS uuid[]))"""),
+            {"d": self._forget.deployment_id, "ids": collected["fact_ids"]},
+        ).mappings()
+        stale = [
+            row["relation_id"]
+            for row in rows
+            if row["fact_label"]
+            != deterministic_fact_label(
+                subject=row["subject"],
+                predicate=row["predicate"],
+                object_name=row["object"],
+            )
+        ]
+        if stale:
+            self._exec(
+                text("""UPDATE relations SET fact_label=NULL, fact_label_version=NULL,
+                  embedding=NULL, embedding_model=NULL,
+                  embedding_input_policy_version=NULL, embedding_text_hash=NULL,
+                  updated_at=now()
+                WHERE deployment_id=:deployment_id
+                  AND relation_id=ANY(CAST(:ids AS uuid[]))"""),
+                {"deployment_id": self._forget.deployment_id, "ids": stale},
+            )
 
 
-def _record(*, row: RowMapping) -> ForgetManifestRecord:
-    """Validate one database row as the typed progress boundary."""
-    return ForgetManifestRecord(
+def _collected(
+    *, connection: Connection, deployment_id: UUID, forget_id: UUID
+) -> dict[str, Any]:
+    """The record's collected IDs, with every key present."""
+    value = connection.execute(
+        text("SELECT collected FROM forgets WHERE deployment_id=:d AND forget_id=:f"),
+        {"d": deployment_id, "f": forget_id},
+    ).scalar_one()
+    collected: dict[str, Any] = dict(value or {})
+    for key in ("fact_ids", "entity_ids", "k_artifact_ids", "object_keys"):
+        collected[key] = sorted(collected.get(key) or ())
+    collected["authored"] = dict(collected.get("authored") or {})
+    return collected
+
+
+def _blocking_paths(
+    *, connection: Connection, forget: Forget, collected: dict[str, Any]
+) -> tuple[str, ...]:
+    """Collected authored pages whose current file still cites the document.
+
+    A page still cites while a synced citation names the document, or while
+    its content is unchanged since it was collected (its citation of an
+    erased fact went with the fact, but the owner has not edited it yet).
+    Compiled-page curation sidecars are not inspected here.
+    """
+    authored = collected["authored"]
+    if not authored:
+        return ()
+    rows = connection.execute(
+        text("""SELECT a.artifact_id, a.git_path, a.content_hash,
+               EXISTS (SELECT 1 FROM knowledge_artifact_evidence e
+                       WHERE e.deployment_id = a.deployment_id
+                         AND e.artifact_id = a.artifact_id
+                         AND (e.doc_id = :doc OR e.claim_lineage_id = :doc
+                              OR e.relation_id = ANY(CAST(:facts AS uuid[]))))
+                 AS cites
+        FROM knowledge_artifacts a
+        WHERE a.deployment_id = :d AND a.artifact_id = ANY(CAST(:ids AS uuid[]))"""),
+        {
+            "d": forget.deployment_id,
+            "doc": forget.doc_id,
+            "facts": collected["fact_ids"],
+            "ids": sorted(authored),
+        },
+    ).mappings()
+    paths: set[str] = set()
+    for row in rows:
+        unchanged = row["content_hash"] == authored.get(str(row["artifact_id"]))
+        if row["cites"] or unchanged:
+            paths.add(str(row["git_path"]))
+    return tuple(sorted(paths))
+
+
+def _forget(*, row: RowMapping) -> Forget:
+    """Validate one database row as the typed record."""
+    return Forget(
         forget_id=row["forget_id"],
         deployment_id=row["deployment_id"],
         doc_id=row["doc_id"],
-        manifest=_manifest(row=row) if row["manifest"] is not None else None,
-        manifest_hash=row["manifest_hash"],
-        status=ForgetManifestStatus(str(row["status"])),
-        prepared_at=row["prepared_at"],
-        accepted_at=row["accepted_at"],
+        version_ids=tuple(row["version_ids"]),
+        content_hashes=tuple(row["content_hashes"]),
+        source_identity_hash=row["source_identity_hash"],
+        status=ForgetStatus(str(row["status"])),
+        blocking_k_paths=tuple(row["blocking_k_paths"]),
+        last_error=row["last_error"],
+        requested_at=row["requested_at"],
         completed_at=row["completed_at"],
-        last_verified_at=row["last_verified_at"],
     )
 
 
-def _manifest(*, row: RowMapping) -> ForgetManifest:
-    """Validate the immutable JSON materialization from one progress row."""
-    return ForgetManifest.model_validate_json(
-        json.dumps(row["manifest"], ensure_ascii=False, separators=(",", ":"))
+_SELECT = """
+    SELECT forget_id, deployment_id, doc_id, version_ids, content_hashes,
+           source_identity_hash, status::text AS status, blocking_k_paths,
+           last_error, requested_at, completed_at
+    FROM forgets
+"""
+
+_INSERT_RECORD = text(
+    """
+    INSERT INTO forgets (
+        forget_id, deployment_id, doc_id, version_ids, content_hashes,
+        source_identity_hash
     )
-
-
-def _require_same_manifest(*, row: RowMapping, manifest: ForgetManifest) -> None:
-    """Reject local identity reuse with bytes unlike the portable append."""
-    stored = _manifest(row=row)
-    if stored.canonical_bytes() != manifest.canonical_bytes():
-        raise ForgetManifestConflictError(
-            f"forget_id {manifest.forget_id} has different local manifest bytes"
-        )
-
-
-def _uuid_values(
-    *, connection: Connection, statement: TextClause, deployment_id: UUID, doc_id: UUID
-) -> tuple[UUID, ...]:
-    """Return one query's distinct UUID column in canonical lexical order."""
-    values = connection.execute(
-        statement, {"deployment_id": deployment_id, "doc_id": doc_id}
-    ).scalars()
-    return tuple(sorted({UUID(str(value)) for value in values}, key=str))
-
-
-def _text_values(
-    *, connection: Connection, statement: TextClause, deployment_id: UUID, doc_id: UUID
-) -> tuple[str, ...]:
-    """Return one query's non-null text column sorted and duplicate-free."""
-    values = connection.execute(
-        statement, {"deployment_id": deployment_id, "doc_id": doc_id}
-    ).scalars()
-    return tuple(sorted({str(value) for value in values if value is not None}))
-
-
-_LOCK_DEPLOYMENT = text(
-    "SELECT pg_advisory_xact_lock(hashtextextended('hard-forget:' ||"
-    " CAST(:deployment_id AS text), 0))"
-)
-
-_SELECT_DOCUMENT = text(
-    """
-    SELECT doc_id, source_kind, source_ref
-    FROM documents
-    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+    SELECT :forget_id, :d, :doc,
+           ARRAY(SELECT version_id FROM document_versions
+                 WHERE deployment_id = :d AND doc_id = :doc ORDER BY version_id),
+           ARRAY(SELECT DISTINCT content_hash FROM document_versions
+                 WHERE deployment_id = :d AND doc_id = :doc ORDER BY content_hash),
+           :identity
+    ON CONFLICT (deployment_id, doc_id) DO NOTHING
+    RETURNING forget_id, deployment_id, doc_id, version_ids, content_hashes,
+              source_identity_hash, status::text AS status, blocking_k_paths,
+              last_error, requested_at, completed_at
     """
 )
 
-_INSERT_PREPARING = text(
+_FORGOTTEN_INGEST = text(
     """
-    INSERT INTO forget_manifests (
-        forget_id, deployment_id, doc_id, schema_version, status
-    ) VALUES (:forget_id, :deployment_id, :doc_id, 1, 'preparing')
-    RETURNING forget_id, deployment_id, doc_id, manifest_hash, manifest,
-              status, prepared_at, accepted_at, completed_at, last_verified_at
-    """
-)
-
-_SELECT_BY_ID = text(
-    """
-    SELECT forget_id, deployment_id, doc_id, manifest_hash, manifest,
-           status, prepared_at, accepted_at, completed_at, last_verified_at
-    FROM forget_manifests
-    WHERE deployment_id = :deployment_id AND forget_id = :forget_id
-    """
-)
-
-_SELECT_BY_ID_FOR_UPDATE = text(
-    """
-    SELECT forget_id, deployment_id, doc_id, manifest_hash, manifest,
-           status, prepared_at, accepted_at, completed_at, last_verified_at
-    FROM forget_manifests
-    WHERE deployment_id = :deployment_id AND forget_id = :forget_id
-    FOR UPDATE
-    """
-)
-
-_SELECT_BY_DOC = text(
-    """
-    SELECT forget_id, deployment_id, doc_id, manifest_hash, manifest,
-           status, prepared_at, accepted_at, completed_at, last_verified_at
-    FROM forget_manifests
-    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    """
-)
-
-_SELECT_PREPARING = text(
-    """
-    SELECT forget_id, deployment_id, doc_id, manifest_hash, manifest,
-           status, prepared_at, accepted_at, completed_at, last_verified_at
-    FROM forget_manifests
-    WHERE deployment_id = :deployment_id AND status = 'preparing'
-    """
-)
-
-_INSERT_PORTABLE = text(
-    """
-    INSERT INTO forget_manifests (
-        forget_id, deployment_id, doc_id, schema_version, manifest_hash, manifest,
-        source_identity_hash, content_hashes, status, accepted_at
-    ) VALUES (
-        :forget_id, :deployment_id, :doc_id, :schema_version, :manifest_hash,
-        CAST(:manifest AS jsonb), :source_identity_hash, :content_hashes,
-        'accepted', now()
-    )
-    """
-)
-
-_MATERIALIZE_PREPARING = text(
-    """
-    UPDATE forget_manifests
-    SET schema_version = :schema_version,
-        manifest_hash = :manifest_hash,
-        manifest = CAST(:manifest AS jsonb),
-        source_identity_hash = :source_identity_hash,
-        content_hashes = :content_hashes,
-        status = 'accepted',
-        accepted_at = COALESCE(accepted_at, now())
-    WHERE deployment_id = :deployment_id
-      AND forget_id = :forget_id
-      AND doc_id = :doc_id
-      AND status = 'preparing'
-      AND manifest IS NULL
-    """
-)
-
-_ORDINARY_WORK_DRAINED = text(
-    """
-    SELECT NOT EXISTS (
-        SELECT 1
-        FROM processing_state
-        WHERE deployment_id = :deployment_id
-          AND status = 'running'
-          AND stage <> 'hard_forget'
-    )
-    """
-)
-
-_CONTENT_HASHES = text(
-    """
-    SELECT DISTINCT content_hash
-    FROM document_versions
-    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    ORDER BY content_hash
-    """
-)
-
-_CHUNK_IDS = text(
-    """
-    SELECT DISTINCT chunk_id
-    FROM chunks
-    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    ORDER BY chunk_id
-    """
-)
-
-_CLAIM_IDS = text(
-    """
-    SELECT DISTINCT claim_id
-    FROM claims
-    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    ORDER BY claim_id
-    """
-)
-
-_MENTION_IDS = text(
-    """
-    SELECT DISTINCT mention_id
-    FROM mentions
-    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    ORDER BY mention_id
-    """
-)
-
-_RESOLVED_ENTITY_IDS = text(
-    """
-    SELECT DISTINCT decision.entity_id
-    FROM resolution_decisions decision
-    JOIN mentions mention ON mention.mention_id = decision.mention_id
-    WHERE decision.deployment_id = :deployment_id
-      AND mention.deployment_id = :deployment_id
-      AND mention.doc_id = :doc_id
-    ORDER BY decision.entity_id
-    """
-)
-
-_EXCLUSIVE_FACT_IDS = text(
-    """
-    SELECT fact_id
-    FROM (
-        SELECT relation_id AS fact_id
-        FROM relations relation
-        WHERE relation.deployment_id = :deployment_id
-          AND EXISTS (
-              SELECT 1 FROM relation_evidence target
-              WHERE target.deployment_id = :deployment_id
-                AND target.relation_id = relation.relation_id
-                AND target.doc_id = :doc_id
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM relation_evidence other
-              JOIN claims claim
-                ON claim.deployment_id = other.deployment_id
-               AND claim.claim_id = other.claim_id
-              JOIN documents document
-                ON document.deployment_id = other.deployment_id
-               AND document.doc_id = other.doc_id
-              WHERE other.deployment_id = :deployment_id
-                AND other.relation_id = relation.relation_id
-                AND other.doc_id <> :doc_id
-                AND other.stance = 'supports'
-                AND claim.is_current_testimony
-                AND document.deleted_at IS NULL
-          )
-        UNION
-        SELECT observation_id AS fact_id
-        FROM observations observation
-        WHERE observation.deployment_id = :deployment_id
-          AND EXISTS (
-              SELECT 1 FROM observation_evidence target
-              WHERE target.deployment_id = :deployment_id
-                AND target.observation_id = observation.observation_id
-                AND target.doc_id = :doc_id
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM observation_evidence other
-              JOIN claims claim
-                ON claim.deployment_id = other.deployment_id
-               AND claim.claim_id = other.claim_id
-              JOIN documents document
-                ON document.deployment_id = other.deployment_id
-               AND document.doc_id = other.doc_id
-              WHERE other.deployment_id = :deployment_id
-                AND other.observation_id = observation.observation_id
-                AND other.doc_id <> :doc_id
-                AND other.stance = 'supports'
-                AND claim.is_current_testimony
-                AND document.deleted_at IS NULL
-          )
-    ) exclusive
-    ORDER BY fact_id
-    """
-)
-
-_EXCLUSIVE_ENTITY_IDS = text(
-    """
-    SELECT DISTINCT target.entity_id
-    FROM resolution_decisions target
-    JOIN mentions mention ON mention.mention_id = target.mention_id
-    WHERE target.deployment_id = :deployment_id
-      AND mention.deployment_id = :deployment_id
-      AND mention.doc_id = :doc_id
-      AND target.superseded_by IS NULL
-      AND NOT EXISTS (
-          SELECT 1
-          FROM resolution_decisions other
-          JOIN mentions other_mention ON other_mention.mention_id = other.mention_id
-          JOIN claims other_claim
-            ON other_claim.deployment_id = other_mention.deployment_id
-           AND other_claim.claim_id = other_mention.claim_id
-          JOIN documents other_document
-            ON other_document.deployment_id = other_mention.deployment_id
-           AND other_document.doc_id = other_mention.doc_id
-          WHERE other.deployment_id = :deployment_id
-            AND other.entity_id = target.entity_id
-            AND other.superseded_by IS NULL
-            AND other_mention.doc_id <> :doc_id
-            AND other_claim.is_current_testimony
-            AND other_document.deleted_at IS NULL
+    SELECT forget_id, requested_at
+    FROM forgets
+    WHERE deployment_id = :d
+      AND (
+        (CAST(:identity AS text) IS NOT NULL
+         AND source_identity_hash = :identity AND NOT identity_released)
+        OR (:content_hash = ANY(content_hashes)
+            AND NOT :content_hash = ANY(released_hashes))
       )
-    ORDER BY target.entity_id
-    """
-)
-
-_K_ARTIFACT_IDS = text(
-    """
-    SELECT artifact_id
-    FROM knowledge_artifacts
-    WHERE deployment_id = :deployment_id
-    ORDER BY artifact_id::text
-    """
-)
-
-_BLOCKING_K_PATHS = text(
-    """
-    WITH target_relations AS (
-        SELECT DISTINCT relation_id
-        FROM relation_evidence
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    ), affected AS (
-        SELECT DISTINCT artifact_id
-        FROM knowledge_artifact_evidence
-        WHERE deployment_id = :deployment_id
-          AND (
-              doc_id = :doc_id
-              OR claim_lineage_id = :doc_id
-              OR relation_id IN (SELECT relation_id FROM target_relations)
-          )
-    )
-    SELECT path
-    FROM (
-        SELECT artifact.git_path AS path
-        FROM knowledge_artifacts artifact
-        WHERE artifact.deployment_id = :deployment_id
-          AND artifact.artifact_id IN (SELECT artifact_id FROM affected)
-          AND artifact.page_kind = 'authored'
-        UNION
-        SELECT artifact.curation_path AS path
-        FROM knowledge_artifacts artifact
-        WHERE artifact.deployment_id = :deployment_id
-          AND artifact.artifact_id IN (SELECT artifact_id FROM affected)
-          AND artifact.page_kind = 'compiled'
-          AND artifact.curation_path IS NOT NULL
-    ) blocking
-    ORDER BY path
+    ORDER BY requested_at, forget_id
+    LIMIT 1
     """
 )
 
 _K_PATHS_FOR_ARTIFACTS = text(
     """
-    SELECT path
-    FROM (
-        SELECT git_path AS path
-        FROM knowledge_artifacts
-        WHERE deployment_id = :deployment_id
-          AND artifact_id = ANY(:artifact_ids)
-        UNION
-        SELECT curation_path AS path
-        FROM knowledge_artifacts
-        WHERE deployment_id = :deployment_id
-          AND artifact_id = ANY(:artifact_ids)
-          AND curation_path IS NOT NULL
-    ) paths
-    ORDER BY path
+    SELECT git_path FROM knowledge_artifacts
+    WHERE deployment_id = :deployment_id AND artifact_id = ANY(:artifact_ids)
+    UNION
+    SELECT curation_path FROM knowledge_artifacts
+    WHERE deployment_id = :deployment_id AND artifact_id = ANY(:artifact_ids)
+      AND curation_path IS NOT NULL
     """
 )
 
-_OBJECT_KEYS = text(
+_SKIP_DOCUMENT_WORK = text(
     """
-    WITH target_artifacts AS (
-        SELECT artifact_id
-        FROM knowledge_artifacts
-        WHERE deployment_id = :deployment_id
-    ), keys AS (
-        SELECT object.raw_uri AS object_key
-        FROM document_versions version
-        JOIN content_objects object
-          ON object.deployment_id = version.deployment_id
-         AND object.content_hash = version.content_hash
-        WHERE version.deployment_id = :deployment_id
-          AND version.doc_id = :doc_id
-          AND NOT EXISTS (
-              SELECT 1
-              FROM document_versions other_version
-              JOIN documents other_document
-                ON other_document.deployment_id = other_version.deployment_id
-               AND other_document.doc_id = other_version.doc_id
-              WHERE other_version.deployment_id = version.deployment_id
-                AND other_version.content_hash = version.content_hash
-                AND other_version.doc_id <> :doc_id
-                AND other_version.deleted_at IS NULL
-                AND other_document.deleted_at IS NULL
-          )
-        UNION ALL
-        SELECT uri.object_key
-        FROM document_representations representation
-        JOIN document_versions version
-          ON version.deployment_id = representation.deployment_id
-         AND version.version_id = representation.version_id
-        CROSS JOIN LATERAL (
-            VALUES (representation.markdown_uri), (representation.pageindex_uri),
-                   (representation.conversion_uri), (representation.blocks_uri),
-                   (representation.meta_uri)
-        ) uri(object_key)
-        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
-        UNION ALL
-        SELECT reference_generation.artifact_uri
-        FROM document_reference_generations reference_generation
-        WHERE reference_generation.deployment_id = :deployment_id
-          AND reference_generation.doc_id = :doc_id
-        UNION ALL
-        SELECT generation.pageindex_uri
-        FROM document_structure_generations generation
-        WHERE generation.deployment_id = :deployment_id
-          AND generation.doc_id = :doc_id
-        UNION ALL
-        SELECT compilation.session_transcript_uri
-        FROM knowledge_compilations compilation
-        WHERE compilation.deployment_id = :deployment_id
-          AND compilation.artifact_id IN (SELECT artifact_id FROM target_artifacts)
-        UNION ALL
-        SELECT run.session_transcript_uri
-        FROM knowledge_plan_runs run
-        WHERE run.deployment_id = :deployment_id
+    UPDATE processing_state
+    SET status = 'skipped', defer_reason = NULL, lease_until = NULL,
+        finished_at = now(), payload = NULL, last_error = NULL
+    WHERE deployment_id = :deployment_id
+      AND stage <> 'forget'
+      AND status IN ('pending', 'failed', 'running')
+      AND """
+    + FORGOTTEN_WORK.format(work="processing_state")
+)
+
+# Facts the document's evidence or its claims' windows touch.
+_LINKED_RELATIONS = """
+    SELECT relation_id FROM relation_evidence
+    WHERE deployment_id=:deployment_id
+      AND (doc_id=:doc_id OR claim_id=ANY(CAST(:claim_ids AS uuid[])))
+    UNION
+    SELECT relation_id FROM relations
+    WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
+"""
+
+_LINKED_OBSERVATIONS = """
+    SELECT observation_id FROM observation_evidence
+    WHERE deployment_id=:deployment_id
+      AND (doc_id=:doc_id OR claim_id=ANY(CAST(:claim_ids AS uuid[])))
+    UNION
+    SELECT observation_id FROM observations
+    WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
+"""
+
+# A fact is exclusive when no other, not forgotten document supports it
+# (current or archived testimony alike). Counterevidence alone cannot keep
+# the forgotten assertion's wording.
+_EXCLUSIVE_FACTS = """
+    SELECT r.relation_id FROM relations r
+    WHERE r.deployment_id=:deployment_id
+      AND r.relation_id=ANY(CAST(:fact_ids AS uuid[]))
+      AND NOT EXISTS (
+        SELECT 1 FROM relation_evidence e
+        WHERE e.deployment_id=r.deployment_id AND e.relation_id=r.relation_id
+          AND e.stance='supports' AND e.doc_id<>:doc_id
+          AND NOT e.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[]))
+          AND NOT e.claim_id=ANY(CAST(:claim_ids AS uuid[])))
+    UNION
+    SELECT o.observation_id FROM observations o
+    WHERE o.deployment_id=:deployment_id
+      AND o.observation_id=ANY(CAST(:fact_ids AS uuid[]))
+      AND NOT EXISTS (
+        SELECT 1 FROM observation_evidence e
+        WHERE e.deployment_id=o.deployment_id AND e.observation_id=o.observation_id
+          AND e.stance='supports' AND e.doc_id<>:doc_id
+          AND NOT e.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[]))
+          AND NOT e.claim_id=ANY(CAST(:claim_ids AS uuid[])))
+"""
+
+_RESOLVED_ENTITIES = """
+    SELECT DISTINCT d.entity_id FROM resolution_decisions d
+    WHERE d.deployment_id=:deployment_id
+      AND d.mention_id=ANY(CAST(:mention_ids AS uuid[]))
+"""
+
+_FACT_ENDPOINTS = """
+    SELECT subject_entity_id FROM relations
+    WHERE deployment_id=:deployment_id AND relation_id=ANY(CAST(:linked_fact_ids AS uuid[]))
+    UNION
+    SELECT object_entity_id FROM relations
+    WHERE deployment_id=:deployment_id AND relation_id=ANY(CAST(:linked_fact_ids AS uuid[]))
+    UNION
+    SELECT subject_entity_id FROM observations
+    WHERE deployment_id=:deployment_id
+      AND observation_id=ANY(CAST(:linked_fact_ids AS uuid[]))
+"""
+
+# An entity is exclusive when it was resolved from this document's mentions
+# and from no mention of another, not forgotten document, and no surviving
+# fact uses it.
+_EXCLUSIVE_ENTITIES = """
+    SELECT e.entity_id FROM entities e
+    WHERE e.deployment_id=:deployment_id
+      AND e.entity_id=ANY(CAST(:entity_ids AS uuid[]))
+      AND e.status <> 'retired'
+      AND EXISTS (
+        SELECT 1 FROM resolution_decisions d JOIN mentions m
+          ON m.deployment_id=d.deployment_id AND m.mention_id=d.mention_id
+        WHERE d.deployment_id=e.deployment_id AND d.entity_id=e.entity_id
+          AND m.doc_id=:doc_id)
+      AND NOT EXISTS (
+        SELECT 1 FROM resolution_decisions d JOIN mentions m
+          ON m.deployment_id=d.deployment_id AND m.mention_id=d.mention_id
+        WHERE d.deployment_id=e.deployment_id AND d.entity_id=e.entity_id
+          AND d.superseded_by IS NULL AND m.doc_id<>:doc_id
+          AND NOT m.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[])))
+      AND NOT EXISTS (
+        SELECT 1 FROM relations r
+        WHERE r.deployment_id=e.deployment_id
+          AND (r.subject_entity_id=e.entity_id OR r.object_entity_id=e.entity_id)
+          AND NOT r.relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[])))
+      AND NOT EXISTS (
+        SELECT 1 FROM observations o
+        WHERE o.deployment_id=e.deployment_id AND o.subject_entity_id=e.entity_id
+          AND NOT o.observation_id=ANY(CAST(:exclusive_fact_ids AS uuid[])))
+"""
+
+# K pages citing the document's evidence or a fact it touched. Compiled pages
+# are rebuilt when a sweep finds such a link; authored pages are listed for
+# their owner when they cite the document or any collected fact.
+_CITING_ARTIFACTS = """
+    SELECT DISTINCT a.artifact_id FROM knowledge_artifacts a
+    JOIN knowledge_artifact_evidence e
+      ON e.deployment_id=a.deployment_id AND e.artifact_id=a.artifact_id
+    WHERE a.deployment_id=:deployment_id
+      AND (e.doc_id=:doc_id OR e.claim_lineage_id=:doc_id
+           OR e.relation_id=ANY(CAST(:{facts} AS uuid[])))
+"""
+
+# Opaque keys of originals the document owns: its own prefix or a D147
+# direct-upload locator. A shared original keeps the key it was first stored
+# under and is never touched while another lineage uses it.
+_OWNED_ORIGINALS = text(
+    """
+    SELECT raw_uri FROM content_objects
+    WHERE deployment_id=:deployment_id
+      AND content_hash=ANY(CAST(:content_hashes AS text[]))
+      AND (raw_uri LIKE CAST(:doc_id AS text) || '/%' OR raw_uri LIKE 'uploads/%')
+    """
+)
+
+_CLEAR_APPLICATION_INPUTS = text(
+    """
+    UPDATE fact_applications SET
+      prepared=NULL, decision=NULL, attempt_id=NULL, input_hash=NULL,
+      input_claim_ids=ARRAY(SELECT id FROM unnest(input_claim_ids) id
+                            WHERE NOT id=ANY(CAST(:claim_ids AS uuid[])) ORDER BY id)
+    WHERE deployment_id=:deployment_id
+      AND input_claim_ids && CAST(:claim_ids AS uuid[])
+    """
+)
+
+# A shared observation's statement is rewritten from a surviving supporter.
+_REPLACE_SHARED_STATEMENTS = text(
+    """
+    WITH replacements AS (
+      SELECT f.observation_id, replacement.statement
+      FROM observations f
+      CROSS JOIN LATERAL (
+        SELECT coalesce(n.output->'observations'->a.output_ordinal->>'statement',
+                        c.claim_text) AS statement
+        FROM observation_evidence e
+        JOIN claims c ON c.deployment_id=e.deployment_id AND c.claim_id=e.claim_id
+        LEFT JOIN fact_applications a ON a.deployment_id=e.deployment_id
+          AND a.claim_id=e.claim_id AND a.support_observation_id=e.observation_id
+          AND a.applied_at IS NOT NULL AND a.support_stance='supports'
+        LEFT JOIN normalization_outputs n ON n.deployment_id=a.deployment_id
+          AND n.claim_id=a.claim_id AND n.normalizer_version=a.normalizer_version
+        WHERE e.deployment_id=f.deployment_id AND e.observation_id=f.observation_id
+          AND e.stance='supports' AND e.doc_id<>:doc_id
+          AND NOT e.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[]))
+          AND NOT e.claim_id=ANY(CAST(:claim_ids AS uuid[]))
+        ORDER BY c.is_current_testimony DESC, (a.application_id IS NULL),
+                 c.asserted_at NULLS LAST, c.claim_id, a.application_id
+        LIMIT 1
+      ) replacement
+      WHERE f.deployment_id=:deployment_id
+        AND f.observation_id=ANY(CAST(:shared_fact_ids AS uuid[]))
+        AND f.statement IS DISTINCT FROM replacement.statement
+    ) UPDATE observations f SET statement=replacements.statement, obs_label=NULL,
+      embedding=NULL, embedding_model=NULL, embedding_input_policy_version=NULL,
+      embedding_text_hash=NULL, updated_at=now()
+    FROM replacements
+    WHERE f.deployment_id=:deployment_id AND f.observation_id=replacements.observation_id
+    """
+)
+
+# Surviving entities the document touched lose their profile and vector until
+# ordinary work recomputes them from what survives.
+_CLEAR_PROFILES = text(
+    """
+    WITH RECURSIVE touched(entity_id) AS (
+      SELECT entity_id FROM entities
+      WHERE deployment_id=:deployment_id
+        AND entity_id=ANY(CAST(:resolved_entity_ids AS uuid[]))
+      UNION
+      SELECT e.merged_into FROM entities e JOIN touched t USING (entity_id)
+      WHERE e.deployment_id=:deployment_id AND e.merged_into IS NOT NULL
     )
-    SELECT DISTINCT object_key
-    FROM keys
-    WHERE object_key IS NOT NULL
-    ORDER BY object_key
+    UPDATE entities SET profile_summary=NULL, embedding=NULL, embedding_model=NULL,
+      embedding_input_policy_version=NULL, embedding_text_hash=NULL, updated_at=now()
+    WHERE deployment_id=:deployment_id
+      AND entity_id IN (SELECT entity_id FROM touched)
+      AND NOT entity_id=ANY(CAST(:exclusive_entity_ids AS uuid[]))
+      AND (profile_summary IS NOT NULL OR embedding IS NOT NULL
+           OR embedding_text_hash IS NOT NULL)
+    RETURNING entity_id
     """
 )
 
-_STORE_MANIFEST = text(
-    """
-    UPDATE forget_manifests
-    SET schema_version = :schema_version,
-        manifest_hash = :manifest_hash,
-        manifest = CAST(:manifest AS jsonb),
-        source_identity_hash = :source_identity_hash,
-        content_hashes = :content_hashes
-    WHERE deployment_id = :deployment_id
-      AND forget_id = :forget_id
-      AND status = 'preparing'
-      AND manifest IS NULL
-    """
-)
-
-_DELETE_UNSTORED_PREPARING = text(
-    """
-    DELETE FROM forget_manifests
-    WHERE deployment_id = :deployment_id
-      AND forget_id = :forget_id
-      AND status = 'preparing'
-      AND manifest IS NULL
-    """
-)
-
-_REGISTER_FORGETTER = text(
-    """
-    INSERT INTO pipeline_component_versions (
-        deployment_id, component, version, params, notes
-    ) VALUES (
-        :deployment_id, 'forgetter', :version, '{"schema_version": 1}'::jsonb,
-        'D74 deterministic hard-forget coordinator'
-    )
-    ON CONFLICT (deployment_id, component, version) DO NOTHING
-    """
-)
-
-_FORGETTER_DEFINITION_MATCHES = text(
-    """
-    SELECT params = '{"schema_version": 1}'::jsonb
-       AND model_name IS NULL
-       AND prompt_hash IS NULL
-       AND embedding_dim IS NULL
-       AND notes = 'D74 deterministic hard-forget coordinator'
-    FROM pipeline_component_versions
-    WHERE deployment_id = :deployment_id
-      AND component = 'forgetter'
-      AND version = :version
-    """
-)
-
-_MARK_ACCEPTED = text(
-    """
-    UPDATE forget_manifests
-    SET status = CASE WHEN status = 'complete' THEN status ELSE 'accepted' END,
-        accepted_at = COALESCE(accepted_at, now())
-    WHERE deployment_id = :deployment_id AND forget_id = :forget_id
-    """
-)
-
-_POSTGRES_SCRUB = (
-    text(
-        "DELETE FROM selection_results WHERE deployment_id=:deployment_id AND chunk_id=ANY(CAST(:chunk_ids AS uuid[]))"
-    ),
-    text(
-        "DELETE FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)"
-    ),
-    text(
-        "DELETE FROM normalization_outputs WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)"
-    ),
+_EXCLUSIVE_FACT_DELETES = (
     text(
         """
-        UPDATE documents
-        SET current_version_id = NULL,
-            corpus_published_revision = NULL,
-            document_entity_id = NULL,
-            source_ref = NULL,
-            source_uri = NULL,
-            title = NULL,
-            deleted_at = COALESCE(deleted_at, now())
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    text(
-        """
-        UPDATE managed_ingest_measurements
-        SET delivery_state = 'cancelled',
-            decision_reason = 'source_forgotten',
-            next_attempt_at = NULL
-        WHERE deployment_id = :deployment_id
-          AND doc_id = :doc_id
-          AND delivery_state IN ('pending', 'parked', 'quarantined')
-        """
-    ),
-    text(
-        """
-        UPDATE document_versions
-        SET current_representation_id = NULL,
-            source_version_ref = NULL,
-            source_modified_at = NULL,
-            published_at = NULL,
-            language = NULL,
-            status = 'deleted',
-            error = NULL,
-            superseded_at = NULL,
-            version_key = NULL,
-            deleted_at = COALESCE(deleted_at, now())
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    # D140: declarations, mode events and the selection projection are
-    # erased explicitly, after the lineage is tombstoned (so the projection
-    # triggers no longer re-insert rows for it).
-    text(
-        """
-        DELETE FROM document_effective_periods
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM document_effective_time_events
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM document_version_scope
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    # The eval schema predates D74 and has no lineage-provenance column. A rare
-    # hard-forget therefore drops deployment-scoped free-text eval fixtures
-    # instead of guessing semantically which prose came from the lineage.
-    text(
-        """
-        DELETE FROM eval_runs WHERE deployment_id = :deployment_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM canary_cases WHERE deployment_id = :deployment_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM golden_claim_labels WHERE deployment_id = :deployment_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM golden_pairs WHERE deployment_id = :deployment_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM knowledge_plan_decisions decision
-        WHERE decision.deployment_id = :deployment_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM knowledge_plan_runs run
-        WHERE run.deployment_id = :deployment_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM knowledge_refresh_queue refresh
-        WHERE refresh.deployment_id = :deployment_id
-          AND (
-              refresh.artifact_id = ANY(:k_artifact_ids)
-              OR refresh.scope_id IN (
-                  SELECT artifact.scope_id
-                  FROM knowledge_artifacts artifact
-                  WHERE artifact.deployment_id = :deployment_id
-                    AND artifact.artifact_id = ANY(:k_artifact_ids)
-                    AND artifact.scope_id IS NOT NULL
-              )
-              OR refresh.payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:claim_ids AS uuid[]) || CAST(:mention_ids AS uuid[])
-                      || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE refresh.payload::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
-        """
-    ),
-    text(
-        """
-        DELETE FROM knowledge_dispatches dispatch
-        WHERE dispatch.deployment_id = :deployment_id
-          AND (
-              dispatch.payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:claim_ids AS uuid[]) || CAST(:mention_ids AS uuid[])
-                      || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE dispatch.payload::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
-        """
-    ),
-    text(
-        """
-        DELETE FROM knowledge_artifact_evidence
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR claim_lineage_id = :doc_id
-               OR relation_id = ANY(:fact_ids))
-        """
-    ),
-    text(
-        """
-        DELETE FROM knowledge_compilations
-        WHERE deployment_id = :deployment_id
-          AND artifact_id = ANY(:k_artifact_ids)
-        """
-    ),
-    text(
-        """
-        UPDATE knowledge_artifacts
-        SET page_summary = NULL,
-            content_hash = NULL,
-            inputs_hash = NULL,
-            last_compiled_at = NULL,
-            status = CASE WHEN page_kind = 'compiled' THEN 'stale' ELSE status END
-        WHERE deployment_id = :deployment_id
-          AND artifact_id = ANY(:k_artifact_ids)
-        """
-    ),
-    text(
-        """
-        UPDATE relation_adjudications
-        SET triggering_claim_id = NULL, features = NULL
-        WHERE deployment_id = :deployment_id
-          AND triggering_claim_id = ANY(:claim_ids)
-        """
-    ),
-    text(
-        """
-        UPDATE observation_adjudications
-        SET triggering_claim_id = NULL, features = NULL
-        WHERE deployment_id = :deployment_id
-          AND triggering_claim_id = ANY(:claim_ids)
-        """
-    ),
-    text(
-        """
-        UPDATE relation_adjudications
-        SET superseded_by = NULL
-        WHERE superseded_by IN (
+        UPDATE relation_adjudications SET superseded_by = NULL
+        WHERE deployment_id=:deployment_id AND superseded_by IN (
             SELECT adjudication_id FROM relation_adjudications
-            WHERE deployment_id = :deployment_id
-              AND (relation_id = ANY(:fact_ids)
-                   OR related_relation_id = ANY(:fact_ids))
-        )
+            WHERE deployment_id=:deployment_id
+              AND (relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
+                   OR related_relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))))
         """
     ),
     text(
         """
         DELETE FROM relation_adjudications
-        WHERE deployment_id = :deployment_id
-          AND (relation_id = ANY(:fact_ids)
-               OR related_relation_id = ANY(:fact_ids))
+        WHERE deployment_id=:deployment_id
+          AND (relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
+               OR related_relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[])))
         """
     ),
     text(
         """
-        UPDATE observation_adjudications
-        SET superseded_by = NULL
-        WHERE superseded_by IN (
+        UPDATE observation_adjudications SET superseded_by = NULL
+        WHERE deployment_id=:deployment_id AND superseded_by IN (
             SELECT adjudication_id FROM observation_adjudications
-            WHERE deployment_id = :deployment_id
-              AND (observation_id = ANY(:fact_ids)
-                   OR related_observation_id = ANY(:fact_ids))
-        )
+            WHERE deployment_id=:deployment_id
+              AND (observation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
+                   OR related_observation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))))
         """
     ),
     text(
         """
         DELETE FROM observation_adjudications
-        WHERE deployment_id = :deployment_id
-          AND (observation_id = ANY(:fact_ids)
-               OR related_observation_id = ANY(:fact_ids))
+        WHERE deployment_id=:deployment_id
+          AND (observation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
+               OR related_observation_id=ANY(CAST(:exclusive_fact_ids AS uuid[])))
+        """
+    ),
+    text(
+        """
+        DELETE FROM fact_window_review_attempts
+        WHERE deployment_id=:deployment_id
+          AND fact_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
         """
     ),
     text(
         """
         DELETE FROM relation_evidence
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR relation_id = ANY(:fact_ids))
+        WHERE deployment_id=:deployment_id
+          AND (doc_id=:doc_id OR relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[])))
         """
     ),
     text(
         """
         DELETE FROM observation_evidence
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR observation_id = ANY(:fact_ids))
-        """
-    ),
-    text(
-        """
-        DELETE FROM normalize_observation_staging
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    text(
-        """
-        DELETE FROM obs_flush_entity_units
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR version_id IN (
-            SELECT version_id FROM document_versions
-            WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          ))
-        """
-    ),
-    text(
-        """
-        DELETE FROM obs_flush_version_state
-        WHERE deployment_id = :deployment_id
-          AND version_id IN (
-            SELECT version_id FROM document_versions
-            WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          )
-        """
-    ),
-    text(
-        """
-        DELETE FROM processing_layer_gaps
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        WHERE deployment_id=:deployment_id
+          AND (doc_id=:doc_id
+               OR observation_id=ANY(CAST(:exclusive_fact_ids AS uuid[])))
         """
     ),
     text(
         """
         DELETE FROM relations
-        WHERE deployment_id = :deployment_id AND relation_id = ANY(:fact_ids)
+        WHERE deployment_id=:deployment_id
+          AND relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
         """
     ),
     text(
         """
         DELETE FROM observations
-        WHERE deployment_id = :deployment_id AND observation_id = ANY(:fact_ids)
+        WHERE deployment_id=:deployment_id
+          AND observation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
+        """
+    ),
+)
+
+# A source-generated `other:` predicate no remaining relation uses goes.
+_PRUNE_PREDICATES = text(
+    """
+    DELETE FROM predicates p
+    WHERE p.deployment_id=:deployment_id AND p.tier='other'
+      AND p.predicate=ANY(CAST(:exclusive_predicates AS text[]))
+      AND NOT EXISTS (SELECT 1 FROM relations r
+                      WHERE r.deployment_id=p.deployment_id AND r.predicate=p.predicate)
+      AND NOT EXISTS (SELECT 1 FROM predicates c
+                      WHERE c.deployment_id=p.deployment_id
+                        AND c.parent_predicate=p.predicate)
+    """
+)
+
+_ENTITY_STATEMENTS = (
+    # Exclusive entities: content-free retired rows (merge logs reference them).
+    text(
+        """
+        DELETE FROM aliases
+        WHERE deployment_id=:deployment_id
+          AND entity_id=ANY(CAST(:exclusive_entity_ids AS uuid[]))
         """
     ),
     text(
         """
-        DELETE FROM aliases
-        WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
+        UPDATE entities SET canonical_name='', normalized_name='', status='retired',
+            merged_into=NULL, profile_summary=NULL, embedding=NULL,
+            embedding_model=NULL, embedding_input_policy_version=NULL,
+            embedding_text_hash=NULL, mention_count=0, graph_degree=0,
+            updated_at=now()
+        WHERE deployment_id=:deployment_id
+          AND entity_id=ANY(CAST(:exclusive_entity_ids AS uuid[]))
+          AND (status <> 'retired' OR canonical_name <> '' OR normalized_name <> '')
+        """
+    ),
+    # Shared entities: aliases only this document's mentions named go, and a
+    # canonical name that came only from it is replaced by a surviving alias.
+    text(
+        """
+        DELETE FROM aliases a
+        WHERE a.deployment_id=:deployment_id
+          AND a.entity_id=ANY(CAST(:resolved_entity_ids AS uuid[]))
+          AND a.normalized_lemma=ANY(CAST(:doc_lemmas AS text[]))
+          AND NOT EXISTS (
+            SELECT 1 FROM mentions m
+            WHERE m.deployment_id=a.deployment_id AND m.doc_id<>:doc_id
+              AND NOT m.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[]))
+              AND (m.normalized_lemma=a.normalized_lemma
+                   OR lower(m.canonical_name_form)=a.normalized_lemma))
+        """
+    ),
+    text(
+        """
+        UPDATE entities e SET (canonical_name, normalized_name, updated_at) = (
+          SELECT a.alias_text, a.normalized_lemma, now() FROM aliases a
+          WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id
+          ORDER BY (a.provenance='llm_canonical') DESC, a.confidence DESC NULLS LAST,
+                   a.last_seen DESC, a.alias_id
+          LIMIT 1)
+        WHERE e.deployment_id=:deployment_id
+          AND e.entity_id=ANY(CAST(:resolved_entity_ids AS uuid[]))
+          AND e.status <> 'retired'
+          AND e.normalized_name=ANY(CAST(:doc_lemmas AS text[]))
+          AND EXISTS (
+            SELECT 1 FROM aliases a
+            WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id)
+          AND NOT EXISTS (
+            SELECT 1 FROM aliases a
+            WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id
+              AND a.normalized_lemma=e.normalized_name)
         """
     ),
     text(
         """
         UPDATE merge_events
-        SET trigger_lemmas = '{}',
-            evidence = NULL,
+        SET trigger_lemmas = '{}', evidence = NULL,
             pre_merge_membership_snapshot = '{}'::jsonb
-        WHERE deployment_id = :deployment_id
-          AND (
-              survivor_id = ANY(:resolved_entity_ids)
-              OR absorbed_id = ANY(:resolved_entity_ids)
-              OR EXISTS (
-                  SELECT 1 FROM unnest(CAST(:mention_ids AS uuid[])) AS ids(value)
-                  WHERE pre_merge_membership_snapshot::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
+        WHERE deployment_id=:deployment_id
+          AND (survivor_id=ANY(CAST(:exclusive_entity_ids AS uuid[]))
+               OR absorbed_id=ANY(CAST(:exclusive_entity_ids AS uuid[]))
+               OR EXISTS (
+                 SELECT 1 FROM unnest(CAST(:mention_ids AS uuid[])) AS ids(value)
+                 WHERE pre_merge_membership_snapshot::text
+                       LIKE '%' || CAST(ids.value AS text) || '%'))
+          AND (cardinality(trigger_lemmas) > 0 OR evidence IS NOT NULL
+               OR pre_merge_membership_snapshot <> '{}'::jsonb)
         """
     ),
     text(
         """
-        UPDATE resolution_exclusions
-        SET reason = NULL
-        WHERE deployment_id = :deployment_id
-          AND (
-              entity_id_low = ANY(:resolved_entity_ids)
-              OR entity_id_high = ANY(:resolved_entity_ids)
-          )
+        UPDATE resolution_exclusions SET reason = NULL
+        WHERE deployment_id=:deployment_id AND reason IS NOT NULL
+          AND (entity_id_low=ANY(CAST(:resolved_entity_ids AS uuid[]))
+               OR entity_id_high=ANY(CAST(:resolved_entity_ids AS uuid[])))
+        """
+    ),
+)
+
+_DELETE_COMPILED_CITATIONS = text(
+    """
+    DELETE FROM knowledge_artifact_evidence
+    WHERE deployment_id=:deployment_id
+      AND artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
+      AND (doc_id=:doc_id OR claim_lineage_id=:doc_id
+           OR relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[])))
+    """
+)
+
+_COMPILED_ARTIFACT_STATEMENTS = (
+    text(
+        """
+        DELETE FROM knowledge_compilations
+        WHERE deployment_id=:deployment_id
+          AND artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
         """
     ),
     text(
         """
-        UPDATE entities
-        SET canonical_name = '',
-            normalized_name = '',
-            status = 'retired',
-            merged_into = NULL,
-            profile_summary = NULL,
-            embedding = NULL,
-            embedding_model = NULL,
-            embedding_input_policy_version = NULL,
-            embedding_text_hash = NULL,
-            mention_count = 0,
-            graph_degree = 0,
-            updated_at = now()
-        WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
+        UPDATE knowledge_artifacts
+        SET page_summary=NULL, content_hash=NULL, inputs_hash=NULL,
+            last_compiled_at=NULL, status='stale'
+        WHERE deployment_id=:deployment_id
+          AND artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
         """
     ),
     text(
         """
-        DELETE FROM document_entity_bindings
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    # D156: the lineage's tag assignments go; the registry is the deployment's
-    # vocabulary, not content from this source, and stays.
-    text(
-        """
-        DELETE FROM document_tags
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    # D134: deleted, not scrubbed in place — they hold names, paths and people.
-    text(
-        """
-        DELETE FROM document_names
-        WHERE deployment_id = :deployment_id
-          AND version_id IN (
-              SELECT version_id FROM document_versions
-              WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          )
+        DELETE FROM knowledge_refresh_queue refresh
+        WHERE refresh.deployment_id=:deployment_id
+          AND (refresh.artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
+               OR refresh.payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
+               OR EXISTS (
+                 SELECT 1 FROM unnest(CAST(:claim_ids AS uuid[])
+                   || CAST(:exclusive_fact_ids AS uuid[])) AS ids(value)
+                 WHERE refresh.payload::text LIKE '%' || CAST(ids.value AS text) || '%'))
         """
     ),
     text(
         """
-        DELETE FROM document_people
-        WHERE deployment_id = :deployment_id
-          AND version_id IN (
-              SELECT version_id FROM document_versions
-              WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          )
+        DELETE FROM knowledge_dispatches dispatch
+        WHERE dispatch.deployment_id=:deployment_id
+          AND (dispatch.payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
+               OR EXISTS (
+                 SELECT 1 FROM unnest(CAST(:claim_ids AS uuid[])
+                   || CAST(:exclusive_fact_ids AS uuid[])) AS ids(value)
+                 WHERE dispatch.payload::text LIKE '%' || CAST(ids.value AS text) || '%'))
         """
+    ),
+)
+
+# The document's subtree, children before parents. Foreign-key cascades that
+# exist inside the subtree (representations, sections, metadata, tags, ...)
+# do part of the work when the versions and the document row go.
+_SUBTREE = (
+    text(
+        "DELETE FROM selection_results WHERE deployment_id=:deployment_id"
+        " AND chunk_id=ANY(CAST(:chunk_ids AS uuid[]))"
     ),
     text(
         """
-        DELETE FROM document_metadata
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        DELETE FROM application_context_bindings
+        WHERE deployment_id=:deployment_id AND application_id IN (
+          SELECT application_id FROM fact_applications
+          WHERE deployment_id=:deployment_id
+            AND claim_id=ANY(CAST(:claim_ids AS uuid[])))
         """
     ),
     text(
-        """
-        DELETE FROM resolution_decisions
-        WHERE deployment_id = :deployment_id
-          AND mention_id = ANY(:mention_ids)
-        """
+        "DELETE FROM fact_applications WHERE deployment_id=:deployment_id"
+        " AND claim_id=ANY(CAST(:claim_ids AS uuid[]))"
+    ),
+    text(
+        "DELETE FROM normalization_outputs WHERE deployment_id=:deployment_id"
+        " AND claim_id=ANY(CAST(:claim_ids AS uuid[]))"
+    ),
+    text(
+        "DELETE FROM normalize_observation_staging"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
         """
-        DELETE FROM mentions
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR mention_id = ANY(:mention_ids))
+        DELETE FROM obs_flush_entity_units
+        WHERE deployment_id=:deployment_id
+          AND (doc_id=:doc_id OR version_id=ANY(CAST(:version_ids AS uuid[])))
         """
     ),
     text(
-        """
-        DELETE FROM grounding_audits
-        WHERE deployment_id = :deployment_id AND claim_id = ANY(:claim_ids)
-        """
+        "DELETE FROM obs_flush_version_state WHERE deployment_id=:deployment_id"
+        " AND version_id=ANY(CAST(:version_ids AS uuid[]))"
     ),
     text(
-        """
-        DELETE FROM claim_extraction_decisions
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
+        "DELETE FROM processing_layer_gaps"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+    ),
+    text(
+        "DELETE FROM document_entity_bindings"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+    ),
+    text(
+        "DELETE FROM resolution_decisions WHERE deployment_id=:deployment_id"
+        " AND mention_id=ANY(CAST(:mention_ids AS uuid[]))"
+    ),
+    text("DELETE FROM mentions WHERE deployment_id=:deployment_id AND doc_id=:doc_id"),
+    text(
+        "DELETE FROM grounding_audits WHERE deployment_id=:deployment_id"
+        " AND claim_id=ANY(CAST(:claim_ids AS uuid[]))"
+    ),
+    text(
+        "DELETE FROM claim_extraction_decisions"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
         """
         DELETE FROM chunk_claims
-        WHERE deployment_id = :deployment_id
-          AND (chunk_id = ANY(:chunk_ids) OR claim_id = ANY(:claim_ids))
+        WHERE deployment_id=:deployment_id
+          AND (chunk_id=ANY(CAST(:chunk_ids AS uuid[]))
+               OR claim_id=ANY(CAST(:claim_ids AS uuid[])))
+        """
+    ),
+    text("DELETE FROM claims WHERE deployment_id=:deployment_id AND doc_id=:doc_id"),
+    text(
+        "DELETE FROM chunk_search WHERE deployment_id=:deployment_id"
+        " AND chunk_id=ANY(CAST(:chunk_ids AS uuid[]))"
+    ),
+    text("DELETE FROM chunks WHERE deployment_id=:deployment_id AND doc_id=:doc_id"),
+    text(
+        """
+        UPDATE document_representations r SET current_structure_generation_id = NULL
+        WHERE r.deployment_id=:deployment_id
+          AND r.version_id=ANY(CAST(:version_ids AS uuid[]))
+          AND r.current_structure_generation_id IS NOT NULL
         """
     ),
     text(
-        """
-        DELETE FROM claims
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
+        "DELETE FROM document_sections"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
-        """
-        DELETE FROM chunk_search
-        WHERE deployment_id = :deployment_id AND chunk_id = ANY(:chunk_ids)
-        """
+        "DELETE FROM document_structure_generations"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
-        """
-        DELETE FROM chunks
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
+        "DELETE FROM document_skeleton_checks"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
-        """
-        DELETE FROM document_sections
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
-    ),
-    # D79 audit tables are erased EXPLICITLY, never via implied cascade:
-    # generations first (their selecting_check_id references checks with
-    # default NO ACTION), then checks, then representations. A future FK
-    # edit must not silently strand titles/stats/failure envelopes of a
-    # forgotten document.
-    text(
-        """UPDATE document_representations r SET current_structure_generation_id = NULL
-        FROM document_versions v WHERE r.version_id = v.version_id
-        AND r.deployment_id = :deployment_id AND v.doc_id = :doc_id"""
+        "DELETE FROM document_effective_periods"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
-        """
-        DELETE FROM document_structure_generations
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
+        "DELETE FROM document_effective_time_events"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
-        """
-        DELETE FROM document_skeleton_checks
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        """
+        "DELETE FROM document_version_scope"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
     ),
     text(
-        """
-        DELETE FROM document_representations
-        WHERE deployment_id = :deployment_id
-          AND version_id IN (
-              SELECT version_id FROM document_versions
-              WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          )
-        """
-    ),
-    text(
-        """
-        DELETE FROM document_crossrefs
-        WHERE deployment_id = :deployment_id AND from_doc_id = :doc_id
-        """
+        "DELETE FROM document_crossrefs"
+        " WHERE deployment_id=:deployment_id AND from_doc_id=:doc_id"
     ),
     # D140 §9: references other lineages made TO the forgotten one are their
-    # sources' content; they are unbound (and keep the target as the source
-    # names it), so a re-ingest of that identity can bind them again.
+    # sources' content; they are unbound, keeping the target as the source
+    # names it.
     text(
         """
-        UPDATE document_crossrefs
-        SET to_doc_id = NULL, resolved = false
-        WHERE deployment_id = :deployment_id AND to_doc_id = :doc_id
-        """
-    ),
-    # D140: the lineage's reference generations (their input hashes and
-    # artifact keys name its content) go with the references they wrote.
-    text(
-        """
-        DELETE FROM document_reference_generations
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UPDATE document_crossrefs SET to_doc_id = NULL, resolved = false
+        WHERE deployment_id=:deployment_id AND to_doc_id=:doc_id
         """
     ),
     text(
+        "DELETE FROM document_reference_generations"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+    ),
+    text(
         """
-        UPDATE content_objects object
-        SET mime = 'application/x-forgotten',
-            byte_size = NULL,
-            raw_uri = 'forgotten/' || object.content_hash,
-            purged_at = COALESCE(object.purged_at, now())
-        WHERE object.deployment_id = :deployment_id
-          AND object.content_hash = ANY(:content_hashes)
-          AND NOT EXISTS (
-              SELECT 1
-              FROM document_versions other_version
-              JOIN documents other_document
-                ON other_document.deployment_id = other_version.deployment_id
-               AND other_document.doc_id = other_version.doc_id
-              WHERE other_version.deployment_id = object.deployment_id
-                AND other_version.content_hash = object.content_hash
-                AND other_version.doc_id <> :doc_id
-                AND other_version.deleted_at IS NULL
-                AND other_document.deleted_at IS NULL
-          )
+        DELETE FROM document_names WHERE deployment_id=:deployment_id
+          AND version_id=ANY(CAST(:version_ids AS uuid[]))
         """
     ),
     text(
         """
-        UPDATE processing_state
-        SET payload = CASE WHEN stage = 'publish_corpus'
-                           THEN jsonb_build_object('doc_id', CAST(:doc_id AS text))
-                           ELSE NULL END,
-            last_error = NULL
-        WHERE deployment_id = :deployment_id
-          AND stage <> 'hard_forget'
-          AND (
-              target_id = :doc_id
-              OR target_id = ANY(:chunk_ids)
-              OR target_id = ANY(:claim_ids)
-              OR target_id = ANY(:mention_ids)
-              OR target_id = ANY(:fact_ids)
-              OR target_id = ANY(:entity_ids)
-              OR target_id = ANY(:resolved_entity_ids)
-              OR content_hash = ANY(:content_hashes)
-              OR payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:chunk_ids AS uuid[]) || CAST(:claim_ids AS uuid[])
-                      || CAST(:mention_ids AS uuid[]) || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE payload::text LIKE '%' || CAST(ids.value AS text) || '%'
-              )
-          )
+        DELETE FROM document_people WHERE deployment_id=:deployment_id
+          AND version_id=ANY(CAST(:version_ids AS uuid[]))
+        """
+    ),
+    text(
+        "DELETE FROM document_metadata"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+    ),
+    text(
+        "DELETE FROM document_tags WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+    ),
+    text(
+        """
+        UPDATE documents SET current_version_id = NULL
+        WHERE deployment_id=:deployment_id AND doc_id=:doc_id
+          AND current_version_id IS NOT NULL
+        """
+    ),
+    text(
+        "DELETE FROM document_versions"
+        " WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+    ),
+    text("DELETE FROM documents WHERE deployment_id=:deployment_id AND doc_id=:doc_id"),
+    # Content-free work-ledger rows stay; their error text and payloads go.
+    text(
+        """
+        UPDATE processing_state SET payload = NULL, last_error = NULL
+        WHERE deployment_id=:deployment_id AND stage <> 'forget'
+          AND (payload IS NOT NULL OR last_error IS NOT NULL)
+          AND (target_id=:doc_id
+               OR target_id=ANY(CAST(:version_ids AS uuid[]))
+               OR target_id=ANY(CAST(:chunk_ids AS uuid[]))
+               OR target_id=ANY(CAST(:claim_ids AS uuid[]))
+               OR content_hash=ANY(CAST(:content_hashes AS text[]))
+               OR payload->>'doc_id'=CAST(:doc_id AS text))
         """
     ),
     text(
         """
         DELETE FROM review_queue review
-        WHERE review.deployment_id = :deployment_id
-          AND (
-              review.candidate::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:chunk_ids AS uuid[]) || CAST(:claim_ids AS uuid[])
-                      || CAST(:mention_ids AS uuid[]) || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE review.candidate::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
+        WHERE review.deployment_id=:deployment_id
+          AND (review.candidate::text LIKE '%' || CAST(:doc_id AS text) || '%'
+               OR EXISTS (
+                 SELECT 1 FROM unnest(CAST(:claim_ids AS uuid[])
+                   || CAST(:mention_ids AS uuid[])
+                   || CAST(:exclusive_fact_ids AS uuid[])
+                   || CAST(:exclusive_entity_ids AS uuid[])) AS ids(value)
+                 WHERE review.candidate::text
+                       LIKE '%' || CAST(ids.value AS text) || '%'))
         """
     ),
 )
 
-_VERIFY_POSTGRES_SCRUB = text(
+# Raw originals no surviving version uses are retired; their keys are kept on
+# the record and purged in step 2. Runs after the subtree is gone.
+_RETIRE_ORIGINALS = text(
     """
-    SELECT count(*)
-    FROM (
-        SELECT 1 FROM normalization_outputs WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
-        UNION ALL
-        SELECT 1 FROM selection_results WHERE deployment_id=:deployment_id AND chunk_id=ANY(CAST(:chunk_ids AS uuid[]))
-        UNION ALL
-        SELECT 1 FROM application_context_bindings WHERE deployment_id=:deployment_id AND application_id IN (
-          SELECT application_id FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
-        )
-        UNION ALL
-        SELECT 1 FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
-        UNION ALL
-        SELECT 1 FROM fact_applications WHERE deployment_id=:deployment_id AND input_claim_ids && CAST(:claim_ids AS uuid[])
-        UNION ALL
-        SELECT 1 FROM relations WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
-        UNION ALL
-        SELECT 1 FROM observations WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
-        UNION ALL
-        SELECT 1 FROM relation_adjudications WHERE deployment_id=:deployment_id AND consumed_claim_ids && CAST(:claim_ids AS uuid[])
-        UNION ALL
-        SELECT 1 FROM observation_adjudications WHERE deployment_id=:deployment_id AND consumed_claim_ids && CAST(:claim_ids AS uuid[])
-        UNION ALL
-        SELECT 1 FROM documents
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          AND (source_ref IS NOT NULL OR source_uri IS NOT NULL OR title IS NOT NULL
-               OR current_version_id IS NOT NULL OR document_entity_id IS NOT NULL
-               OR corpus_published_revision IS NOT NULL OR corpus_paths IS NOT NULL
-               OR deleted_at IS NULL)
-        UNION ALL
-        SELECT 1 FROM document_representations representation
-        JOIN document_versions version
-          ON version.deployment_id = representation.deployment_id
-         AND version.version_id = representation.version_id
-        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_versions
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          AND (current_representation_id IS NOT NULL
-               OR source_version_ref IS NOT NULL
-               OR source_modified_at IS NOT NULL
-               OR published_at IS NOT NULL
-               OR language IS NOT NULL
-               OR status <> 'deleted'
-               OR error IS NOT NULL
-               OR superseded_at IS NOT NULL
-               OR version_key IS NOT NULL
-               OR deleted_at IS NULL)
-        UNION ALL
-        SELECT 1 FROM document_reference_generations
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_effective_periods
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_effective_time_events
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_version_scope
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM managed_ingest_measurements
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-          AND delivery_state IN ('pending', 'parked', 'quarantined')
-        UNION ALL
-        SELECT 1 FROM document_sections
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_structure_generations
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_skeleton_checks
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM chunks
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM chunk_search
-        WHERE deployment_id = :deployment_id AND chunk_id = ANY(:chunk_ids)
-        UNION ALL
-        SELECT 1 FROM chunk_claims
-        WHERE deployment_id = :deployment_id
-          AND (chunk_id = ANY(:chunk_ids) OR claim_id = ANY(:claim_ids))
-        UNION ALL
-        SELECT 1 FROM claims
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM mentions
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR mention_id = ANY(:mention_ids))
-        UNION ALL
-        SELECT 1 FROM document_entity_bindings
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_tags
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_metadata
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_names name
-        JOIN document_versions version
-          ON version.deployment_id = name.deployment_id
-         AND version.version_id = name.version_id
-        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM document_people person
-        JOIN document_versions version
-          ON version.deployment_id = person.deployment_id
-         AND version.version_id = person.version_id
-        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM resolution_decisions
-        WHERE deployment_id = :deployment_id AND mention_id = ANY(:mention_ids)
-        UNION ALL
-        SELECT 1 FROM claim_extraction_decisions
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM grounding_audits
-        WHERE deployment_id = :deployment_id AND claim_id = ANY(:claim_ids)
-        UNION ALL
-        SELECT 1 FROM relation_evidence
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR relation_id = ANY(:fact_ids))
-        UNION ALL
-        SELECT 1 FROM observation_evidence
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR observation_id = ANY(:fact_ids))
-        UNION ALL
-        SELECT 1 FROM normalize_observation_staging
-        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-        UNION ALL
-        SELECT 1 FROM relations
-        WHERE deployment_id = :deployment_id AND relation_id = ANY(:fact_ids)
-        UNION ALL
-        SELECT 1 FROM observations
-        WHERE deployment_id = :deployment_id AND observation_id = ANY(:fact_ids)
-        UNION ALL
-        SELECT 1 FROM aliases
-        WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
-        UNION ALL
-        SELECT 1 FROM merge_events
-        WHERE deployment_id = :deployment_id
-          AND (
-              survivor_id = ANY(:resolved_entity_ids)
-              OR absorbed_id = ANY(:resolved_entity_ids)
-              OR EXISTS (
-                  SELECT 1 FROM unnest(CAST(:mention_ids AS uuid[])) AS ids(value)
-                  WHERE pre_merge_membership_snapshot::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
-          AND (
-              cardinality(trigger_lemmas) > 0
-              OR evidence IS NOT NULL
-              OR pre_merge_membership_snapshot <> '{}'::jsonb
-          )
-        UNION ALL
-        SELECT 1 FROM resolution_exclusions
-        WHERE deployment_id = :deployment_id
-          AND reason IS NOT NULL
-          AND (
-              entity_id_low = ANY(:resolved_entity_ids)
-              OR entity_id_high = ANY(:resolved_entity_ids)
-          )
-        UNION ALL
-        SELECT 1 FROM entities
-        WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
-          AND (status <> 'retired' OR canonical_name <> '' OR normalized_name <> ''
-               OR profile_summary IS NOT NULL
-               OR embedding IS NOT NULL OR embedding_model IS NOT NULL
-               OR embedding_input_policy_version IS NOT NULL
-               OR embedding_text_hash IS NOT NULL)
-        UNION ALL
-        SELECT 1 FROM knowledge_artifact_evidence
-        WHERE deployment_id = :deployment_id
-          AND (doc_id = :doc_id OR claim_lineage_id = :doc_id
-               OR relation_id = ANY(:fact_ids))
-        UNION ALL
-        SELECT 1 FROM knowledge_compilations
-        WHERE deployment_id = :deployment_id
-          AND artifact_id = ANY(:k_artifact_ids)
-        UNION ALL
-        SELECT 1 FROM knowledge_artifacts
-        WHERE deployment_id = :deployment_id
-          AND artifact_id = ANY(:k_artifact_ids)
-          AND (
-              page_summary IS NOT NULL OR content_hash IS NOT NULL
-              OR inputs_hash IS NOT NULL OR last_compiled_at IS NOT NULL
-              OR (page_kind = 'compiled' AND status <> 'stale')
-          )
-        UNION ALL
-        SELECT 1 FROM document_crossrefs
-        WHERE deployment_id = :deployment_id
-          AND (from_doc_id = :doc_id OR to_doc_id = :doc_id)
-        UNION ALL
-        SELECT 1 FROM relation_adjudications
-        WHERE deployment_id = :deployment_id
-          AND (
-              triggering_claim_id = ANY(:claim_ids)
-              OR relation_id = ANY(:fact_ids)
-              OR related_relation_id = ANY(:fact_ids)
-          )
-        UNION ALL
-        SELECT 1 FROM observation_adjudications
-        WHERE deployment_id = :deployment_id
-          AND (
-              triggering_claim_id = ANY(:claim_ids)
-              OR observation_id = ANY(:fact_ids)
-              OR related_observation_id = ANY(:fact_ids)
-          )
-        UNION ALL
-        SELECT 1 FROM knowledge_plan_decisions decision
-        WHERE decision.deployment_id = :deployment_id
-        UNION ALL
-        SELECT 1 FROM knowledge_plan_runs run
-        WHERE run.deployment_id = :deployment_id
-        UNION ALL
-        SELECT 1 FROM knowledge_refresh_queue refresh
-        WHERE refresh.deployment_id = :deployment_id
-          AND (
-              refresh.artifact_id = ANY(:k_artifact_ids)
-              OR refresh.scope_id IN (
-                  SELECT artifact.scope_id
-                  FROM knowledge_artifacts artifact
-                  WHERE artifact.deployment_id = :deployment_id
-                    AND artifact.artifact_id = ANY(:k_artifact_ids)
-                    AND artifact.scope_id IS NOT NULL
-              )
-              OR refresh.payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:claim_ids AS uuid[]) || CAST(:mention_ids AS uuid[])
-                      || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE refresh.payload::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
-        UNION ALL
-        SELECT 1 FROM knowledge_dispatches dispatch
-        WHERE dispatch.deployment_id = :deployment_id
-          AND (
-              dispatch.payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:claim_ids AS uuid[]) || CAST(:mention_ids AS uuid[])
-                      || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE dispatch.payload::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
-        UNION ALL
-        SELECT 1 FROM eval_runs WHERE deployment_id = :deployment_id
-        UNION ALL
-        SELECT 1 FROM canary_cases WHERE deployment_id = :deployment_id
-        UNION ALL
-        SELECT 1 FROM golden_claim_labels WHERE deployment_id = :deployment_id
-        UNION ALL
-        SELECT 1 FROM golden_pairs WHERE deployment_id = :deployment_id
-        UNION ALL
-        SELECT 1 FROM processing_state
-        WHERE deployment_id = :deployment_id
-          AND stage <> 'hard_forget'
-          AND (last_error IS NOT NULL OR (
-            payload IS NOT NULL AND NOT (
-                stage = 'publish_corpus'
-                AND payload = jsonb_build_object('doc_id', CAST(:doc_id AS text))
-            )
-          ))
-          AND (
-              target_id = :doc_id
-              OR target_id = ANY(:chunk_ids)
-              OR target_id = ANY(:claim_ids)
-              OR target_id = ANY(:mention_ids)
-              OR target_id = ANY(:fact_ids)
-              OR target_id = ANY(:entity_ids)
-              OR target_id = ANY(:resolved_entity_ids)
-              OR content_hash = ANY(:content_hashes)
-              OR payload::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:chunk_ids AS uuid[]) || CAST(:claim_ids AS uuid[])
-                      || CAST(:mention_ids AS uuid[]) || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE payload::text LIKE '%' || CAST(ids.value AS text) || '%'
-              )
-          )
-        UNION ALL
-        SELECT 1 FROM review_queue review
-        WHERE review.deployment_id = :deployment_id
-          AND (
-              review.candidate::text LIKE '%' || CAST(:doc_id AS text) || '%'
-              OR EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      CAST(:chunk_ids AS uuid[]) || CAST(:claim_ids AS uuid[])
-                      || CAST(:mention_ids AS uuid[]) || CAST(:fact_ids AS uuid[])
-                      || CAST(:resolved_entity_ids AS uuid[])
-                      || CAST(:k_artifact_ids AS uuid[])
-                  ) AS ids(value)
-                  WHERE review.candidate::text LIKE '%'
-                        || CAST(ids.value AS text) || '%'
-              )
-          )
-        UNION ALL
-        SELECT 1 FROM content_objects object
-        WHERE object.deployment_id = :deployment_id
-          AND object.content_hash = ANY(:content_hashes)
-          AND NOT EXISTS (
-              SELECT 1
-              FROM document_versions other_version
-              JOIN documents other_document
-                ON other_document.deployment_id = other_version.deployment_id
-               AND other_document.doc_id = other_version.doc_id
-              WHERE other_version.deployment_id = object.deployment_id
-                AND other_version.content_hash = object.content_hash
-                AND other_version.doc_id <> :doc_id
-                AND other_version.deleted_at IS NULL
-                AND other_document.deleted_at IS NULL
-          )
-          AND (object.mime <> 'application/x-forgotten'
-               OR object.byte_size IS NOT NULL
-               OR object.raw_uri <> 'forgotten/' || object.content_hash
-               OR object.purged_at IS NULL)
-    ) residual
+    UPDATE content_objects object
+    SET mime = 'application/x-forgotten', byte_size = NULL,
+        raw_uri = 'forgotten/' || object.content_hash,
+        purged_at = COALESCE(object.purged_at, now())
+    FROM (SELECT content_hash, raw_uri FROM content_objects
+          WHERE deployment_id=:deployment_id
+            AND content_hash=ANY(CAST(:hashes AS text[]))) original
+    WHERE object.deployment_id=:deployment_id
+      AND object.content_hash=original.content_hash
+      AND object.purged_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM document_versions v
+        WHERE v.deployment_id=object.deployment_id
+          AND v.content_hash=object.content_hash)
+    RETURNING original.raw_uri
     """
 )
 
-_MARK_COMPLETE = text(
-    """
-    UPDATE forget_manifests
-    SET status = 'complete', completed_at = COALESCE(completed_at, now()),
-        last_verified_at = now()
-    WHERE deployment_id = :deployment_id
-      AND forget_id = :forget_id
-      AND manifest_hash = :manifest_hash
-      AND status IN ('accepted', 'complete')
-    """
-)
-
-
-_FORGOTTEN_INGEST = text(
-    """
-    SELECT forget_id
-    FROM forget_manifests
-    WHERE deployment_id = :deployment_id
-      AND status = 'complete'
-      AND (
-        source_identity_hash = :source_identity_hash
-        OR :content_hash = ANY(content_hashes)
-      )
-    ORDER BY completed_at, forget_id
-    LIMIT 1
-    """
+# The eval schema has no lineage-provenance column, so a forget drops the
+# deployment's free-text eval fixtures and K plan transcripts rather than guess
+# which prose came from the document (as D74 did). Not counted as residue.
+_DEPLOYMENT_FIXTURES = (
+    text("DELETE FROM eval_runs WHERE deployment_id=:deployment_id"),
+    text("DELETE FROM canary_cases WHERE deployment_id=:deployment_id"),
+    text("DELETE FROM golden_claim_labels WHERE deployment_id=:deployment_id"),
+    text("DELETE FROM golden_pairs WHERE deployment_id=:deployment_id"),
+    text("DELETE FROM knowledge_plan_decisions WHERE deployment_id=:deployment_id"),
+    text("DELETE FROM knowledge_plan_runs WHERE deployment_id=:deployment_id"),
 )

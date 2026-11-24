@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import DocumentDeletion
 from rememberstack.model import DocumentNotFoundError
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.surfaces.http_api import _spend_gated_route
@@ -26,25 +25,6 @@ from rememberstack.surfaces.http_api import build_api
 _DEPLOYMENT_ID = UUID("11111111-1111-1111-1111-111111111111")
 _DOC = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 _AT = datetime(2026, 9, 23, tzinfo=UTC)
-
-
-class _Boundary:
-    """Admission/readiness; admission can be closed to model a hard-forget."""
-
-    def __init__(self, *, forgetting: bool = False) -> None:
-        """Open unless a forget is in progress."""
-        self._forgetting = forgetting
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Refuse while a forget is in progress."""
-        assert deployment_id == _DEPLOYMENT_ID
-        if self._forgetting:
-            raise ForgetInProgressError("forget in progress")
 
 
 class _UnusedEngine:
@@ -85,19 +65,13 @@ class _ScopedAuth:
 
 
 def _client(
-    deletion: _Deletion | None,
-    *,
-    auth: _ScopedAuth | None = None,
-    forgetting: bool = False,
+    deletion: _Deletion | None, *, auth: _ScopedAuth | None = None
 ) -> TestClient:
     """Build an API exposing only the delete route (when composed)."""
-    boundary = _Boundary(forgetting=forgetting)
     return TestClient(
         build_api(
             engine=_UnusedEngine(),  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             deletion=deletion,
             auth=auth,
         )
@@ -162,32 +136,6 @@ def test_only_a_write_credential_may_delete() -> None:
     )
     assert allowed.status_code == 200, allowed.text
     assert deletion.calls == [(_DEPLOYMENT_ID, _DOC)]
-
-
-def test_a_hard_forget_in_progress_closes_deletion_too() -> None:
-    """D74's barrier is deployment-wide: no route is exempt, deletion included."""
-    deletion = _Deletion()
-    response = _client(deletion, forgetting=True).delete(f"/documents/{_DOC}")
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "forget_in_progress"}}
-    assert deletion.calls == []
-
-
-def test_a_forget_that_wins_the_fence_is_a_503_not_a_500() -> None:
-    """Admission was open, but a forget was preparing when the delete took
-    the D74 fence: the same stable negative as the admission check."""
-
-    class _Fenced(_Deletion):
-        def delete_document(
-            self, *, deployment_id: UUID, doc_id: UUID
-        ) -> DocumentDeletion:
-            raise ForgetInProgressError("forget preparing")
-
-    response = _client(_Fenced()).delete(f"/documents/{_DOC}")
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "forget_in_progress"}}
 
 
 def test_deletion_is_not_a_chargeable_path() -> None:

@@ -392,14 +392,6 @@ def test_public_deployment_id_properties(migrated: str) -> None:
 # --- HTTP / MCP -------------------------------------------------------------
 
 
-class _OpenBoundary:
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
 class _NullEngine:
     """QueryEngine stand-in; open routes do not use it."""
 
@@ -434,8 +426,6 @@ def test_http_open_routes_and_four_assured_operations(migrated: str) -> None:
     app = build_api(
         engine=query_engine,
         deployment_id=_DEPLOYMENT,
-        admission=_OpenBoundary(),
-        readiness=_OpenBoundary(),
         surface=surface,
         open_query=facade,
     )
@@ -839,8 +829,6 @@ def _open_api(migrated: str):
     return build_api(
         engine=query_engine,
         deployment_id=_DEPLOYMENT,
-        admission=_OpenBoundary(),
-        readiness=_OpenBoundary(),
         surface=surface,
         open_query=facade,
     )
@@ -1201,8 +1189,6 @@ def test_http_auth_propagates_principal_to_open_execution_routes(migrated: str) 
     app = build_api(
         engine=query_engine,
         deployment_id=_DEPLOYMENT,
-        admission=_OpenBoundary(),
-        readiness=_OpenBoundary(),
         surface=surface,
         open_query=tracking,  # type: ignore[arg-type]
         auth=auth,  # type: ignore[arg-type]

@@ -45,15 +45,6 @@ _VERSION = UUID("58000000-0000-0000-0000-000000000002")
 _AT = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
 
 
-class _Boundary:
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _BuildInfo:
     def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
         assert deployment_id == _DEPLOYMENT_ID
@@ -99,12 +90,9 @@ class _History:
 @pytest.fixture()
 def surface() -> tuple[MemoryClient, _History]:
     history = _History()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         build_info=_BuildInfo(),
         section_history=history,
     )
@@ -155,8 +143,6 @@ def test_http_refusals(surface: tuple[MemoryClient, _History]) -> None:
         build_api(
             engine=cast("QueryEngine", object()),
             deployment_id=_DEPLOYMENT_ID,
-            admission=_Boundary(),
-            readiness=_Boundary(),
             section_history=_History(),
         )
     )

@@ -45,16 +45,6 @@ class _Auth:
         return AuthenticatedContext(deployment_id=owner, principal=f"{value}-user")
 
 
-class _Open:
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
-class _Ready:
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-
 class _Lease:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -72,12 +62,7 @@ class _Lease:
 
 def _client() -> tuple[TestClient, dict[str, ApiDeployment], dict[UUID, _Lease]]:
     # The composing deployment has no perimeter at all.
-    app = build_api(
-        engine=cast(QueryEngine, object()),
-        deployment_id=_A,
-        admission=_Open(),
-        readiness=_Ready(),
-    )
+    app = build_api(engine=cast(QueryEngine, object()), deployment_id=_A)
     template: ApiDeployment = app.state.api_deployment
     leases = {_A: _Lease(), _B: _Lease()}
     deployments = {
@@ -142,11 +127,7 @@ def test_each_request_meets_its_own_deployments_perimeter() -> None:
 
 def test_without_an_override_the_composed_perimeter_applies() -> None:
     app = build_api(
-        engine=cast(QueryEngine, object()),
-        deployment_id=_A,
-        admission=_Open(),
-        readiness=_Ready(),
-        auth=_Auth(_A),
+        engine=cast(QueryEngine, object()), deployment_id=_A, auth=_Auth(_A)
     )
 
     @app.get("/probe")
@@ -183,12 +164,7 @@ def test_a_hosts_own_route_sees_the_resolved_deployment() -> None:
 
 def test_included_routers_reuse_the_one_resolution() -> None:
     """A router's ``Depends(deployment_context)`` never calls the resolver again."""
-    app = build_api(
-        engine=cast(QueryEngine, object()),
-        deployment_id=_A,
-        admission=_Open(),
-        readiness=_Ready(),
-    )
+    app = build_api(engine=cast(QueryEngine, object()), deployment_id=_A)
     template: ApiDeployment = app.state.api_deployment
     answers = [
         replace(template, deployment_id=_B, auth=_Auth(_B)),
@@ -230,12 +206,7 @@ def _refuse() -> bool:
 
 def test_a_hosts_dependency_override_still_applies_on_held_routes() -> None:
     """Holding routes must not hide an override keyed by the original callable."""
-    app = build_api(
-        engine=cast(QueryEngine, object()),
-        deployment_id=_A,
-        admission=_Open(),
-        readiness=_Ready(),
-    )
+    app = build_api(engine=cast(QueryEngine, object()), deployment_id=_A)
 
     @app.get("/guarded")
     def guarded(ok: Annotated[bool, Depends(_allowed)]) -> dict[str, bool]:
@@ -282,8 +253,6 @@ def test_a_host_route_can_be_opened_to_ingest_credentials() -> None:
     app = build_api(
         engine=cast(QueryEngine, object()),
         deployment_id=_A,
-        admission=_Open(),
-        readiness=_Ready(),
         auth=_ScopedAuth(),
         ingest_scope_routes=(("POST", "/uploads/{upload_id}/complete"),),
     )

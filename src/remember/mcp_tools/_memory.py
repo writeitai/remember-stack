@@ -276,24 +276,6 @@ def handle_delete_document_tool(
                     ),
                 )
             )
-        if getattr(error, "status_code", None) == 503 and "forget_in_progress" in str(
-            getattr(error, "detail", "")
-        ):
-            return error_result(
-                ToolError(
-                    code="forget_in_progress",
-                    detail=(
-                        "A hard forget is running on this deployment; nothing was"
-                        " deleted."
-                    ),
-                    status_code=503,
-                    retryable=True,
-                    agent_action=(
-                        "Retry the same delete later with back-off; the"
-                        " deployment accepts no changes until the forget finishes."
-                    ),
-                )
-            )
         mapped = map_error(error)
         if mapped.code in {"internal_error", "local_backend_error"}:
             logger.exception(

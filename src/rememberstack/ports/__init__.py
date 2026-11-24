@@ -1,7 +1,6 @@
 """Provider-neutral deployment substrate and store-capability protocols."""
 
 from rememberstack.ports.auth import AuthPerimeterPort
-from rememberstack.ports.forget import ForgetManifestPort
 from rememberstack.ports.git import KGitRemotePort
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -21,7 +20,6 @@ from rememberstack.ports.telemetry import TelemetryPort
 
 __all__ = (
     "AuthPerimeterPort",
-    "ForgetManifestPort",
     "KGitPurgePort",
     "KGitRemotePort",
     "ModelProviderPort",

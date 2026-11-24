@@ -24,7 +24,6 @@ from rememberstack.core.concise_adjudication import PROMPT_RENDERER_VERSION
 from rememberstack.model.fact_application import AssertionKind
 from rememberstack.model.fact_application import FactApplicationDecision
 from rememberstack.model.relations import NormalizationResponse
-from rememberstack.spine.admission import active_forget_id_on
 
 
 class ApplicationInputChanged(RuntimeError):
@@ -58,21 +57,6 @@ def canonical_json(value: object) -> str:
     return json.dumps(
         value, default=encode, sort_keys=True, separators=(",", ":"), allow_nan=False
     )
-
-
-@contextmanager
-def application_fence(*, connection: Connection, deployment_id: UUID) -> Iterator[None]:
-    """Coordinate every payload publication with the existing hard-forget fence."""
-    connection.execute(
-        text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
-        {"key": f"hard-forget:{deployment_id}"},
-    )
-    if (
-        active_forget_id_on(connection=connection, deployment_id=deployment_id)
-        is not None
-    ):
-        raise ApplicationInputChanged("ordinary fact work is fenced by hard forget")
-    yield
 
 
 def canonical_entity(
@@ -120,27 +104,22 @@ def entity_members(
 def application_block(
     *, connection: Connection, deployment_id: UUID, subject_entity_id: UUID
 ) -> Iterator[tuple[UUID, list[UUID]]]:
-    """Acquire forget, identity, then canonical entity locks in their global order."""
-    with application_fence(connection=connection, deployment_id=deployment_id):
-        connection.execute(
-            text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
-            {"key": f"{deployment_id}:identity-epoch"},
-        )
-        root = canonical_entity(
-            connection=connection,
-            deployment_id=deployment_id,
-            entity_id=subject_entity_id,
-        )
-        connection.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
-            {"key": f"{deployment_id}:obs:{root}"},
-        )
-        yield (
-            root,
-            entity_members(
-                connection=connection, deployment_id=deployment_id, root=root
-            ),
-        )
+    """Acquire the identity, then the canonical entity lock in their global order."""
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
+        {"key": f"{deployment_id}:identity-epoch"},
+    )
+    root = canonical_entity(
+        connection=connection, deployment_id=deployment_id, entity_id=subject_entity_id
+    )
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+        {"key": f"{deployment_id}:obs:{root}"},
+    )
+    yield (
+        root,
+        entity_members(connection=connection, deployment_id=deployment_id, root=root),
+    )
 
 
 class FactApplicationCatalog:
@@ -214,10 +193,7 @@ class FactApplicationCatalog:
                 ]
             ),
         }
-        with (
-            self._engine.begin() as connection,
-            application_fence(connection=connection, deployment_id=deployment_id),
-        ):
+        with self._engine.begin() as connection:
             connection.execute(
                 text("""
               INSERT INTO normalization_outputs(deployment_id,claim_id,normalizer_version,output,accepted_outputs)
@@ -272,10 +248,7 @@ class FactApplicationCatalog:
             "object": object_entity_id,
             "application_id": uuid4(),
         }
-        with (
-            self._engine.begin() as connection,
-            application_fence(connection=connection, deployment_id=deployment_id),
-        ):
+        with self._engine.begin() as connection:
             inserted = connection.execute(
                 text("""
               INSERT INTO fact_applications(application_id,deployment_id,claim_id,normalizer_version,
@@ -448,10 +421,7 @@ class FactApplicationCatalog:
         decision: FactApplicationDecision,
     ) -> bool:
         """CAS the first complete answer; late replies cannot replace another attempt."""
-        with (
-            self._engine.begin() as connection,
-            application_fence(connection=connection, deployment_id=deployment_id),
-        ):
+        with self._engine.begin() as connection:
             result = connection.execute(
                 text("""
               UPDATE fact_applications a SET decision=CAST(:decision AS jsonb)

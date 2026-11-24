@@ -51,16 +51,6 @@ _DEPLOYMENT = UUID("54000000-0000-0000-0000-00000000000a")
 _SECRET = "umc_dp_test-secret-not-for-production"
 
 
-class _OpenBoundary:
-    """No-op readiness/admission."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
 class _CountingIngest:
     """Record ingest calls."""
 
@@ -257,8 +247,6 @@ def _guarded_app(
             embedding_model="toy",
         ),
         deployment_id=_DEPLOYMENT,
-        admission=_OpenBoundary(),
-        readiness=_OpenBoundary(),
         auth=auth,
         spend_lease=lease,
         ingest=ingest,
@@ -616,8 +604,6 @@ def test_search_commit_reports_query_embedding_cost() -> None:
             embedding_model="toy",
         ),
         deployment_id=_DEPLOYMENT,
-        admission=_OpenBoundary(),
-        readiness=_OpenBoundary(),
         auth=auth,
         spend_lease=lease,
     )
@@ -726,8 +712,6 @@ def _documents_app(*, lease: _FakeLease, inventory: _EmptyInventory) -> TestClie
                 embedding_model="toy",
             ),
             deployment_id=_DEPLOYMENT,
-            admission=_OpenBoundary(),
-            readiness=_OpenBoundary(),
             auth=auth,
             spend_lease=lease,
             documents=inventory,  # type: ignore[arg-type]

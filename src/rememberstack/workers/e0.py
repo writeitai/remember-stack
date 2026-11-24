@@ -88,11 +88,11 @@ from rememberstack.model import ConverterLaneError
 from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import ConvertSource
 from rememberstack.model import DerivationRange
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import FileHints
-from rememberstack.model import ForgottenSourceError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import ModelRequest
@@ -195,13 +195,13 @@ _STORED_KEY: Final = re.compile(r"uploads/[A-Za-z0-9_-]{16,128}")
 disjoint from the engine's own keys (``<doc_id>/…``, ``forgotten/…``)."""
 
 
-_STORED_REFUSALS: Final = (ValueError, ForgottenSourceError)
+_STORED_REFUSALS: Final = (ValueError, DocumentForgottenError)
 """What refuses a stored object for good (size, content type,
 metadata, a forgotten identity); anything else may succeed on retry."""
 
 
 class IngestAdmission(Protocol):
-    """The one D74 check required before an ingest writes any bytes."""
+    """The D159 re-ingest guard, checked before an ingest writes any bytes."""
 
     def guard_ingest(
         self,
@@ -211,7 +211,7 @@ class IngestAdmission(Protocol):
         source_ref: str,
         content_hash: str,
     ) -> None:
-        """Raise when admission is closed or the identity was forgotten."""
+        """Raise ``DocumentForgottenError`` when a forget record guards this content."""
         ...
 
 
@@ -681,7 +681,10 @@ class UploadIngestor:
         source_ref: str,
         content_hash: str,
     ) -> None:
-        """Check D74 before writing forgotten bytes back into the raw store."""
+        """Refuse forgotten content before writing its bytes (D159 §3.6).
+
+        Checked again at registration under the lineage row lock.
+        """
         self._admission.guard_ingest(
             deployment_id=deployment_id,
             source_kind=source_kind,

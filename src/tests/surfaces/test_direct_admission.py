@@ -295,15 +295,6 @@ class _Open:
         self.gate.set()
         self.entered = 0
 
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        self.entered += 1
-        assert self.gate.wait(timeout=10)
-
-
-class _Ready:
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
 
 class _Auth:
     """``Bearer key-<jti>`` is a signed credential; ``Bearer shared`` is not."""
@@ -371,8 +362,6 @@ def _app(
     app = build_api(
         engine=cast(QueryEngine, object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=barrier or _Open(),
-        readiness=_Ready(),
         auth=_Auth() if auth else None,
         spend_lease=(lease or _Lease()) if auth else None,  # type: ignore[arg-type]
         direct_admission=admission,

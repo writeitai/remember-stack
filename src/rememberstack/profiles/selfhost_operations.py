@@ -11,7 +11,6 @@ from rememberstack.adapters.selfhost import SelfHostTaskQueue
 from rememberstack.model import DeadLetterReplayResult
 from rememberstack.model import OperationalReport
 from rememberstack.model import ProcessingLane
-from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import OperationalCatalog
 from rememberstack.spine import OperationalSettings
 from rememberstack.spine import WorkLedger
@@ -55,6 +54,12 @@ class SelfHostOperations:
             engine=self._engine, settings=WorkLedgerSettings()
         ).resume_no_route(deployment_id=deployment_id, routable_mimes=frozenset(routes))
 
+    def forget_reapply(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        """Re-run every forget record's sweeps after a restore (D159 §3.8)."""
+        from rememberstack.workers import forget_reapply
+
+        return forget_reapply(engine=self._engine, deployment_id=deployment_id)
+
     def replay(
         self,
         *,
@@ -65,7 +70,6 @@ class SelfHostOperations:
         not_before: datetime | None,
     ) -> DeadLetterReplayResult:
         """Compose the authoritative replay transition with local delivery."""
-        ForgetCatalog(engine=self._engine).assert_available(deployment_id=deployment_id)
         ledger = WorkLedger(engine=self._engine, settings=WorkLedgerSettings())
         return DeadLetterReplayer(
             ledger=ledger, queue=SelfHostTaskQueue(ledger=ledger)

@@ -1,107 +1,35 @@
-"""One explicit self-host composition for D74 hard-forget and readiness."""
+"""One explicit self-host composition for D159 forget: hide, sweep, reapply."""
 
-from datetime import datetime
-from pathlib import Path
 from typing import Self
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
-from rememberstack.adapters.selfhost import LocalFSObjectStore
-from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
-from rememberstack.model import ForgetManifest
+from rememberstack.model import Forget
 from rememberstack.model import PipelineStage
-from rememberstack.ports.forget import ForgetManifestPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.purge import CorpusCachePurgePort
 from rememberstack.ports.purge import KGitPurgePort
 from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
-from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine.corpus_export import CorpusReaderCatalog
-from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
-from rememberstack.spine.surface_cost import open_surface_scope
-from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
-from rememberstack.spine.surface_cost import SurfaceCallSite
-from rememberstack.spine.surface_cost import SurfaceCostKind
-from rememberstack.spine.surface_cost import SurfaceCostMeter
-from rememberstack.workers import DeletionService
+from rememberstack.workers import ForgetHandler
+from rememberstack.workers import ForgetService
 from rememberstack.workers import HandlerRegistry
-from rememberstack.workers import HardForgetHandler
-from rememberstack.workers import HardForgetReadiness
-from rememberstack.workers import HardForgetService
-from rememberstack.workers import KnowledgeCommitDriver
-from rememberstack.workers import KnowledgeCycleForgetRebuilder
 from rememberstack.workers.corpus_publication import CorpusPublisher
+from rememberstack.workers.forget import DEFAULT_QUIET_PERIOD_S
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 
 
-class SelfHostHardForget:
-    """The self-host request, worker registration, admission, and startup gate."""
+class SelfHostForget:
+    """The internal request entry point and the sweep worker over selected stores."""
 
-    def __init__(
-        self,
-        *,
-        engine: Engine,
-        catalog: ForgetCatalog,
-        service: HardForgetService,
-        handler: HardForgetHandler,
-        readiness: HardForgetReadiness,
-    ) -> None:
-        """Retain one shared coordinator graph for every self-host surface."""
-        self._engine = engine
-        self._catalog = catalog
+    def __init__(self, *, service: ForgetService, handler: ForgetHandler) -> None:
+        """Retain one shared forget graph for every self-host surface."""
         self._service = service
         self._handler = handler
-        self._readiness = readiness
-
-    @classmethod
-    def compose(
-        cls,
-        *,
-        engine: Engine,
-        model_provider: ModelProviderPort,
-        embedding_model: str,
-        manifest_root: Path,
-        raw_root: Path,
-        artifact_root: Path,
-        corpus_root: Path,
-        knowledge_repository: Path,
-        knowledge_author_name: str,
-        knowledge_author_email: str,
-        knowledge_driver: KnowledgeCommitDriver,
-    ) -> Self:
-        """Compose only existing production workers and selected self-host stores."""
-        catalog = ForgetCatalog(engine=engine)
-        raw = LocalFSObjectStore(root=raw_root)
-        artifacts = LocalFSObjectStore(root=artifact_root)
-        corpus = LocalFSObjectStore(root=corpus_root)
-        return cls.from_stores(
-            engine=engine,
-            model_provider=model_provider,
-            embedding_model=embedding_model,
-            manifest_store=LocalFSForgetManifestStore(root=manifest_root),
-            object_purgers=(raw, artifacts),
-            corpus_store=corpus,
-            publisher=CorpusPublisher(
-                catalog=CorpusPublicationCatalog(engine=engine),
-                readers=CorpusReaderCatalog(engine=engine),
-                raw_store=raw,
-                artifact_store=artifacts,
-                corpus_store=corpus,
-            ),
-            k_git=LocalGitRepository(
-                repository=knowledge_repository,
-                path_catalog=catalog,
-                author_name=knowledge_author_name,
-                author_email=knowledge_author_email,
-            ),
-            knowledge_rebuilder=KnowledgeCycleForgetRebuilder(driver=knowledge_driver),
-        )
 
     @classmethod
     def from_stores(
@@ -110,156 +38,92 @@ class SelfHostHardForget:
         engine: Engine,
         model_provider: ModelProviderPort,
         embedding_model: str,
-        manifest_store: ForgetManifestPort,
         object_purgers: tuple[ObjectPurgePort, ...],
         corpus_store: ObjectPurgePort,
         publisher: CorpusPublisher,
         k_git: KGitPurgePort | None = None,
         knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
         caches: CorpusCachePurgePort | None = None,
+        quiet_period_s: float = DEFAULT_QUIET_PERIOD_S,
     ) -> Self:
-        """D147: compose the same erasure/replay over the deployment's actual stores.
+        """D147: compose the hide and the sweep over the deployment's actual stores.
 
-        The stock API profile has no K store. If K history is present, its host
-        must supply both K capabilities; absence never silently acknowledges it.
+        The stock API profile has no K store. If K pages exist, the host must
+        supply both K capabilities; their absence never silently skips them.
         """
         catalog = ForgetCatalog(engine=engine)
         absent_k = _NoKnowledgeStore(engine=engine)
-        service = HardForgetService(
-            catalog=catalog, manifest_store=manifest_store, k_git=k_git or absent_k
-        )
-        profile_refresher = EntityProfileRefresher(
+        handler = ForgetHandler(
             engine=engine,
-            model_provider=model_provider,
-            embedding_model=embedding_model,
-        )
-        handler = HardForgetHandler(
             catalog=catalog,
-            deletion=DeletionService(
-                catalog=LifecycleCatalog(engine=engine),
-                profile_refresher=profile_refresher,
+            profile_refresher=EntityProfileRefresher(
+                engine=engine,
+                model_provider=model_provider,
+                embedding_model=embedding_model,
             ),
-            profile_refresher=profile_refresher,
             object_purgers=object_purgers,
             projection_purger=SelfHostProjectionPurger(
                 publisher=publisher, object_purger=corpus_store, caches=caches
             ),
             knowledge_rebuilder=knowledge_rebuilder or absent_k,
             k_git=k_git or absent_k,
-        )
-        readiness = HardForgetReadiness(
-            catalog=catalog,
-            manifest_store=manifest_store,
-            request_service=service,
-            handler=handler,
+            quiet_period_s=quiet_period_s,
         )
         return cls(
-            engine=engine,
-            catalog=catalog,
-            service=service,
-            handler=handler,
-            readiness=readiness,
+            service=ForgetService(engine=engine, catalog=catalog), handler=handler
         )
 
     @property
-    def handler(self) -> HardForgetHandler:
+    def handler(self) -> ForgetHandler:
+        """The sweep worker for the ``forget`` stage."""
         return self._handler
 
     def register(self, *, registry: HandlerRegistry) -> None:
-        """Install the one unlaned hard-forget worker handler."""
-        registry.register(stage=PipelineStage.HARD_FORGET, handler=self._handler)
+        """Install the one unlaned forget worker handler."""
+        registry.register(stage=PipelineStage.FORGET, handler=self._handler)
 
     def request(
-        self,
-        *,
-        deployment_id: UUID,
-        doc_id: UUID,
-        forget_id: UUID,
-        requested_at: datetime,
-    ) -> ForgetManifest:
-        """Submit one lineage request through the crash-safe acceptance cut."""
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID | None = None
+    ) -> tuple[Forget, bool]:
+        """Hide one lineage and start its sweeps; a repeat returns the record."""
         return self._service.request(
-            deployment_id=deployment_id,
-            doc_id=doc_id,
-            forget_id=forget_id,
-            requested_at=requested_at,
-        )
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Re-honor every portable manifest before serving begins."""
-        meter = SurfaceCostMeter(
-            recorder=SqlSurfaceCostRecorder(
-                engine=self._engine, deployment_id=deployment_id
-            ),
-            deployment_id=deployment_id,
-            call_site=SurfaceCallSite.PROFILE_FORGET_RECOVERY,
-        )
-        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
-            return self._readiness.ensure_ready(
-                deployment_id=deployment_id, meter=meter
-            )
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Implement the shared public/mount admission perimeter."""
-        self._catalog.assert_available(deployment_id=deployment_id)
-
-    def guard_ingest(
-        self,
-        *,
-        deployment_id: UUID,
-        source_kind: str,
-        source_ref: str,
-        content_hash: str,
-    ) -> None:
-        """Implement E0's before-bytes barrier and irreversible ingest guard."""
-        self._catalog.guard_ingest(
-            deployment_id=deployment_id,
-            source_kind=source_kind,
-            source_ref=source_ref,
-            content_hash=content_hash,
+            deployment_id=deployment_id, doc_id=doc_id, forget_id=forget_id
         )
 
 
 class _NoKnowledgeStore:
-    """The source/claims/facts profile has no Plane-K serving store to acknowledge."""
+    """The source/claims/facts profile has no Plane-K serving store to purge."""
 
     def __init__(self, *, engine: Engine) -> None:
         self._engine = engine
 
-    def blocking_redaction_paths(
-        self, *, deployment_id: UUID, doc_id: UUID
-    ) -> tuple[str, ...]:
-        with self._engine.connect() as connection:
-            present = connection.execute(
-                text(
-                    "SELECT EXISTS (SELECT 1 FROM knowledge_artifacts WHERE deployment_id = :d)"
-                ),
-                {"d": deployment_id},
-            ).scalar_one()
-        if present:
-            raise RuntimeError(
-                "K history requires a composed K purge and rebuild capability"
-            )
-        return ()
-
     def recompile_without_lineage(
         self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> None:
-        if artifact_ids:
-            raise RuntimeError(
-                "K history requires a composed K purge and rebuild capability"
-            )
+        self._refuse(deployment_id=deployment_id, artifact_ids=artifact_ids)
 
     def purge_artifacts(
         self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> None:
-        self.recompile_without_lineage(
-            deployment_id=deployment_id, artifact_ids=artifact_ids
-        )
+        self._refuse(deployment_id=deployment_id, artifact_ids=artifact_ids)
 
     def verify_artifacts_purged(
         self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> None:
-        self.recompile_without_lineage(
-            deployment_id=deployment_id, artifact_ids=artifact_ids
-        )
+        self._refuse(deployment_id=deployment_id, artifact_ids=artifact_ids)
+
+    def _refuse(self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]) -> None:
+        if not artifact_ids:
+            return
+        with self._engine.connect() as connection:
+            present = connection.execute(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM knowledge_artifacts"
+                    " WHERE deployment_id = :d AND artifact_id = ANY(CAST(:ids AS uuid[])))"
+                ),
+                {"d": deployment_id, "ids": list(artifact_ids)},
+            ).scalar_one()
+        if present:
+            raise RuntimeError(
+                "K pages require a composed K purge and rebuild capability"
+            )

@@ -18,13 +18,13 @@ job; `DeletionService` is the operator's grain (§8) through the same
 cascade, and `DocumentDeleter` is its public, caller-facing form (D135).
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid5
 
-from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
@@ -35,7 +35,6 @@ from rememberstack.model import CurrencyTransition
 from rememberstack.model import DocumentDeletion
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import EnqueueWork
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -43,8 +42,6 @@ from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
-from rememberstack.spine.admission import active_forget_id_on
-from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.processing_layers import lineage_changed_on
 from rememberstack.spine.processing_layers import take_layer_fence_on
@@ -699,15 +696,12 @@ class DeletionService:
 
 
 class DocumentDeleter:
-    """The public document delete (D135): one fenced, atomic deletion episode.
+    """The public document delete (D135): one atomic deletion episode.
 
     The tombstone and the whole §8 cascade run in ONE database transaction
-    that holds the D74 hard-forget fence (a shared advisory lock) from the
-    first statement to the commit. So a delete either happens completely or
-    not at all; a concurrent re-ingest of the same lineage waits on the
-    lineage row until it commits; and a hard-forget cannot enter
-    ``preparing`` part-way through (a forget already preparing refuses the
-    delete up front with ``ForgetInProgressError``).
+    under the lineage row lock. So a delete either happens completely or not
+    at all, and a concurrent re-ingest of the same lineage waits on the
+    lineage row until it commits.
 
     An absent document is ``DocumentNotFoundError``. A lineage some other
     path tombstoned without finishing its cascade (a crashed operator run, a
@@ -728,18 +722,15 @@ class DocumentDeleter:
         self, *, deployment_id: UUID, doc_id: UUID, meter: CostMeterPort | None = None
     ) -> DocumentDeletion:
         """Remove one document's contribution to this deployment's memory."""
-        try:
-            with self._engine.begin() as connection:
-                delta, deleted_at = self._delete_fenced(
-                    connection=connection, deployment_id=deployment_id, doc_id=doc_id
-                )
-        except ApplicationInputChanged as error:
-            # Only the forget fence raises this inside the delete; the fence
-            # is held throughout, so this is a forget that was already
-            # preparing when a savepoint re-checked it.
-            raise ForgetInProgressError(
-                f"deployment {deployment_id} is honoring a hard forget"
-            ) from error
+        with self._engine.begin() as connection:
+            removal = remove_lineage_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+            if removal is None or (removal.already_deleted and not removal.changed):
+                # Absent, or nothing was left to finish: the document was
+                # already gone.
+                raise DocumentNotFoundError(str(doc_id))
+            delta, deleted_at = removal.delta, removal.deleted_at
         try:
             self._profile_refresher.refresh_for_facts(
                 deployment_id=deployment_id,
@@ -763,65 +754,73 @@ class DocumentDeleter:
             observations_closed=len(delta.observations_closed),
         )
 
-    def _delete_fenced(
-        self, *, connection: Connection, deployment_id: UUID, doc_id: UUID
-    ) -> tuple[ReconciliationDelta, datetime]:
-        """Tombstone and cascade inside the caller's fenced transaction."""
-        connection.execute(
-            text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
-            {"key": f"hard-forget:{deployment_id}"},
-        )
-        if active_forget_id_on(connection=connection, deployment_id=deployment_id):
-            raise ForgetInProgressError(
-                f"deployment {deployment_id} is honoring a hard forget"
-            )
-        # D143 §3.3 lock order: the layer fence before the lineage lock.
-        take_layer_fence_on(connection=connection, deployment_id=deployment_id)
-        catalog = LifecycleCatalog.on_connection(connection=connection)
-        # Lock the lineage BEFORE reading its state: a concurrent delete of
-        # the same document waits here, then reads the committed tombstone
-        # and is refused as already deleted rather than answering 200.
-        catalog.lock_lineage(doc_id=doc_id)
-        state = catalog.lineage_deletion_state(
-            deployment_id=deployment_id, doc_id=doc_id
-        )
-        if state is None:
-            raise DocumentNotFoundError(str(doc_id))
-        already_deleted = state["deleted_at"] is not None
-        deleted_at = catalog.delete_lineage(doc_id=doc_id)
-        # One run id per deletion EPISODE: stable across a repeat of the same
-        # deletion (the tombstone instant does not move), new for a later
-        # deletion after the document was added back — so each episode gets
-        # its own ledger rows and its own evidence_changed event.
-        reconciliation_id = _derived_run_id(
-            kind="delete-lineage", id_=doc_id, at=deleted_at.isoformat()
-        )
-        delta, changed = _cascade_run(
+
+@dataclass(frozen=True)
+class LineageRemoval:
+    """What one lineage removal transaction did (D135 delete, D159 hide)."""
+
+    delta: ReconciliationDelta
+    deleted_at: datetime
+    already_deleted: bool
+    changed: bool
+
+
+def remove_lineage_on(
+    *, connection: Connection, deployment_id: UUID, doc_id: UUID
+) -> LineageRemoval | None:
+    """Tombstone a lineage and run or finish its cascade in the caller's transaction.
+
+    Takes the lineage row lock (the lock ingest takes) before reading its
+    state. ``None`` when the deployment never held the lineage. A lineage
+    already tombstoned has its unfinished cascade finished (D135's
+    finish-or-refuse rerun); ``changed`` says whether anything was left.
+    """
+    # D143 §3.3 lock order: the layer fence before the lineage lock.
+    take_layer_fence_on(connection=connection, deployment_id=deployment_id)
+    catalog = LifecycleCatalog.on_connection(connection=connection)
+    # Lock the lineage BEFORE reading its state: a concurrent removal of the
+    # same document waits here, then reads the committed tombstone.
+    catalog.lock_lineage(doc_id=doc_id)
+    state = catalog.lineage_deletion_state(deployment_id=deployment_id, doc_id=doc_id)
+    if state is None:
+        return None
+    already_deleted = state["deleted_at"] is not None
+    deleted_at = catalog.delete_lineage(doc_id=doc_id)
+    # One run id per deletion EPISODE: stable across a repeat of the same
+    # deletion (the tombstone instant does not move), new for a later
+    # deletion after the document was added back — so each episode gets
+    # its own ledger rows and its own evidence_changed event.
+    reconciliation_id = _derived_run_id(
+        kind="delete-lineage", id_=doc_id, at=deleted_at.isoformat()
+    )
+    delta, changed = _cascade_run(
+        catalog=catalog,
+        deployment_id=deployment_id,
+        transitions=_with_recorded(
             catalog=catalog,
-            deployment_id=deployment_id,
-            transitions=_with_recorded(
-                catalog=catalog,
-                transitions=catalog.stale_for_deleted_testimony(
-                    deployment_id=deployment_id, doc_id=doc_id
-                ),
-                reconciliation_id=reconciliation_id,
-            ),
-            reconciliation_id=reconciliation_id,
-            boundary=None,
-            scope_claim_ids=catalog.lineage_claim_ids(
+            transitions=catalog.stale_for_deleted_testimony(
                 deployment_id=deployment_id, doc_id=doc_id
             ),
-        )
-        if already_deleted and not changed:
-            # Nothing was left to finish: the document was already gone.
-            raise DocumentNotFoundError(str(doc_id))
-        # D140 §8.2: catalog.delete_lineage queued the window review in this
-        # transaction (only for a lineage that ever had periods)
-        # D143: the deleted lineage's gaps go in the same transaction.
-        lineage_changed_on(
-            connection=connection, deployment_id=deployment_id, doc_id=doc_id
-        )
-        return delta, deleted_at
+            reconciliation_id=reconciliation_id,
+        ),
+        reconciliation_id=reconciliation_id,
+        boundary=None,
+        scope_claim_ids=catalog.lineage_claim_ids(
+            deployment_id=deployment_id, doc_id=doc_id
+        ),
+    )
+    # D140 §8.2: catalog.delete_lineage queued the window review in this
+    # transaction (only for a lineage that ever had periods)
+    # D143: the deleted lineage's gaps go in the same transaction.
+    lineage_changed_on(
+        connection=connection, deployment_id=deployment_id, doc_id=doc_id
+    )
+    return LineageRemoval(
+        delta=delta,
+        deleted_at=deleted_at,
+        already_deleted=already_deleted,
+        changed=changed,
+    )
 
 
 def cascade_lineage_removal(

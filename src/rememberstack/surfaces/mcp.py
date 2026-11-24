@@ -55,7 +55,6 @@ from remember.models import Tag
 from remember.models import TagCreate
 from remember.models import TagList
 from remember.models import TagUpdate
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import UnknownTagError
 from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import DocumentReferencesPage
@@ -177,9 +176,6 @@ class _LocalDocumentDeleteBackend:
             )
         except DocumentNotFoundError as error:
             raise _DocumentNotFound() from error
-        except ForgetInProgressError as error:
-            # the same stable, retryable negative the HTTP route answers
-            raise _ForgetInProgress() from error
 
 
 class _LocalDocumentSearchBackend:
@@ -302,13 +298,6 @@ class _DocumentNotFound(Exception):
 
     status_code = 404
     detail = "document_not_found"
-
-
-class _ForgetInProgress(Exception):
-    """The HTTP-shaped D74 barrier the shared tool maps to ``forget_in_progress``."""
-
-    status_code = 503
-    detail = "forget_in_progress"
 
 
 class OperationMcpServer:

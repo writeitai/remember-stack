@@ -29,6 +29,7 @@ class ProcessingTarget(StrEnum):
     KNOWLEDGE_ARTIFACT = "knowledge_artifact"
     KNOWLEDGE_DISPATCH = "knowledge_dispatch"
     CORPUS_PUBLICATION = "corpus_publication"
+    FORGET = "forget"
 
 
 class ProcessingStatus(StrEnum):

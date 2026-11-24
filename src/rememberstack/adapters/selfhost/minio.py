@@ -483,20 +483,28 @@ class MinIOObjectStore:
         keys: tuple[ObjectKey, ...],
         prefixes: tuple[ObjectKey, ...],
         before_write: Callable[[], None] | None = None,
-    ) -> ObjectPurgeEvidence:
-        """Delete exact keys/descendants and report unfinished-upload coverage."""
+    ) -> int:
+        """Delete exact keys/descendants; return how many objects were removed.
+
+        The count covers current objects, retained versions and delete markers,
+        and unfinished uploads, so a caller can tell erasure from absence.
+        """
         # Validate all destructive inputs before touching the store.
         exact = {_validated_key(key=key) for key in keys}
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
+        removed = 0
         for key in keys:
             if before_write:
                 before_write()
+            if self._exists(normalized=_validated_key(key=key)):
+                removed += 1
             self.delete(key=key)
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
                 if before_write:
                     before_write()
                 self.delete(key=key)
+                removed += 1
         # Suspended versioning still retains source-bearing history. Never
         # confuse an empty current listing with erasure of those bytes.
         if self._has_versions():
@@ -510,6 +518,7 @@ class MinIOObjectStore:
                     self._client.delete_object(
                         Bucket=self._bucket, Key=name, VersionId=version
                     )
+                    removed += 1
         try:
             for name, upload_id in self._iter_uploads(prefix=""):
                 if name in exact or any(
@@ -519,9 +528,10 @@ class MinIOObjectStore:
                     if before_write:
                         before_write()
                     self._abort_upload(name=name, upload_id=upload_id)
+                    removed += 1
         except _UploadListingNotImplemented:
-            return ObjectPurgeEvidence(multipart_uploads="provider_managed")
-        return ObjectPurgeEvidence(multipart_uploads="checked")
+            pass  # the provider's lifecycle rule cleans unfinished uploads
+        return removed
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]

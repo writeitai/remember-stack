@@ -27,10 +27,8 @@ from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
-from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.corpus_export import _DOCUMENTS
 from rememberstack.spine.work_ledger import enqueue_on
 
@@ -103,40 +101,26 @@ def document_on(
 
 @dataclass
 class CorpusPublicationLock:
-    """Publication ownership and D74 drain on independent checked-out sessions.
+    """Publication ownership on one checked-out session.
 
-    Neither may reconnect/reacquire silently. Losing either stops further IO;
-    the other lock still makes erasure wait for an already-issued request.
+    It may not reconnect or reacquire silently; losing it stops further IO.
     """
 
     connection: Connection
     deployment_id: UUID
     backend_pid: int
-    admission_connection: Connection
-    admission_pid: int
     work: ClaimedWork | None = None
-    forget_id: UUID | None = None
 
     def check(self) -> None:
         """Confirm actual lock ownership and live claim before a provider mutation."""
-        if any(
-            session.closed or session.invalidated
-            for session in (self.connection, self.admission_connection)
-        ):
-            raise CorpusLockLostError(
-                "corpus publication or admission session was lost"
-            )
+        if self.connection.closed or self.connection.invalidated:
+            raise CorpusLockLostError("corpus publication session was lost")
         try:
             held = _holds_lock(
                 connection=self.connection,
                 pid=self.backend_pid,
                 key=f"corpus-publication:{self.deployment_id}",
                 mode="ExclusiveLock",
-            ) and _holds_lock(
-                connection=self.admission_connection,
-                pid=self.admission_pid,
-                key=f"hard-forget:{self.deployment_id}",
-                mode="ShareLock",
             )
             if held and self.work is not None:
                 held = self.connection.execute(
@@ -156,22 +140,6 @@ class CorpusPublicationLock:
             ) from error
         if not held:
             raise CorpusLockLostError("corpus publication lost its lock or work claim")
-        active = active_forget_id_on(
-            connection=self.connection, deployment_id=self.deployment_id
-        )
-        if self.forget_id is None:
-            if active is not None:
-                raise ForgetInProgressError(
-                    f"deployment is honoring forget_id {active}"
-                )
-        elif not self.connection.execute(
-            text("""SELECT EXISTS (SELECT 1 FROM forget_manifests
-            WHERE deployment_id = :d AND forget_id = :f AND status = 'accepted')"""),
-            {"d": self.deployment_id, "f": self.forget_id},
-        ).scalar_one():
-            raise ForgetInProgressError(
-                "corpus erasure requires its accepted restore barrier"
-            )
 
 
 def _holds_lock(*, connection: Connection, pid: int, key: str, mode: str) -> bool:
@@ -231,77 +199,38 @@ class CorpusPublicationCatalog:
 
     @contextmanager
     def locked(
-        self,
-        *,
-        deployment_id: UUID,
-        work: ClaimedWork | None = None,
-        forget_id: UUID | None = None,
+        self, *, deployment_id: UUID, work: ClaimedWork | None = None
     ) -> Iterator[CorpusPublicationLock]:
         """Serialize publishers on a dedicated session, including all streamed IO."""
-        # The admission fence must outlive an issued request even if its
-        # publication backend dies. These are the existing D74/P3 locks, on
-        # separate sessions, not a lease, IO journal or new coordination table.
         with self._engine.connect().execution_options(
             isolation_level="AUTOCOMMIT"
-        ) as admission:
-            fence = {"key": f"hard-forget:{deployment_id}"}
+        ) as connection:
+            params = {"key": f"corpus-publication:{deployment_id}"}
             try:
-                admission.execute(
-                    text("SELECT pg_advisory_lock_shared(hashtextextended(:key, 0))"),
-                    fence,
+                connection.execute(
+                    text("SELECT pg_advisory_lock(hashtextextended(:key, 0))"), params
                 )
-                if forget_id is None and active_forget_id_on(
-                    connection=admission, deployment_id=deployment_id
-                ):
-                    raise ForgetInProgressError(
-                        "corpus publication is blocked by hard forget"
-                    )
-                with self._engine.connect().execution_options(
-                    isolation_level="AUTOCOMMIT"
-                ) as connection:
-                    params = {"key": f"corpus-publication:{deployment_id}"}
+                lock = CorpusPublicationLock(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    backend_pid=connection.execute(
+                        text("SELECT pg_backend_pid()")
+                    ).scalar_one(),
+                    work=work,
+                )
+                lock.check()
+                yield lock
+            finally:
+                if not connection.invalidated and not connection.closed:
                     try:
                         connection.execute(
-                            text("SELECT pg_advisory_lock(hashtextextended(:key, 0))"),
+                            text(
+                                "SELECT pg_advisory_unlock(hashtextextended(:key, 0))"
+                            ),
                             params,
                         )
-                        lock = CorpusPublicationLock(
-                            connection=connection,
-                            deployment_id=deployment_id,
-                            backend_pid=connection.execute(
-                                text("SELECT pg_backend_pid()")
-                            ).scalar_one(),
-                            admission_connection=admission,
-                            admission_pid=admission.execute(
-                                text("SELECT pg_backend_pid()")
-                            ).scalar_one(),
-                            work=work,
-                            forget_id=forget_id,
-                        )
-                        lock.check()
-                        yield lock
-                    finally:
-                        if not connection.invalidated and not connection.closed:
-                            try:
-                                connection.execute(
-                                    text(
-                                        "SELECT pg_advisory_unlock(hashtextextended(:key, 0))"
-                                    ),
-                                    params,
-                                )
-                            except DBAPIError:
-                                connection.invalidate()
-            finally:
-                if not admission.invalidated and not admission.closed:
-                    try:
-                        admission.execute(
-                            text(
-                                "SELECT pg_advisory_unlock_shared(hashtextextended(:key, 0))"
-                            ),
-                            fence,
-                        )
                     except DBAPIError:
-                        admission.invalidate()
+                        connection.invalidate()
 
     def clear(
         self, *, lock: CorpusPublicationLock, doc_id: UUID

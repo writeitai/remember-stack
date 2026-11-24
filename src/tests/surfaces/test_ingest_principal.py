@@ -100,27 +100,12 @@ class _RecordingIngest:
         return self._result()
 
 
-class _OpenBoundary:
-    """Admission/readiness that never refuses, so proofs stay about ingest."""
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Never close the D74 admission barrier during these proofs."""
-        _ = deployment_id
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Report no outstanding forget manifests to replay."""
-        _ = deployment_id
-        return ()
-
-
 def _client(ingest: _RecordingIngest, *, trusted: bool = True) -> TestClient:
     """Build the API over the recording ingest port."""
     return TestClient(
         build_api(
             engine=None,  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=_OpenBoundary(),
-            readiness=_OpenBoundary(),
             ingest=ingest,
             trusted_principal_source=trusted,
         )
@@ -309,8 +294,6 @@ def test_legacy_port_without_the_keyword_still_serves_unattributed_ingest() -> N
         build_api(
             engine=None,  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=_OpenBoundary(),
-            readiness=_OpenBoundary(),
             ingest=legacy,  # type: ignore[arg-type]
         )
     )

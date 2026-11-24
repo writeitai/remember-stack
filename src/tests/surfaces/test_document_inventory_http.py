@@ -33,19 +33,6 @@ _VERSION = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
 _AT = datetime(2026, 6, 1, tzinfo=UTC)
 
 
-class _Ready:
-    """Open admission/readiness boundary for route tests."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Accept the configured deployment."""
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _UnusedEngine:
     """Query-engine placeholder; the inventory route never calls it."""
 
@@ -100,13 +87,10 @@ class _Inventory:
 
 def _client(inventory: _Inventory) -> TestClient:
     """Build an API exposing only the inventory route."""
-    boundary = _Ready()
     return TestClient(
         build_api(
             engine=_UnusedEngine(),  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             documents=inventory,
         )
     )

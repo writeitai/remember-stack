@@ -105,22 +105,11 @@ def _surface() -> tuple[OperationSurface, _RecordingExecutor]:
     return surface, executor
 
 
-class _Boundary:
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
 def _http() -> tuple[TestClient, _RecordingExecutor]:
     surface, executor = _surface()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         surface=surface,
     )
     return TestClient(app), executor

@@ -42,17 +42,6 @@ _GONE = UUID("57000000-0000-0000-0000-00000000dead")
 _AT = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
 
 
-class _Boundary:
-    """Open admission and readiness for the one deployment under test."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _Deletion:
     """Delete `_DOC` once; everything else, and a second delete, is absent."""
 
@@ -111,12 +100,9 @@ def surface() -> tuple[MemoryClient, _Deletion, _Inventory]:
     """The real HTTP app with only the document routes composed."""
     deletion = _Deletion()
     inventory = _Inventory()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         documents=inventory,
         deletion=deletion,
     )

@@ -36,10 +36,10 @@ from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
+from rememberstack.workers.forget import forget_reapply
+from rememberstack.workers.forget import ForgetHandler
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
-from rememberstack.workers.forget import HardForgetHandler
-from rememberstack.workers.forget import HardForgetReadiness
-from rememberstack.workers.forget import HardForgetService
+from rememberstack.workers.forget import ForgetService
 from rememberstack.workers.forget import KnowledgeCycleForgetRebuilder
 from rememberstack.workers.knowledge_authored import KnowledgeAuthoredSynchronizer
 from rememberstack.workers.knowledge_authored import KnowledgeDispatchHandler
@@ -134,9 +134,9 @@ __all__ = (
     "HandlerOutcome",
     "HandlerRegistry",
     "ForgetKnowledgeRebuilder",
-    "HardForgetHandler",
-    "HardForgetReadiness",
-    "HardForgetService",
+    "ForgetHandler",
+    "ForgetService",
+    "forget_reapply",
     "KnowledgeCycleForgetRebuilder",
     "RunResult",
     "StageHandler",

@@ -55,16 +55,6 @@ _VERSION = UUID("15600000-0000-0000-0000-00000000000e")
 _NOW = datetime(2026, 11, 13, tzinfo=UTC)
 
 
-class _Boundary:
-    """Open admission and readiness for the one deployment under test."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _Tags:
     """An in-memory registry with the spine's naming and refusal rules."""
 
@@ -226,13 +216,10 @@ def ingest(tags: _Tags) -> _Ingest:
 
 @pytest.fixture()
 def http(tags: _Tags, ingest: _Ingest) -> TestClient:
-    boundary = _Boundary()
     return TestClient(
         build_api(
             engine=cast("QueryEngine", object()),
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             ingest=ingest,
             tags=tags,
         )
@@ -547,12 +534,9 @@ def test_engine_mcp_lists_tag_tools_only_when_the_deployment_serves_them(
         def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
             return DeploymentBuildInfo(build_revision="tags")
 
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         tags=_Tags(),
         build_info=_BuildInfo(),
     )

@@ -1,10 +1,11 @@
 """D155 idempotent publication and verifying reconcile over the same live tree.
 
-Publication, repair and D74 erasure share the same lock and renderer. None
-performs paid model work.
+Publication and repair share one lock and renderer; D159 forget erasure uses
+the same renderer without the lock. None performs paid model work.
 """
 
 from collections import defaultdict
+from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import nullcontext
 import hashlib
@@ -24,7 +25,6 @@ from rememberstack.core.corpus_export import render_navigation
 from rememberstack.model import ClaimedWork
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
-from rememberstack.model import ObjectPurgeEvidence
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.object_store import MutableObjectStorePort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -42,6 +42,10 @@ _CHUNK_SIZE = 1024 * 1024
 
 class CorpusSourceStore(ObjectStorePort, StreamingReadPort, Protocol):
     """Immutable inventory reads and bounded original/media streams."""
+
+
+class CorpusStore(MutableObjectStorePort, ObjectStorePort, Protocol):
+    """The live corpus bucket: complete-object writes and whole-object reads."""
 
 
 def document_folder(key: str) -> tuple[str, str] | None:
@@ -63,7 +67,7 @@ class CorpusPublisher:
         readers: CorpusReaderCatalog,
         raw_store: CorpusSourceStore,
         artifact_store: CorpusSourceStore,
-        corpus_store: MutableObjectStorePort,
+        corpus_store: CorpusStore,
         policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
     ) -> None:
         self._catalog = catalog
@@ -110,7 +114,11 @@ class CorpusPublisher:
                 while parent:
                     ancestors.add(parent)
                     parent = posixpath.dirname(parent)
-            self._navigation(lock=held, ancestors=ancestors)
+            self._navigation(
+                deployment_id=held.deployment_id,
+                before_write=held.check,
+                ancestors=ancestors,
+            )
             self._catalog.set_paths(
                 lock=held, doc_id=doc_id, paths={path} if path else set()
             )
@@ -143,7 +151,11 @@ class CorpusPublisher:
             for paths in folders.values():
                 for path in paths:
                     self._remove_folder(lock=lock, path=path)
-            self._navigation(lock=lock, existing=navigation)
+            self._navigation(
+                deployment_id=lock.deployment_id,
+                before_write=lock.check,
+                existing=navigation,
+            )
             # Only small input identities survive the metadata pass; no stored
             # receipts or export inventories. Concurrent changes get fresh work.
             self._catalog.clear_unselected_paths(
@@ -159,82 +171,63 @@ class CorpusPublisher:
             return len(published)
 
     def erase_document(
-        self,
-        *,
-        deployment_id: UUID,
-        doc_id: UUID,
-        forget_id: UUID,
-        purger: ObjectPurgePort,
-    ) -> ObjectPurgeEvidence | None:
-        """D74: erase this suffix, then regenerate metadata from scrubbed authority.
+        self, *, deployment_id: UUID, doc_id: UUID, purger: ObjectPurgePort
+    ) -> tuple[bool, tuple[str, ...]]:
+        """D159 forget: erase this suffix and regenerate the navigation that listed it.
 
-        Discovery includes retained/delete-marked keys and uncompleted uploads.
-        Even an empty recorded set MUST scan: a bucket can be restored separately
-        from PostgreSQL. Survivor document folders are never written or deleted.
+        Takes no publication lock: it deletes only the document's own folders
+        (every object version, found by suffix) and rewrites only navigation
+        files that list the suffix, from the database, which no longer serves
+        the document. A publisher racing it can at worst write navigation that
+        lists the document again; the forget's next sweep finds and removes
+        that. Returns whether anything was removed, and the removed folders
+        and rewritten navigation paths (for mount invalidation).
         """
-        with self._catalog.locked(
-            deployment_id=deployment_id, forget_id=forget_id
-        ) as lock:
-            if self._catalog.clear(lock=lock, doc_id=doc_id) is not None:
-                raise RuntimeError(
-                    "corpus erasure requires scrubbed document authority"
-                )
-            folders = self._catalog.paths(lock=lock, doc_id=doc_id)
-            navigation: set[str] = set()
-            suffix = corpus_suffix(doc_id)
-            for key in purger.iter_purge_keys():
-                if found := document_folder(key.root):
-                    if found[1] == suffix:
-                        folders.add(found[0])
-                elif _is_navigation(key.root):
-                    navigation.add(key.root)
-            # Navigation can contain the source even after its last folder key
-            # disappeared. Erase its retained versions too, then render it anew.
-            keys = tuple(ObjectKey(path) for path in sorted(navigation))
-            prefixes = tuple(ObjectKey(path) for path in sorted(folders))
-            evidence = purger.purge_objects(
-                keys=keys, prefixes=prefixes, before_write=lock.check
-            )
-            purger.verify_objects_purged(keys=keys, prefixes=prefixes)
-            self._navigation(lock=lock, existing=set())
-            self._verify_erasure(lock=lock, doc_id=doc_id, purger=purger)
-            self._catalog.set_paths(lock=lock, doc_id=doc_id, paths=set())
-            return evidence
-
-    def verify_erased(
-        self,
-        *,
-        deployment_id: UUID,
-        doc_id: UUID,
-        forget_id: UUID,
-        purger: ObjectPurgePort,
-    ) -> None:
-        with self._catalog.locked(
-            deployment_id=deployment_id, forget_id=forget_id
-        ) as lock:
-            self._verify_erasure(lock=lock, doc_id=doc_id, purger=purger)
-            if self._catalog.paths(lock=lock, doc_id=doc_id):
-                raise RuntimeError("corpus erasure left recorded friendly paths")
-
-    def _verify_erasure(
-        self, *, lock: CorpusPublicationLock, doc_id: UUID, purger: ObjectPurgePort
-    ) -> None:
         suffix = corpus_suffix(doc_id)
+        folders: set[str] = set()
         navigation: set[str] = set()
         for key in purger.iter_purge_keys():
             if found := document_folder(key.root):
                 if found[1] == suffix:
-                    raise RuntimeError(f"corpus erasure verification found {key.root}")
+                    folders.add(found[0])
             elif _is_navigation(key.root):
                 navigation.add(key.root)
-        with self._readers.documents(deployment_id=lock.deployment_id) as documents:
-            desired = render_navigation(documents, policy=self.policy)
-        if navigation != desired.keys() or any(
-            self._store.sha256_of(key=ObjectKey(path))
-            != hashlib.sha256(content).hexdigest()
-            for path, content in desired.items()
-        ):
-            raise RuntimeError("corpus erasure verification found stale navigation")
+        listing = {path for path in navigation if self._lists(path=path, suffix=suffix)}
+        ancestors = {""}
+        for path in folders | {posixpath.dirname(path) for path in listing}:
+            parent = posixpath.dirname(path) if path in folders else path
+            while parent:
+                ancestors.add(parent)
+                parent = posixpath.dirname(parent)
+        rewritten = {posixpath.join(parent, "_index.md") for parent in ancestors}
+        rewritten = (rewritten | {"llms.txt"} | listing) & navigation
+        if folders:
+            # Every retained version of each listing file goes too: an older
+            # version can still list the document.
+            purger.purge_objects(
+                keys=tuple(ObjectKey(path) for path in sorted(rewritten)),
+                prefixes=tuple(ObjectKey(path) for path in sorted(folders)),
+            )
+        elif listing:
+            purger.purge_objects(
+                keys=tuple(ObjectKey(path) for path in sorted(rewritten)), prefixes=()
+            )
+        if folders or listing:
+            self._navigation(
+                deployment_id=deployment_id, before_write=None, ancestors=ancestors
+            )
+        for path in navigation | set(rewritten):
+            if self._lists(path=path, suffix=suffix):
+                raise RuntimeError(
+                    f"corpus navigation still lists the document: {path}"
+                )
+        return bool(folders or listing), tuple(sorted(folders | rewritten))
+
+    def _lists(self, *, path: str, suffix: str) -> bool:
+        """Whether one current navigation file names a document suffix."""
+        if self._store.sha256_of(key=ObjectKey(path)) is None:
+            return False
+        return suffix.encode() in self._store.read_bytes(key=ObjectKey(path))
 
     def _discover(
         self, *, lock: CorpusPublicationLock
@@ -249,7 +242,7 @@ class CorpusPublisher:
             elif _is_navigation(key.root):
                 navigation.add(key.root)
             else:
-                self._delete(lock=lock, key=key)
+                self._delete(before_write=lock.check, key=key)
         return folders, navigation
 
     def _publish_document(
@@ -287,32 +280,50 @@ class CorpusPublisher:
             if existing:
                 updating = index.content.replace(b"State: ready", b"State: updating", 1)
                 self._put(
-                    lock=lock,
+                    before_write=lock.check,
                     path=export.path + "/_index.md",
                     file=GeneratedFile("_index.md", updating),
                 )
             for file in changed:
                 if isinstance(file, CopyFile):
-                    self._put(lock=lock, path=export.path + "/" + file.path, file=file)
+                    self._put(
+                        before_write=lock.check,
+                        path=export.path + "/" + file.path,
+                        file=file,
+                    )
             for key in sorted(existing - desired):
-                self._delete(lock=lock, key=ObjectKey(key))
+                self._delete(before_write=lock.check, key=ObjectKey(key))
             for file in changed:
                 if isinstance(file, GeneratedFile) and file.path not in {
                     "document.json",
                     "_index.md",
                 }:
-                    self._put(lock=lock, path=export.path + "/" + file.path, file=file)
+                    self._put(
+                        before_write=lock.check,
+                        path=export.path + "/" + file.path,
+                        file=file,
+                    )
             metadata = next(
                 file for file in export.files if file.path == "document.json"
             )
-            self._put(lock=lock, path=export.path + "/document.json", file=metadata)
-            self._put(lock=lock, path=export.path + "/_index.md", file=index)
+            self._put(
+                before_write=lock.check,
+                path=export.path + "/document.json",
+                file=metadata,
+            )
+            self._put(
+                before_write=lock.check, path=export.path + "/_index.md", file=index
+            )
         for old in folders - {export.path}:
             self._remove_folder(lock=lock, path=old)
         return export.revision, export.path
 
     def _put(
-        self, *, lock: CorpusPublicationLock, path: str, file: CopyFile | GeneratedFile
+        self,
+        *,
+        path: str,
+        file: CopyFile | GeneratedFile,
+        before_write: Callable[[], None] | None,
     ) -> None:
         chunks = (
             self._stream(file=file)
@@ -324,7 +335,7 @@ class CorpusPublisher:
             chunks=chunks,
             storage_class="hot",
             sha256=file.sha256,
-            before_write=lock.check,
+            before_write=before_write,
         )
 
     def _stream(self, *, file: CopyFile) -> Iterator[bytes]:
@@ -343,19 +354,23 @@ class CorpusPublisher:
             if close is not None:
                 close()
 
-    def _delete(self, *, lock: CorpusPublicationLock, key: ObjectKey) -> None:
-        lock.check()
+    def _delete(
+        self, *, key: ObjectKey, before_write: Callable[[], None] | None
+    ) -> None:
+        if before_write is not None:
+            before_write()
         self._store.delete(key=key)
 
     def _remove_folder(self, *, lock: CorpusPublicationLock, path: str) -> None:
         self._store.abort_uploads(prefix=path, before_write=lock.check)
         for key in self._store.iter_keys(prefix=path):
-            self._delete(lock=lock, key=key)
+            self._delete(before_write=lock.check, key=key)
 
     def _navigation(
         self,
         *,
-        lock: CorpusPublicationLock,
+        deployment_id: UUID,
+        before_write: Callable[[], None] | None,
         existing: set[str] | None = None,
         ancestors: set[str] | None = None,
     ) -> None:
@@ -372,16 +387,16 @@ class CorpusPublisher:
                     for key in self._store.iter_keys(prefix=posixpath.join(parent, "~"))
                 )
         assert existing is not None
-        with self._readers.documents(deployment_id=lock.deployment_id) as documents:
+        with self._readers.documents(deployment_id=deployment_id) as documents:
             desired = render_navigation(
                 documents, policy=self.policy, ancestors=ancestors
             )
         for path in sorted(desired, key=lambda name: (-name.count("/"), name)):
             file = GeneratedFile(path, desired[path])
             if self._store.sha256_of(key=ObjectKey(path)) != file.sha256:
-                self._put(lock=lock, path=path, file=file)
+                self._put(path=path, file=file, before_write=before_write)
         for path in sorted(existing - desired.keys()):
-            self._delete(lock=lock, key=ObjectKey(path))
+            self._delete(key=ObjectKey(path), before_write=before_write)
 
 
 class PublishCorpusHandler:

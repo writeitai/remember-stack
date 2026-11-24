@@ -1,12 +1,12 @@
-"""Real-PostgreSQL proofs for the D74 hard-forget catalog."""
+"""Real-PostgreSQL proofs for the D159 forget: hide, sweep, guard (design §5)."""
 
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
 import json
 from pathlib import Path
-from typing import cast
 from uuid import UUID
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -19,23 +19,28 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.model import ClaimedWork
 from rememberstack.model import DecisionRecord
 from rememberstack.model import DecisionType
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.model import ForgetInProgressError
-from rememberstack.model import ForgetManifest
-from rememberstack.model import ForgetManifestStatus
+from rememberstack.model import DocumentForgottenError
+from rememberstack.model import DocumentNotFoundError
+from rememberstack.model import EnqueueWork
+from rememberstack.model import Forget
+from rememberstack.model import ForgetStatus
+from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingLane
+from rememberstack.model import ProcessingTarget
 from rememberstack.model import SelectionResponse
-from rememberstack.ports import ForgetManifestPort
 from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine import WorkLedger
+from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.selection_catalog import SelectionCatalog
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.workers import HardForgetHandler
-from rememberstack.workers import HardForgetReadiness
-from rememberstack.workers import HardForgetService
+from rememberstack.workers import ForgetService
 
 _ROOT = Path(__file__).resolve().parents[3]
 _NOW = datetime(2026, 7, 21, tzinfo=UTC)
@@ -74,6 +79,15 @@ _TARGET_SHARED_MENTION_ID = UUID("75000000-0000-0000-0000-000000000027")
 _CONTROL_SHARED_MENTION_ID = UUID("75000000-0000-0000-0000-000000000028")
 _MERGED_SURVIVOR_ID = UUID("75000000-0000-0000-0000-000000000029")
 _TARGET_MEASUREMENT_ID = UUID("75000000-0000-0000-0000-000000000030")
+_TARGET_IDS = (
+    _TARGET_DOC_ID,
+    _TARGET_VERSION_ID,
+    _TARGET_REPRESENTATION_ID,
+    _TARGET_CHUNK_ID,
+    _TARGET_CLAIM_ID,
+    _EXCLUSIVE_MENTION_ID,
+    _TARGET_SHARED_MENTION_ID,
+)
 
 
 @pytest.fixture(scope="module")
@@ -82,9 +96,7 @@ def database_engine() -> Iterator[Engine]:
     try:
         database_url = load_database_settings().sqlalchemy_url()
     except ValidationError:
-        pytest.skip(
-            "REMEMBERSTACK_DATABASE_URL is required for real hard-forget proofs"
-        )
+        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real forget proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
     command.upgrade(config=config, revision="head")
@@ -98,68 +110,7 @@ def database_engine() -> Iterator[Engine]:
 @pytest.fixture()
 def seeded_engine(database_engine: Engine) -> Engine:
     """Give the proof a fresh deployment with target and independent control data."""
-    _restore_pre_forget_postgres(engine=database_engine)
-    return database_engine
-
-
-class _PortableManifestStore:
-    """Retain one D74 manifest outside the restored PostgreSQL state."""
-
-    def __init__(self, *, manifest: ForgetManifest) -> None:
-        """Bind the immutable portable intent used by the restore drill."""
-        self._manifest = manifest
-
-    def append(self, *, manifest: ForgetManifest) -> None:
-        """Reject an unexpected attempt to replace the retained intent."""
-        assert manifest == self._manifest
-
-    def manifests(self, *, deployment_id: UUID) -> tuple[ForgetManifest, ...]:
-        """Enumerate the retained intent only for its original deployment."""
-        if deployment_id == self._manifest.deployment_id:
-            return (self._manifest,)
-        return ()
-
-
-class _NoPreparingRequest:
-    """Refuse request admission in a restore with no local preparation row."""
-
-    def request(self, **_: object) -> ForgetManifest:
-        """Fail if readiness invents a new request instead of materializing intent."""
-        raise AssertionError("portable restore has no preparing request")
-
-
-class _PostgresRestoreHandler:
-    """Run only the real PostgreSQL leg of the independently composed restore drill."""
-
-    def __init__(self, *, catalog: ForgetCatalog) -> None:
-        """Bind the real catalog used by readiness rematerialization."""
-        self._catalog = catalog
-
-    def honor(self, *, manifest: ForgetManifest, **_: object) -> None:
-        """Scrub, verify, and complete the rematerialized PostgreSQL intent."""
-        self._catalog.scrub_postgres(manifest=manifest)
-        self._catalog.verify_postgres_scrubbed(manifest=manifest)
-        self._catalog.mark_complete(manifest=manifest)
-
-
-def _postgres_restore_readiness(
-    *, engine: Engine, manifest: ForgetManifest
-) -> HardForgetReadiness:
-    """Compose real PostgreSQL readiness with already-covered external store ports."""
-    catalog = ForgetCatalog(engine=engine)
-    return HardForgetReadiness(
-        catalog=catalog,
-        manifest_store=cast(
-            ForgetManifestPort, _PortableManifestStore(manifest=manifest)
-        ),
-        request_service=cast(HardForgetService, _NoPreparingRequest()),
-        handler=cast(HardForgetHandler, _PostgresRestoreHandler(catalog=catalog)),
-    )
-
-
-def _restore_pre_forget_postgres(*, engine: Engine) -> None:
-    """Replace local state with the fixed pre-forget PostgreSQL snapshot."""
-    with engine.begin() as connection:
+    with database_engine.begin() as connection:
         connection.execute(
             text(
                 "TRUNCATE TABLE mentions, resolution_decisions, chunks,"
@@ -168,11 +119,11 @@ def _restore_pre_forget_postgres(*, engine: Engine) -> None:
                 " observation_evidence, deployments CASCADE"
             )
         )
-    DeploymentBootstrapper(engine=engine).bootstrap_deployment(
+    DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(
             deployment_id=_DEPLOYMENT_ID,
-            slug="hard-forget",
-            name="Hard forget proof",
+            slug="forget",
+            name="Forget proof",
             default_language="en",
             raw_bucket="mem://raw",
             artifacts_bucket="mem://artifacts",
@@ -180,66 +131,371 @@ def _restore_pre_forget_postgres(*, engine: Engine) -> None:
             knowledge_repo_uri="mem://knowledge.git",
         )
     )
-    with engine.begin() as connection:
+    with database_engine.begin() as connection:
         _seed_documents(connection=connection)
         _seed_structure_provenance(connection=connection)
         _seed_evidence(connection=connection)
         _seed_postgres_p1_residuals(connection=connection)
         _seed_knowledge_and_residuals(connection=connection)
+    return database_engine
 
 
-def test_inventory_scrub_and_verification_preserve_independent_evidence(
+def _hide(*, engine: Engine) -> Forget:
+    """Request the forget of the target lineage (D159 §3.2)."""
+    forget, created = ForgetService(
+        engine=engine, catalog=ForgetCatalog(engine=engine)
+    ).request(deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID)
+    assert created
+    return forget
+
+
+def test_hide_is_one_transaction_and_a_repeat_returns_the_record(
     seeded_engine: Engine,
 ) -> None:
-    """Exercise the real inventory and scrub SQL against lineage-shaped residuals."""
+    """Tombstone, cascade, record and the first sweep land together (§3.2)."""
+    forget = _hide(engine=seeded_engine)
+    assert forget.status is ForgetStatus.ERASING
+    assert forget.version_ids == (_TARGET_VERSION_ID,)
+    assert forget.content_hashes == (_TARGET_CONTENT_HASH,)
+    assert forget.source_identity_hash is None  # an upload is guarded by its bytes
+    with seeded_engine.connect() as connection:
+        hidden = connection.execute(
+            text(
+                "SELECT d.deleted_at IS NOT NULL, v.deleted_at IS NOT NULL"
+                " FROM documents d JOIN document_versions v USING (doc_id)"
+                " WHERE d.doc_id = :doc"
+            ),
+            {"doc": _TARGET_DOC_ID},
+        ).one()
+        assert tuple(hidden) == (True, True)
+        assert not connection.execute(
+            text("SELECT is_current_testimony FROM claims WHERE claim_id = :c"),
+            {"c": _TARGET_CLAIM_ID},
+        ).scalar_one()
+        sweeps = connection.execute(
+            text(
+                "SELECT payload FROM processing_state WHERE target_kind = 'forget'"
+                " AND target_id = :f AND stage = 'forget'"
+            ),
+            {"f": _FORGET_ID},
+        ).scalars()
+        assert [payload["sweep"] for payload in sweeps] == [1]
+        record = json.dumps(
+            connection.execute(
+                text("SELECT to_jsonb(f) FROM forgets f WHERE forget_id = :f"),
+                {"f": _FORGET_ID},
+            ).scalar_one()
+        )
+        assert _TOKEN not in record
+    again, created = ForgetService(
+        engine=seeded_engine, catalog=ForgetCatalog(engine=seeded_engine)
+    ).request(deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID)
+    assert not created and again == forget
+    with pytest.raises(DocumentNotFoundError):
+        ForgetService(
+            engine=seeded_engine, catalog=ForgetCatalog(engine=seeded_engine)
+        ).request(deployment_id=_DEPLOYMENT_ID, doc_id=uuid4())
+
+
+def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
+    seeded_engine: Engine,
+) -> None:
+    """§5 tests 1 and 3: erased, and nothing extra removed; a repeat is a no-op."""
+    before = _control_counts(engine=seeded_engine)
     catalog = ForgetCatalog(engine=seeded_engine)
-    catalog.prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
-    )
-    manifest = catalog.inventory_and_store_manifest(
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=_TARGET_DOC_ID,
-        forget_id=_FORGET_ID,
-        requested_at=_NOW,
-    )
+    forget = _hide(engine=seeded_engine)
+    findings = catalog.sweep_postgres(forget=forget)
 
-    assert manifest.chunk_ids == (_TARGET_CHUNK_ID,)
-    assert manifest.claim_ids == (_TARGET_CLAIM_ID,)
-    assert manifest.mention_ids == (_EXCLUSIVE_MENTION_ID, _TARGET_SHARED_MENTION_ID)
-    assert manifest.resolved_entity_ids == (_EXCLUSIVE_ENTITY_ID, _SHARED_ENTITY_ID)
-    assert set(manifest.fact_ids) == {_EXCLUSIVE_RELATION_ID, _EXCLUSIVE_OBSERVATION_ID}
-    assert manifest.entity_ids == (_EXCLUSIVE_ENTITY_ID,)
-    assert manifest.k_artifact_ids == (_ARTIFACT_ID,)
-    assert {key.root for key in manifest.object_keys} == {
-        "mem://artifacts/target-blocks.json",
-        "mem://artifacts/target-conversion.json",
-        "mem://artifacts/target-markdown.md",
-        "mem://artifacts/target-meta.json",
-        "mem://artifacts/target-pageindex.json",
-        "mem://artifacts/target-structure-old-pageindex.json",
-        "mem://artifacts/target-structure-new-pageindex.json",
-        "mem://artifacts/writer-transcript.json",
-        f"mem://raw/target.bin?marker={_TOKEN}",
-        "mem://artifacts/planner-transcript.json",
-        # D140: the forgotten lineage's stored reference sets
-        f"mem://artifacts/{_TARGET_DOC_ID}/references/{_TOKEN}.ndjson",
+    assert findings.removed
+    assert findings.compiled_artifact_ids == (_ARTIFACT_ID,)
+    assert {key.root for key in findings.object_keys} == {
+        f"{_TARGET_DOC_ID}/{_TARGET_CONTENT_HASH}/original.txt"
     }
-
-    catalog.accept_and_enqueue(manifest=manifest)
-    catalog.scrub_postgres(manifest=manifest)
-    catalog.verify_postgres_scrubbed(manifest=manifest)
-    catalog.mark_complete(manifest=manifest)
-
-    record = catalog.record_for_doc(deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID)
-    assert record is not None
-    assert record.status is ForgetManifestStatus.COMPLETE
+    assert findings.blocking_k_paths == ()
     _assert_scrubbed_and_control_survives(engine=seeded_engine)
+    assert _control_counts(engine=seeded_engine) == before
+    again = catalog.sweep_postgres(forget=forget)
+    assert not again.removed
+    assert again.compiled_artifact_ids == ()
+
+
+_ID_COLUMNS = (
+    "doc_id",
+    "version_id",
+    "representation_id",
+    "section_id",
+    "chunk_id",
+    "claim_id",
+    "mention_id",
+    "from_doc_id",
+    "to_doc_id",
+    "from_version_id",
+    "current_version_id",
+    "claim_lineage_id",
+)
+# Every public table with a column that names a document, version,
+# representation, section, chunk, claim or mention. "swept" rows are deleted or
+# unbound by the sweep; the others are reviewed content-free rows that keep the
+# IDs only (D159 §3.1). A new table fails this test until it is classified.
+_CLASSIFIED: dict[str, str] = {
+    "chunk_claims": "swept",
+    "chunk_search": "swept",
+    "chunks": "swept",
+    "claim_extraction_decisions": "swept",
+    "claims": "swept",
+    "document_crossrefs": "swept",
+    "document_effective_periods": "swept",
+    "document_effective_time_events": "swept",
+    "document_entity_bindings": "swept",
+    "document_metadata": "swept",
+    "document_names": "swept",
+    "document_people": "swept",
+    "document_reference_generations": "swept",
+    "document_representations": "swept",
+    "document_sections": "swept",
+    "document_skeleton_checks": "swept",
+    "document_structure_generations": "swept",
+    "document_tags": "swept",
+    "document_version_scope": "swept",
+    "document_versions": "swept",
+    "documents": "swept",
+    "fact_applications": "swept",
+    "grounding_audits": "swept",
+    "knowledge_artifact_evidence": "swept",
+    "mentions": "swept",
+    "normalization_outputs": "swept",
+    "normalize_observation_staging": "swept",
+    "obs_flush_entity_units": "swept",
+    "obs_flush_version_state": "swept",
+    "observation_evidence": "swept",
+    "processing_layer_gaps": "swept",
+    "relation_evidence": "swept",
+    "resolution_decisions": "swept",
+    "selection_results": "swept",
+    "forgets": "the forget record itself (IDs and hashes only)",
+    "managed_ingest_measurements": "metering receipt: counts and the UUIDs as billing metadata",
+    "testimony_currency_events": "content-free currency history (IDs, reason, time)",
+}
+
+
+def test_schema_coverage_classifies_every_document_reference(
+    seeded_engine: Engine,
+) -> None:
+    """§5 test 2: every referencing table is swept or on the reviewed allow-list."""
+    with seeded_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT c.table_name, c.column_name
+                FROM information_schema.columns c
+                JOIN pg_class k ON k.relname = c.table_name
+                JOIN pg_namespace n ON n.oid = k.relnamespace
+                 AND n.nspname = c.table_schema
+                WHERE c.table_schema = 'public' AND k.relkind IN ('r', 'p')
+                  AND NOT k.relispartition
+                  AND c.table_name NOT LIKE 'template\\_%'
+                  AND c.column_name = ANY(CAST(:columns AS text[]))
+                """
+            ),
+            {"columns": list(_ID_COLUMNS)},
+        ).all()
+    columns: dict[str, list[str]] = {}
+    for table, column in rows:
+        columns.setdefault(table, []).append(column)
+    assert set(columns) == set(_CLASSIFIED), (
+        "classify every table that references a document in _CLASSIFIED"
+    )
+    catalog = ForgetCatalog(engine=seeded_engine)
+    forget = _hide(engine=seeded_engine)
+    catalog.sweep_postgres(forget=forget)
+    with seeded_engine.connect() as connection:
+        for table, names in sorted(columns.items()):
+            if _CLASSIFIED[table] != "swept":
+                continue
+            for column in names:
+                remaining = connection.execute(
+                    text(
+                        f"SELECT count(*) FROM {table}"
+                        f" WHERE {column} = ANY(CAST(:ids AS uuid[]))"
+                    ),
+                    {"ids": list(_TARGET_IDS)},
+                ).scalar_one()
+                assert remaining == 0, f"{table}.{column} still names the document"
+
+
+def test_late_writer_residue_is_removed_by_the_next_sweep(
+    seeded_engine: Engine,
+) -> None:
+    """§5 test 6 (PostgreSQL): late rows and a stale label are residue."""
+    catalog = ForgetCatalog(engine=seeded_engine)
+    forget = _hide(engine=seeded_engine)
+    assert catalog.sweep_postgres(forget=forget).removed
+    assert not catalog.sweep_postgres(forget=forget).removed
+    late_claim = uuid4()
+    with seeded_engine.begin() as connection:
+        # A worker that kept writing after the hide.
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, extractor_version) VALUES (:claim, :d,"
+                " :doc, :chunk, :token, :token, 0, 20, true, true, 'late')"
+            ),
+            {
+                "claim": late_claim,
+                "d": _DEPLOYMENT_ID,
+                "doc": _TARGET_DOC_ID,
+                "chunk": _TARGET_CHUNK_ID,
+                "token": _TOKEN,
+            },
+        )
+        # A stale label job writing the shared fact's old wording back.
+        connection.execute(
+            text(
+                "UPDATE relations SET fact_label = :token,"
+                " fact_label_version = 'stale' WHERE relation_id = :r"
+            ),
+            {"token": f"{_TOKEN} old wording", "r": _SHARED_RELATION_ID},
+        )
+    assert catalog.sweep_postgres(forget=forget).removed
+    with seeded_engine.connect() as connection:
+        assert _count(connection, "claims", "claim_id", late_claim) == 0
+        assert (
+            connection.execute(
+                text("SELECT fact_label FROM relations WHERE relation_id = :r"),
+                {"r": _SHARED_RELATION_ID},
+            ).scalar_one()
+            is None
+        )
+    assert not catalog.sweep_postgres(forget=forget).removed
+
+
+def test_work_of_a_forgotten_document_is_never_claimed_and_loses_its_lease(
+    seeded_engine: Engine,
+) -> None:
+    """§3.2: claiming and renewing check the tombstone; the sweep skips the rows."""
+    ledger = WorkLedger(engine=seeded_engine, settings=WorkLedgerSettings())
+    running = ledger.enqueue(
+        work=EnqueueWork(
+            deployment_id=_DEPLOYMENT_ID,
+            target_kind=ProcessingTarget.CHUNK,
+            target_id=_TARGET_CHUNK_ID,
+            stage=PipelineStage.EMBED_CHUNK,
+            component_version="forget-test",
+            content_hash="c",
+            lane=ProcessingLane.STEADY,
+        )
+    )
+    claimed = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.EMBED_CHUNK,
+        lane=ProcessingLane.STEADY,
+    )
+    assert isinstance(claimed, ClaimedWork)
+    assert claimed.processing_id == running.processing_id
+    for target_kind, target_id in (
+        (ProcessingTarget.DOCUMENT_VERSION, _TARGET_VERSION_ID),
+        (ProcessingTarget.CLAIM, _TARGET_CLAIM_ID),
+        (ProcessingTarget.CHUNK, _CONTROL_CHUNK_ID),
+    ):
+        ledger.enqueue(
+            work=EnqueueWork(
+                deployment_id=_DEPLOYMENT_ID,
+                target_kind=target_kind,
+                target_id=target_id,
+                stage=PipelineStage.EMBED_CLAIM,
+                component_version="forget-test",
+                content_hash="c",
+                lane=ProcessingLane.STEADY,
+            )
+        )
+    forget = _hide(engine=seeded_engine)
+
+    assert not ledger.renew_lease(
+        processing_id=claimed.processing_id, attempt=claimed.attempt
+    )
+    other = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.EMBED_CLAIM,
+        lane=ProcessingLane.STEADY,
+    )
+    # §5 test 5: the control document's work proceeds; the target's never runs.
+    assert isinstance(other, ClaimedWork) and other.target_id == _CONTROL_CHUNK_ID
+    assert (
+        ledger.claim_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.EMBED_CLAIM,
+            lane=ProcessingLane.STEADY,
+        )
+        is None
+    )
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+    with seeded_engine.connect() as connection:
+        statuses = connection.execute(
+            text(
+                "SELECT status::text FROM processing_state WHERE deployment_id = :d"
+                " AND component_version = 'forget-test'"
+                " AND target_id <> :control ORDER BY status"
+            ),
+            {"d": _DEPLOYMENT_ID, "control": _CONTROL_CHUNK_ID},
+        ).scalars()
+        assert set(statuses) == {"skipped"}
+
+
+def test_reingest_guard_refuses_bytes_and_identity_and_names_the_record(
+    seeded_engine: Engine,
+) -> None:
+    """§3.6 / §5 test 9 without the flag: refused before bytes and at registration."""
+    catalog = ForgetCatalog(engine=seeded_engine)
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET source_kind = 'filesystem' WHERE doc_id = :doc"),
+            {"doc": _TARGET_DOC_ID},
+        )
+    forget = _hide(engine=seeded_engine)
+    assert forget.source_identity_hash is not None
+    with pytest.raises(DocumentForgottenError) as refused:
+        catalog.guard_ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="upload",
+            source_ref=_TARGET_CONTENT_HASH,
+            content_hash=_TARGET_CONTENT_HASH,
+        )
+    assert refused.value.forget_id == _FORGET_ID
+    with pytest.raises(DocumentForgottenError):
+        catalog.guard_ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="filesystem",
+            source_ref=f"target-ref-{_TOKEN}",
+            content_hash="c" * 64,
+        )
+    catalog.guard_ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="filesystem",
+        source_ref="another-file",
+        content_hash="c" * 64,
+    )
+    # A released hash (a deliberate re-add) no longer guards; the sweep keys stay.
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE forgets SET released_hashes = CAST(:hashes AS text[])"
+                " WHERE forget_id = :f"
+            ),
+            {"hashes": [_TARGET_CONTENT_HASH], "f": _FORGET_ID},
+        )
+    catalog.guard_ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="upload",
+        source_ref=_TARGET_CONTENT_HASH,
+        content_hash=_TARGET_CONTENT_HASH,
+    )
 
 
 def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
     seeded_engine: Engine,
 ) -> None:
-    """WP-I.4/D74: a raw forgotten id repairs its later merge survivor."""
+    """A shared entity's profile is cleared and rebuilt from what survives."""
     from rememberstack.spine.clustering import apply_merge
 
     old_input = f"Shared\n{_TOKEN}\nshared observation"
@@ -280,109 +536,137 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
                 "entities": [_SHARED_ENTITY_ID, _MERGED_SURVIVOR_ID],
             },
         )
-    catalog = ForgetCatalog(engine=seeded_engine)
-    catalog.prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
-    )
-    manifest = catalog.inventory_and_store_manifest(
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=_TARGET_DOC_ID,
-        forget_id=_FORGET_ID,
-        requested_at=_NOW,
-    )
-    assert _SHARED_ENTITY_ID in manifest.resolved_entity_ids
-    assert _MERGED_SURVIVOR_ID not in manifest.resolved_entity_ids
-    catalog.accept_and_enqueue(manifest=manifest)
-    catalog.scrub_postgres(manifest=manifest)
+    forget = _hide(engine=seeded_engine)
+    findings = ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+    assert {_SHARED_ENTITY_ID, _MERGED_SURVIVOR_ID} <= set(findings.profile_entity_ids)
     provider = FakeModelProvider()
     refresh = EntityProfileRefresher(
         engine=seeded_engine, model_provider=provider, embedding_model="profile-test"
     ).refresh_many(
         deployment_id=_DEPLOYMENT_ID,
-        entity_ids=manifest.resolved_entity_ids,
-        call_key=f"profile:hard_forget:{_FORGET_ID}",
+        entity_ids=findings.profile_entity_ids,
+        call_key=f"profile:forget:{_FORGET_ID}",
     )
-    catalog.verify_postgres_scrubbed(manifest=manifest)
-
-    assert {item.entity_id for item in refresh} >= {
-        _SHARED_ENTITY_ID,
-        _MERGED_SURVIVOR_ID,
-    }
     shared = next(item for item in refresh if item.entity_id == _MERGED_SURVIVOR_ID)
     assert shared.has_evidence and shared.updated
     assert _TOKEN not in shared.salient_facts
     assert provider.embedded_texts
     assert all(_TOKEN not in profile_input for profile_input in provider.embedded_texts)
     with seeded_engine.connect() as connection:
-        survivor_row = connection.execute(
-            text(
-                "SELECT profile_summary, embedding IS NOT NULL,"
-                " embedding_input_policy_version, embedding_text_hash"
-                " FROM entities WHERE deployment_id = :deployment"
-                " AND entity_id = :entity"
-            ),
-            {"deployment": _DEPLOYMENT_ID, "entity": _MERGED_SURVIVOR_ID},
-        ).one()
-        absorbed_row = connection.execute(
-            text(
-                "SELECT profile_summary, embedding IS NOT NULL, embedding_model,"
-                " embedding_input_policy_version, embedding_text_hash"
-                " FROM entities WHERE deployment_id = :deployment"
-                " AND entity_id = :entity"
-            ),
-            {"deployment": _DEPLOYMENT_ID, "entity": _SHARED_ENTITY_ID},
-        ).one()
-    assert _TOKEN not in str(survivor_row.profile_summary)
-    assert "control claim" in str(survivor_row.profile_summary)
-    assert survivor_row[1] is True
-    assert (
-        survivor_row.embedding_input_policy_version == "entity-profile-v3:dated-history"
-    )
-    assert survivor_row.embedding_text_hash != embedding_text_hash(old_input)
-    assert _TOKEN not in str(absorbed_row.profile_summary)
-    assert "control claim" in str(absorbed_row.profile_summary)
-    assert absorbed_row[1] is True
-    assert absorbed_row.embedding_model == "profile-test"
-    assert (
-        absorbed_row.embedding_input_policy_version == "entity-profile-v3:dated-history"
-    )
-    assert absorbed_row.embedding_text_hash != embedding_text_hash(old_input)
+        for entity_id in (_MERGED_SURVIVOR_ID, _SHARED_ENTITY_ID):
+            row = connection.execute(
+                text(
+                    "SELECT profile_summary, embedding IS NOT NULL,"
+                    " embedding_text_hash FROM entities"
+                    " WHERE deployment_id = :deployment AND entity_id = :entity"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "entity": entity_id},
+            ).one()
+            assert _TOKEN not in str(row.profile_summary)
+            assert "control claim" in str(row.profile_summary)
+            assert row[1] is True
+            assert row.embedding_text_hash != embedding_text_hash(old_input)
 
 
-def test_readiness_rehonors_manifest_after_old_postgres_restore(
-    seeded_engine: Engine,
+@pytest.mark.parametrize("phase", ("selection", "claimify"))
+def test_late_extraction_response_cannot_publish_after_the_hide(
+    seeded_engine: Engine, phase: str
 ) -> None:
-    """Restore pre-forget PostgreSQL; portable readiness must scrub it again."""
-    catalog = ForgetCatalog(engine=seeded_engine)
-    catalog.prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
-    )
-    manifest = catalog.inventory_and_store_manifest(
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=_TARGET_DOC_ID,
-        forget_id=_FORGET_ID,
-        requested_at=_NOW,
-    )
-    catalog.accept_and_enqueue(manifest=manifest)
-    catalog.scrub_postgres(manifest=manifest)
-    catalog.verify_postgres_scrubbed(manifest=manifest)
-    catalog.mark_complete(manifest=manifest)
+    """Both publication APIs refuse a response once the lineage is hidden."""
+    _hide(engine=seeded_engine)
+    with pytest.raises(LookupError):
+        if phase == "selection":
+            SelectionCatalog(engine=seeded_engine).freeze(
+                deployment_id=_DEPLOYMENT_ID,
+                representation_id=_TARGET_REPRESENTATION_ID,
+                chunk_id=_TARGET_CHUNK_ID,
+                extractor_version="forget-test",
+                input_hash="hash",
+                selection=SelectionResponse(candidates=()),
+                cards=(),
+                diagnostics=(),
+                truncated=False,
+            )
+        else:
+            ClaimCatalog(engine=seeded_engine).record_extraction(
+                claims=(),
+                decisions=(
+                    DecisionRecord(
+                        decision_id=_FORGET_ID,
+                        deployment_id=_DEPLOYMENT_ID,
+                        doc_id=_TARGET_DOC_ID,
+                        chunk_id=_TARGET_CHUNK_ID,
+                        claim_id=None,
+                        decision_type=DecisionType.CLAIMIFY_OMITTED,
+                        source_span=_TOKEN,
+                        reason=None,
+                        edit_detail=None,
+                        protected_class=None,
+                        extractor_version="forget-test",
+                    ),
+                ),
+                claimify_input_hash="hash",
+            )
+    with seeded_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM selection_results"
+                    " WHERE extractor_version = 'forget-test'"
+                )
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM claim_extraction_decisions"
+                    " WHERE extractor_version='forget-test'"
+                )
+            ).scalar_one()
+            == 0
+        )
 
-    _restore_pre_forget_postgres(engine=seeded_engine)
-    assert (
-        catalog.record_for_doc(deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID)
-        is None
-    )
 
-    honored = _postgres_restore_readiness(
-        engine=seeded_engine, manifest=manifest
-    ).ensure_ready(deployment_id=_DEPLOYMENT_ID)
-
-    assert honored == (_FORGET_ID,)
-    record = catalog.record_for_doc(deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID)
-    assert record is not None
-    assert record.status is ForgetManifestStatus.COMPLETE
-    _assert_scrubbed_and_control_survives(engine=seeded_engine)
+def _control_counts(*, engine: Engine) -> dict[str, int]:
+    """Exact control-side counts that a forget must leave unchanged (§5 test 3)."""
+    with engine.connect() as connection:
+        return {
+            "documents": _count(connection, "documents", "doc_id", _CONTROL_DOC_ID),
+            "versions": _count(
+                connection, "document_versions", "doc_id", _CONTROL_DOC_ID
+            ),
+            "claims": _count(connection, "claims", "doc_id", _CONTROL_DOC_ID),
+            "chunks": _count(connection, "chunks", "doc_id", _CONTROL_DOC_ID),
+            "mentions": _count(connection, "mentions", "doc_id", _CONTROL_DOC_ID),
+            "relation_evidence": _count(
+                connection, "relation_evidence", "doc_id", _CONTROL_DOC_ID
+            ),
+            "observation_evidence": _count(
+                connection, "observation_evidence", "doc_id", _CONTROL_DOC_ID
+            ),
+            "shared_relation": _count(
+                connection, "relations", "relation_id", _SHARED_RELATION_ID
+            ),
+            "shared_observation": _count(
+                connection, "observations", "observation_id", _SHARED_OBSERVATION_ID
+            ),
+            "shared_entity": _count(
+                connection, "entities", "entity_id", _SHARED_ENTITY_ID
+            ),
+            "control_entity": _count(
+                connection, "entities", "entity_id", _CONTROL_ENTITY_ID
+            ),
+            "control_original": int(
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM content_objects WHERE content_hash = :h"
+                        " AND purged_at IS NULL"
+                    ),
+                    {"h": _CONTROL_CONTENT_HASH},
+                ).scalar_one()
+            ),
+        }
 
 
 _TARGET_CHECK_ID = UUID("75000000-0000-0000-0000-0000000000c1")
@@ -447,7 +731,7 @@ def _seed_structure_provenance(*, connection: Connection) -> None:
 def _seed_documents(*, connection: Connection) -> None:
     """Seed two complete E0/E1 lineages and an inbound source-bearing crossref."""
     for content_hash, raw_uri in (
-        (_TARGET_CONTENT_HASH, f"mem://raw/target.bin?marker={_TOKEN}"),
+        (_TARGET_CONTENT_HASH, f"{_TARGET_DOC_ID}/{_TARGET_CONTENT_HASH}/original.txt"),
         (_CONTROL_CONTENT_HASH, "mem://raw/control.bin"),
     ):
         connection.execute(
@@ -1325,26 +1609,29 @@ def _seed_knowledge_and_residuals(*, connection: Connection) -> None:
 
 
 def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
-    """Prove nominated residuals are absent and independent support remains."""
+    """The target's subtree is gone, shared facts survive with clean wording."""
     with engine.connect() as connection:
-        target = connection.execute(
-            text(
-                "SELECT source_ref, source_uri, title, current_version_id, deleted_at"
-                " FROM documents WHERE deployment_id = :d AND doc_id = :doc"
-            ),
-            {"d": _DEPLOYMENT_ID, "doc": _TARGET_DOC_ID},
-        ).one()
-        assert target[:4] == (None, None, None, None)
-        assert target.deleted_at is not None
+        assert _count(connection, "documents", "doc_id", _TARGET_DOC_ID) == 0
+        assert _count(connection, "document_versions", "doc_id", _TARGET_DOC_ID) == 0
+        assert (
+            _count(
+                connection,
+                "document_representations",
+                "representation_id",
+                _TARGET_REPRESENTATION_ID,
+            )
+            == 0
+        )
+        # The receipt keeps its counts and the erased version's UUID.
         meter = connection.execute(
             text(
-                "SELECT delivery_state, decision_reason "
-                "FROM managed_ingest_measurements "
-                "WHERE measurement_id = :measurement_id"
+                "SELECT doc_id, version_id, delivery_state"
+                " FROM managed_ingest_measurements"
+                " WHERE measurement_id = :measurement_id"
             ),
             {"measurement_id": _TARGET_MEASUREMENT_ID},
         ).one()
-        assert meter == ("cancelled", "source_forgotten")
+        assert tuple(meter) == (_TARGET_DOC_ID, _TARGET_VERSION_ID, "parked")
         assert _count(connection, "chunks", "doc_id", _TARGET_DOC_ID) == 0
         assert _count(connection, "chunk_search", "chunk_id", _TARGET_CHUNK_ID) == 0
         assert _count(connection, "chunk_search", "chunk_id", _CONTROL_CHUNK_ID) == 1
@@ -1366,20 +1653,17 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         for table in ("document_metadata", "document_people", "document_names"):
             assert _count(connection, table, "version_id", _TARGET_VERSION_ID) == 0
             assert _count(connection, table, "version_id", _CONTROL_VERSION_ID) == 1
-        assert (
-            _count(connection, "claim_extraction_decisions", "doc_id", _TARGET_DOC_ID)
-            == 0
-        )
-        assert (
-            _count(
-                connection, "document_structure_generations", "doc_id", _TARGET_DOC_ID
-            )
-            == 0
-        )
-        assert (
-            _count(connection, "document_skeleton_checks", "doc_id", _TARGET_DOC_ID)
-            == 0
-        )
+        for table in (
+            "claim_extraction_decisions",
+            "document_structure_generations",
+            "document_skeleton_checks",
+            "document_reference_generations",
+            "document_effective_periods",
+            "document_effective_time_events",
+            "document_version_scope",
+        ):
+            assert _count(connection, table, "doc_id", _TARGET_DOC_ID) == 0, table
+        assert _count(connection, "document_version_scope", "doc_id", _CONTROL_DOC_ID)
         assert _count(connection, "grounding_audits", "claim_id", _TARGET_CLAIM_ID) == 0
         assert (
             _count(connection, "relations", "relation_id", _EXCLUSIVE_RELATION_ID) == 0
@@ -1392,28 +1676,13 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         )
         exclusive_entity = connection.execute(
             text(
-                "SELECT canonical_name, normalized_name, status, profile_summary"
+                "SELECT canonical_name, normalized_name, status, profile_summary,"
+                " embedding, embedding_model, embedding_text_hash"
                 " FROM entities WHERE deployment_id = :d AND entity_id = :entity"
             ),
             {"d": _DEPLOYMENT_ID, "entity": _EXCLUSIVE_ENTITY_ID},
         ).one()
-        assert exclusive_entity == ("", "", "retired", None)
-        exclusive_embedding = connection.execute(
-            text(
-                "SELECT embedding, embedding_model,"
-                " embedding_input_policy_version, embedding_text_hash"
-                " FROM entities WHERE deployment_id = :d AND entity_id = :entity"
-            ),
-            {"d": _DEPLOYMENT_ID, "entity": _EXCLUSIVE_ENTITY_ID},
-        ).one()
-        assert exclusive_embedding == (None, None, None, None)
-        assert connection.execute(
-            text(
-                "SELECT embedding IS NULL FROM entities"
-                " WHERE deployment_id = :d AND entity_id = :entity"
-            ),
-            {"d": _DEPLOYMENT_ID, "entity": _CONTROL_ENTITY_ID},
-        ).scalar_one()
+        assert tuple(exclusive_entity) == ("", "", "retired", None, None, None, None)
         assert _count(connection, "aliases", "entity_id", _EXCLUSIVE_ENTITY_ID) == 0
         merge_audit = connection.execute(
             text(
@@ -1432,9 +1701,6 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             ).scalar_one()
             is None
         )
-        assert (
-            _count(connection, "document_crossrefs", "to_doc_id", _TARGET_DOC_ID) == 0
-        )
         # D140 §9: the control's reference TO the forgotten lineage is the
         # control's own content; it survives unbound, ready to re-bind
         assert connection.execute(
@@ -1447,29 +1713,23 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert (
             _count(connection, "document_crossrefs", "from_doc_id", _TARGET_DOC_ID) == 0
         )
-        for table in (
-            "document_reference_generations",
-            "document_effective_periods",
-            "document_effective_time_events",
-            "document_version_scope",
-        ):
-            assert _count(connection, table, "doc_id", _TARGET_DOC_ID) == 0, table
-        assert _count(connection, "document_version_scope", "doc_id", _CONTROL_DOC_ID)
-        assert (
-            connection.execute(
-                text("SELECT version_key FROM document_versions WHERE version_id = :v"),
-                {"v": _TARGET_VERSION_ID},
-            ).scalar_one()
-            is None
-        )
         processing = connection.execute(
             text(
                 "SELECT payload, last_error FROM processing_state"
                 " WHERE deployment_id = :d AND stage = 'convert'"
+                " AND target_id = :doc"
             ),
-            {"d": _DEPLOYMENT_ID},
+            {"d": _DEPLOYMENT_ID, "doc": _TARGET_DOC_ID},
         ).one()
         assert processing == (None, None)
+        original = connection.execute(
+            text(
+                "SELECT raw_uri, purged_at IS NOT NULL FROM content_objects"
+                " WHERE deployment_id = :d AND content_hash = :h"
+            ),
+            {"d": _DEPLOYMENT_ID, "h": _TARGET_CONTENT_HASH},
+        ).one()
+        assert tuple(original) == (f"forgotten/{_TARGET_CONTENT_HASH}", True)
 
         assert _count(connection, "documents", "doc_id", _CONTROL_DOC_ID) == 1
         assert _count(connection, "claims", "doc_id", _CONTROL_DOC_ID) == 1
@@ -1511,7 +1771,7 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             "golden_pairs",
             "review_queue",
         ):
-            assert _deployment_rows(connection=connection, table=table) == 0
+            assert _deployment_rows(connection=connection, table=table) == 0, table
         assert (
             _deployment_rows(connection=connection, table="knowledge_subscriptions")
             == 1
@@ -1521,6 +1781,7 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             text(
                 "SELECT count(*) FROM ("
                 " SELECT raw_uri AS value FROM content_objects WHERE deployment_id = :d"
+                " UNION ALL SELECT collected::text FROM forgets WHERE deployment_id = :d"
                 " UNION ALL SELECT source_ref FROM documents WHERE deployment_id = :d"
                 " UNION ALL SELECT source_uri FROM documents WHERE deployment_id = :d"
                 " UNION ALL SELECT title FROM documents WHERE deployment_id = :d"
@@ -1535,6 +1796,7 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
                 " UNION ALL SELECT fact_label FROM relations WHERE deployment_id = :d"
                 " UNION ALL SELECT statement FROM observations WHERE deployment_id = :d"
                 " UNION ALL SELECT canonical_name FROM entities WHERE deployment_id = :d"
+                " UNION ALL SELECT alias_text FROM aliases WHERE deployment_id = :d"
                 " UNION ALL SELECT profile_summary FROM entities WHERE deployment_id = :d"
                 " UNION ALL SELECT page_summary FROM knowledge_artifacts"
                 "   WHERE deployment_id = :d"
@@ -1549,6 +1811,10 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
                 "   WHERE deployment_id = :d"
                 " UNION ALL SELECT address FROM document_people WHERE deployment_id = :d"
                 " UNION ALL SELECT name_text FROM document_names"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT payload::text FROM processing_state"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT last_error FROM processing_state"
                 "   WHERE deployment_id = :d"
                 ") residual WHERE value LIKE '%' || :token || '%'"
             ),
@@ -1583,20 +1849,9 @@ def _deployment_rows(*, connection: Connection, table: str) -> int:
 def test_mutable_fact_payloads_and_date_witnesses_are_erased(
     seeded_engine: Engine,
 ) -> None:
-    """Old manifests also remove new source outputs and mixed-source model payloads."""
+    """D118 outputs, mixed-source model payloads and date witnesses are erased."""
     from uuid import uuid4
 
-    catalog = ForgetCatalog(engine=seeded_engine)
-    catalog.prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
-    )
-    manifest = catalog.inventory_and_store_manifest(
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=_TARGET_DOC_ID,
-        forget_id=_FORGET_ID,
-        requested_at=_NOW,
-    )
-    # Simulate restoring a store with D118 rows under an earlier portable inventory.
     own, surviving = uuid4(), uuid4()
     with seeded_engine.begin() as connection:
         for claim, app, phrase in (
@@ -1676,10 +1931,10 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
               jsonb_build_object('rationale',CAST(:phrase AS text)),now())"""),
             {"dep": _DEPLOYMENT_ID, "id": _SHARED_OBSERVATION_ID, "phrase": _TOKEN},
         )
-    catalog.accept_and_enqueue(manifest=manifest)
-    catalog.scrub_postgres(manifest=manifest)
-    catalog.scrub_postgres(manifest=manifest)
-    catalog.verify_postgres_scrubbed(manifest=manifest)
+    catalog = ForgetCatalog(engine=seeded_engine)
+    forget = _hide(engine=seeded_engine)
+    assert catalog.sweep_postgres(forget=forget).removed
+    assert not catalog.sweep_postgres(forget=forget).removed
     with seeded_engine.connect() as connection:
         assert (
             connection.execute(
@@ -1726,65 +1981,6 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
                     "SELECT count(*) FROM fact_window_review_attempts WHERE fact_id=:id"
                 ),
                 {"id": _SHARED_OBSERVATION_ID},
-            ).scalar_one()
-            == 0
-        )
-
-
-@pytest.mark.parametrize("phase", ("selection", "claimify"))
-def test_late_extraction_response_cannot_publish_after_forget_starts(
-    seeded_engine: Engine, phase: str
-) -> None:
-    """Both actual publication APIs reject a response after forget was prepared."""
-    catalog = ForgetCatalog(engine=seeded_engine)
-    catalog.prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
-    )
-    with pytest.raises(ForgetInProgressError):
-        if phase == "selection":
-            SelectionCatalog(engine=seeded_engine).freeze(
-                deployment_id=_DEPLOYMENT_ID,
-                representation_id=_TARGET_REPRESENTATION_ID,
-                chunk_id=_TARGET_CHUNK_ID,
-                extractor_version="forget-test",
-                input_hash="hash",
-                selection=SelectionResponse(candidates=()),
-                cards=(),
-                diagnostics=(),
-                truncated=False,
-            )
-        else:
-            ClaimCatalog(engine=seeded_engine).record_extraction(
-                claims=(),
-                decisions=(
-                    DecisionRecord(
-                        decision_id=_FORGET_ID,
-                        deployment_id=_DEPLOYMENT_ID,
-                        doc_id=_TARGET_DOC_ID,
-                        chunk_id=_TARGET_CHUNK_ID,
-                        claim_id=None,
-                        decision_type=DecisionType.CLAIMIFY_OMITTED,
-                        source_span=_TOKEN,
-                        reason=None,
-                        edit_detail=None,
-                        protected_class=None,
-                        extractor_version="forget-test",
-                    ),
-                ),
-                claimify_input_hash="hash",
-            )
-    with seeded_engine.connect() as connection:
-        assert (
-            connection.execute(
-                text("SELECT count(*) FROM selection_results")
-            ).scalar_one()
-            == 0
-        )
-        assert (
-            connection.execute(
-                text(
-                    "SELECT count(*) FROM claim_extraction_decisions WHERE extractor_version='forget-test'"
-                )
             ).scalar_one()
             == 0
         )

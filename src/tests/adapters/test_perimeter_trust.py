@@ -324,8 +324,6 @@ def test_the_shared_secret_is_unaffected_by_a_missing_document() -> None:
         build_api(
             engine=object(),  # type: ignore[arg-type]
             deployment_id=issuer.deployment_id,
-            admission=_Open(),  # type: ignore[arg-type]
-            readiness=_Open(),  # type: ignore[arg-type]
             surface=_NoOperations(issuer.deployment_id),  # type: ignore[arg-type]
             connectors=object(),  # type: ignore[arg-type]
             auth=auth,
@@ -337,14 +335,6 @@ def test_the_shared_secret_is_unaffected_by_a_missing_document() -> None:
     shared = client.get("/operations", headers={"Authorization": f"Bearer {secret}"})
     assert signed.status_code == 401
     assert shared.status_code == 200, shared.text
-
-
-class _Open:
-    def ensure_ready(self, *, deployment_id: object) -> tuple[object, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: object) -> None:
-        return None
 
 
 class _NoOperations:

@@ -728,26 +728,10 @@ def test_concurrent_name_addressed_mutations_do_not_deadlock(rig: _Rig) -> None:
     assert {result.description for result in results} == {"writer 0", "writer 1"}
 
 
-class _Open:
-    """Open readiness and admission for the HTTP proofs."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
 def _http(rig: _Rig) -> TestClient:
     """The real HTTP routes over this deployment's tag registry."""
     return TestClient(
-        build_api(
-            engine=MagicMock(),
-            deployment_id=_DEPLOYMENT_ID,
-            admission=_Open(),
-            readiness=_Open(),
-            tags=rig.tags,
-        )
+        build_api(engine=MagicMock(), deployment_id=_DEPLOYMENT_ID, tags=rig.tags)
     )
 
 

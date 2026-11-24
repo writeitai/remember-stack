@@ -56,15 +56,6 @@ _CHUNK = UUID("59000000-0000-0000-0000-000000000003")
 _AT = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
 
 
-class _Boundary:
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _BuildInfo:
     def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
         assert deployment_id == _DEPLOYMENT_ID
@@ -168,12 +159,9 @@ class _Reads:
 def composed() -> tuple[MemoryClient, _References, _Reads, TestClient]:
     references = _References()
     reads = _Reads()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         build_info=_BuildInfo(),
         references=references,
         document_references=reads,

@@ -32,19 +32,6 @@ _ENTITY = UUID("27270000-0000-0000-0000-000000000002")
 _OTHER = UUID("27270000-0000-0000-0000-000000000003")
 
 
-class _Ready:
-    """Open admission/readiness boundary."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        del deployment_id
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Accept the configured deployment."""
-        del deployment_id
-
-
 def _envelope() -> Envelope:
     """A minimal valid envelope."""
     now = datetime.now(UTC)
@@ -162,13 +149,10 @@ def _client(
     ingest: object | None = None,
 ) -> TestClient:
     """Build an API over the given fakes."""
-    boundary = _Ready()
     return TestClient(
         build_api(
             engine=engine or _Engine(),  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             graph=graph,  # type: ignore[arg-type]
             open_query=open_query,  # type: ignore[arg-type]
             ingest=ingest,  # type: ignore[arg-type]

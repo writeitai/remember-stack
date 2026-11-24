@@ -568,17 +568,11 @@ def request_window_review_on(
 ) -> bool:
     """Queue a lineage fan-out in the caller's transaction, if it ever had periods.
 
-    Returns whether a job was queued. Nothing is queued while a hard forget is
-    honored: it scrubs the touched facts' windows and bases itself, and a job
-    naming the forgotten lineage would lose its payload to the same scrub.
+    Returns whether a job was queued.
     """
-    from rememberstack.spine.admission import active_forget_id_on
-
     if not lineage_ever_periodised_on(
         connection=connection, deployment_id=deployment_id, doc_id=doc_id
     ):
-        return False
-    if active_forget_id_on(connection=connection, deployment_id=deployment_id):
         return False
     from rememberstack.spine.work_ledger import enqueue_on
 
