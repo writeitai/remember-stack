@@ -383,12 +383,12 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 121,
+    "c": 120,
     "f": 150,
-    "n": 653,
+    "n": 656,
     "p": 87,
     "t": 7,
-    "u": 41,
+    "u": 40,
 }
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),

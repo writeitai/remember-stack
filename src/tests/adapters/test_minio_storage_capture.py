@@ -190,7 +190,7 @@ def live_tree(
     """Publish four real document folders sharing immutable originals/artifacts."""
     roles = native_roles
     stores: dict[str, CaptureStore] = {}
-    for role in ("artifacts", "corpus", "forget", "raw"):
+    for role in ("artifacts", "corpus", "raw"):
         filesystem = base64.b32encode(uuid4().bytes).decode().rstrip("=").lower()
         store = MinIOObjectStore(bucket=filesystem, settings=minio_settings)
         store.ensure_bucket()
@@ -322,7 +322,7 @@ def live_tree(
                 ManagedFilesystemBinding(
                     role=role, filesystem_id=stores[role].filesystem
                 )
-                for role in ("artifacts", "corpus", "forget", "raw")
+                for role in ("artifacts", "corpus", "raw")
             ),
         ),
         managed_runtime_source_digest="6" * 64,
@@ -628,7 +628,7 @@ def test_marker_and_recorded_folder_must_both_match(
 def test_capture_helpers_refuse_any_other_schema_head(live_tree: LiveTree) -> None:
     state = live_tree
     with state.roles.engine.begin() as connection:
-        connection.execute(text("UPDATE alembic_version SET version_num='p9_52_0073'"))
+        connection.execute(text("UPDATE alembic_version SET version_num='p9_53_0074'"))
     try:
         with state.roles.connect() as collector:
             collector.execute("BEGIN")
@@ -651,7 +651,7 @@ def test_capture_helpers_refuse_any_other_schema_head(live_tree: LiveTree) -> No
     finally:
         with state.roles.engine.begin() as connection:
             connection.execute(
-                text("UPDATE alembic_version SET version_num='p9_53_0074'")
+                text("UPDATE alembic_version SET version_num='p9_54_0075'")
             )
 
 

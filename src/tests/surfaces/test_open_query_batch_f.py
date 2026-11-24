@@ -1245,18 +1245,15 @@ def test_selfhost_api_shares_kill_switches_audit_and_e1_embed_gate(
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
 
     projection_work_root = tmp_path / "projection-work"
-    forget_manifest_root = tmp_path / "forget-manifests"
     objects_root = tmp_path / "objects"
-    for path in (projection_work_root, forget_manifest_root, objects_root):
+    for path in (projection_work_root, objects_root):
         path.mkdir(parents=True, exist_ok=True)
 
     store = LocalFSObjectStore(root=objects_root)
     engine = create_engine(migrated)
     profile = SelfHostProfile(
         settings=SelfHostSettings(
-            deployment_id=_DEPLOYMENT,
-            forget_manifest_root=forget_manifest_root,
-            migration_config=_ROOT / "alembic.ini",
+            deployment_id=_DEPLOYMENT, migration_config=_ROOT / "alembic.ini"
         ),
         engine=engine,
         raw_store=store,  # type: ignore[arg-type]

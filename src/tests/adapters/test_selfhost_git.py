@@ -17,13 +17,10 @@ _ARTIFACT_ID = UUID("74000000-0000-0000-0000-000000000004")
 
 
 class PathCatalog:
-    """Return fixed synced owner blockers and affected artifact paths."""
+    """Return fixed affected artifact paths."""
 
     def __init__(self, *, paths: tuple[str, ...]) -> None:
         self.paths = paths
-
-    def blocking_k_paths(self, *, deployment_id: UUID, doc_id: UUID) -> tuple[str, ...]:
-        return ("K2/owner.md",)
 
     def k_paths_for_artifacts(
         self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
@@ -67,9 +64,6 @@ def test_local_git_purge_erases_affected_history_and_keeps_clean_current(
     )
     purge: KGitPurgePort = adapter
 
-    assert purge.blocking_redaction_paths(
-        deployment_id=_DEPLOYMENT_ID, doc_id=_DOC_ID
-    ) == ("K2/owner.md",)
     purge.purge_artifacts(
         deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID, artifact_ids=(_ARTIFACT_ID,)
     )

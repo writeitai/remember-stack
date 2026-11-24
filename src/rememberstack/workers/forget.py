@@ -4,7 +4,7 @@
 lineage row lock: the lineage cascade, the tombstone, the record and the first
 sweep's work row. ``ForgetHandler`` runs one sweep per work row (PostgreSQL,
 objects, corpus, K) and schedules the next one after a quiet period, until a
-sweep after the quiet period finds nothing left. ``forget_reapply`` re-runs the
+sweep after the quiet period finds nothing left. ``ForgetService.reapply`` re-runs the
 sweeps of every record after an operator restores a store from a backup.
 """
 
@@ -123,6 +123,46 @@ class ForgetService:
                 )
             return forget, created
 
+    def rehide(self, *, forget: Forget) -> None:
+        """Hide again (finish the cascade) when a restored database holds the lineage."""
+        with self._engine.begin() as connection:
+            remove_lineage_on(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                doc_id=forget.doc_id,
+            )
+
+    def reapply(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        """``remember ops forget-reapply``: re-run every record's sweeps (§3.8).
+
+        For each record: hide the document again if a restored database holds
+        it, mark the record ``erasing`` and enqueue a new series of sweeps.
+        Ordinary workers run them; nothing waits for them.
+        """
+        reapplied: list[UUID] = []
+        for forget in self._catalog.records(deployment_id=deployment_id):
+            with self._engine.begin() as connection:
+                remove_lineage_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    doc_id=forget.doc_id,
+                )
+                self._catalog.rearm_on(connection=connection, forget=forget)
+                enqueue_on(
+                    connection=connection,
+                    work=sweep_work(
+                        deployment_id=deployment_id,
+                        forget_id=forget.forget_id,
+                        sweep=_next_sweep_on(connection=connection, forget=forget),
+                        failures=0,
+                        not_before=None,
+                        first=True,
+                        reapply=True,
+                    ),
+                )
+            reapplied.append(forget.forget_id)
+        return tuple(reapplied)
+
 
 @dataclass(frozen=True)
 class _SweepPayload:
@@ -145,7 +185,7 @@ class ForgetHandler:
     def __init__(
         self,
         *,
-        engine: Engine,
+        service: ForgetService,
         catalog: ForgetCatalog,
         profile_refresher: ProfileRefresherPort,
         object_purgers: tuple[ObjectPurgePort, ...],
@@ -159,7 +199,7 @@ class ForgetHandler:
             raise ValueError("forget requires at least one object-store purger")
         if quiet_period_s < 0:
             raise ValueError("the forget quiet period cannot be negative")
-        self._engine = engine
+        self._service = service
         self._catalog = catalog
         self._profile_refresher = profile_refresher
         self._object_purgers = object_purgers
@@ -230,14 +270,9 @@ class ForgetHandler:
         self, *, forget: Forget, payload: _SweepPayload, meter: CostMeterPort | None
     ) -> bool:
         """One sweep (D159 §3.3); whether it removed any forgotten residue."""
-        with self._engine.begin() as connection:
-            # A restored database, or an upgraded D74 forget, still holds the
-            # lineage: hide it again (finish its cascade) before sweeping.
-            remove_lineage_on(
-                connection=connection,
-                deployment_id=forget.deployment_id,
-                doc_id=forget.doc_id,
-            )
+        # A restored database, or an upgraded D74 forget, still holds the
+        # lineage: hide it again (finish its cascade) before sweeping.
+        self._service.rehide(forget=forget)
         findings = self._catalog.sweep_postgres(forget=forget)
         found = findings.removed
         if findings.profile_entity_ids:
@@ -321,37 +356,6 @@ class ForgetHandler:
             first=payload.first,
             reapply=payload.reapply,
         )
-
-
-def forget_reapply(*, engine: Engine, deployment_id: UUID) -> tuple[UUID, ...]:
-    """``remember ops forget-reapply``: re-run every record's sweeps (D159 §3.8).
-
-    For each record: hide the document again if a restored database holds it,
-    mark the record ``erasing`` and enqueue a new series of sweeps. Ordinary
-    workers run them; nothing waits for them.
-    """
-    catalog = ForgetCatalog(engine=engine)
-    reapplied: list[UUID] = []
-    for forget in catalog.records(deployment_id=deployment_id):
-        with engine.begin() as connection:
-            remove_lineage_on(
-                connection=connection, deployment_id=deployment_id, doc_id=forget.doc_id
-            )
-            catalog.rearm_on(connection=connection, forget=forget)
-            enqueue_on(
-                connection=connection,
-                work=sweep_work(
-                    deployment_id=deployment_id,
-                    forget_id=forget.forget_id,
-                    sweep=_next_sweep_on(connection=connection, forget=forget),
-                    failures=0,
-                    not_before=None,
-                    first=True,
-                    reapply=True,
-                ),
-            )
-        reapplied.append(forget.forget_id)
-    return tuple(reapplied)
 
 
 def _next_sweep_on(*, connection: Connection, forget: Forget) -> int:

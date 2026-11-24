@@ -56,9 +56,12 @@ class SelfHostOperations:
 
     def forget_reapply(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
         """Re-run every forget record's sweeps after a restore (D159 §3.8)."""
-        from rememberstack.workers import forget_reapply
+        from rememberstack.spine import ForgetCatalog
+        from rememberstack.workers import ForgetService
 
-        return forget_reapply(engine=self._engine, deployment_id=deployment_id)
+        return ForgetService(
+            engine=self._engine, catalog=ForgetCatalog(engine=self._engine)
+        ).reapply(deployment_id=deployment_id)
 
     def replay(
         self,

@@ -1,5 +1,12 @@
-"""S55/WP-7.7 restore drill over LocalFS, projections, and Git."""
+"""D159 §5 test 11: restore a store from before a forget, then forget-reapply.
 
+Real LocalFS object and corpus stores and a real Git repository; the record and
+the PostgreSQL step are scripted (the PostgreSQL leg is proven against real
+PostgreSQL in ``tests/spine/test_forget_catalog.py``).
+"""
+
+from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -9,135 +16,120 @@ from uuid import UUID
 
 import pytest
 
-from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.selfhost import LocalGitRepository
-from rememberstack.adapters.selfhost import ObjectAlreadyExistsError
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
+from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.adapters.testing import RecordingProfileRefresher
-from rememberstack.model import current_temporal_scope
-from rememberstack.model import Envelope
-from rememberstack.model import ForgetManifest
-from rememberstack.model import Freshness
-from rememberstack.model import Grain
-from rememberstack.model import Negative
-from rememberstack.model import NegativeKind
+from rememberstack.model import ClaimedWork
+from rememberstack.model import EnqueueWork
+from rememberstack.model import Forget
+from rememberstack.model import ForgetStatus
 from rememberstack.model import ObjectKey
+from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingTarget
 from rememberstack.spine import ForgetCatalog
-from rememberstack.workers import DeletionService
-from rememberstack.workers import ForgetKnowledgeRebuilder
-from rememberstack.workers import HardForgetHandler
-from rememberstack.workers import HardForgetReadiness
-from rememberstack.workers import HardForgetService
+from rememberstack.spine.forget import SweepFindings
+from rememberstack.workers import ForgetHandler
+from rememberstack.workers import ForgetService
 from tests.corpus_export_support import document
 from tests.corpus_purge_support import scrubbed_publisher
 from tests.corpus_purge_support import ScrubbedAuthority
 
 _DEPLOYMENT_ID = UUID("55500000-0000-0000-0000-000000000001")
 _DOC_ID = UUID("55500000-0000-0000-0000-000000000002")
-_VERSION_ID = UUID("55500000-0000-0000-0000-000000000003")
 _FORGET_ID = UUID("55500000-0000-0000-0000-000000000004")
 _ARTIFACT_ID = UUID("55500000-0000-0000-0000-000000000005")
-_FORGOTTEN_IDS = tuple(
-    UUID(f"55500000-0000-0000-0000-{suffix:012d}") for suffix in range(10, 14)
-)
-_NOW = datetime(2026, 7, 21, 14, 0, tzinfo=timezone.utc)
+_HASH = "e" * 64
 _TOKEN = "S55_REAL_UNIQUE_FORGOTTEN_TOKEN"
 _CONTROL = "S55_REAL_INDEPENDENT_CONTROL"
-_OBJECT_KEY = ObjectKey("raw/forgotten.txt")
-_CONTROL_KEY = ObjectKey("raw/control.txt")
-_PROJECTION_PREFIX = ObjectKey(document(doc_id=_DOC_ID, title=_TOKEN).path)
+# An ingest_stored original (D147 locator) and the document's own prefix.
+_UPLOAD_KEY = ObjectKey("uploads/abcdefghijklmnop")
+_OWN_KEY = ObjectKey(f"{_DOC_ID}/{_HASH}/original.txt")
+_CONTROL_KEY = ObjectKey("control/original.txt")
+_FORGOTTEN_DOCUMENT = document(doc_id=_DOC_ID, title=_TOKEN)
 _CONTROL_DOCUMENT = document(2, deployment_id=_DEPLOYMENT_ID, title=_CONTROL)
-_CONTROL_PREFIX = ObjectKey(_CONTROL_DOCUMENT.path)
+_FORGET = Forget(
+    forget_id=_FORGET_ID,
+    deployment_id=_DEPLOYMENT_ID,
+    doc_id=_DOC_ID,
+    version_ids=(),
+    content_hashes=(_HASH,),
+    source_identity_hash=None,
+    status=ForgetStatus.COMPLETE,
+    requested_at=datetime(2026, 11, 24, tzinfo=timezone.utc),
+    completed_at=datetime(2026, 11, 24, tzinfo=timezone.utc),
+)
 
 
+@dataclass
 class _Catalog:
-    def ordinary_work_is_drained(self, *, deployment_id: UUID) -> bool:
-        return True
+    """The surviving record: its keys and the K artifacts it collected."""
 
-    def __init__(self) -> None:
-        self.complete = False
+    finished: list[tuple[str, ...]] = field(default_factory=list)
 
-    def preparing_record(self, *, deployment_id: UUID) -> None:
+    def record(self, **_: object) -> Forget:
+        return _FORGET
+
+    def sweep_postgres(self, *, forget: Forget) -> SweepFindings:
+        return SweepFindings(
+            removed=False,
+            object_keys=(_UPLOAD_KEY, _OWN_KEY),
+            compiled_artifact_ids=(),
+            blocking_k_paths=(),
+            profile_entity_ids=(),
+        )
+
+    def live_originals(self, **_: object) -> frozenset[str]:
+        return frozenset()
+
+    def collected_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
+        return (_ARTIFACT_ID,)
+
+    def still_blocking(self, **_: object) -> tuple[str, ...]:
+        return ()
+
+    def authored_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
+        return ()
+
+    def finish(self, *, blocking_k_paths: tuple[str, ...], **_: object) -> ForgetStatus:
+        self.finished.append(blocking_k_paths)
+        return ForgetStatus.COMPLETE
+
+    def record_error(self, **_: object) -> None:
+        raise AssertionError("no sweep may fail in this drill")
+
+    def schedule(self, *, work: EnqueueWork) -> None:
+        raise AssertionError("no sweep may fail in this drill")
+
+
+class _Service:
+    def rehide(self, **_: object) -> None:
         return None
-
-    def materialize_portable(self, *, manifest: ForgetManifest) -> None:
-        self.complete = False
-
-    def profile_repair_batches(
-        self, *, manifest: ForgetManifest
-    ) -> tuple[tuple[UUID, ...], ...]:
-        """Offer the cleared fixture profiles to the normal repair loop."""
-        return (manifest.resolved_entity_ids,)
-
-    def scrub_postgres(self, *, manifest: ForgetManifest) -> None:
-        return None
-
-    def verify_postgres_scrubbed(self, *, manifest: ForgetManifest) -> None:
-        return None
-
-    def mark_complete(self, *, manifest: ForgetManifest) -> None:
-        self.complete = True
-
-
-class _Caches:
-    def __init__(self, *, root: Path) -> None:
-        self.root = root
-        self.stopped = False
-
-    def quiesce(self, **_: object) -> None:
-        self.stopped = True
-
-    def purge(self, *, doc_id: UUID, **_: object) -> None:
-        assert self.stopped
-        import shutil
-
-        shutil.rmtree(self.root / str(doc_id), ignore_errors=True)
-
-    def verify(self, *, doc_id: UUID, **_: object) -> None:
-        assert self.stopped and not (self.root / str(doc_id)).exists()
 
 
 class _Paths:
-    def blocking_k_paths(self, *, deployment_id: UUID, doc_id: UUID) -> tuple[str, ...]:
-        return ()
-
     def k_paths_for_artifacts(
         self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> tuple[str, ...]:
-        return ("K1/affected.md",)
+        return ("K1/affected.md",) if artifact_ids == (_ARTIFACT_ID,) else ()
 
 
-class _Deletion:
-    def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID, **_: object) -> None:
+class _Rebuild:
+    def recompile_without_lineage(self, **_: object) -> None:
         return None
 
 
-class _KnowledgeRebuilder:
-    def recompile_without_lineage(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        return None
+@dataclass
+class _Sessions:
+    """A remember.dev session cache: drops the paths it is told about."""
 
+    root: Path
 
-class _UnusedRequest:
-    def request(self, **_: object) -> ForgetManifest:
-        raise AssertionError("no preparing request exists in this restore canary")
+    def invalidate(self, *, doc_id: UUID, **_: object) -> None:
+        import shutil
 
-
-def _manifest() -> ForgetManifest:
-    return ForgetManifest(
-        forget_id=_FORGET_ID,
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=_DOC_ID,
-        requested_at=_NOW,
-        chunk_ids=(_FORGOTTEN_IDS[0],),
-        claim_ids=(_FORGOTTEN_IDS[1],),
-        fact_ids=(_FORGOTTEN_IDS[2],),
-        entity_ids=(_FORGOTTEN_IDS[3],),
-        object_keys=(_OBJECT_KEY,),
-        k_artifact_ids=(_ARTIFACT_ID,),
-    )
+        shutil.rmtree(self.root / str(doc_id), ignore_errors=True)
 
 
 def _seed_git(*, repository: Path) -> Path:
@@ -149,118 +141,115 @@ def _seed_git(*, repository: Path) -> Path:
     affected.parent.mkdir(parents=True)
     affected.write_text(f"{_TOKEN}\n", encoding="utf-8")
     control.write_text(f"{_CONTROL}\n", encoding="utf-8")
-    _commit(repository=repository, message="private history")
-    affected.write_text("sanitized current\n", encoding="utf-8")
-    _commit(repository=repository, message="owner redaction")
+    _commit(repository=repository, message="compiled before the forget")
+    affected.write_text("rebuilt without the document\n", encoding="utf-8")
+    _commit(repository=repository, message="rebuilt")
     backup = repository.parent / "knowledge-backup.git"
     _git("clone", "--quiet", "--mirror", str(repository), str(backup))
     return backup
 
 
-def _seed_projections(*, snapshot_store: LocalFSObjectStore, mount_root: Path) -> None:
-    for prefix, content in ((_PROJECTION_PREFIX, _TOKEN), (_CONTROL_PREFIX, _CONTROL)):
-        try:
-            snapshot_store.write_bytes(
-                key=ObjectKey(f"{prefix.root}/data"),
-                content=content.encode(),
-                storage_class="cold",
-            )
-        except ObjectAlreadyExistsError:
-            pass
-    for doc_id, content in ((_DOC_ID, _TOKEN), (_CONTROL_DOCUMENT.doc_id, _CONTROL)):
-        path = mount_root / str(doc_id) / "cached"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+def _seed_objects(*, raw: LocalFSObjectStore, corpus: LocalFSObjectStore) -> None:
+    for store, key, content in (
+        (raw, _UPLOAD_KEY, _TOKEN),
+        (raw, _OWN_KEY, _TOKEN),
+        (raw, ObjectKey(f"{_DOC_ID}/{_HASH}/conversion-checkpoints/a.json"), _TOKEN),
+        (raw, _CONTROL_KEY, _CONTROL),
+        (corpus, ObjectKey(f"{_FORGOTTEN_DOCUMENT.path}/data"), _TOKEN),
+        (corpus, ObjectKey(f"{_CONTROL_DOCUMENT.path}/data"), _CONTROL),
+    ):
+        store.purge_objects(keys=(key,), prefixes=())
+        store.write_bytes(key=key, content=content.encode(), storage_class="cold")
 
 
 def _contains(*, root: Path, token: str) -> bool:
     return any(
-        token in path.read_text(encoding="utf-8")
+        token.encode() in path.read_bytes()
         for path in root.rglob("*")
         if path.is_file()
     )
 
 
-def _negative(*, token: str) -> Envelope:
-    del token  # S55: the absent lookup value must not alter the public response.
-    return Envelope(
-        grain=Grain.EVIDENCE,
-        temporal_scope=current_temporal_scope(evaluated_at=_NOW),
-        freshness=Freshness(pg_live_ts=_NOW),
-        negative=Negative(
-            kind=NegativeKind.UNKNOWN_ENTITY, explanation="No matching memory exists."
-        ),
+def _work(*, sweep: int, first: bool) -> ClaimedWork:
+    return ClaimedWork(
+        processing_id=UUID(int=sweep),
+        deployment_id=_DEPLOYMENT_ID,
+        target_kind=ProcessingTarget.FORGET,
+        target_id=_FORGET_ID,
+        stage=PipelineStage.FORGET,
+        component_version=f"forget-v1/{sweep}",
+        content_hash=str(_FORGET_ID),
+        lane=None,
+        attempt=1,
+        payload={
+            "forget_id": str(_FORGET_ID),
+            "sweep": sweep,
+            "failures": 0,
+            "first": first,
+            "reapply": True,
+        },
     )
 
 
-def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> None:
-    """Restore whole and independent stores; readiness must purge them again."""
-    objects = LocalFSObjectStore(root=tmp_path / "objects")
-    snapshots = LocalFSObjectStore(root=tmp_path / "snapshots")
+def test_forget_reapply_erases_a_restored_store(tmp_path: Path) -> None:
+    """Restore objects (an ingest_stored original), corpus and K; reapply cleans."""
+    raw = LocalFSObjectStore(root=tmp_path / "raw")
+    corpus = LocalFSObjectStore(root=tmp_path / "corpus")
     mount_root = tmp_path / "mount"
     repository = tmp_path / "knowledge"
     backup = _seed_git(repository=repository)
-    objects.write_bytes(key=_OBJECT_KEY, content=_TOKEN.encode(), storage_class="cold")
-    objects.write_bytes(
-        key=_CONTROL_KEY, content=_CONTROL.encode(), storage_class="cold"
-    )
-    _seed_projections(snapshot_store=snapshots, mount_root=mount_root)
-    authority = ScrubbedAuthority(survivors=(_CONTROL_DOCUMENT,))
-    git = LocalGitRepository(
-        repository=repository,
-        path_catalog=_Paths(),
-        author_name="RememberStack",
-        author_email="rememberstack@example.test",
-    )
     catalog = _Catalog()
-    handler = HardForgetHandler(
+    handler = ForgetHandler(
+        service=cast(ForgetService, _Service()),
         catalog=cast(ForgetCatalog, catalog),
-        deletion=cast(DeletionService, _Deletion()),
         profile_refresher=RecordingProfileRefresher(),
-        object_purgers=(objects,),
+        object_purgers=(raw,),
         projection_purger=SelfHostProjectionPurger(
-            object_purger=snapshots,
-            publisher=scrubbed_publisher(store=snapshots, authority=authority),
-            caches=_Caches(root=mount_root),
+            publisher=scrubbed_publisher(
+                store=corpus,
+                authority=ScrubbedAuthority(survivors=(_CONTROL_DOCUMENT,)),
+            ),
+            object_purger=corpus,
+            caches=_Sessions(root=mount_root),
         ),
-        knowledge_rebuilder=cast(ForgetKnowledgeRebuilder, _KnowledgeRebuilder()),
-        k_git=git,
-    )
-    manifest_root = tmp_path / "forget-manifests"
-    manifest_root.mkdir()
-    manifest_store = LocalFSForgetManifestStore(root=manifest_root)
-    manifest_store.append(manifest=_manifest())
-    readiness = HardForgetReadiness(
-        catalog=cast(ForgetCatalog, catalog),
-        manifest_store=manifest_store,
-        request_service=cast(HardForgetService, _UnusedRequest()),
-        handler=handler,
+        knowledge_rebuilder=_Rebuild(),
+        k_git=LocalGitRepository(
+            repository=repository,
+            path_catalog=_Paths(),
+            author_name="RememberStack",
+            author_email="rememberstack@example.test",
+        ),
+        quiet_period_s=0,
     )
 
-    def assert_s55() -> None:
-        with pytest.raises(FileNotFoundError):
-            objects.read_bytes(key=_OBJECT_KEY)
-        assert objects.read_bytes(key=_CONTROL_KEY) == _CONTROL.encode()
+    def reapply() -> None:
+        """One reapply series: the first sweep, then a clean one after it."""
+        handler.handle(work=_work(sweep=1, first=True), meter=NoopCostMeter())
+        outcome = handler.handle(
+            work=_work(sweep=2, first=False), meter=NoopCostMeter()
+        )
+        assert outcome.follow_up == ()
+
+    def assert_clean() -> None:
+        for key in (_UPLOAD_KEY, _OWN_KEY):
+            with pytest.raises(FileNotFoundError):
+                raw.read_bytes(key=key)
+        assert raw.read_bytes(key=_CONTROL_KEY) == _CONTROL.encode()
+        assert not _contains(root=tmp_path / "raw", token=_TOKEN)
+        assert not _contains(root=tmp_path / "corpus", token=_TOKEN)
+        assert _contains(root=tmp_path / "corpus", token=_CONTROL)
         assert not _contains(root=mount_root, token=_TOKEN)
-        assert _contains(root=mount_root, token=_CONTROL)
         assert (
             _output("-C", str(repository), "log", "--all", "-S", _TOKEN, "--format=%H")
             == ""
         )
         assert _CONTROL in (repository / "K1/control.md").read_text()
-        assert _negative(token=_TOKEN) == _negative(token="S55_NEVER_SEEN")
-
-    readiness.ensure_ready(deployment_id=_DEPLOYMENT_ID)
-    assert catalog.complete
-    assert_s55()
 
     def restore_objects() -> None:
-        objects.write_bytes(
-            key=_OBJECT_KEY, content=_TOKEN.encode(), storage_class="cold"
-        )
-
-    def restore_projections() -> None:
-        _seed_projections(snapshot_store=snapshots, mount_root=mount_root)
+        _seed_objects(raw=raw, corpus=corpus)
+        session = mount_root / str(_DOC_ID) / "cached"
+        session.parent.mkdir(parents=True, exist_ok=True)
+        session.write_text(_TOKEN, encoding="utf-8")
 
     def restore_git() -> None:
         _git(
@@ -274,17 +263,23 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
         )
         _git("-C", str(repository), "reset", "--hard", "refs/rememberstack/restore")
         _git("-C", str(repository), "update-ref", "-d", "refs/rememberstack/restore")
+        for ref in _output(
+            "-C",
+            str(repository),
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/rememberstack/forget/",
+        ).splitlines():
+            _git("-C", str(repository), "update-ref", "-d", ref)
 
-    restorers = (restore_objects, restore_projections, restore_git)
-    for restore in restorers:
+    restore_objects()
+    reapply()
+    assert_clean()
+    for restore in (restore_objects, restore_git):
         restore()
-    readiness.ensure_ready(deployment_id=_DEPLOYMENT_ID)
-    assert_s55()
-
-    for restore in restorers:
-        restore()
-        readiness.ensure_ready(deployment_id=_DEPLOYMENT_ID)
-        assert_s55()
+        reapply()
+        assert_clean()
+    assert catalog.finished == [(), (), ()]
 
 
 def _git(*arguments: str) -> None:

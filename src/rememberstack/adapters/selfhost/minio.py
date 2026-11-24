@@ -143,7 +143,9 @@ class _S3Client(Protocol):
         """Create one bucket."""
         ...
 
-    def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
+    def get_object(
+        self, *, Bucket: str, Key: str, VersionId: str = ...
+    ) -> _GetObjectOutput:
         """Read one object."""
         ...
 
@@ -568,6 +570,33 @@ class MinIOObjectStore:
                 f"object purge verification found: {sorted(remaining)!r}"
             )
         return evidence
+
+    def purge_retained_versions_containing(
+        self, *, keys: tuple[ObjectKey, ...], needle: bytes
+    ) -> int:
+        """Delete non-current versions of exact keys whose bytes contain ``needle``."""
+        if not keys or not self._has_versions():
+            return 0
+        removed = 0
+        for key in keys:
+            name = _validated_key(key=key)
+            page = self._client.list_object_versions(Bucket=self._bucket, Prefix=name)
+            for item in page.get("Versions", ()):
+                if item["Key"] != name or item.get("IsLatest", False):
+                    continue
+                body = self._client.get_object(
+                    Bucket=self._bucket, Key=name, VersionId=item["VersionId"]
+                )["Body"]
+                try:
+                    found = needle in body.read()
+                finally:
+                    body.close()
+                if found:
+                    self._client.delete_object(
+                        Bucket=self._bucket, Key=name, VersionId=item["VersionId"]
+                    )
+                    removed += 1
+        return removed
 
     def iter_purge_keys(self) -> Iterator[ObjectKey]:
         """Include retained keys and uploads that no published object exposes."""

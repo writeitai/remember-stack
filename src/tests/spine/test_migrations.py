@@ -157,6 +157,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_51_0072",
         "p9_52_0073",
         "p9_53_0074",
+        "p9_54_0075",
     )
     assert len(script.get_heads()) == 1
 
@@ -170,7 +171,9 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # trigger, and p9_23_0044's DOWNGRADE rebuilds a derived cache from the
     # aliases already present (D103), and D140 fills its selection projection
     # from existing versions and rewrites it per lineage in a trigger
-    # function. All derive from existing rows; none seeds a deployment.
+    # function. D159 converts D74 forget manifests into forget records and
+    # enqueues the unfinished ones' sweeps. All derive from existing rows;
+    # none seeds a deployment.
     inserts_per_revision = {
         path.name: path.read_text(encoding="utf-8").lower().count("insert into")
         for path in _VERSIONS.glob("p*_*.py")
@@ -182,6 +185,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_23_0044_drop_generic_identifier_guard.py": 1,
         "p9_35_0056_document_metadata.py": 2,
         "p9_38_0059_d140_effective_time.py": 2,
+        "p9_54_0075_forget_records.py": 2,
     }
     assert "bootstrap_deployment" not in migration_source
 
@@ -698,7 +702,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_53_0074"
+    assert head_before_noop == head_after_noop == "p9_54_0075"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1316,7 +1320,7 @@ def test_fresh_setup_runs_on_a_server_without_sql_pgq() -> None:
             assert graph_catalog_problems(connection=connection) == ()
     finally:
         engine.dispose()
-    assert _head_revision(database_url=database_url) == "p9_53_0074"
+    assert _head_revision(database_url=database_url) == "p9_54_0075"
 
 
 def test_citation_projection_migration_round_trips_graph_metadata() -> None:
@@ -1469,7 +1473,7 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_53_0074"
+    assert _head_revision(database_url=database_url) == "p9_54_0075"
 
 
 def test_d150_refuses_to_drop_staged_originals() -> None:
@@ -1513,7 +1517,7 @@ def test_d150_refuses_to_drop_staged_originals() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_53_0074"
+    assert _head_revision(database_url=database_url) == "p9_54_0075"
 
 
 _BACKFILL_MIMES = (
@@ -1722,7 +1726,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_53_0074"
+    assert _head_revision(database_url=database_url) == "p9_54_0075"
 
 
 def test_d134_own_document_name_span_downgrade_guard() -> None:
@@ -1781,7 +1785,7 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_53_0074"
+    assert _head_revision(database_url=database_url) == "p9_54_0075"
 
 
 def test_d138_downgrade_guard_protects_search_only_readings() -> None:
@@ -1916,4 +1920,158 @@ def test_d138_downgrade_guard_protects_search_only_readings() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_53_0074"
+    assert _head_revision(database_url=database_url) == "p9_54_0075"
+
+
+def test_d159_upgrade_turns_d74_manifests_into_forget_records() -> None:
+    """§5 test 13 (D74 part): complete stays complete; unfinished is hidden, queued."""
+    import json
+
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_53_0074")
+    engine = create_engine(database_url)
+    deployment_id = uuid4()
+    complete_doc, unfinished_doc = uuid4(), uuid4()
+    complete_id, unfinished_id, preparing_id = uuid4(), uuid4(), uuid4()
+    unfinished_version = uuid4()
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES (:d, 'd159-upgrade',"
+                    " 'D159 upgrade', 'mem://raw', 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"d": deployment_id},
+            )
+            for doc_id, kind in ((complete_doc, "upload"), (unfinished_doc, "drive")):
+                connection.execute(
+                    text(
+                        "INSERT INTO content_objects (deployment_id, content_hash,"
+                        " mime, raw_uri) VALUES (:d, :h, 'text/plain', 'raw')"
+                    ),
+                    {"d": deployment_id, "h": f"hash-{doc_id}"},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                        " source_ref) VALUES (:doc, :d, :kind, :ref)"
+                    ),
+                    {"doc": doc_id, "d": deployment_id, "kind": kind, "ref": "file-1"},
+                )
+            connection.execute(
+                text(
+                    "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                    " content_hash, version_no) VALUES (:v, :d, :doc, :h, 1)"
+                ),
+                {
+                    "v": unfinished_version,
+                    "d": deployment_id,
+                    "doc": unfinished_doc,
+                    "h": f"hash-{unfinished_doc}",
+                },
+            )
+            for forget_id, doc_id, status in (
+                (complete_id, complete_doc, "complete"),
+                (unfinished_id, unfinished_doc, "accepted"),
+            ):
+                manifest = {
+                    "forget_id": str(forget_id),
+                    "requested_at": "2026-11-01T00:00:00Z",
+                    "fact_ids": [str(uuid4())],
+                    "entity_ids": [],
+                    "resolved_entity_ids": [],
+                    "k_artifact_ids": [],
+                    "object_keys": [f"{doc_id}/original.txt"],
+                }
+                connection.execute(
+                    text(
+                        "INSERT INTO forget_manifests (forget_id, deployment_id,"
+                        " doc_id, schema_version, manifest_hash, manifest,"
+                        " content_hashes, status, accepted_at, completed_at)"
+                        " VALUES (:f, :d, :doc, 1, 'h', CAST(:m AS jsonb),"
+                        " ARRAY[:hash], CAST(:status AS forget_manifest_status),"
+                        " now(), CASE WHEN :status = 'complete' THEN now() END)"
+                    ),
+                    {
+                        "f": forget_id,
+                        "d": deployment_id,
+                        "doc": doc_id,
+                        "m": json.dumps(manifest),
+                        "hash": f"hash-{doc_id}",
+                        "status": status,
+                    },
+                )
+            connection.execute(
+                text(
+                    "INSERT INTO forget_manifests (forget_id, deployment_id, doc_id,"
+                    " schema_version) VALUES (:f, :d, :doc, 1)"
+                ),
+                {"f": preparing_id, "d": deployment_id, "doc": uuid4()},
+            )
+            # A queued D74 coordinator row is skipped, never run.
+            connection.execute(
+                text(
+                    "INSERT INTO processing_state (processing_id, deployment_id,"
+                    " target_kind, target_id, stage, component_version,"
+                    " content_hash) VALUES (gen_random_uuid(), :d, 'document',"
+                    " :doc, 'hard_forget', 'hard-forget-v1', 'h')"
+                ),
+                {"d": deployment_id, "doc": unfinished_doc},
+            )
+
+        command.upgrade(config=config, revision="p9_54_0075")
+
+        with engine.connect() as connection:
+            records = {
+                row["forget_id"]: row
+                for row in connection.execute(
+                    text("SELECT * FROM forgets WHERE deployment_id = :d"),
+                    {"d": deployment_id},
+                ).mappings()
+            }
+            assert records[complete_id]["status"] == "complete"
+            assert records[complete_id]["source_identity_hash"] is None  # an upload
+            unfinished = records[unfinished_id]
+            assert unfinished["status"] == "erasing"
+            assert unfinished["version_ids"] == [unfinished_version]
+            assert unfinished["content_hashes"] == [f"hash-{unfinished_doc}"]
+            assert unfinished["source_identity_hash"] is not None
+            assert unfinished["collected"]["object_keys"] == [
+                f"{unfinished_doc}/original.txt"
+            ]
+            assert records[preparing_id]["status"] == "erasing"
+            hidden = connection.execute(
+                text(
+                    "SELECT d.deleted_at IS NOT NULL AND v.deleted_at IS NOT NULL"
+                    " FROM documents d JOIN document_versions v USING (doc_id)"
+                    " WHERE d.doc_id = :doc"
+                ),
+                {"doc": unfinished_doc},
+            ).scalar_one()
+            assert hidden
+            work = {
+                (row["target_kind"], row["status"])
+                for row in connection.execute(
+                    text(
+                        "SELECT target_kind::text AS target_kind,"
+                        " status::text AS status FROM processing_state"
+                        " WHERE deployment_id = :d AND stage = 'forget'"
+                    ),
+                    {"d": deployment_id},
+                ).mappings()
+            }
+            assert work == {("document", "skipped"), ("forget", "pending")}
+            assert (
+                connection.execute(
+                    text("SELECT to_regclass('public.forget_manifests')")
+                ).scalar_one()
+                is None
+            )
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_54_0075"

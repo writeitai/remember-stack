@@ -52,9 +52,10 @@ class SelfHostForget:
         supply both K capabilities; their absence never silently skips them.
         """
         catalog = ForgetCatalog(engine=engine)
+        service = ForgetService(engine=engine, catalog=catalog)
         absent_k = _NoKnowledgeStore(engine=engine)
         handler = ForgetHandler(
-            engine=engine,
+            service=service,
             catalog=catalog,
             profile_refresher=EntityProfileRefresher(
                 engine=engine,

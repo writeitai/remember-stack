@@ -47,7 +47,6 @@ from rememberstack.model import ManifestComponent
 from rememberstack.model import ProviderCallUsage
 from rememberstack.workers.e0 import _record_lane_usage
 from rememberstack.workers.e0 import _require_coherent_envelope
-from rememberstack.workers.forget import conversion_checkpoint_prefixes
 from rememberstack.workers.lane_checkpoints import ObjectStoreLaneCheckpoints
 
 _OCR_TEXT = "Visible contract clause.\n"
@@ -878,14 +877,6 @@ def test_registry_builds_the_image_route_only_with_both_keys(
     assert routes["application/pdf"].name == "pdf"
     assert routes["application/pdf"] is not routes["image/png"]
     assert isinstance(routes["image/png"], LaneCheckpointConverter)
-
-
-def test_forget_prefixes_cover_private_checkpoints_only() -> None:
-    """Deletion targets the checkpoint directory, not representation objects."""
-    doc_id = uuid4()
-    digest = "a" * 64
-    (prefix,) = conversion_checkpoint_prefixes(doc_id=doc_id, content_hashes=(digest,))
-    assert prefix.root == f"{doc_id}/{digest}/conversion-checkpoints"
 
 
 def test_usage_event_carries_provider_echoed_models() -> None:

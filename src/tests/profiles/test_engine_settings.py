@@ -7,7 +7,6 @@ from sqlalchemy.pool import NullPool
 
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import MinIOSettings
-from rememberstack.adapters.selfhost import ObjectStoreForgetManifestStore
 from rememberstack.profiles import EngineSettings
 from rememberstack.profiles import SelfHostProfile
 from rememberstack.profiles import SelfHostSettings
@@ -30,7 +29,6 @@ def _settings() -> EngineSettings:
             raw_bucket_name="fs-raw",
             artifacts_bucket_name="fs-artifacts",
             corpusfs_bucket_name="fs-corpus",
-            forget_manifest_bucket_name="fs-forget",
         ),
         database=DatabaseSettings(
             database_url=SecretStr("postgresql+psycopg://u:p@db.invalid:5432/project")
@@ -38,7 +36,7 @@ def _settings() -> EngineSettings:
         object_store=_store("shared"),
         model_provider=OpenRouterSettings(api_key="child-key"),
         work_ledger=WorkLedgerSettings(),
-        object_store_by_bucket={"fs-raw": _store("raw"), "fs-forget": _store("forget")},
+        object_store_by_bucket={"fs-raw": _store("raw")},
     )
 
 
@@ -61,9 +59,6 @@ def test_from_settings_keeps_no_state_on_local_disk_and_takes_engine_options() -
         assert isinstance(profile._engine.pool, NullPool)  # noqa: SLF001
         assert _access_key(profile._raw_store) == "raw"  # noqa: SLF001
         assert _access_key(profile._artifact_store) == "shared"  # noqa: SLF001
-        manifests = profile._forget_manifest_store()  # noqa: SLF001
-        assert isinstance(manifests, ObjectStoreForgetManifestStore)
-        assert _access_key(manifests._store) == "forget"  # noqa: SLF001
     finally:
         profile.close()
 

@@ -42,6 +42,16 @@ class ObjectPurgePort(Protocol):
         """Verify object absence, returning the unfinished-upload coverage."""
         ...
 
+    def purge_retained_versions_containing(
+        self, *, keys: tuple[ObjectKey, ...], needle: bytes
+    ) -> int:
+        """Delete retained (non-current) versions of these keys that contain ``needle``.
+
+        A store that keeps no object versions answers zero. Current objects are
+        never touched; the caller rewrites them.
+        """
+        ...
+
 
 @runtime_checkable
 class ProjectionPurgePort(Protocol):

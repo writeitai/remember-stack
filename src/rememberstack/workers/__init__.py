@@ -36,7 +36,6 @@ from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
-from rememberstack.workers.forget import forget_reapply
 from rememberstack.workers.forget import ForgetHandler
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 from rememberstack.workers.forget import ForgetService
@@ -136,7 +135,6 @@ __all__ = (
     "ForgetKnowledgeRebuilder",
     "ForgetHandler",
     "ForgetService",
-    "forget_reapply",
     "KnowledgeCycleForgetRebuilder",
     "RunResult",
     "StageHandler",

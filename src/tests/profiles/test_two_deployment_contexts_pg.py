@@ -211,14 +211,13 @@ def profiles(
     built: dict[UUID, SelfHostProfile] = {}
     for deployment_id, engine in engines.items():
         root = tmp_path / str(deployment_id)
-        (root / "forget").mkdir(parents=True)
+        root.mkdir(parents=True)
         built[deployment_id] = SelfHostProfile(
             settings=SelfHostSettings(
                 deployment_id=deployment_id,
                 retrieval_database_budget_s=75
                 if deployment_id == _DEPLOYMENT_A
                 else 240,
-                forget_manifest_root=root / "forget",
             ),
             engine=engine,
             raw_store=(  # type: ignore[arg-type]

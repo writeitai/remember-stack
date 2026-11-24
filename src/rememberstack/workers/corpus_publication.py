@@ -177,11 +177,14 @@ class CorpusPublisher:
 
         Takes no publication lock: it deletes only the document's own folders
         (every object version, found by suffix) and rewrites only navigation
-        files that list the suffix, from the database, which no longer serves
-        the document. A publisher racing it can at worst write navigation that
-        lists the document again; the forget's next sweep finds and removes
-        that. Returns whether anything was removed, and the removed folders
-        and rewritten navigation paths (for mount invalidation).
+        above them or listing the suffix, from the database, which no longer
+        serves the document. Navigation is rewritten before anything is
+        deleted, so an interrupted step never leaves a survivor's listing
+        missing; retained versions that still list the suffix go last. A
+        publisher racing it can at worst write navigation that lists the
+        document again; the forget's next sweep finds and removes that.
+        Returns whether anything was removed, and the removed folders and
+        rewritten navigation paths (for mount invalidation).
         """
         suffix = corpus_suffix(doc_id)
         folders: set[str] = set()
@@ -199,35 +202,34 @@ class CorpusPublisher:
             while parent:
                 ancestors.add(parent)
                 parent = posixpath.dirname(parent)
-        rewritten = {posixpath.join(parent, "_index.md") for parent in ancestors}
-        rewritten = (rewritten | {"llms.txt"} | listing) & navigation
-        if folders:
-            # Every retained version of each listing file goes too: an older
-            # version can still list the document.
-            purger.purge_objects(
-                keys=tuple(ObjectKey(path) for path in sorted(rewritten)),
-                prefixes=tuple(ObjectKey(path) for path in sorted(folders)),
-            )
-        elif listing:
-            purger.purge_objects(
-                keys=tuple(ObjectKey(path) for path in sorted(rewritten)), prefixes=()
-            )
         if folders or listing:
             self._navigation(
                 deployment_id=deployment_id, before_write=None, ancestors=ancestors
             )
-        for path in navigation | set(rewritten):
+        removed = 0
+        if folders:
+            removed += purger.purge_objects(
+                keys=(), prefixes=tuple(ObjectKey(path) for path in sorted(folders))
+            )
+        removed += purger.purge_retained_versions_containing(
+            keys=tuple(ObjectKey(path) for path in sorted(navigation)),
+            needle=suffix.encode(),
+        )
+        for path in navigation:
             if self._lists(path=path, suffix=suffix):
                 raise RuntimeError(
                     f"corpus navigation still lists the document: {path}"
                 )
-        return bool(folders or listing), tuple(sorted(folders | rewritten))
+        rewritten = {posixpath.join(parent, "_index.md") for parent in ancestors}
+        rewritten |= {"llms.txt"} | listing
+        return bool(folders or listing or removed), tuple(sorted(folders | rewritten))
 
     def _lists(self, *, path: str, suffix: str) -> bool:
         """Whether one current navigation file names a document suffix."""
-        if self._store.sha256_of(key=ObjectKey(path)) is None:
+        try:
+            return suffix.encode() in self._store.read_bytes(key=ObjectKey(path))
+        except FileNotFoundError:
             return False
-        return suffix.encode() in self._store.read_bytes(key=ObjectKey(path))
 
     def _discover(
         self, *, lock: CorpusPublicationLock

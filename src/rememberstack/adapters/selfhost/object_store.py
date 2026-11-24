@@ -170,6 +170,12 @@ class LocalFSObjectStore:
         self._prune_parents(path.parent, root=self._root)
         self._prune_parents(self._class_path(key=key).parent, root=self._metadata_root)
 
+    def purge_retained_versions_containing(
+        self, *, keys: tuple[ObjectKey, ...], needle: bytes
+    ) -> int:
+        """Local storage keeps no object versions."""
+        return 0
+
     def iter_purge_keys(self) -> Iterator[ObjectKey]:
         """Local storage retains neither object versions nor multipart uploads."""
         yield from self.iter_keys(prefix="")

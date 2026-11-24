@@ -46,7 +46,6 @@ from rememberstack.model import DocumentDeletion
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EvalSuite
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -87,6 +86,7 @@ from rememberstack.workers import E3Settings
 from rememberstack.workers import EmbedChunksHandler
 from rememberstack.workers import EmbedClaimsHandler
 from rememberstack.workers import ExtractClaimsHandler
+from rememberstack.workers import ForgetService
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import LabelFactsHandler
 from rememberstack.workers import NormalizeRelationsHandler
@@ -1653,68 +1653,19 @@ def test_old_reconcile_work_keeps_the_re_added_documents_anchors(
     assert _open_works_for(rig) == 1
 
 
-def test_a_forget_already_preparing_refuses_the_delete(rig: _LifecycleRig) -> None:
-    """Major: a forget that entered preparing before the delete took the
-    fence refuses it with ForgetInProgressError, and nothing is changed."""
+def test_a_forget_of_another_document_does_not_stop_a_delete(
+    rig: _LifecycleRig,
+) -> None:
+    """D159: a forget hides one lineage; nothing else waits for it."""
     added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
     other = rig.observe(source_ref="other.md", content=f"{_FILLER_SENTENCE}\n")
     rig.drain()
-    ForgetCatalog(engine=rig.engine).prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id, forget_id=uuid4()
+    ForgetService(engine=rig.engine, catalog=ForgetCatalog(engine=rig.engine)).request(
+        deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id
     )
 
-    with pytest.raises(ForgetInProgressError):
-        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
 
-    assert (
-        rig.scalar("SELECT deleted_at FROM documents WHERE doc_id = :d", d=added.doc_id)
-        is None
-    )
-    assert _current_claims(rig, added.doc_id) == 1
-
-
-def test_a_forget_cannot_start_while_a_delete_is_running(rig: _LifecycleRig) -> None:
-    """Major: the delete holds the D74 fence to its commit. A forget prepared
-    mid-delete waits for it, so the delete completes whole."""
-    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
-    other = rig.observe(source_ref="other.md", content=f"{_FILLER_SENTENCE}\n")
-    rig.drain()
-    blocker = rig.engine.connect()
-    blocker.begin()
-    blocker.execute(
-        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
-        {"d": added.doc_id},
-    )
-    outcomes: dict[str, object] = {}
-
-    def delete() -> None:
-        try:
-            outcomes["deleted"] = _deleter(rig).delete_document(
-                deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
-            )
-        except Exception as error:  # noqa: BLE001 — asserted below
-            outcomes["error"] = error
-
-    def forget() -> None:
-        ForgetCatalog(engine=rig.engine).prepare(
-            deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id, forget_id=uuid4()
-        )
-        outcomes["forget_prepared_at"] = time.monotonic()
-
-    deleting = threading.Thread(target=delete)
-    deleting.start()
-    _wait_for_blocked(rig, count=1)  # mid-delete, fence held
-    forgetting = threading.Thread(target=forget)
-    forgetting.start()
-    _wait_for_blocked(rig, count=2)  # the forget waits on the fence
-    assert "forget_prepared_at" not in outcomes
-    blocker.rollback()
-    blocker.close()
-    deleting.join(timeout=60)
-    forgetting.join(timeout=60)
-
-    assert "error" not in outcomes, outcomes.get("error")
-    assert "forget_prepared_at" in outcomes
     assert _current_claims(rig, added.doc_id) == 0
     assert rig.relation()["invalidated_at"] is not None
 

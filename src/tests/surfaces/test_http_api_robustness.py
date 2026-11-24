@@ -18,9 +18,9 @@ from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
 
 from rememberstack.model import current_temporal_scope
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
-from rememberstack.model import ForgottenSourceError
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import IngestedVersion
@@ -127,18 +127,22 @@ class _SavedQueries:
         return ()
 
 
+_FORGET_ID = UUID("59000000-0000-0000-0000-000000000001")
+_FORGOTTEN_AT = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
+
+
 class _ForgottenIngest:
-    """An E0 gate whose admission matched an irreversible forget."""
+    """An E0 gate whose re-ingest guard matched a forget record (D159 §3.6)."""
 
     def ingest(self, **kwargs: object) -> IngestedVersion:
         """Refuse like `guard_ingest`."""
         del kwargs
-        raise ForgottenSourceError("ingest matches irreversible forget_id x")
+        raise DocumentForgottenError(forget_id=_FORGET_ID, forgotten_at=_FORGOTTEN_AT)
 
     def ingest_observed(self, **kwargs: object) -> IngestedVersion:
         """Refuse like `guard_ingest`."""
         del kwargs
-        raise ForgottenSourceError("ingest matches irreversible forget_id x")
+        raise DocumentForgottenError(forget_id=_FORGET_ID, forgotten_at=_FORGOTTEN_AT)
 
 
 def _client(
@@ -303,7 +307,13 @@ def test_reingesting_forgotten_content_is_a_conflict(lineage: dict[str, str]) ->
         headers={"Content-Type": "application/octet-stream"},
     )
     assert response.status_code == 409
-    assert response.json() == {"detail": "source_forgotten"}
+    assert response.json() == {
+        "detail": {
+            "code": "document_forgotten",
+            "forget_id": str(_FORGET_ID),
+            "forgotten_at": _FORGOTTEN_AT.isoformat(),
+        }
+    }
 
 
 def test_other_internal_graph_errors_stay_500() -> None:

@@ -39,7 +39,6 @@ from rememberstack.ports import SystemOnePort
 from rememberstack.ports import TaskQueuePort
 from rememberstack.ports import TelemetryPort
 import rememberstack.ports.auth as auth_module
-import rememberstack.ports.forget as forget_module
 import rememberstack.ports.git as git_module
 import rememberstack.ports.metering as metering_module
 import rememberstack.ports.model_provider as model_provider_module
@@ -55,7 +54,6 @@ ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
 _PORT_MODULES: tuple[ModuleType, ...] = (
     auth_module,
-    forget_module,
     git_module,
     metering_module,
     model_provider_module,
