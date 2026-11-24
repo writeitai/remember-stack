@@ -91,6 +91,8 @@ any text layer; a missing page index in the OCR response is a typed conversion
 failure, not a discount from the source page count. The
 separate managed cloud maps the same count to `doc-scan`, without also
 charging `doc-text`; implementing that receipt mapping belongs to the cloud.
+The `image_ocr_description` route records one `image` unit per PNG or JPEG
+before its OCR and description calls (D150 amendment of 2026-11-24).
 
 ### 2.2 Detection and precedence
 

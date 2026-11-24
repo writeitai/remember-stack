@@ -75,6 +75,7 @@ from rememberstack.core.metering import cost_class_for_route
 from rememberstack.core.metering import DOC_SCAN_ALGORITHM_VERSION
 from rememberstack.core.metering import DOC_TEXT_ALGORITHM_VERSION
 from rememberstack.core.metering import FREE_ROUTES
+from rememberstack.core.metering import IMAGE_ALGORITHM_VERSION
 from rememberstack.core.metering import METERING_CLASSIFIER_VERSION
 from rememberstack.core.metering import normalized_character_count
 from rememberstack.core.metering import UnmeteredRouteError
@@ -1012,8 +1013,9 @@ class ConvertHandler:
 
         Returns None when nothing is metered here: no meter, a free card, or
         an approved measurement. A recorded but unapproved measurement parks
-        the work again. A PDF is measured now, before its OCR call, and
-        parks. A reading route converts first and is measured after.
+        the work again. A PDF (its pages) and an image (one unit) are
+        measured now, before any provider call, and park. A reading route
+        converts first and is measured after.
         """
         if self._meter_scope is None or converter.name in FREE_ROUTES:
             return None
@@ -1031,6 +1033,15 @@ class ConvertHandler:
             raise AdmissionPendingError(f"measurement {state}")
         if cost_class == "doc-text":
             return cost_class
+        if cost_class == "image":
+            self._record_measurement(
+                work=work,
+                source=source,
+                cost_class=cost_class,
+                native_quantity=1,
+                algorithm_version=IMAGE_ALGORITHM_VERSION,
+            )
+            raise AdmissionPendingError("measured one image before provider calls")
         by_url = (
             isinstance(converter, UrlConverter)
             and isinstance(self._raw_store, PresignedReadPort)
