@@ -1544,7 +1544,9 @@ class SelfHostProfile:
     def _model_bindings(self) -> dict[str, str]:
         """This deployment's non-secret model bindings."""
         return _model_bindings(
-            openrouter=self._model_provider_settings, systemone=self._systemone_settings
+            openrouter=self._model_provider_settings,
+            systemone=self._systemone_settings,
+            facts=self._fact_settings,
         )
 
     def _managed_meter_scope(self):  # noqa: ANN202
@@ -2311,15 +2313,15 @@ def _model_bindings(
     *,
     openrouter: OpenRouterSettings | None = None,
     systemone: TypeSafeSettings | None = None,
+    facts: FactAdjudicationSettings | None = None,
 ) -> dict[str, str]:
     """Non-secret provider model identities used by the composed pipeline.
 
-    ``openrouter`` is the deployment's provider settings and ``systemone`` the
-    profile's checked System One settings; without them each is read from the
-    environment.
+    ``openrouter`` is the deployment's provider settings, and ``systemone``
+    and ``facts`` the profile's checked System One and fact-adjudication
+    settings; without them each is read from the environment.
     """
     from rememberstack.spine import ObservationSettings
-    from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
     from rememberstack.workers import E2Settings
     from rememberstack.workers import E3Settings
     from rememberstack.workers import P1Settings
@@ -2335,7 +2337,8 @@ def _model_bindings(
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
     observations = ObservationSettings.model_validate({})
-    facts = FactAdjudicationSettings.model_validate({})
+    if facts is None:
+        facts = FactAdjudicationSettings.model_validate({})
     p1 = P1Settings.model_validate({})
     if openrouter is None:
         openrouter = OpenRouterSettings.model_validate({})

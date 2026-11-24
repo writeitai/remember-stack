@@ -98,7 +98,11 @@ class StrictSchemaError(ValueError):
 class OpenRouterSettings(BaseSettings):
     """The OpenRouter binding: key and endpoint, per deployment (D61)."""
 
-    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_OPENROUTER_")
+    # Frozen: one deployment's key, endpoint and ZDR policy cannot change after
+    # an engine or a System One client was built and checked against them.
+    model_config = SettingsConfigDict(
+        env_prefix="REMEMBERSTACK_OPENROUTER_", frozen=True
+    )
 
     api_key: str = Field(min_length=1)
     base_url: str = Field(default="https://openrouter.ai/api/v1")

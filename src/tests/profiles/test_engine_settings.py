@@ -429,3 +429,24 @@ def test_zdr_prompt_fallback_needs_the_deployments_openrouter_provider(
             )
     finally:
         engine.dispose()
+
+
+def test_readiness_reports_the_checked_fact_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readiness describes the settings the handlers use, not a later env."""
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    settings = replace(
+        _settings(), model_provider=OpenRouterSettings(api_key="child-key", zdr=True)
+    )
+    profile = SelfHostProfile.from_settings(settings)
+    try:
+        monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "prompt")
+        bindings = profile._model_bindings()  # noqa: SLF001
+    finally:
+        profile.close()
+
+    assert bindings["systemone_route"] == "openrouter"
+    assert bindings["fact_adjudication"] == "jev-latest"

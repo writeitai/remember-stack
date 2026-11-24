@@ -382,3 +382,44 @@ def test_compose_takes_the_jev_route_and_reads_zdr_only_from_dotenv() -> None:
         assert "REMEMBERSTACK_OPENROUTER_ZDR" not in environment
         assert "REMEMBERSTACK_OPENROUTER_BASE_URL" not in environment
         assert service["env_file"] == [{"path": ".env", "required": False}]
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    (
+        "https://api.typesafe.ai/v1",
+        "https://gateway.example/api/v1",
+        "http://openrouter.ai/api/v1",
+    ),
+)
+def test_zdr_openrouter_route_refuses_a_host_other_than_openrouter(
+    base_url: str,
+) -> None:
+    """``provider.zdr`` binds only OpenRouter; any other host is refused.
+
+    The refusal happens before a client exists, so no request can leave.
+    """
+    with pytest.raises(ConfigurationError, match="openrouter.ai"):
+        build_systemone_provider(
+            settings=TypeSafeSettings(route="openrouter"),
+            openrouter=OpenRouterSettings(
+                api_key="project-key", base_url=base_url, zdr=True
+            ),
+        )
+
+
+def test_deployment_openrouter_settings_cannot_change_after_checks() -> None:
+    """Key, endpoint and ZDR are frozen once a deployment's settings exist."""
+    from pydantic import ValidationError
+
+    settings = OpenRouterSettings(api_key="project-key", zdr=True)
+
+    for field, value in (
+        ("zdr", False),
+        ("api_key", "other-project-key"),
+        ("base_url", "https://api.typesafe.ai/v1"),
+    ):
+        with pytest.raises(ValidationError):
+            setattr(settings, field, value)
+    assert settings.zdr is True
+    assert settings.api_key == "project-key"
