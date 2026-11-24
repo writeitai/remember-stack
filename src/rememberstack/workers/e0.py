@@ -755,14 +755,20 @@ class ConvertHandler:
             # The reading limit guards this process, which would read the PDF;
             # a route that fetches it by URL is not bound by it (D147).
             self._fail_oversized_pdf(source=source)
+        # A route's provider ceiling (the PDF route's, the image route's)
+        # fails the version before measurement, download or any provider call.
         provider_limit = getattr(converter, "provider_limit_bytes", None)
         if (
-            source.mime == "application/pdf"
-            and source.byte_size is not None
+            source.byte_size is not None
             and isinstance(provider_limit, int)
             and source.byte_size > provider_limit
         ):
-            error = f"PDF exceeds the pre-OCR provider limit of {provider_limit} bytes"
+            error = (
+                f"PDF exceeds the pre-OCR provider limit of {provider_limit} bytes"
+                if source.mime == "application/pdf"
+                else f"{source.mime} exceeds the {converter.name} provider limit "
+                f"of {provider_limit} bytes"
+            )
             self._catalog.mark_version_failed(version_id=source.version_id, error=error)
             raise NonRetryableHandlerError(error)
         cost_class = self._admission(work=work, source=source, converter=converter)
