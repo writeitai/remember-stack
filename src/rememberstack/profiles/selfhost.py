@@ -49,6 +49,7 @@ from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.adapters.systemone import build_systemone_provider
+from rememberstack.adapters.systemone import validate_systemone_routing
 from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
@@ -896,9 +897,11 @@ class EngineSettings:
     several deployments from one process makes one per deployment and builds
     each engine from it, so no deployment's values live in process globals.
     Model policy (which models each stage calls) and the accounts of the
-    optional converter providers (OCR, image description) and of System One
-    still come from the environment and are the same for every deployment a
-    process serves.
+    optional converter providers (OCR, image description) still come from the
+    environment and are the same for every deployment a process serves. So
+    does System One's account on its direct ``typesafe`` route; on the
+    ``openrouter`` route (``REMEMBERSTACK_TYPESAFE_ROUTE``) System One uses
+    this deployment's ``model_provider`` key, base URL and ZDR flag.
     """
 
     deployment: SelfHostSettings
@@ -970,6 +973,11 @@ class SelfHostProfile:
         the routes named by ``settings.conversion_routes``, for a host that
         runs conversion elsewhere. ``forget_manifests`` replaces the local
         ``forget_manifest_root`` store.
+
+        When fact adjudication uses Jev, the System One settings are read and
+        checked here (route, ZDR and backup), so an unsafe combination stops
+        the profile before it serves readiness or takes a task; both Jev
+        stages and the readiness bindings reuse the same checked settings.
         """
         self._settings = settings
         self._engine = engine
@@ -988,6 +996,13 @@ class SelfHostProfile:
         self._corpus_caches = corpus_caches
         self._k_git = k_git
         self._knowledge_rebuilder = knowledge_rebuilder
+        self._systemone_settings: TypeSafeSettings | None = None
+        if FactAdjudicationSettings.model_validate({}).engine == "jev":
+            systemone_settings = TypeSafeSettings.model_validate({})
+            validate_systemone_routing(
+                settings=systemone_settings, openrouter=self._model_provider_settings
+            )
+            self._systemone_settings = systemone_settings
 
     @classmethod
     def from_settings(
@@ -1455,7 +1470,9 @@ class SelfHostProfile:
 
     def _model_bindings(self) -> dict[str, str]:
         """This deployment's non-secret model bindings."""
-        return _model_bindings(openrouter=self._model_provider_settings)
+        return _model_bindings(
+            openrouter=self._model_provider_settings, systemone=self._systemone_settings
+        )
 
     def _managed_meter_scope(self):  # noqa: ANN202
         """Return the fleet-authored commercial scope, or None for OSS self-host."""
@@ -1856,7 +1873,7 @@ class SelfHostProfile:
                     settings=fact_settings,
                     systemone_provider=(
                         build_systemone_provider(
-                            settings=TypeSafeSettings(),
+                            settings=self._systemone_settings or TypeSafeSettings(),
                             openrouter=self._model_provider_settings,
                         )
                         if fact_settings.engine == "jev"
@@ -1878,7 +1895,7 @@ class SelfHostProfile:
                     settings=fact_settings,
                     systemone_provider=(
                         build_systemone_provider(
-                            settings=TypeSafeSettings(),
+                            settings=self._systemone_settings or TypeSafeSettings(),
                             openrouter=self._model_provider_settings,
                         )
                         if fact_settings.engine == "jev"
@@ -2190,11 +2207,16 @@ def _build_revision() -> str:
     return BuildProvenanceSettings().build_revision
 
 
-def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str, str]:
+def _model_bindings(
+    *,
+    openrouter: OpenRouterSettings | None = None,
+    systemone: TypeSafeSettings | None = None,
+) -> dict[str, str]:
     """Non-secret provider model identities used by the composed pipeline.
 
-    ``openrouter`` is the deployment's provider settings; without them they
-    are read from the environment.
+    ``openrouter`` is the deployment's provider settings and ``systemone`` the
+    profile's checked System One settings; without them each is read from the
+    environment.
     """
     from rememberstack.spine import ObservationSettings
     from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
@@ -2218,7 +2240,8 @@ def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str
     if openrouter is None:
         openrouter = OpenRouterSettings.model_validate({})
     if facts.engine == "jev":
-        fact_adjudication_model = TypeSafeSettings.model_validate({}).model
+        systemone = systemone or TypeSafeSettings.model_validate({})
+        fact_adjudication_model = systemone.model
     else:
         fact_adjudication_model = facts.model
     bindings = {
@@ -2266,8 +2289,8 @@ def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str
         if openrouter.reasoning_effort_map
         else "unset",
     }
-    if facts.engine == "jev":
-        settings = TypeSafeSettings.model_validate({})
+    if facts.engine == "jev" and systemone is not None:
+        settings = systemone
         bindings["systemone_backup"] = settings.backup
         if settings.route != "typesafe":
             # Present only when opted in, so direct-TypeSafe bindings and

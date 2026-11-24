@@ -6420,8 +6420,10 @@ OpenRouter's TypeSafe-compatible `/systemone` endpoint.
 `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter` builds the client from the
 deployment's OpenRouter settings (key, base URL, ZDR), so a multi-deployment
 host bills each deployment to its own key. With OpenRouter ZDR on, every call
-sends `provider: {zdr: true, data_collection: deny}` and the native Decisions
-backup is refused. The billed `usage.cost` is required. The default `typesafe`
+sends `provider: {zdr: true, data_collection: deny}`, and the direct
+`typesafe` route and the native Decisions backup are both refused when the
+profile is built. Strict zero retention also needs the OpenRouter account or
+key guardrail to exclude Safety Retention for All other models. The billed `usage.cost` is required. The default `typesafe`
 route is unchanged. The owner requires remember.dev to send customer content
 only to ZDR endpoints. See the
 [binding contract](plan/designs/jev_adjudication_design.md#system-one-through-openrouter)
@@ -7647,7 +7649,9 @@ deployment's values into another's work.
    adjudication engine) and the accounts of the optional converter providers (Mistral OCR,
    image description) and of System One still come from the environment. They are the
    same for every deployment a process serves, so they are the host's accounts, not any
-   one deployment's.
+   one deployment's. *(Clarified 2026-11-24, D126: on `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`
+   System One uses the deployment's own `model_provider` key, base URL and ZDR flag
+   instead; only the direct `typesafe` route uses the process-wide TypeSafe account.)*
 2. **Run one named task.** `run_task(context, processing_id)` (`rememberstack.profiles`)
    reads the row's route from the context's database and runs it through the ordinary
    worker boundary (`Worker.run_one`, with a claim restricted to that row by

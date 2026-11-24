@@ -68,8 +68,9 @@ System One SDK README, and the Decisions API reference:
 - **Payload.** Under ZDR, every request adds
   `"provider": {"zdr": true, "data_collection": "deny"}`. These are the same
   two fields #630 added to embeddings. The TypeSafe route never sends
-  `provider`, because TypeSafe's own API has no such field. The client refuses
-  `zdr` on that route.
+  `provider`, because TypeSafe's own API has no such field. A deployment with
+  `zdr` on is therefore refused on that route (the profile checks it when it
+  is built), instead of silently sending Jev content to TypeSafe's own API.
 - **No `only` allowlist.** Jev is served only by TypeSafe on OpenRouter, so
   `only: ["typesafe"]` would restrict nothing that `zdr: true` does not
   already restrict, since `zdr` selects `typesafe/zdr` among TypeSafe's two
@@ -81,8 +82,8 @@ System One SDK README, and the Decisions API reference:
   from `input_tokens` and `output_tokens`. The serving model is recorded as
   OpenRouter names it (`typesafe/...`), without a second `typesafe/` prefix.
 - **Backup.** The optional OpenAI Decisions backup calls OpenAI's own API,
-  outside OpenRouter's ZDR routing. Under the OpenRouter route with ZDR on,
-  startup refuses `REMEMBERSTACK_TYPESAFE_BACKUP=openai_decisions`.
+  outside OpenRouter's ZDR routing. With ZDR on, the profile refuses
+  `REMEMBERSTACK_TYPESAFE_BACKUP=openai_decisions` when it is built.
 - **Readiness bindings.** `systemone_route` is reported only when it is not
   the default, so direct-TypeSafe deployments and benchmark protocols keep
   byte-identical bindings. ZDR stays out of the bindings, as D127 decided for
@@ -94,6 +95,14 @@ System One SDK README, and the Decisions API reference:
 ## Unverified
 
 The tests use mocked transports. Before production use, one live call should
-confirm three things: the reported `provider` is TypeSafe's ZDR endpoint,
+confirm three things: the call was served by TypeSafe's ZDR endpoint,
 `usage.cost` is present, and OpenRouter's 429 and 529 error bodies classify as
-before (they carry no `answers` or `usage`).
+before (they carry no `answers` or `usage`). The response's `provider` field
+names TypeSafe for both endpoints, so the endpoint check needs other evidence
+that distinguishes `typesafe/zdr` from `typesafe`.
+
+The request flag is also not sufficient on its own: OpenRouter combines
+`zdr: true` with the account's or key guardrail's Safety Retention policy,
+set separately for Google models and All other models (Jev is in the second
+group), and self-serve accounts allow Safety Retention by default. Strict zero
+retention needs that setting excluded and verified for every Project key.

@@ -11,6 +11,7 @@ from rememberstack.adapters.systemone import build_systemone_provider
 from rememberstack.adapters.typesafe import ConfigurationError
 from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
+from rememberstack.adapters.typesafe import TypeSafeUnavailableError
 from rememberstack.model import ProviderAccountingError
 
 _OPENROUTER_BODY: dict[str, object] = {
@@ -18,7 +19,9 @@ _OPENROUTER_BODY: dict[str, object] = {
     "model": "typesafe/jev-1.13-20260917",
     "provider": "TypeSafe",
     "answers": {"match": {"choice": "NEW", "confidence": 0.97}},
-    "usage": {"input_tokens": 476, "output_tokens": 70, "cost": 0.000019992},
+    # Deliberately unlike the direct route's local price (476 x $0.042/M =
+    # 0.000019992), so the test proves the billed cost is the one recorded.
+    "usage": {"input_tokens": 476, "output_tokens": 70, "cost": 0.0000731},
 }
 
 
@@ -80,7 +83,7 @@ def test_openrouter_route_uses_deployment_key_and_zdr_routing() -> None:
     assert usage.model_name == "typesafe/jev-1.13-20260917"
     assert usage.tokens_in == 476
     assert usage.tokens_out == 70
-    assert usage.cost_usd == Decimal("0.000019992")
+    assert usage.cost_usd == Decimal("0.0000731")
 
 
 def test_openrouter_route_without_zdr_sends_no_provider_preferences() -> None:
@@ -125,7 +128,7 @@ def test_direct_typesafe_route_is_unchanged() -> None:
     seen: list[httpx.Request] = []
     provider = build_systemone_provider(
         settings=TypeSafeSettings(api_key="direct-key"),
-        openrouter=OpenRouterSettings(api_key="openrouter-key", zdr=True),
+        openrouter=OpenRouterSettings(api_key="openrouter-key"),
     )
     assert isinstance(provider, TypeSafeSystemOneClient)
     provider.close()
@@ -201,7 +204,121 @@ def test_zdr_refuses_the_native_decisions_backup(
         )
 
 
-def test_zdr_preferences_require_the_openrouter_route() -> None:
-    """TypeSafe's own API has no provider field, so ZDR cannot be sent there."""
+def test_zdr_deployment_refuses_the_direct_typesafe_route() -> None:
+    """A ZDR deployment cannot send Jev content to TypeSafe's own API.
+
+    TypeSafe's API has no zero-data-retention control, so the default route
+    is refused rather than silently ignoring the deployment's ZDR flag.
+    """
     with pytest.raises(ConfigurationError, match="ROUTE=openrouter"):
-        TypeSafeSystemOneClient(settings=TypeSafeSettings(api_key="direct"), zdr=True)
+        build_systemone_provider(
+            settings=TypeSafeSettings(api_key="direct-key"),
+            openrouter=OpenRouterSettings(api_key="openrouter-key", zdr=True),
+        )
+    with pytest.raises(ConfigurationError, match="ROUTE=openrouter"):
+        TypeSafeSystemOneClient(
+            settings=TypeSafeSettings(api_key="direct-key"),
+            openrouter=OpenRouterSettings(api_key="openrouter-key", zdr=True),
+        )
+
+
+def test_client_on_openrouter_route_never_uses_the_process_typesafe_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct construction with the route from the environment needs settings.
+
+    With a process-wide TypeSafe key and URL present, building the exported
+    client on the OpenRouter route without the deployment's OpenRouter
+    settings is refused instead of calling TypeSafe with the process key.
+    """
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_API_KEY", "process-typesafe-key")
+
+    with pytest.raises(ConfigurationError, match="OpenRouter settings"):
+        TypeSafeSystemOneClient()
+
+    seen: list[httpx.Request] = []
+    client = TypeSafeSystemOneClient(
+        openrouter=OpenRouterSettings(api_key="project-key", zdr=True),
+        client=httpx.Client(transport=_capture(body=_OPENROUTER_BODY, seen=seen)),
+    )
+    try:
+        client.evaluate(state={}, questions={})
+    finally:
+        client.close()
+
+    assert str(seen[0].url) == "https://openrouter.ai/api/v1/systemone"
+    assert seen[0].headers["Authorization"] == "Bearer project-key"
+    assert json.loads(seen[0].content)["provider"] == {
+        "zdr": True,
+        "data_collection": "deny",
+    }
+
+
+@pytest.mark.parametrize("status", (429, 529))
+def test_openrouter_rejection_is_retried_with_key_and_zdr_on_every_attempt(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """OpenRouter's 429/529 error bodies retry, then succeed, never leaving ZDR."""
+    monkeypatch.setattr("rememberstack.adapters.typesafe.time.sleep", lambda _s: None)
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(
+                status, json={"error": {"code": status, "message": "busy"}}
+            )
+        return httpx.Response(200, json=_OPENROUTER_BODY)
+
+    client = _routed_client(
+        openrouter=OpenRouterSettings(api_key="project-key", zdr=True),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        _answers, usage = client.evaluate(state={"text": "x"}, questions={})
+    finally:
+        client.close()
+
+    assert len(seen) == 2
+    for request in seen:
+        assert str(request.url) == "https://openrouter.ai/api/v1/systemone"
+        assert request.headers["Authorization"] == "Bearer project-key"
+        assert json.loads(request.content)["provider"] == {
+            "zdr": True,
+            "data_collection": "deny",
+        }
+    assert usage.cost_usd == Decimal("0.0000731")
+
+
+@pytest.mark.parametrize("status", (429, 529))
+def test_exhausted_openrouter_rejections_classify_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """Unbilled 429/529 bodies keep the existing availability classification."""
+    monkeypatch.setattr("rememberstack.adapters.typesafe.time.sleep", lambda _s: None)
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            status, json={"error": {"code": status, "message": "busy"}}
+        )
+
+    client = _routed_client(
+        openrouter=OpenRouterSettings(api_key="project-key", zdr=True),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(TypeSafeUnavailableError) as raised:
+            client.evaluate(state={}, questions={})
+    finally:
+        client.close()
+
+    assert raised.value.usage is None
+    assert len(seen) == 4
+    assert all(
+        json.loads(request.content)["provider"]
+        == {"zdr": True, "data_collection": "deny"}
+        for request in seen
+    )

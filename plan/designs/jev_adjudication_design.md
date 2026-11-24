@@ -149,13 +149,35 @@ two Jev endpoints, `typesafe` and `typesafe/zdr`; only the second is a
 zero-data-retention endpoint, and the flag makes routing choose it. No `only`
 allowlist is sent: Jev has a single provider, so it would restrict nothing that
 `zdr` does not, and it would break if the provider slug changed. Without ZDR no
-`provider` object is sent. The client refuses ZDR on the `typesafe` route,
-because TypeSafe's API has no `provider` field.
+`provider` object is sent.
 
-Under that route with ZDR, startup refuses `backup="openai_decisions"`: the
-native backup would carry the same content to OpenAI outside OpenRouter's ZDR
-routing. A missing deployment `OpenRouterSettings` on the `openrouter` route is
-also a startup `ConfigurationError`. Readiness reports `systemone_route` only
+A deployment whose `OpenRouterSettings.zdr` is true must use the `openrouter`
+route: TypeSafe's own API has no zero-data-retention control, so the direct
+route is refused rather than silently sending customer content there. Under
+ZDR, `backup="openai_decisions"` is refused too: the native backup would carry
+the same content to OpenAI outside OpenRouter's ZDR routing. A missing
+deployment `OpenRouterSettings` on the `openrouter` route is also a
+`ConfigurationError`. `validate_systemone_routing` makes these checks, and
+`SelfHostProfile` runs it when the profile is built (before it serves
+readiness or takes a task), keeping the checked `TypeSafeSettings` for both
+Jev stages and for readiness. `TypeSafeSystemOneClient` itself takes the
+deployment's `OpenRouterSettings` and, on the `openrouter` route, refuses to
+start without them, so no construction path can fall back to the
+process-wide TypeSafe key.
+
+The request flags are necessary but not sufficient for strict zero retention.
+OpenRouter combines a request's `zdr: true` with the account's (or the API
+key's guardrail's) policy, which decides whether Safety Retention endpoints
+also count; a Safety Retention endpoint may keep any request, flagged or not,
+for abuse prevention. The choice is separate for **Google models** and **All
+other models**; Jev is in **All other models**. Self-serve accounts allow
+Safety Retention by default and no request field turns it off, so a
+deployment that requires strict zero retention sets the account, or the
+guardrail on every Project key, to ZDR only with Safety Retention excluded for
+that group, and verifies it before sending customer content. The response's
+`provider` field names TypeSafe for both Jev endpoints, so it cannot show
+which one served a call; a rollout check needs evidence that distinguishes the
+two endpoints. Readiness reports `systemone_route` only
 when it is not `typesafe`, so direct-TypeSafe bindings stay byte-identical;
 ZDR, like other OpenRouter transport settings (D127), is not a binding. The
 route changes no generation identity or paid reuse key. Rationale:
@@ -505,7 +527,9 @@ call has its own receipt. Invalid native answers follow the same ownership rule.
 2. **Sub-floor confidence:**
    - Evaluated within Jev as `NEW` fact fail-safe. Does NOT fall back to prompt.
 3. **Network isolation:**
-   - Standard outbound HTTPS on 443 to `api.typesafe.ai`. `HTTP_PROXY` and
+   - Standard outbound HTTPS on 443 to `api.typesafe.ai` on the `typesafe`
+     route, or to the deployment's OpenRouter base URL (default
+     `openrouter.ai`) on the `openrouter` route. `HTTP_PROXY` and
      `HTTPS_PROXY` respected via `httpx`.
 
 ---

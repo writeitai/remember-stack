@@ -1105,6 +1105,58 @@ def test_prefeature_backup_restores_with_optional_provider_disabled(
     assert state_path.read_bytes() == original
 
 
+@pytest.mark.parametrize(
+    ("saved", "restored"), [(None, "typesafe"), ("openrouter", "openrouter")]
+)
+def test_restore_replays_the_saved_systemone_route(
+    tmp_path: Path, saved: str | None, restored: str
+) -> None:
+    """The route comes from saved readiness; absent means the direct route.
+
+    An exported parent ``REMEMBERSTACK_TYPESAFE_ROUTE`` is unset for Compose,
+    so it cannot override the route the run was measured with.
+    """
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+    }
+    if saved is not None:
+        bindings["systemone_route"] = saved
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+
+    environment = store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
+    command = store_backup._compose_runtime_command(
+        compose_project="exact-project",
+        compose_base_env=tmp_path / "base.env",
+        runtime_environment=tmp_path / "runtime.env",
+        arguments=("up", "api"),
+    )
+
+    assert environment["REMEMBERSTACK_TYPESAFE_ROUTE"] == restored
+    assert "REMEMBERSTACK_TYPESAFE_ROUTE" in command
+
+
+def test_restore_refuses_an_unknown_systemone_route(tmp_path: Path) -> None:
+    """A tampered or future route never restores as something else."""
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+    }
+    bindings["systemone_route"] = "elsewhere"
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="System One route"):
+        store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
+
+
 @pytest.mark.parametrize("selector", [None, "openai_decisions"])
 def test_partial_backup_binding_cannot_restore_an_implicit_policy(
     tmp_path: Path, selector: str | None

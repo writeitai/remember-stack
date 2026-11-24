@@ -13,6 +13,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.openrouter import OpenRouterSettings
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
@@ -73,15 +74,37 @@ class TypeSafeSystemOneClient(SystemOnePort):
         settings: TypeSafeSettings | None = None,
         *,
         client: httpx.Client | None = None,
-        zdr: bool = False,
+        openrouter: OpenRouterSettings | None = None,
     ) -> None:
-        """Initialize the client, failing fast if API key is missing.
+        """Initialize the client, failing fast on missing or unsafe configuration.
 
-        ``zdr`` sends OpenRouter's zero-data-retention routing preferences on
-        every request; TypeSafe's own API has no such field, so it requires
-        the ``openrouter`` route.
+        On the ``openrouter`` route the deployment's ``openrouter`` settings
+        are required and are the only source of the key, base URL and ZDR
+        flag; the TypeSafe key and URL are never used, so no construction
+        path can fall back to a process-wide TypeSafe key. Under ZDR every
+        request carries OpenRouter's zero-data-retention routing preferences.
+        On the ``typesafe`` route a deployment that asks for ZDR is refused:
+        TypeSafe's own API has no such control.
         """
-        self._settings = settings or TypeSafeSettings()
+        resolved = settings or TypeSafeSettings()
+        zdr = False
+        if resolved.route == "openrouter":
+            if openrouter is None:
+                raise ConfigurationError(
+                    "REMEMBERSTACK_TYPESAFE_ROUTE=openrouter needs the deployment's"
+                    " OpenRouter settings"
+                )
+            resolved = resolved.model_copy(
+                update={"api_key": openrouter.api_key, "base_url": openrouter.base_url}
+            )
+            zdr = openrouter.zdr
+        elif openrouter is not None and openrouter.zdr:
+            raise ConfigurationError(
+                "REMEMBERSTACK_OPENROUTER_ZDR=true needs"
+                " REMEMBERSTACK_TYPESAFE_ROUTE=openrouter for Jev: TypeSafe's own"
+                " API cannot be held to zero data retention"
+            )
+        self._settings = resolved
         if not self._settings.api_key or not self._settings.api_key.strip():
             raise ConfigurationError(
                 "REMEMBERSTACK_OPENROUTER_API_KEY is required for System One via"
@@ -89,10 +112,6 @@ class TypeSafeSystemOneClient(SystemOnePort):
                 if self._settings.route == "openrouter"
                 else "REMEMBERSTACK_TYPESAFE_API_KEY is required for TypeSafe AI"
                 " System One client"
-            )
-        if zdr and self._settings.route != "openrouter":
-            raise ConfigurationError(
-                "System One ZDR routing requires REMEMBERSTACK_TYPESAFE_ROUTE=openrouter"
             )
         self._zdr = zdr
         self._client = client or httpx.Client(timeout=self._settings.timeout_s)

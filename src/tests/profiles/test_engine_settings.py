@@ -1,8 +1,10 @@
 """D147: one deployment's engine settings choose its buckets' credentials."""
 
+from dataclasses import replace
 from uuid import UUID
 
 from pydantic import SecretStr
+import pytest
 from sqlalchemy.pool import NullPool
 
 from rememberstack.adapters import OpenRouterSettings
@@ -149,3 +151,56 @@ def test_setup_hands_alembic_a_url_encoded_password_verbatim() -> None:
     assert config.get_main_option("sqlalchemy.url") == url
     section = config.get_section(config.config_ini_section) or {}
     assert section["sqlalchemy.url"] == url
+
+
+@pytest.mark.parametrize(
+    ("route", "backup", "message"),
+    (
+        ("typesafe", "none", "ROUTE=openrouter"),
+        ("openrouter", "openai_decisions", "BACKUP must be none"),
+    ),
+)
+def test_from_settings_refuses_jev_configs_that_bypass_zdr(
+    monkeypatch: pytest.MonkeyPatch, route: str, backup: str, message: str
+) -> None:
+    """A ZDR deployment's unsafe Jev routing stops the profile at construction.
+
+    Neither the direct TypeSafe route nor the native OpenAI backup can be held
+    to zero data retention, so the profile refuses them before it serves
+    readiness or takes a task, not when the first Jev task arrives.
+    """
+    from rememberstack.adapters.typesafe import ConfigurationError
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", route)
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", backup)
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_API_KEY", "process-typesafe-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENAI_DECISIONS_API_KEY", "native-key")
+    settings = replace(
+        _settings(), model_provider=OpenRouterSettings(api_key="child-key", zdr=True)
+    )
+
+    with pytest.raises(ConfigurationError, match=message):
+        SelfHostProfile.from_settings(settings)
+
+
+def test_from_settings_reports_the_checked_systemone_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readiness reports the same System One settings the profile checked."""
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    settings = replace(
+        _settings(), model_provider=OpenRouterSettings(api_key="child-key", zdr=True)
+    )
+    profile = SelfHostProfile.from_settings(settings)
+    try:
+        # A later change to the environment does not change what was checked.
+        monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "typesafe")
+        bindings = profile._model_bindings()  # noqa: SLF001
+    finally:
+        profile.close()
+
+    assert bindings["systemone_route"] == "openrouter"
+    assert bindings["systemone_backup"] == "none"

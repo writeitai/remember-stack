@@ -77,6 +77,8 @@ MODEL_BINDING_ENVIRONMENT = {
     "systemone_backup_long_context_multiplier": "REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_MULTIPLIER",
     "systemone_backup_pricing_multiplier": "REMEMBERSTACK_OPENAI_DECISIONS_PRICING_MULTIPLIER",
 }
+#: Restored from the optional ``systemone_route`` binding (absent = ``typesafe``).
+SYSTEMONE_ROUTE_VARIABLE = "REMEMBERSTACK_TYPESAFE_ROUTE"
 UNSET_MODEL_BINDINGS = {
     "openrouter_embedding_provider": "auto",
     "openrouter_embedding_provider_order": "unset",
@@ -481,6 +483,7 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
         raise StoreBackupError(f"state.json has no model bindings for {sample_id}")
 
     backup_environment = _saved_backup_environment(bindings=bindings)
+    route = _saved_systemone_route(bindings=bindings)
     profile_data = _load_object(run_dir / "run.json").get("execution_profile")
     if profile_data is not None:
         profile = _RuntimeExecutionProfile.model_validate(profile_data)
@@ -508,9 +511,16 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
             if binding.startswith("systemone_backup"):
                 environment.pop(variable, None)
         environment.update(backup_environment)
+        recorded_route = environment.get(SYSTEMONE_ROUTE_VARIABLE)
+        if recorded_route is not None and recorded_route != route:
+            raise StoreBackupError(
+                "execution profile differs from the saved System One route"
+            )
+        environment[SYSTEMONE_ROUTE_VARIABLE] = route
         return environment
 
     environment: dict[str, str] = dict(backup_environment)
+    environment[SYSTEMONE_ROUTE_VARIABLE] = route
     for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
         if binding.startswith("systemone_backup"):
             continue
@@ -522,6 +532,19 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
             raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
         environment[variable] = normalized
     return environment
+
+
+def _saved_systemone_route(*, bindings: dict[str, object]) -> str:
+    """Restore who served System One; an absent binding is the direct route.
+
+    ``systemone_route`` appears in readiness only when a run opted into a
+    route other than ``typesafe``, so older and direct runs restore
+    ``typesafe`` and an exported parent value cannot override either.
+    """
+    route = bindings.get("systemone_route", "typesafe")
+    if not isinstance(route, str) or route not in ("typesafe", "openrouter"):
+        raise StoreBackupError("saved readiness has an unknown System One route")
+    return route
 
 
 def _saved_backup_environment(*, bindings: dict[str, object]) -> dict[str, str]:
@@ -592,6 +615,7 @@ def _compose_runtime_command(
             "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT",
             "REMEMBERSTACK_TYPESAFE_MODEL",
             "REMEMBERSTACK_TYPESAFE_BACKUP",
+            SYSTEMONE_ROUTE_VARIABLE,
             "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY",
