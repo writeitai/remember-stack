@@ -78,7 +78,9 @@ from rememberstack.spine.work_ledger import WorkLedgerSettings
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
-_logger = logging.getLogger(__name__)
+# A fixed name: this module runs as ``python -m`` (``__main__``), and its
+# records must still reach handlers attached to ``rememberstack`` (D158).
+_logger = logging.getLogger("rememberstack.profiles.selfhost")
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -1136,7 +1138,8 @@ class SelfHostProfile:
             )
         except DocumentBindingRebuildError:
             _logger.exception(
-                "document binding rebuild failed; exact document-local T0 remains disabled"
+                "document binding rebuild failed; exact document-local T0 remains disabled",
+                extra={"error_code": "document_binding_rebuild_failed"},
             )
         from rememberstack.spine.section_index_backfill import (  # noqa: PLC0415
             SectionIndexBackfill,
@@ -1150,7 +1153,10 @@ class SelfHostProfile:
                 engine=self._engine, artifact_store=self._artifact_store
             ).run(deployment_id=self._settings.deployment_id)
         except Exception:  # noqa: BLE001 — setup completes; readers see not_indexed
-            _logger.exception("section index backfill failed; rerun setup to resume")
+            _logger.exception(
+                "section index backfill failed; rerun setup to resume",
+                extra={"error_code": "section_index_backfill_failed"},
+            )
         from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
         from rememberstack.spine import EntityProfileRefresher  # noqa: PLC0415
         from rememberstack.workers import P1Settings  # noqa: PLC0415

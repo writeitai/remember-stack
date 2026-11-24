@@ -493,6 +493,7 @@ class NormalizeRelationsHandler:
                 "e3.claim_normalize_error claim_id=%s error_class=%s site=generate",
                 claim.claim_id,
                 type(exception).__name__,
+                extra={"error_code": "e3_claim_normalize_failed"},
             )
             return None
         except ProviderCallError:

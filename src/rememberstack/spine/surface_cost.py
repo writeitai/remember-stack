@@ -159,12 +159,18 @@ class SqlSurfaceCostRecorder:
     ) -> None:
         """Insert one allowlisted receipt or raise if no loss signal is durable."""
         if deployment_id != self._deployment_id:
-            _logger.exception("surface_cost_deployment_mismatch")
+            _logger.exception(
+                "surface_cost_deployment_mismatch",
+                extra={"error_code": "surface_cost_deployment_mismatch"},
+            )
             self._bump_counter(column="persist_failures")
             return
         scope = _SCOPE.get()
         if scope is None:
-            _logger.exception("surface_cost_scope_missing")
+            _logger.exception(
+                "surface_cost_scope_missing",
+                extra={"error_code": "surface_cost_scope_missing"},
+            )
             self._bump_counter(column="scope_missing")
             scope = SurfaceRequestScope(
                 request_id=uuid4(), surface=SurfaceCostKind.LIBRARY
@@ -194,7 +200,10 @@ class SqlSurfaceCostRecorder:
                     },
                 )
         except Exception:
-            _logger.exception("surface_cost_record_failed")
+            _logger.exception(
+                "surface_cost_record_failed",
+                extra={"error_code": "surface_cost_record_failed"},
+            )
             self._bump_counter(column="persist_failures")
 
     def _bump_counter(self, *, column: str) -> None:

@@ -565,7 +565,9 @@ def _internal_error(*, name: str) -> dict[str, object]:
     Called from inside an ``except`` block, so ``logger.exception`` records
     the active exception.
     """
-    logger.exception("MCP tool %s failed unexpectedly", name)
+    logger.exception(
+        "MCP tool %s failed unexpectedly", name, extra={"error_code": "mcp_tool_failed"}
+    )
     return error_result(
         ToolError(
             code="internal_error",
