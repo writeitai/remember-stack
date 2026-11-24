@@ -973,6 +973,24 @@ def test_runtime_validation_uses_the_image_revision_stamp(
     )
 
 
+def test_shard_runner_pins_and_attests_the_systemone_route() -> None:
+    """An ambient route cannot change the measured Jev route or escape attestation.
+
+    The serialized profile carries no route (fingerprints unchanged), so the
+    runner pins the direct route unless the profile names one, and every
+    running app container must match it.
+    """
+    script = Path("benchmarks/locomo/sharding/run_shard.sh").read_text(encoding="utf-8")
+    pin = script.index("export REMEMBERSTACK_TYPESAFE_ROUTE=typesafe")
+    assert script.index('export "$binding"') < pin
+    assert "grep -q '^REMEMBERSTACK_TYPESAFE_ROUTE=' <<<\"$profile_environment\"" in (
+        script
+    )
+    attestation = script[script.index("attest_worker_environment() {") :]
+    attestation = attestation[: attestation.index("\n}\n")]
+    assert "      REMEMBERSTACK_TYPESAFE_ROUTE\n" in attestation
+
+
 def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     """The runner verifies ingestion off-host before any scoring can begin."""
 

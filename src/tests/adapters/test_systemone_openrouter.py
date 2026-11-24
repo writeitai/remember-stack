@@ -179,6 +179,37 @@ def test_openrouter_route_requires_valid_billed_cost(usage: dict[str, object]) -
         client.close()
 
 
+@pytest.mark.parametrize(
+    "body",
+    (
+        {
+            "model": "typesafe/jev-1.13",
+            "answers": {},
+            "usage": {"input_tokens": 10, "cost": 0.00001},
+        },
+        {"answers": {}, "usage": {"input_tokens": 10, "output_tokens": 1, "cost": 0.1}},
+        {
+            "model": " ",
+            "answers": {},
+            "usage": {"input_tokens": 10, "output_tokens": 1, "cost": 0.1},
+        },
+    ),
+)
+def test_openrouter_route_requires_output_tokens_and_serving_model(
+    body: dict[str, object],
+) -> None:
+    """Incomplete OpenRouter usage is an accounting failure, never a default."""
+    client = _routed_client(
+        openrouter=OpenRouterSettings(api_key="project-key"),
+        transport=_capture(body=body, seen=[]),
+    )
+    try:
+        with pytest.raises(ProviderAccountingError):
+            client.evaluate(state={}, questions={})
+    finally:
+        client.close()
+
+
 def test_route_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hosts select OpenRouter for System One with one process-wide variable."""
     monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
@@ -322,3 +353,36 @@ def test_exhausted_openrouter_rejections_classify_as_unavailable(
         == {"zdr": True, "data_collection": "deny"}
         for request in seen
     )
+
+
+def test_compose_forwards_the_whole_jev_retention_policy() -> None:
+    """An exported route, ZDR flag and base URL all reach every app service.
+
+    The shared ``x-app`` environment is merged into the API, setup and every
+    worker, so a policy exported in the shell is not silently dropped. ZDR
+    uses ``-`` rather than ``:-`` so an explicitly blank value stops startup
+    instead of becoming ``false``.
+    """
+    from pathlib import Path
+
+    compose = (Path(__file__).resolve().parents[3] / "compose.yaml").read_text(
+        encoding="utf-8"
+    )
+    shared = compose.split("\nservices:\n", maxsplit=1)[0]
+    for line in (
+        "REMEMBERSTACK_TYPESAFE_ROUTE: ${REMEMBERSTACK_TYPESAFE_ROUTE:-typesafe}",
+        "REMEMBERSTACK_OPENROUTER_ZDR: ${REMEMBERSTACK_OPENROUTER_ZDR-false}",
+        "REMEMBERSTACK_OPENROUTER_BASE_URL:"
+        " ${REMEMBERSTACK_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}",
+    ):
+        assert f"\n    {line}\n" in shared
+    import yaml
+
+    rendered = yaml.safe_load(compose)["services"]
+    for name in ("setup", "api", "worker-convert", "worker-llm"):
+        environment = rendered[name]["environment"]
+        assert environment["REMEMBERSTACK_OPENROUTER_ZDR"] == (
+            "${REMEMBERSTACK_OPENROUTER_ZDR-false}"
+        )
+        assert "REMEMBERSTACK_TYPESAFE_ROUTE" in environment
+        assert "REMEMBERSTACK_OPENROUTER_BASE_URL" in environment

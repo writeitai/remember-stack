@@ -76,7 +76,9 @@ accounting error.
 
 With `REMEMBERSTACK_OPENROUTER_ZDR=true`, every Jev call also sends
 `"provider": {"zdr": true, "data_collection": "deny"}`, so OpenRouter routes
-it only to TypeSafe's zero-data-retention endpoint. With ZDR on, the engine
+it only to endpoints your account or key policy counts as zero data retention:
+TypeSafe's ZDR endpoint, plus Safety Retention endpoints if that policy allows
+them (see below). With ZDR on, the engine
 refuses to start on the default `typesafe` route, because TypeSafe's own API
 cannot be held to zero data retention, and refuses the OpenAI Decisions backup
 below, because it would send the same content outside OpenRouter; keep
@@ -92,7 +94,9 @@ other models**. Self-serve accounts allow Safety Retention by default, and no
 request field turns it off. For strict zero retention, set your OpenRouter
 account, or the guardrail on every key the engine uses, to ZDR only with
 Safety Retention excluded for that group, and confirm it before you send
-customer content. See OpenRouter's
+customer content. Also keep OpenRouter's own input and output logging turned
+off for the account, since that is a separate setting from provider routing.
+See OpenRouter's
 [ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
 The response names `TypeSafe` as the provider for both Jev endpoints, so it
 does not show which one served a call.

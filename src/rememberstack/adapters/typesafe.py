@@ -248,12 +248,23 @@ def _typesafe_usage(
 
     TypeSafe's own API is priced locally ($0.042 per million input tokens).
     Through OpenRouter (``reported_cost``) the billed ``usage.cost`` is
-    required, as for OpenRouter chat; OpenRouter already names the serving
-    model in the ``typesafe/`` namespace, so it is not prefixed twice.
+    required, as for OpenRouter chat, and so are ``output_tokens`` and the
+    serving ``model``; OpenRouter already names the serving model in the
+    ``typesafe/`` namespace, so it is not prefixed twice.
     """
     if not isinstance(body, Mapping) or not isinstance(body.get("usage"), Mapping):
         raise ProviderAccountingError("TypeSafe response carries no token usage")
     usage = body["usage"]
+    if reported_cost and (
+        "output_tokens" not in usage
+        or not isinstance(body.get("model"), str)
+        or not str(body.get("model")).strip()
+    ):
+        # OpenRouter's schema requires both; a default would under-record
+        # output tokens or attribute the call to the configured alias.
+        raise ProviderAccountingError(
+            "OpenRouter System One response lacks output tokens or the serving model"
+        )
     incoming = usage.get("input_tokens")
     outgoing = usage.get("output_tokens", 0)
     if (

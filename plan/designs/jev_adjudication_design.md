@@ -279,7 +279,12 @@ If `presentation["facts"]` is empty (a new entity or first assertion), the
 adjudicator short-circuits immediately in code to the deterministic `_sole_new_fact`
 path, bypassing the network call entirely (0 tokens, 0 latency).
 
-### C. Typed Questions (`POST https://api.typesafe.ai/v1/systemone`)
+### C. Typed Questions (`POST {base_url}/systemone`)
+
+`base_url` is `https://api.typesafe.ai/v1` on the `typesafe` route and the
+deployment's OpenRouter base URL on the `openrouter` route (see *System One
+through OpenRouter*).
+
 When candidates exist, all three questions are dispatched in a single parallel
 HTTP call over the presentation state:
 
