@@ -62,16 +62,43 @@ def _record_upload_callers() -> Counter[tuple[str, tuple[str, ...]]]:
     return callers
 
 
+def _method_callers(*, name: str) -> Counter[tuple[str, tuple[str, ...]]]:
+    """Count every ``.<name>(`` call by (module stem, enclosing scope)."""
+    callers: Counter[tuple[str, tuple[str, ...]]] = Counter()
+    for path in _PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == name
+            ):
+                callers[(path.stem, _enclosing_scope(tree, node))] += 1
+    return callers
+
+
 def test_only_the_gated_e0_methods_create_document_versions() -> None:
     """`record_upload` is called only from the three guarded `UploadIngestor` methods.
 
     Checking the enclosing scope, not just the file, is the point: a second
     call inside `e0.py` but outside `ingest`/`ingest_observed`/`ingest_stored` would skip
-    the D74 admission check and route configuration wiring. If this fails,
-    route the new caller through the ingestor rather than widening this audit.
+    the D159 re-ingest guard and route configuration wiring. ``ingest`` and
+    ``ingest_observed`` register through ``_register``, which removes the
+    original a forget refused at registration; ``_register`` itself is called
+    only from those two. If this fails, route the new caller through the
+    ingestor rather than widening this audit.
     """
     assert _record_upload_callers() == Counter(
-        {("e0", ("UploadIngestor", method)): 1 for method in _GATED_METHODS}
+        {
+            ("e0", ("UploadIngestor", "_register")): 1,
+            ("e0", ("UploadIngestor", "ingest_stored")): 1,
+        }
+    )
+    assert _method_callers(name="_register") == Counter(
+        {
+            ("e0", ("UploadIngestor", method)): 1
+            for method in _GATED_METHODS - {"ingest_stored"}
+        }
     )
 
 
