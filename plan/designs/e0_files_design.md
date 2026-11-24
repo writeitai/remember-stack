@@ -98,7 +98,8 @@ original class, and, through that route, a metered deployment's cost class
 (D150). Text flavours cannot be settled by
 bytes: once bytes establish text, D133/D138 registry hints select Markdown,
 CSV, code, configuration, or plain text and their distinct processing postures.
-Textual email, notebooks, RTF, and delimited data keep their registry families;
+Textual email, notebooks, RTF, SPSS Portable (`.por`, a text encoding of a
+dataset), and delimited data keep their registry families;
 their converters validate full structure. Recognizable HTML markup retains
 `text/html` for its separate converter, and an empty upload
 is valid text in every deployment; a metered one bills it at the per-source
