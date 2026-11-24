@@ -9607,28 +9607,31 @@ for good), use `remember ops inspect`; see
 
 ### What the engine reports
 
-Every unexpected failure in the engine ends one of two ways:
+At the places listed below, an unexpected failure ends one of two ways:
 
 - **It is raised.** It leaves the engine as an exception, and whatever runs
   the engine reports it: Uvicorn's error log for a request, the process exit
   for a command.
 - **It is logged once at ERROR.** When the engine turns the failure into a
-  response, a retry, a skipped item or a fallback, it logs one record on a
+  response, a skipped item or a fallback, it logs one record on a
   `rememberstack.*` logger, at the point where it does so.
 
-Every such record carries a stable code in `error_code`, for example
-`worker_item_failed`, `graph_query_failed` or `meter_receipt_unauthorized`.
-A code is lowercase letters, digits and underscores, 3 to 64 characters, and
-stays the same across releases; a renamed or removed code is listed in the
-changelog. Expected outcomes, such as a retry that will run again or a busy
-graph, are logged at WARNING with a code too. The message is a fixed
-sentence. Identifiers such as `processing_id`, `stage`, `attempt` or
-`sqlstate` are separate fields on the record, not part of the message.
+Expected outcomes, such as a retry that will run again or a busy graph, are
+logged at WARNING. Every such record carries a stable code in `error_code`,
+for example `worker_item_failed` or `graph_query_failed`. A code starts with
+a lowercase letter, then lowercase letters, digits and underscores, 3 to 64
+characters in all, and stays the same across releases; a renamed or removed
+code is listed in the changelog. The message is a fixed sentence.
+Identifiers such as `processing_id`, `stage`, `attempt` or `sqlstate` are
+separate fields on the record, not part of the message. Other parts of the
+engine, such as the query sandbox, are being brought under the same rules.
 
-Some failures can carry your content in their text: a model provider's error
-can quote the request, and a database error can quote a query's values. For
-those, the record holds only the exception's type, in `exception_type`, and
-no traceback.
+A worker item's failure, a model provider failure on a request and a live
+graph query failure can carry your content in their text: a provider's error
+can quote the request, and a database error can quote a query's values.
+Those records hold only the exception's type, in `exception_type`, and no
+traceback. Other ERROR records, such as an MCP tool failure, keep the
+exception and its traceback.
 
 The main places the engine logs:
 
@@ -9639,9 +9642,11 @@ The main places the engine logs:
 | An expired lease is requeued / dead-lettered | `worker_lease_expired_retry` / `worker_lease_expired` | WARNING / ERROR |
 | A run finishes after losing its lease | `worker_lease_lost` | WARNING |
 | A model provider call fails on a request (503) | `provider_call_failed` | ERROR |
-| A live graph query fails or times out (503) | `graph_query_failed` | ERROR |
+| A live graph query hits a database error or times out (503) | `graph_query_failed` | ERROR |
+| A live graph result no longer matches its rows (503) | `graph_hydration_mismatch` | ERROR |
 | The live graph has no free slot (503) | `graph_capacity_exhausted` | WARNING |
 | An MCP tool fails unexpectedly | `mcp_tool_failed` | ERROR |
+| A managed meter receipt is refused / the control plane is unavailable | `meter_receipt_unauthorized` / `meter_receipt_retry` | ERROR / WARNING |
 
 The engine sends nothing anywhere itself. To collect these records, attach a
 handler to the `rememberstack` logger, as below.
@@ -9665,9 +9670,11 @@ Events are stripped to metadata before they leave the process: the
 exception type and stack trace stay; the exception message is replaced by
 `[redacted]`; request bodies, breadcrumbs, local variables, user data and
 extras are removed. Because extras are removed, the `error_code` is not on
-the event. A worker failure is reported once, with the tags `stage`, `lane`
-and `processing_id`, which you can look up with `remember ops inspect`.
-Performance tracing is off.
+the event. A failed worker item is reported once, with the tags `stage`,
+`lane` and `processing_id`, which you can look up with
+`remember ops inspect`. The adapter does not forward the worker's other log
+records, such as a dead-lettered expired lease or a failed finalizer; collect
+those with a logging handler as below. Performance tracing is off.
 
 To keep the codes, leave `REMEMBERSTACK_SENTRY_DSN` unset and initialise the
 SDK yourself in a bootstrap module (see [Where the setup runs](#where-the-setup-runs)):
@@ -9686,7 +9693,10 @@ sentry_sdk.init(
 ```
 
 Sentry's logging integration then sends each ERROR record, with its fields,
-as an event.
+as an event. This replaces the adapter's metadata-only filtering: by
+default the event includes the exception text and frame local variables.
+Use the SDK's `before_send` hook and its `include_local_variables=False`
+option if your policy needs metadata only.
 
 ### PostHog
 
@@ -9715,14 +9725,26 @@ logging.getLogger("rememberstack").addHandler(PostHogErrors(level=logging.ERROR)
 
 PostHog's SDK also sends the exception's message. If your policy allows
 metadata only, drop it in the client's `before_send` hook. PostHog also accepts OpenTelemetry
-logs at `https://eu.i.posthog.com/i/v1/logs`, which feeds PostHog Logs rather
-than Error Tracking.
+logs at `https://eu.i.posthog.com/i/v1/logs`, with your project token as a
+bearer token, which feeds PostHog Logs rather than Error Tracking; see
+[PostHog's logs setup](https://posthog.com/docs/logs).
 
 ### OpenTelemetry
 
-Run the engine under `opentelemetry-instrument` with
-`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true` to export log records
-with no code changes, or attach the SDK's handler in a bootstrap module:
+For zero-code export, install `opentelemetry-distro` in an image built on
+the engine's and run the engine's command under `opentelemetry-instrument`
+with these settings (the image's exporter speaks HTTP, while the agent
+defaults to gRPC):
+
+```bash
+OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://collector.example:4318/v1/logs
+OTEL_TRACES_EXPORTER=none
+OTEL_METRICS_EXPORTER=none
+```
+
+Or attach the SDK's handler in a bootstrap module:
 
 ```python
 import logging
