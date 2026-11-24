@@ -158,19 +158,34 @@ class DocumentPage(BaseModel):
     next_cursor: str | None = None
 
 
-class DocumentDeletion(BaseModel):
-    """What deleting one document changed in the live memory.
+class DocumentArchive(BaseModel):
+    """What archiving one document changed in the live memory (D159 §2.1).
 
-    The counts describe this call. A call that finishes a deletion another
-    path started reports only the work it finished.
+    The document stays readable as history. The counts describe this call: a
+    repeat answers the same ``archived_at`` with zero counts, and a call that
+    finishes an archive another path started reports only what it finished.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     doc_id: UUID
-    deleted_at: datetime
+    archived_at: datetime
     claims_retired: int = Field(ge=0)
     relations_closed: int = Field(ge=0)
     observations_closed: int = Field(ge=0)
+
+
+class DocumentUnarchive(BaseModel):
+    """What unarchiving one document restored (D159 §2.3).
+
+    Unarchive is the exact undo of the archive: the testimony it ended is
+    current again and the facts it closed that have support again are
+    reopened. Unarchiving a live document answers zero counts.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    claims_restored: int = Field(ge=0)
+    facts_reopened: int = Field(ge=0)
 
 
 # ---------------------------------------------------------------------------

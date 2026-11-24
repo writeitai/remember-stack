@@ -48,6 +48,16 @@ def rebuild_fact_graphs(*, connection: Connection) -> None:
                 helpers, ("graph_neighborhood", "graph_path"), strict=True
             )
         )
+    if connection.exec_driver_sql(
+        "SELECT to_regprocedure("
+        "'public.fact_believed_at(text, uuid, timestamptz, timestamptz)') IS NOT NULL"
+    ).scalar_one():
+        # D159: belief clocks read close/reopen events once facts can reopen.
+        from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+            belief_interval_helper,
+        )
+
+        helpers = tuple(belief_interval_helper(sql=sql) for sql in helpers)
     _rebuild(
         connection=connection,
         sources=sources,

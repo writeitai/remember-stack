@@ -134,7 +134,8 @@ def _history_statement(*, statement: str) -> str:
         ),
         new=(
             "AND (c.ingested_at IS NULL OR c.ingested_at <= CAST(:believed_at AS timestamptz))\n"
-            "        AND (c.invalidated_at IS NULL OR c.invalidated_at > CAST(:believed_at AS timestamptz))\n"
+            "        AND public.fact_believed_at('relation', c.relation_id, c.invalidated_at,"
+            " CAST(:believed_at AS timestamptz))\n"
             "        AND c.valid_from <= CAST(:valid_at AS timestamptz)\n"
             "        AND (c.valid_precision='open' OR c.valid_until > CAST(:valid_at AS timestamptz))"
         ),
@@ -188,7 +189,8 @@ WHERE rememberstack_graph_internal.relation_evidence_in_scope(
 
 _HISTORY_CLOCK = """
     AND (r.ingested_at IS NULL OR r.ingested_at <= CAST(:believed_at AS timestamptz))
-    AND (r.invalidated_at IS NULL OR r.invalidated_at > CAST(:believed_at AS timestamptz))
+    AND public.fact_believed_at('relation', r.relation_id, r.invalidated_at,
+                                CAST(:believed_at AS timestamptz))
     AND r.valid_from <= CAST(:valid_at AS timestamptz)
     AND (r.valid_precision='open' OR r.valid_until > CAST(:valid_at AS timestamptz))"""
 

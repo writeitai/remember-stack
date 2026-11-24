@@ -53,7 +53,8 @@ from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
-from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentArchive
+from rememberstack.model import DocumentUnarchive
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.ports.auth import AuthPerimeterPort
@@ -1438,7 +1439,7 @@ class SelfHostProfile:
                 engine=self._engine, artifact_store=self._artifact_store
             ),
             document_references=DocumentReferences(engine=self._engine),
-            deletion=_SelfHostDocumentDeletion(
+            archive=_SelfHostDocumentArchive(
                 engine=self._engine,
                 model_provider=self._model_provider,
                 embedding_model=embedding_model,
@@ -2087,14 +2088,14 @@ def _expected_components() -> dict[PipelineStage, str]:
     }
 
 
-class _SelfHostDocumentDeletion:
-    """Serve `DELETE /documents/{doc_id}` (D135) over this profile's spine.
+class _SelfHostDocumentArchive:
+    """Serve archive and unarchive (D159) over this profile's spine.
 
-    The tombstone and currency cascade commit with durable corpus retry work.
-    Corpus removal and navigation repair must succeed before the surface returns.
-    The one model call it can make is entity-profile re-embedding afterwards. That call is recorded on the
-    surface cost ledger under its own call site, like a review verdict's
-    profile refresh, rather than disappearing.
+    The archive (or its undo) and the currency cascade commit with durable
+    corpus retry work. Corpus removal (or republication) and navigation repair
+    must succeed before the surface returns. The one model call either can make
+    is entity-profile re-embedding afterwards, recorded on the surface cost
+    ledger under its own call site rather than disappearing.
     """
 
     def __init__(
@@ -2105,13 +2106,13 @@ class _SelfHostDocumentDeletion:
         embedding_model: str,
         publisher: CorpusPublisher,
     ) -> None:
-        """Compose the lifecycle catalog and the profile projection it touches."""
+        """Compose the archiver and the profile projection it touches."""
         from rememberstack.spine import EntityProfileRefresher
-        from rememberstack.workers import DocumentDeleter
+        from rememberstack.workers import DocumentArchiver
 
         self._engine = engine
         self._publisher = publisher
-        self._deleter = DocumentDeleter(
+        self._archiver = DocumentArchiver(
             engine=engine,
             profile_refresher=EntityProfileRefresher(
                 engine=engine,
@@ -2120,28 +2121,60 @@ class _SelfHostDocumentDeletion:
             ),
         )
 
-    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
-        """Delete one lineage with metered, best-effort profile refresh."""
-        meter = SurfaceCostMeter(
+    def archive_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentArchive:
+        """Archive one lineage with metered, best-effort profile refresh."""
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            result = self._archiver.archive_document(
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                meter=self._meter(
+                    deployment_id=deployment_id,
+                    call_site=SurfaceCallSite.PROFILE_ARCHIVE,
+                ),
+            )
+            self._publish(deployment_id=deployment_id, doc_id=doc_id)
+            return result
+
+    def unarchive_document(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> DocumentUnarchive:
+        """Unarchive one lineage with metered, best-effort profile refresh."""
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            result = self._archiver.unarchive_document(
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                meter=self._meter(
+                    deployment_id=deployment_id,
+                    call_site=SurfaceCallSite.PROFILE_UNARCHIVE,
+                ),
+            )
+            self._publish(deployment_id=deployment_id, doc_id=doc_id)
+            return result
+
+    def _meter(
+        self, *, deployment_id: UUID, call_site: SurfaceCallSite
+    ) -> SurfaceCostMeter:
+        """The surface cost meter for this call's profile refresh."""
+        return SurfaceCostMeter(
             recorder=SqlSurfaceCostRecorder(
                 engine=self._engine, deployment_id=deployment_id
             ),
             deployment_id=deployment_id,
-            call_site=SurfaceCallSite.PROFILE_DELETE,
+            call_site=call_site,
         )
-        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
-            result = self._deleter.delete_document(
-                deployment_id=deployment_id, doc_id=doc_id, meter=meter
+
+    def _publish(self, *, deployment_id: UUID, doc_id: UUID) -> None:
+        """Bring the corpus filesystem in line before answering (D155).
+
+        The transaction retained ordinary retry work, so a failure here leaves
+        nothing stranded.
+        """
+        if not self._publisher.publish_corpus(
+            deployment_id=deployment_id, doc_id=doc_id
+        ):
+            raise RuntimeError(
+                "document changed during corpus publication; retry work retained"
             )
-            # The tombstone transaction retained ordinary retry work. Surface
-            # success only after this document's copies and indexes are removed.
-            if not self._publisher.publish_corpus(
-                deployment_id=deployment_id, doc_id=doc_id
-            ):
-                raise RuntimeError(
-                    "document changed during corpus deletion; retry work retained"
-                )
-            return result
 
 
 class _BuildInfo:

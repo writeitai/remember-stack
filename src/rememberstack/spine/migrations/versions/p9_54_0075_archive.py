@@ -1,0 +1,358 @@
+"""D159 archive: archived lineages, the renamed currency reason, the reopen outcome.
+
+Archive replaces D135's public delete. An archived lineage keeps every row
+(it stays readable as history) and is recorded on ``documents.archived_at`` and
+``archived_by`` (``caller`` or ``source``); ``deleted_at`` remains only for
+forget's hide. The currency reason ``version_deleted`` is renamed
+``version_archived``, and ``reopened_unarchive`` records an unarchive (or a
+returning claim) reopening a fact an archive closed, without erasing the close.
+
+Upgrade of D135 data: every lineage D135 deleted (and no D74 forget owns)
+becomes an archive — ``caller`` for an explicit delete, ``source`` for a
+connector-observed deletion — with ``archived_at`` set to its deletion time.
+The currency events and closures of that lineage's current deletion episode
+(the delete or connector finalization, plus the late reconcile runs of the
+episode) are re-labelled with the one archive reconciliation id unarchive looks
+for, and only the version tombstones the lineage deletion set (same instant as
+the lineage's) are cleared. An earlier deletion the lineage already came back
+from is left alone, and so are internal version tombstones.
+
+Belief intervals: once a fact can be reopened, ``invalidated_at`` holds only
+its current state. ``public.fact_believed_at`` answers "was this fact believed
+at instant b?" from its close and reopen adjudications (a fact never reopened
+keeps the old single-column test), and ``memory_v1.facts_as_of`` and the graph
+traversal helpers' belief clocks use it, so a read inside an archive interval
+still sees the fact closed.
+"""
+
+from collections.abc import Sequence
+from datetime import datetime
+from datetime import UTC
+from uuid import NAMESPACE_URL
+from uuid import UUID
+from uuid import uuid5
+
+from alembic import op
+from sqlalchemy import text
+
+revision: str = "p9_54_0075"
+down_revision: str | None = "p9_53_0074"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def archive_reconciliation_id(*, doc_id: UUID, archived_at: datetime) -> UUID:
+    """The archive episode's reconciliation id (D159 §2.1).
+
+    A frozen copy of ``spine.lifecycle.archive_reconciliation_id`` (a test
+    keeps the two equal), so a later change to the runtime cannot change what
+    this upgrade wrote. The instant is rendered in UTC, so the id does not
+    depend on the session time zone that read it.
+    """
+    return uuid5(
+        NAMESPACE_URL,
+        f"rememberstack:archive:{doc_id}:{archived_at.astimezone(UTC).isoformat()}",
+    )
+
+
+FACT_BELIEVED_AT_SIGNATURE = (
+    "public.fact_believed_at(text, uuid, timestamptz, timestamptz)"
+)
+
+FACT_BELIEVED_AT_DDL = r"""
+CREATE FUNCTION public.fact_believed_at(
+  fact_kind text,
+  fact_id uuid,
+  invalidated_at timestamptz,
+  believed_at timestamptz
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN $1 = 'relation' AND EXISTS (
+      SELECT 1 FROM public.relation_adjudications AS a
+      WHERE a.relation_id = $2 AND a.outcome = 'reopened_unarchive'
+    ) THEN coalesce((
+      SELECT a.outcome = 'reopened_unarchive'
+      FROM public.relation_adjudications AS a
+      WHERE a.relation_id = $2
+        AND a.outcome IN ('retracted_source_removal', 'invalidated', 'reopened_unarchive')
+        AND a.decided_at <= $4
+      ORDER BY a.decided_at DESC, a.adjudication_id DESC
+      LIMIT 1
+    ), true)
+    WHEN $1 = 'observation' AND EXISTS (
+      SELECT 1 FROM public.observation_adjudications AS a
+      WHERE a.observation_id = $2 AND a.outcome = 'reopened_unarchive'
+    ) THEN coalesce((
+      SELECT a.outcome = 'reopened_unarchive'
+      FROM public.observation_adjudications AS a
+      WHERE a.observation_id = $2
+        AND a.outcome IN ('retracted_source_removal', 'invalidated', 'reopened_unarchive')
+        AND a.decided_at <= $4
+      ORDER BY a.decided_at DESC, a.adjudication_id DESC
+      LIMIT 1
+    ), true)
+    ELSE $3 IS NULL OR $3 > $4
+  END
+$$;
+COMMENT ON FUNCTION public.fact_believed_at(text, uuid, timestamptz, timestamptz) IS
+  'D159 belief at an instant: true when the fact''s latest close or reopen adjudication at or before believed_at is not a close. invalidated_at holds only the current state once an unarchive has reopened a fact; a fact never reopened answers from invalidated_at alone. SECURITY DEFINER over the adjudication transcripts; EXECUTE for the graph and query roles.';
+REVOKE ALL ON FUNCTION public.fact_believed_at(text, uuid, timestamptz, timestamptz) FROM PUBLIC;
+DO $do$
+BEGIN
+  EXECUTE format(
+    'GRANT EXECUTE ON FUNCTION public.fact_believed_at(text, uuid, timestamptz, timestamptz) TO %I, %I',
+    'rememberstack_graph_' || current_database(),
+    'rememberstack_query_' || current_database()
+  );
+END
+$do$;
+"""
+
+_HELPER_BELIEF = (
+    "(h.invalidated_at IS NULL\n                    OR h.invalidated_at > clock_believed)",
+    "public.fact_believed_at('relation', h.relation_id, h.invalidated_at,"
+    " clock_believed)",
+)
+
+
+def belief_interval_helper(*, sql: str) -> str:
+    """A traversal helper whose belief clock reads close/reopen events."""
+    old, new = _HELPER_BELIEF
+    old = old.replace("\\n", "\n")
+    if sql.count(old) != 2:
+        raise RuntimeError("unexpected traversal helper belief predicate")
+    return sql.replace(old, new)
+
+
+def facts_as_of_ddl() -> str:
+    """``memory_v1.facts_as_of`` with belief intervals from close/reopen events."""
+    from rememberstack.spine.migrations.versions.p9_30_0051_mutable_fact_windows import (
+        FACTS_AS_OF_DDL,
+    )
+
+    old = "AND (f.invalidated_at IS NULL OR f.invalidated_at > facts_as_of.believed_at)"
+    new = (
+        "AND public.fact_believed_at(f.fact_kind, f.fact_id, f.invalidated_at,"
+        " facts_as_of.believed_at)"
+    )
+    if FACTS_AS_OF_DDL.count(old) != 1:
+        raise RuntimeError("unexpected facts_as_of belief predicate")
+    return FACTS_AS_OF_DDL.replace(old, new).replace(
+        "CREATE FUNCTION memory_v1.facts_as_of(",
+        "CREATE OR REPLACE FUNCTION memory_v1.facts_as_of(",
+    )
+
+
+_SCHEMA = (
+    "ALTER TABLE documents ADD COLUMN archived_at timestamptz",
+    "ALTER TABLE documents ADD COLUMN archived_by text"
+    " CHECK (archived_by IN ('caller', 'source'))",
+    "ALTER TABLE documents ADD CONSTRAINT documents_archived_pair"
+    " CHECK ((archived_at IS NULL) = (archived_by IS NULL))",
+    "COMMENT ON COLUMN documents.archived_at IS"
+    " 'D159 archive: when the lineage stopped testifying; it stays readable as"
+    " history (include_archived). NULL while live.'",
+    "COMMENT ON COLUMN documents.archived_by IS"
+    " 'D159 who archived: caller (an explicit archive) or source (a connector saw"
+    " the file deleted). Identical bytes never undo a caller archive.'",
+    "COMMENT ON COLUMN documents.deleted_at IS"
+    " 'Forget''s hide tombstone (D159 §3.2); every read filters it.'",
+    "ALTER TYPE currency_reason RENAME VALUE 'version_deleted' TO 'version_archived'",
+)
+
+_DELETED_LINEAGES = text(
+    """
+    SELECT d.doc_id, d.deleted_at,
+           CASE WHEN d.deleted_sync_cycle_id IS NULL THEN 'caller' ELSE 'source' END
+             AS archived_by
+    FROM documents d
+    WHERE d.deleted_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM {forget_table} f WHERE f.doc_id = d.doc_id)
+    ORDER BY d.doc_id
+    """
+)
+
+_EPISODE_RUN_IDS = text(
+    """
+    SELECT DISTINCT e.reconciliation_id
+    FROM testimony_currency_events e
+    WHERE e.doc_id = :doc_id
+      AND e.reason = 'version_archived'
+      AND NOT e.became_current
+      AND e.occurred_at >= :deleted_at
+    UNION
+    SELECT p.processing_id
+    FROM processing_state p
+    JOIN document_versions v
+      ON v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+    WHERE p.target_kind = 'document_version'
+      AND p.stage = 'reconcile'
+      AND v.doc_id = :doc_id
+    """
+)
+
+_RELABEL_EVENTS = text(
+    """
+    UPDATE testimony_currency_events
+    SET reconciliation_id = :rid
+    WHERE doc_id = :doc_id
+      AND reason = 'version_archived'
+      AND NOT became_current
+      AND occurred_at >= :deleted_at
+    """
+)
+
+_RELABEL_CLOSURES = (
+    text(
+        f"""
+        UPDATE {table}
+        SET features = coalesce(features, '{{}}'::jsonb)
+            || jsonb_build_object('reconciliation_id', CAST(:rid AS text),
+                                  'archive', true)
+        WHERE outcome = 'retracted_source_removal'
+          AND decided_at >= :deleted_at
+          AND features ->> 'reconciliation_id' = ANY(CAST(:run_ids AS text[]))
+        """
+    )
+    for table in ("relation_adjudications", "observation_adjudications")
+)
+
+_CLEAR_EPISODE_TOMBSTONES = text(
+    """
+    UPDATE document_versions SET deleted_at = NULL
+    WHERE doc_id = :doc_id AND deleted_at = :deleted_at
+    """
+)
+
+_ARCHIVE_LINEAGE = text(
+    """
+    UPDATE documents
+    SET archived_at = deleted_at, archived_by = :archived_by, deleted_at = NULL
+    WHERE doc_id = :doc_id
+    """
+)
+
+
+def upgrade() -> None:
+    """Add the archive columns, rename the reason, convert D135 deletions."""
+    # The new outcome must be committed before the belief function below can
+    # name it (PostgreSQL refuses a new enum value in its own transaction).
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TYPE adjudication_outcome ADD VALUE IF NOT EXISTS 'reopened_unarchive'"
+        )
+    for statement in _SCHEMA:
+        op.execute(statement)
+    connection = op.get_bind()
+    # A D74 forget owns its lineage whether the forget slice has already turned
+    # its manifests into forget records or not.
+    forget_table = connection.execute(
+        text(
+            "SELECT coalesce(to_regclass('public.forgets'),"
+            " to_regclass('public.forget_manifests'))::text"
+        )
+    ).scalar_one()
+    rows = (
+        connection.execute(
+            text(
+                _DELETED_LINEAGES.text.format(
+                    forget_table=forget_table or "(SELECT NULL::uuid AS doc_id)"
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for row in rows:
+        doc_id: UUID = row["doc_id"]
+        deleted_at: datetime = row["deleted_at"]
+        rid = archive_reconciliation_id(doc_id=doc_id, archived_at=deleted_at)
+        params = {"doc_id": doc_id, "deleted_at": deleted_at}
+        run_ids = [
+            str(run_id)
+            for run_id in connection.execute(_EPISODE_RUN_IDS, params).scalars()
+        ]
+        connection.execute(_RELABEL_EVENTS, {**params, "rid": rid})
+        for statement in _RELABEL_CLOSURES:
+            connection.execute(
+                statement, {**params, "rid": str(rid), "run_ids": run_ids}
+            )
+        connection.execute(_CLEAR_EPISODE_TOMBSTONES, params)
+        connection.execute(
+            _ARCHIVE_LINEAGE, {"doc_id": doc_id, "archived_by": row["archived_by"]}
+        )
+    op.execute("ALTER TABLE documents DROP COLUMN deleted_sync_cycle_id")
+    _install_belief_intervals()
+
+
+def _install_belief_intervals() -> None:
+    """The belief predicate, then facts_as_of and the traversal helpers on it."""
+    from rememberstack.spine.migrations._helpers import apply_ddl
+    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+        _gated_graph_helpers,
+    )
+    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+        _restore_helper_settings,
+    )
+
+    apply_ddl(sql=FACT_BELIEVED_AT_DDL)
+    op.execute(facts_as_of_ddl())
+    for _, gated in _gated_graph_helpers():
+        op.execute(belief_interval_helper(sql=gated))
+    _restore_helper_settings()
+
+
+def downgrade() -> None:
+    """Drop the archive columns; refused while any lineage is archived.
+
+    An archive cannot be turned back into a D135 deletion faithfully, and the
+    reopen outcome stays (PostgreSQL cannot drop an enum value in place).
+    """
+    connection = op.get_bind()
+    if connection.execute(
+        text("SELECT EXISTS (SELECT 1 FROM documents WHERE archived_at IS NOT NULL)")
+    ).scalar_one():
+        raise RuntimeError("D159 downgrade refuses a store with archived documents")
+    if connection.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM relation_adjudications"
+            " WHERE outcome = 'reopened_unarchive')"
+            " OR EXISTS (SELECT 1 FROM observation_adjudications"
+            " WHERE outcome = 'reopened_unarchive')"
+        )
+    ).scalar_one():
+        raise RuntimeError("D159 downgrade refuses a store with reopened facts")
+    from rememberstack.spine.migrations.versions.p9_30_0051_mutable_fact_windows import (
+        FACTS_AS_OF_DDL,
+    )
+    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+        _gated_graph_helpers,
+    )
+    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+        _restore_helper_settings,
+    )
+
+    op.execute(
+        FACTS_AS_OF_DDL.replace(
+            "CREATE FUNCTION memory_v1.facts_as_of(",
+            "CREATE OR REPLACE FUNCTION memory_v1.facts_as_of(",
+        )
+    )
+    for _, gated in _gated_graph_helpers():
+        op.execute(gated)
+    _restore_helper_settings()
+    op.execute(f"DROP FUNCTION {FACT_BELIEVED_AT_SIGNATURE}")
+    op.execute("ALTER TABLE documents ADD COLUMN deleted_sync_cycle_id uuid")
+    op.execute(
+        "ALTER TYPE currency_reason RENAME VALUE 'version_archived' TO 'version_deleted'"
+    )
+    op.execute("ALTER TABLE documents DROP CONSTRAINT documents_archived_pair")
+    op.execute("ALTER TABLE documents DROP COLUMN archived_by")
+    op.execute("ALTER TABLE documents DROP COLUMN archived_at")

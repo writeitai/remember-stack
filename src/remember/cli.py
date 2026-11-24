@@ -762,8 +762,11 @@ def _run_documents(args: argparse.Namespace) -> int:
             )
             print(tags.model_dump_json())
             return 0
-        deletion = client.delete_document(doc_id=args.doc_id)
-    print(deletion.model_dump_json())
+        if args.documents_command == "archive":
+            result = client.archive_document(doc_id=args.doc_id)
+        else:
+            result = client.unarchive_document(doc_id=args.doc_id)
+    print(result.model_dump_json())
     return 0
 
 
@@ -1428,15 +1431,24 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     search_documents.add_argument(
         "--cursor", help="pass a previous page's next_cursor (only without a query)"
     )
-    delete_document = documents_commands.add_parser(
-        "delete",
+    archive_document = documents_commands.add_parser(
+        "archive",
         parents=[client_flags],
         help=(
-            "remove a document from memory: its claims stop counting and facts"
-            " only it supported are closed"
+            "archive a document: its claims stop counting and facts only it"
+            " supported are closed; it stays readable as history"
         ),
     )
-    delete_document.add_argument("doc_id", type=UUID)
+    archive_document.add_argument("doc_id", type=UUID)
+    unarchive_document = documents_commands.add_parser(
+        "unarchive",
+        parents=[client_flags],
+        help=(
+            "undo an archive: the document's testimony is current again and the"
+            " facts it closed reopen when supported"
+        ),
+    )
+    unarchive_document.add_argument("doc_id", type=UUID)
     tag_document = documents_commands.add_parser(
         "tag",
         parents=[client_flags],

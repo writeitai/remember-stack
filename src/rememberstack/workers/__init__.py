@@ -72,7 +72,7 @@ from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.p1 import P1Settings
 from rememberstack.workers.reconcile import CycleFinalizer
 from rememberstack.workers.reconcile import DeletionService
-from rememberstack.workers.reconcile import DocumentDeleter
+from rememberstack.workers.reconcile import DocumentArchiver
 from rememberstack.workers.reconcile import RECONCILE_VERSION
 from rememberstack.workers.reconcile import ReconcileHandler
 from rememberstack.workers.sync import SyncCycleRunner
@@ -142,7 +142,7 @@ __all__ = (
     "StageHandler",
     "CycleFinalizer",
     "DeletionService",
-    "DocumentDeleter",
+    "DocumentArchiver",
     "DeadLetterReplayer",
     "ReconcileHandler",
     "RECONCILE_VERSION",

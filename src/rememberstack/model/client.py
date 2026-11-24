@@ -13,7 +13,7 @@ from remember.models import CapabilityReadiness
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import DeploymentBuildInfo
-from remember.models import DocumentDeletion
+from remember.models import DocumentArchive
 from remember.models import DocumentPage
 from remember.models import DocumentPeopleMatch
 from remember.models import DocumentReference
@@ -31,6 +31,7 @@ from remember.models import DocumentStatus
 from remember.models import DocumentStatusFilter
 from remember.models import DocumentSummary
 from remember.models import DocumentTagFilter
+from remember.models import DocumentUnarchive
 from remember.models import DocumentVersionSummary
 from remember.models import EffectiveInterval
 from remember.models import MatchingEdition
@@ -72,7 +73,8 @@ __all__ = (
     "ProcessingLayer",
     "ProcessingLayerState",
     "ProcessingLayerStates",
-    "DocumentDeletion",
+    "DocumentArchive",
+    "DocumentUnarchive",
     "DocumentPage",
     "DocumentPeopleMatch",
     "DocumentSearchFilters",

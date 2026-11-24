@@ -14,11 +14,13 @@ fact-level `evidence_changed` delta. The policy's two branches never mix:
 Watched lineages defer source-acted closure to their sync cycle's
 FINALIZATION (the retract-timing barrier): an intra-cycle move resolves as a
 support swap, never retract-then-reassert. The `CycleFinalizer` runs that
-job; `DeletionService` is the operator's grain (§8) through the same
-cascade, and `DocumentDeleter` is its public, caller-facing form (D135).
+job and finishes source archives; `DocumentArchiver` is the caller-facing
+archive and unarchive (D159), and `DeletionService` the internal version
+removal and the operator forget's cascade through the same §8 rules.
 """
 
 from datetime import datetime
+from datetime import UTC
 import logging
 from uuid import NAMESPACE_URL
 from uuid import UUID
@@ -32,23 +34,26 @@ from rememberstack.core import chunker_version as chunker_version_of
 from rememberstack.core import ChunkerParams
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CurrencyTransition
-from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentArchive
 from rememberstack.model import DocumentNotFoundError
+from rememberstack.model import DocumentUnarchive
 from rememberstack.model import EnqueueWork
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
+from rememberstack.model import ProcessingTarget
 from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.fact_applications import ApplicationInputChanged
+from rememberstack.spine.lifecycle import archive_reconciliation_id
 from rememberstack.spine.lifecycle import LifecycleCatalog
-from rememberstack.spine.processing_layers import lineage_changed_on
 from rememberstack.spine.processing_layers import take_layer_fence_on
 from rememberstack.spine.review import ReviewQueue
+from rememberstack.spine.work_ledger import enqueue_on
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.p1 import label_relation_component_version
@@ -113,7 +118,26 @@ class ReconcileHandler:
             return self._retire_deleted_testimony(
                 work=work, context=context, version_id=version_id, meter=meter
             )
+        archived_at = context.get("lineage_archived_at")
+        if isinstance(archived_at, datetime):
+            retired = self._retire_archived_testimony(
+                work=work, context=context, archived_at=archived_at, meter=meter
+            )
+            if retired is not None:
+                return retired
+            # The lineage came back before this run could write: reconcile it
+            # as the live lineage it is again (D159 §2.1).
 
+        regained: tuple[CurrencyTransition, ...] = ()
+        if (
+            context["versioning_mode"] != "living"
+            or context["current_version_id"] == version_id
+        ):
+            # D159 §2.3: a changed version of an archived document reuses its
+            # claims (D56); a reused claim is current testimony again.
+            regained = self._catalog.regained_after_archive(
+                deployment_id=deployment_id, version_id=version_id
+            )
         source_acted: tuple[CurrencyTransition, ...] = ()
         if (
             context["versioning_mode"] == "living"
@@ -141,7 +165,7 @@ class ReconcileHandler:
             chunker_version=self._chunker_version,
             extractor_version=self._extractor_version,
         )
-        transitions = (*source_acted, *transcription)
+        transitions = (*regained, *source_acted, *transcription)
         applied = self._catalog.apply_transitions(
             deployment_id=deployment_id,
             reconciliation_id=reconciliation_id,
@@ -171,6 +195,17 @@ class ReconcileHandler:
         changed_relations, changed_observations = self._catalog.recount(
             relation_ids=relation_ids, observation_ids=observation_ids
         )
+        if any(
+            t.became_current and t.reason == "version_archived" for t in transitions
+        ):
+            # A returning claim reopens a fact an archive closed for it, by
+            # the unarchive rule (D159 §2.3).
+            self._catalog.reopen_archive_closures(
+                deployment_id=deployment_id,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                reconciliation_id=reconciliation_id,
+            )
 
         zero_relations = self._catalog.open_zero_support_relations(
             deployment_id=deployment_id, relation_ids=relation_ids
@@ -253,7 +288,7 @@ class ReconcileHandler:
             raise NonRetryableHandlerError(
                 f"version {version_id} reconciliation context has no doc_id"
             )
-        if work.component_version == RECONCILE_CLAIMS_VERSION:
+        if work.component_version.startswith(RECONCILE_CLAIMS_VERSION):
             # D143 §4.2: the claims mode opens no fact label and no review.
             return HandlerOutcome()
         return HandlerOutcome(
@@ -295,14 +330,14 @@ class ReconcileHandler:
         version_id: UUID,
         meter: CostMeterPort,
     ) -> HandlerOutcome:
-        """End testimony that pipeline work produced after a deletion (D135).
+        """End testimony that pipeline work produced after a removal.
 
-        A document deleted while its version was still processing keeps
-        running through the pipeline: claims and fact support can land after
-        the deletion's cascade already ran. This stage is where that work
-        arrives, so it retires whatever the deleted lineage (or deleted
-        version) still holds current, through the same §8 cascade, and ends
-        the chain — nothing downstream is worth paying for on deleted input.
+        A version removed internally (or a lineage hidden by forget) while it
+        was still processing keeps running through the pipeline: claims and
+        fact support can land after the cascade already ran. This stage is
+        where that work arrives, so it retires whatever the removed input
+        still holds current, through the same §8 cascade, and ends the chain —
+        nothing downstream is worth paying for on removed input.
         """
         deployment_id = work.deployment_id
         reconciliation_id = work.processing_id
@@ -325,7 +360,7 @@ class ReconcileHandler:
             )
         scope: tuple[UUID, ...] = ()
         if context.get("lineage_deleted_at") is not None:
-            late = self._catalog.stale_for_deleted_testimony(
+            late = self._catalog.stale_for_lineage_removal(
                 deployment_id=deployment_id, doc_id=doc_id
             )
             scope = self._catalog.lineage_claim_ids(
@@ -342,7 +377,7 @@ class ReconcileHandler:
             scope = self._catalog.version_claim_ids(
                 deployment_id=deployment_id, version_id=version_id
             )
-        delta, _changed = _cascade_run(
+        delta = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,
             transitions=_with_recorded(
@@ -353,6 +388,7 @@ class ReconcileHandler:
             reconciliation_id=reconciliation_id,
             boundary=None,
             scope_claim_ids=scope,
+            archive=False,
         )
         try:
             self._profile_refresher.refresh_for_facts(
@@ -371,7 +407,7 @@ class ReconcileHandler:
         # D140 §8.2: late testimony retired from a deleted version changes
         # the lineage's evidence; review its facts (only if it had periods).
         # The claims mode opens no review (D143 §4.2).
-        if work.component_version == RECONCILE_CLAIMS_VERSION:
+        if work.component_version.startswith(RECONCILE_CLAIMS_VERSION):
             return HandlerOutcome()
         return HandlerOutcome(
             follow_up=_window_review(
@@ -381,6 +417,74 @@ class ReconcileHandler:
                 reason="deleted_testimony_retired",
                 request_id=uuid5(
                     NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
+                ),
+                lane=work.lane,
+            )
+        )
+
+    def _retire_archived_testimony(
+        self,
+        *,
+        work: ClaimedWork,
+        context: dict[str, object],
+        archived_at: datetime,
+        meter: CostMeterPort,
+    ) -> HandlerOutcome | None:
+        """Retire what work in flight left current after an archive (D159 §2.1).
+
+        Runs in one transaction under the lineage row lock and writes only if
+        the lineage is still archived under the same episode; every transition
+        and closure is recorded under that archive's reconciliation id, so
+        unarchive restores it. Returns ``None`` (nothing written) when the
+        lineage came back in the meantime. Ends the chain otherwise: nothing
+        downstream is worth paying for while the document is archived, and
+        unarchive repeats this reconcile.
+        """
+        deployment_id = work.deployment_id
+        doc_id = context["doc_id"]
+        if not isinstance(doc_id, UUID):
+            raise NonRetryableHandlerError(
+                f"version {context['version_id']} reconciliation context has no doc_id"
+            )
+        reconciliation_id = archive_reconciliation_id(
+            doc_id=doc_id, archived_at=archived_at
+        )
+        with self._catalog.transaction() as catalog:
+            catalog.lock_lineage(doc_id=doc_id)
+            if catalog.lineage_archived_at(doc_id=doc_id) != archived_at:
+                return None
+            # Archived evidence never anchors identity (D102).
+            catalog.clear_document_bindings(deployment_id=deployment_id, doc_id=doc_id)
+            delta = _archive_cascade(
+                catalog=catalog,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reconciliation_id=reconciliation_id,
+            )
+        try:
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=deployment_id,
+                relation_ids=delta.recounted_relations,
+                observation_ids=delta.recounted_observations,
+                meter=meter,
+                call_key=f"profile:reconcile-archived:{work.processing_id}",
+            )
+        except ProfileRefreshContendedError:
+            _logger.warning(
+                "profile.refresh_contended reconciliation_id=%s; "
+                "stale cache remains empty",
+                reconciliation_id,
+            )
+        if work.component_version.startswith(RECONCILE_CLAIMS_VERSION):
+            return HandlerOutcome()
+        return HandlerOutcome(
+            follow_up=_window_review(
+                catalog=self._catalog,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reason="archived_testimony_retired",
+                request_id=uuid5(
+                    NAMESPACE_URL, f"fact-window-review:{work.processing_id}"
                 ),
                 lane=work.lane,
             )
@@ -461,6 +565,8 @@ class CycleFinalizer:
     runs the deletion cascade for lineages whose source deletion the cycle
     recorded. Lineages still extracting defer the whole cycle — the
     recorded grace, visible as (completed_at set, finalized_at null).
+    Archived lineages whose cascade still has work left — a source archive
+    waiting for its cascade, or late fact work — are settled on every pass.
     """
 
     def __init__(self, *, catalog: LifecycleCatalog) -> None:
@@ -497,47 +603,38 @@ class CycleFinalizer:
                         catalog=catalog, deployment_id=deployment_id, cycle_id=cycle_id
                     )
             finalized.append(cycle_id)
-        for doc_id, episode_at in self._catalog.stranded_deletion_episodes(
+        for doc_id, archived_at in self._catalog.pending_archives(
             deployment_id=deployment_id
         ):
-            # One transaction per episode, opened by locking the lineage row
-            # a re-ingest also locks: a recreated file and this cascade never
-            # interleave, and the cascade retires only testimony no live
-            # version carries — never the recreated version's (D135).
+            # One transaction per archive, opened by locking the lineage row a
+            # re-ingest or an unarchive also locks: the cascade writes only
+            # while the lineage is still archived under this episode (D159).
+            reconciliation_id = archive_reconciliation_id(
+                doc_id=doc_id, archived_at=archived_at
+            )
             with self._catalog.transaction() as catalog:
                 catalog.lock_lineage(doc_id=doc_id)
-                # D102: deleted evidence never anchors identity. A lineage
-                # still deleted loses its anchors; one recreated since keeps
-                # only those its live testimony earned.
-                if catalog.lineage_is_deleted(doc_id=doc_id):
-                    catalog.clear_document_bindings(
-                        deployment_id=deployment_id, doc_id=doc_id
-                    )
-                else:
-                    catalog.rebuild_live_document_bindings(
-                        deployment_id=deployment_id, doc_id=doc_id
-                    )
+                if catalog.lineage_archived_at(doc_id=doc_id) != archived_at:
+                    continue
+                # D102: archived evidence never anchors identity.
+                catalog.clear_document_bindings(
+                    deployment_id=deployment_id, doc_id=doc_id
+                )
                 # D140 §8.2: queued in the cascade's transaction (crash-safe)
                 catalog.request_window_review(
                     deployment_id=deployment_id,
                     doc_id=doc_id,
-                    reason="source_deleted",
-                    # one request per deletion episode, however many passes
+                    reason="source_archived",
+                    # one request per archive episode, however many passes
                     request_id=uuid5(
-                        NAMESPACE_URL,
-                        f"fact-window-review:source-deleted:{doc_id}:{episode_at}",
+                        NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
                     ),
                 )
-                cascade_lineage_removal(
+                _archive_cascade(
                     catalog=catalog,
                     deployment_id=deployment_id,
                     doc_id=doc_id,
-                    # per deletion EPISODE: stable on retry (the versions'
-                    # deletion instant does not move), new for a later
-                    # deletion after the file came back
-                    reconciliation_id=_derived_run_id(
-                        kind="finalize-delete", doc_id=doc_id, at=episode_at.isoformat()
-                    ),
+                    reconciliation_id=reconciliation_id,
                 )
         return tuple(finalized)
 
@@ -608,12 +705,11 @@ class CycleFinalizer:
 
 
 class DeletionService:
-    """The §8 deletion grains: version, lineage — one uniform cascade.
+    """The internal removal grains: one version, or a lineage forget hides.
 
-    Deleting removes the document's contribution: currency ends, counts
-    recompute, solely-supported facts close (recorded, reversible, no
-    flag). Claims are retained as history — forgotten ≠ deleted; only
-    hard-forget (§13) scrubs content.
+    Removing ends the material's contribution through the §8 cascade:
+    currency ends, counts recompute, solely-supported facts close (recorded,
+    no flag). Caller-facing removal is archive (`DocumentArchiver`).
     """
 
     def __init__(
@@ -649,12 +745,14 @@ class DeletionService:
                     current_version_id=context["current_version_id"],  # type: ignore[arg-type]
                 ),
             )
-        delta = _cascade(
+        delta = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,
             transitions=transitions,
             reconciliation_id=_derived_run_id(kind="delete-version", id_=version_id),
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
+            scope_claim_ids=(),
+            archive=False,
         )
         self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
         return delta
@@ -667,13 +765,25 @@ class DeletionService:
         meter: CostMeterPort | None = None,
         refresh_profiles: bool = True,
     ) -> ReconciliationDelta:
-        """Remove a lineage's whole contribution (operator grain, §8)."""
+        """Remove a lineage's whole contribution (the operator forget's hide)."""
         self._catalog.delete_lineage(doc_id=doc_id)
-        delta = cascade_lineage_removal(
+        reconciliation_id = _derived_run_id(kind="delete-lineage", id_=doc_id)
+        delta = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,
-            doc_id=doc_id,
-            reconciliation_id=_derived_run_id(kind="delete-lineage", id_=doc_id),
+            transitions=_with_recorded(
+                catalog=self._catalog,
+                transitions=self._catalog.stale_for_lineage_removal(
+                    deployment_id=deployment_id, doc_id=doc_id
+                ),
+                reconciliation_id=reconciliation_id,
+            ),
+            reconciliation_id=reconciliation_id,
+            boundary=None,
+            scope_claim_ids=self._catalog.lineage_claim_ids(
+                deployment_id=deployment_id, doc_id=doc_id
+            ),
+            archive=False,
         )
         if refresh_profiles:
             self._refresh_profiles(
@@ -698,163 +808,291 @@ class DeletionService:
         )
 
 
-class DocumentDeleter:
-    """The public document delete (D135): one fenced, atomic deletion episode.
+class DocumentArchiver:
+    """The caller-facing archive and unarchive (D159 §2).
 
-    The tombstone and the whole §8 cascade run in ONE database transaction
-    that holds the D74 hard-forget fence (a shared advisory lock) from the
-    first statement to the commit. So a delete either happens completely or
-    not at all; a concurrent re-ingest of the same lineage waits on the
-    lineage row until it commits; and a hard-forget cannot enter
-    ``preparing`` part-way through (a forget already preparing refuses the
-    delete up front with ``ForgetInProgressError``).
-
-    An absent document is ``DocumentNotFoundError``. A lineage some other
-    path tombstoned without finishing its cascade (a crashed operator run, a
-    source deletion awaiting finalization) is finished rather than refused.
-    Entity profiles are refreshed after the commit on a best effort basis —
-    they are disposable orientation text, and a provider outage must not
-    fail a deletion that has already committed.
+    Each runs in ONE database transaction that locks the lineage row before
+    reading its archive state, so it happens completely or not at all and a
+    concurrent re-ingest of the same lineage waits on the row. An unknown or
+    forgotten document is ``DocumentNotFoundError``. Entity profiles are
+    refreshed after the commit on a best-effort basis — they are disposable
+    orientation text, and a provider outage must not fail a committed archive.
     """
 
     def __init__(
         self, *, engine: Engine, profile_refresher: ProfileRefresherPort
     ) -> None:
-        """Bind the spine and the profile projection the deletion touches."""
+        """Bind the spine and the profile projection archive touches."""
         self._engine = engine
         self._profile_refresher = profile_refresher
 
-    def delete_document(
+    def archive_document(
         self, *, deployment_id: UUID, doc_id: UUID, meter: CostMeterPort | None = None
-    ) -> DocumentDeletion:
-        """Remove one document's contribution to this deployment's memory."""
+    ) -> DocumentArchive:
+        """End one document's testimony; it stays readable as history.
+
+        A repeat answers the same ``archived_at`` with zero counts; an archive
+        another path started (a source archive awaiting finalization) is
+        finished, and the answer reports what this call did.
+        """
         try:
             with self._engine.begin() as connection:
-                delta, deleted_at = self._delete_fenced(
-                    connection=connection, deployment_id=deployment_id, doc_id=doc_id
+                delta, archived_at = archive_lineage_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    archived_by="caller",
                 )
         except ApplicationInputChanged as error:
-            # Only the forget fence raises this inside the delete; the fence
-            # is held throughout, so this is a forget that was already
-            # preparing when a savepoint re-checked it.
+            # Only the D74 forget fence raises this inside the archive.
             raise ForgetInProgressError(
                 f"deployment {deployment_id} is honoring a hard forget"
             ) from error
-        try:
-            self._profile_refresher.refresh_for_facts(
-                deployment_id=deployment_id,
-                relation_ids=delta.recounted_relations,
-                observation_ids=delta.recounted_observations,
-                meter=meter,
-                call_key=f"profile:delete:{delta.reconciliation_id}",
-            )
-        except Exception:  # noqa: BLE001 — the deletion itself has committed
-            _logger.warning(
-                "document.delete profile refresh failed doc_id=%s; profiles"
-                " refresh on the next evidence change for those entities",
-                doc_id,
-                exc_info=True,
-            )
-        return DocumentDeletion(
+        self._refresh_profiles(
+            deployment_id=deployment_id,
             doc_id=doc_id,
-            deleted_at=deleted_at,
+            relation_ids=delta.recounted_relations,
+            observation_ids=delta.recounted_observations,
+            meter=meter,
+            call_key=f"profile:archive:{delta.reconciliation_id}",
+        )
+        return DocumentArchive(
+            doc_id=doc_id,
+            archived_at=archived_at,
             claims_retired=delta.transitions,
             relations_closed=len(delta.relations_closed),
             observations_closed=len(delta.observations_closed),
         )
 
-    def _delete_fenced(
-        self, *, connection: Connection, deployment_id: UUID, doc_id: UUID
-    ) -> tuple[ReconciliationDelta, datetime]:
-        """Tombstone and cascade inside the caller's fenced transaction."""
-        connection.execute(
-            text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
-            {"key": f"hard-forget:{deployment_id}"},
-        )
-        if active_forget_id_on(connection=connection, deployment_id=deployment_id):
+    def unarchive_document(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        meter: CostMeterPort | None = None,
+        only_source: bool = False,
+    ) -> DocumentUnarchive:
+        """Undo the archive exactly (D159 §2.3); a live document answers zeros.
+
+        ``only_source`` undoes only a source archive: a connector seeing the
+        file again never undoes a caller's archive.
+        """
+        try:
+            with self._engine.begin() as connection:
+                restored, relation_ids, observation_ids, reopened, run_id = (
+                    _unarchive_on(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        doc_id=doc_id,
+                        only_source=only_source,
+                    )
+                )
+        except ApplicationInputChanged as error:
             raise ForgetInProgressError(
                 f"deployment {deployment_id} is honoring a hard forget"
+            ) from error
+        if run_id is not None:
+            self._refresh_profiles(
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                meter=meter,
+                call_key=f"profile:unarchive:{run_id}",
             )
-        # D143 §3.3 lock order: the layer fence before the lineage lock.
-        take_layer_fence_on(connection=connection, deployment_id=deployment_id)
-        catalog = LifecycleCatalog.on_connection(connection=connection)
-        # Lock the lineage BEFORE reading its state: a concurrent delete of
-        # the same document waits here, then reads the committed tombstone
-        # and is refused as already deleted rather than answering 200.
-        catalog.lock_lineage(doc_id=doc_id)
-        state = catalog.lineage_deletion_state(
-            deployment_id=deployment_id, doc_id=doc_id
+        return DocumentUnarchive(
+            doc_id=doc_id, claims_restored=restored, facts_reopened=reopened
         )
-        if state is None:
-            raise DocumentNotFoundError(str(doc_id))
-        already_deleted = state["deleted_at"] is not None
-        deleted_at = catalog.delete_lineage(doc_id=doc_id)
-        # One run id per deletion EPISODE: stable across a repeat of the same
-        # deletion (the tombstone instant does not move), new for a later
-        # deletion after the document was added back — so each episode gets
-        # its own ledger rows and its own evidence_changed event.
-        reconciliation_id = _derived_run_id(
-            kind="delete-lineage", id_=doc_id, at=deleted_at.isoformat()
-        )
-        delta, changed = _cascade_run(
-            catalog=catalog,
+
+    def _refresh_profiles(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        relation_ids: tuple[UUID, ...],
+        observation_ids: tuple[UUID, ...],
+        meter: CostMeterPort | None,
+        call_key: str,
+    ) -> None:
+        """Best-effort refresh after commit; a failure is logged, never raised."""
+        try:
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=deployment_id,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                meter=meter,
+                call_key=call_key,
+            )
+        except Exception:  # noqa: BLE001 — the archive itself has committed
+            _logger.warning(
+                "document.archive profile refresh failed doc_id=%s; profiles"
+                " refresh on the next evidence change for those entities",
+                doc_id,
+                exc_info=True,
+            )
+
+
+def archive_lineage_on(
+    *, connection: Connection, deployment_id: UUID, doc_id: UUID, archived_by: str
+) -> tuple[ReconciliationDelta, datetime]:
+    """Archive a lineage inside the caller's transaction (D159 §2.1).
+
+    Locks (the D143 layer fence, then the lineage row), records the archive,
+    then runs the lineage cascade under the archive reconciliation id.
+    Returns the delta and the archive instant.
+    """
+    _hard_forget_fence(connection=connection, deployment_id=deployment_id)
+    # D143 §3.3 lock order: the layer fence before the lineage lock.
+    take_layer_fence_on(connection=connection, deployment_id=deployment_id)
+    catalog = LifecycleCatalog.on_connection(connection=connection)
+    catalog.lock_lineage(doc_id=doc_id)
+    state = catalog.lineage_state(deployment_id=deployment_id, doc_id=doc_id)
+    if state is None or state["deleted_at"] is not None:
+        raise DocumentNotFoundError(str(doc_id))
+    archived_at = catalog.set_archived(doc_id=doc_id, archived_by=archived_by)
+    delta = _archive_cascade(
+        catalog=catalog,
+        deployment_id=deployment_id,
+        doc_id=doc_id,
+        reconciliation_id=archive_reconciliation_id(
+            doc_id=doc_id, archived_at=archived_at
+        ),
+    )
+    return delta, archived_at
+
+
+def _unarchive_on(
+    *, connection: Connection, deployment_id: UUID, doc_id: UUID, only_source: bool
+) -> tuple[int, tuple[UUID, ...], tuple[UUID, ...], int, UUID | None]:
+    """The unarchive transaction; returns counts, touched facts and its run id.
+
+    Clears the archive marks, makes current again the testimony the archive
+    ended, recounts, reopens the facts the rule allows, rebuilds the T4
+    anchors from live testimony, and repeats every reconcile the archive may
+    have cut short (completed work is reused, D56).
+    """
+    _hard_forget_fence(connection=connection, deployment_id=deployment_id)
+    take_layer_fence_on(connection=connection, deployment_id=deployment_id)
+    catalog = LifecycleCatalog.on_connection(connection=connection)
+    catalog.lock_lineage(doc_id=doc_id)
+    state = catalog.lineage_state(deployment_id=deployment_id, doc_id=doc_id)
+    if state is None or state["deleted_at"] is not None:
+        raise DocumentNotFoundError(str(doc_id))
+    archived_at = state["archived_at"]
+    if not isinstance(archived_at, datetime) or (
+        only_source and state["archived_by"] != "source"
+    ):
+        return 0, (), (), 0, None
+    run_id = _derived_run_id(
+        kind="unarchive", doc_id=doc_id, at=archived_at.astimezone(UTC).isoformat()
+    )
+    catalog.clear_archived(deployment_id=deployment_id, doc_id=doc_id)
+    restored = catalog.apply_transitions(
+        deployment_id=deployment_id,
+        reconciliation_id=run_id,
+        transitions=catalog.archived_testimony(
             deployment_id=deployment_id,
-            transitions=_with_recorded(
-                catalog=catalog,
-                transitions=catalog.stale_for_deleted_testimony(
-                    deployment_id=deployment_id, doc_id=doc_id
-                ),
-                reconciliation_id=reconciliation_id,
+            doc_id=doc_id,
+            archive_reconciliation_id=archive_reconciliation_id(
+                doc_id=doc_id, archived_at=archived_at
             ),
-            reconciliation_id=reconciliation_id,
-            boundary=None,
-            scope_claim_ids=catalog.lineage_claim_ids(
-                deployment_id=deployment_id, doc_id=doc_id
+        ),
+    )
+    claim_ids = catalog.lineage_claim_ids(deployment_id=deployment_id, doc_id=doc_id)
+    relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
+    observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)
+    catalog.recount(relation_ids=relation_ids, observation_ids=observation_ids)
+    reopened_relations, reopened_observations = catalog.reopen_archive_closures(
+        deployment_id=deployment_id,
+        relation_ids=relation_ids,
+        observation_ids=observation_ids,
+        reconciliation_id=run_id,
+    )
+    catalog.rebuild_live_document_bindings(deployment_id=deployment_id, doc_id=doc_id)
+    catalog.emit_evidence_changed(
+        deployment_id=deployment_id,
+        delta=ReconciliationDelta(
+            reconciliation_id=run_id,
+            transitions=restored,
+            recounted_relations=relation_ids,
+            recounted_observations=observation_ids,
+        ),
+    )
+    repeated: set[tuple[UUID, bool]] = set()
+    for run in catalog.reconcile_runs_to_repeat(doc_id=doc_id, archived_at=archived_at):
+        version_id: UUID = run["version_id"]  # type: ignore[assignment]
+        claims_mode = str(run["component_version"]).startswith(RECONCILE_CLAIMS_VERSION)
+        if (version_id, claims_mode) in repeated:
+            continue
+        repeated.add((version_id, claims_mode))
+        base = RECONCILE_CLAIMS_VERSION if claims_mode else RECONCILE_VERSION
+        lane = run["lane"]
+        payload = run["payload"]
+        enqueue_on(
+            connection=connection,
+            work=EnqueueWork(
+                deployment_id=deployment_id,
+                target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                target_id=version_id,
+                stage=PipelineStage.RECONCILE,
+                component_version=f"{base}:unarchive:{run_id}",
+                content_hash=str(run["content_hash"]),
+                lane=None if lane is None else ProcessingLane(str(lane)),
+                payload=dict(payload) if isinstance(payload, dict) else None,
             ),
         )
-        if already_deleted and not changed:
-            # Nothing was left to finish: the document was already gone.
-            raise DocumentNotFoundError(str(doc_id))
-        # D140 §8.2: catalog.delete_lineage queued the window review in this
-        # transaction (only for a lineage that ever had periods)
-        # D143: the deleted lineage's gaps go in the same transaction.
-        lineage_changed_on(
-            connection=connection, deployment_id=deployment_id, doc_id=doc_id
+    return (
+        restored,
+        relation_ids,
+        observation_ids,
+        len(reopened_relations) + len(reopened_observations),
+        run_id,
+    )
+
+
+def _hard_forget_fence(*, connection: Connection, deployment_id: UUID) -> None:
+    """The D74 hard-forget fence (shared), held until the caller commits."""
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
+        {"key": f"hard-forget:{deployment_id}"},
+    )
+    if active_forget_id_on(connection=connection, deployment_id=deployment_id):
+        raise ForgetInProgressError(
+            f"deployment {deployment_id} is honoring a hard forget"
         )
-        return delta, deleted_at
 
 
-def cascade_lineage_removal(
+def _archive_cascade(
     *,
     catalog: LifecycleCatalog,
     deployment_id: UUID,
     doc_id: UUID,
     reconciliation_id: UUID,
 ) -> ReconciliationDelta:
-    """The uniform lineage-removal cascade (§8): currency → recount → close.
+    """The archive cascade (§8): currency → recount → close, archive-marked.
 
-    Scoped to testimony no live version carries (D135): a version that is
-    live again — the file was recreated — keeps its claims. Recount and
-    closure cover every fact any of the lineage's claims touches.
+    Retires every claim of the lineage no live version carries — all of them
+    while it is archived — and recounts and closes every fact any of the
+    lineage's claims touches, so fact work that applied already-retired
+    claims is settled too. Idempotent under the archive reconciliation id.
     """
-    transitions = _with_recorded(
-        catalog=catalog,
-        transitions=catalog.stale_for_deleted_testimony(
-            deployment_id=deployment_id, doc_id=doc_id
-        ),
-        reconciliation_id=reconciliation_id,
-    )
-    delta, _changed = _cascade_run(
+    return _cascade_run(
         catalog=catalog,
         deployment_id=deployment_id,
-        transitions=transitions,
+        transitions=_with_recorded(
+            catalog=catalog,
+            transitions=catalog.stale_for_lineage_removal(
+                deployment_id=deployment_id, doc_id=doc_id
+            ),
+            reconciliation_id=reconciliation_id,
+        ),
         reconciliation_id=reconciliation_id,
         boundary=None,
         scope_claim_ids=catalog.lineage_claim_ids(
             deployment_id=deployment_id, doc_id=doc_id
         ),
+        archive=True,
     )
-    return delta
 
 
 def _with_recorded(
@@ -882,25 +1120,6 @@ def _with_recorded(
     )
 
 
-def _cascade(
-    *,
-    catalog: LifecycleCatalog,
-    deployment_id: UUID,
-    transitions: tuple[CurrencyTransition, ...],
-    reconciliation_id: UUID,
-    boundary: object,
-) -> ReconciliationDelta:
-    """Apply one source-acted basis change end to end, idempotently."""
-    delta, _changed = _cascade_run(
-        catalog=catalog,
-        deployment_id=deployment_id,
-        transitions=transitions,
-        reconciliation_id=reconciliation_id,
-        boundary=boundary,
-    )
-    return delta
-
-
 def _cascade_run(
     *,
     catalog: LifecycleCatalog,
@@ -908,19 +1127,17 @@ def _cascade_run(
     transitions: tuple[CurrencyTransition, ...],
     reconciliation_id: UUID,
     boundary: object,
-    scope_claim_ids: tuple[UUID, ...] = (),
-) -> tuple[ReconciliationDelta, bool]:
-    """The cascade, plus whether this run changed any state at all.
-
-    "Changed" means a new currency event, a recount that moved a count, or
-    a newly closed fact. A rerun of a completed cascade changes nothing,
-    which is how a repeated delete tells "already deleted" from "an earlier
-    attempt stopped part-way" (D135).
+    scope_claim_ids: tuple[UUID, ...],
+    archive: bool,
+) -> ReconciliationDelta:
+    """Apply one source-acted basis change end to end, idempotently.
 
     ``scope_claim_ids`` widens the recount/closure scope beyond the claims
-    that transition in this run. A deleted lineage passes all of its claims:
+    that transition in this run. A removed lineage passes all of its claims:
     fact work that applied already-retired claims (a fact with no current
     support, still open) is then settled like any other source-acted loss.
+    ``archive`` marks the closures as an archive's, which unarchive may
+    reopen. A rerun of a completed cascade changes nothing.
     """
     applied = catalog.apply_transitions(
         deployment_id=deployment_id,
@@ -932,15 +1149,7 @@ def _cascade_run(
     )
     relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
     observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)
-    changed_relations, changed_observations = catalog.recount(
-        relation_ids=relation_ids, observation_ids=observation_ids
-    )
-    # A support_withdrawn review on a claim no live version carries asks a
-    # question the deletion already answered; resolve it so the zero-support
-    # guard below does not keep a deleted document's fact open (D135).
-    resolved_reviews = catalog.resolve_deleted_support_reviews(
-        deployment_id=deployment_id, claim_ids=claim_ids
-    )
+    catalog.recount(relation_ids=relation_ids, observation_ids=observation_ids)
     closed_relations = catalog.close_relations(
         deployment_id=deployment_id,
         relation_ids=catalog.open_zero_support_relations(
@@ -948,6 +1157,7 @@ def _cascade_run(
         ),
         boundary=boundary,
         reconciliation_id=reconciliation_id,
+        archive=archive,
     )
     closed_observations = catalog.close_observations(
         deployment_id=deployment_id,
@@ -955,6 +1165,7 @@ def _cascade_run(
             deployment_id=deployment_id, observation_ids=observation_ids
         ),
         reconciliation_id=reconciliation_id,
+        archive=archive,
     )
     delta = ReconciliationDelta(
         reconciliation_id=reconciliation_id,
@@ -965,15 +1176,7 @@ def _cascade_run(
         observations_closed=closed_observations,
     )
     catalog.emit_evidence_changed(deployment_id=deployment_id, delta=delta)
-    changed = bool(
-        applied
-        or resolved_reviews
-        or changed_relations
-        or changed_observations
-        or closed_relations
-        or closed_observations
-    )
-    return delta, changed
+    return delta
 
 
 def _derived_run_id(*, kind: str, **parts: object) -> UUID:

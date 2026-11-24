@@ -1,6 +1,6 @@
 """Argument parsing and execution of the memory write tools.
 
-``ingest``, ``pipeline_readiness`` and ``delete_document`` share one parser
+``ingest``, ``pipeline_readiness`` and the archive tools share one parser
 each and one structured error envelope (:mod:`._errors`), whichever host runs
 them.
 
@@ -38,13 +38,15 @@ from typing import Literal
 from typing import Protocol
 from uuid import UUID
 
+from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
-from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools._definitions import ARCHIVE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools._definitions import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools._definitions import FILENAME_MAX_LEN
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import MEMORY_WRITE_TOOL_NAMES
@@ -64,7 +66,8 @@ from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
 from remember.mime import infer_upload_mime
 from remember.models import check_tag_ref
-from remember.models import DocumentDeletion
+from remember.models import DocumentArchive
+from remember.models import DocumentUnarchive
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -160,11 +163,15 @@ class MemoryWriteBackend(Protocol):
         ...
 
 
-class DocumentDeleteBackend(Protocol):
-    """Authority that deletes one document for one MCP composition (D135)."""
+class DocumentArchiveBackend(Protocol):
+    """Authority that archives and unarchives documents for one MCP host (D159)."""
 
-    def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
-        """Remove the document or raise a 404-shaped ``document_not_found``."""
+    def archive_document(self, *, doc_id: UUID) -> DocumentArchive:
+        """Archive the document or raise a 404-shaped ``document_not_found``."""
+        ...
+
+    def unarchive_document(self, *, doc_id: UUID) -> DocumentUnarchive:
+        """Unarchive the document or raise a 404-shaped ``document_not_found``."""
         ...
 
 
@@ -231,29 +238,38 @@ def handle_memory_write_tool(
     }
 
 
-def handle_delete_document_tool(
-    *, arguments: Mapping[str, object], backend: DocumentDeleteBackend | None
+def handle_archive_tool(
+    *,
+    name: str,
+    arguments: Mapping[str, object],
+    backend: DocumentArchiveBackend | None,
 ) -> dict[str, object]:
-    """Dispatch ``delete_document`` to a success or structured error result."""
+    """Dispatch ``archive_document`` or ``unarchive_document`` to a result."""
+    if name not in ARCHIVE_TOOL_NAMES:
+        raise ValueError(f"not an archive tool: {name!r}")
     if backend is None:
         return error_result(
             ToolError(
                 code="tool_not_composed",
                 detail=(
-                    f"MCP tool {DELETE_DOCUMENT_TOOL_NAME!r} is not composed on this"
-                    " server (read-only, or no deletion port)."
+                    f"MCP tool {name!r} is not composed on this server"
+                    " (read-only, or no archive port)."
                 ),
                 status_code=None,
                 retryable=False,
                 agent_action=(
-                    "Tell the user deletion is not available on this server; do"
+                    "Tell the user archiving is not available on this server; do"
                     " not retry."
                 ),
             )
         )
     try:
-        doc_id = parse_delete_document_arguments(arguments=arguments)
-        deletion = backend.delete_document(doc_id=doc_id)
+        doc_id = parse_doc_id_arguments(arguments=arguments)
+        result: BaseModel = (
+            backend.archive_document(doc_id=doc_id)
+            if name == ARCHIVE_DOCUMENT_TOOL_NAME
+            else backend.unarchive_document(doc_id=doc_id)
+        )
     except ToolArgumentError as error:
         return error_result(error.error)
     except Exception as error:  # noqa: BLE001 — mapped at the MCP wire boundary
@@ -264,16 +280,10 @@ def handle_delete_document_tool(
             return error_result(
                 ToolError(
                     code="document_not_found",
-                    detail=(
-                        f"No live document {arguments.get('doc_id')}: the id is"
-                        " unknown or the document is already deleted."
-                    ),
+                    detail=f"No document {arguments.get('doc_id')}: the id is unknown.",
                     status_code=404,
                     retryable=False,
-                    agent_action=(
-                        "Do not retry. Check the doc_id; if the user meant this"
-                        " document, it is already gone from memory."
-                    ),
+                    agent_action="Do not retry. Check the doc_id with the user.",
                 )
             )
         if getattr(error, "status_code", None) == 503 and "forget_in_progress" in str(
@@ -284,30 +294,28 @@ def handle_delete_document_tool(
                     code="forget_in_progress",
                     detail=(
                         "A hard forget is running on this deployment; nothing was"
-                        " deleted."
+                        " changed."
                     ),
                     status_code=503,
                     retryable=True,
                     agent_action=(
-                        "Retry the same delete later with back-off; the"
-                        " deployment accepts no changes until the forget finishes."
+                        "Retry the same call later with back-off; the deployment"
+                        " accepts no changes until the forget finishes."
                     ),
                 )
             )
         mapped = map_error(error)
         if mapped.code in {"internal_error", "local_backend_error"}:
-            logger.exception(
-                "MCP tool %s failed with %s", DELETE_DOCUMENT_TOOL_NAME, mapped.code
-            )
+            logger.exception("MCP tool %s failed with %s", name, mapped.code)
         return error_result(mapped)
     return {
-        "content": [{"type": "text", "text": deletion.model_dump_json()}],
+        "content": [{"type": "text", "text": result.model_dump_json()}],
         "isError": False,
     }
 
 
-def parse_delete_document_arguments(*, arguments: Mapping[str, object]) -> UUID:
-    """Validate ``delete_document`` arguments and return the document id."""
+def parse_doc_id_arguments(*, arguments: Mapping[str, object]) -> UUID:
+    """Validate ``{"doc_id": ...}`` arguments and return the document id."""
     reject_unknown_keys(arguments=arguments, allowed={"doc_id"})
     raw = arguments.get("doc_id")
     if not isinstance(raw, str) or not raw:

@@ -25,10 +25,10 @@ from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
-from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
-from remember.mcp_tools import handle_delete_document_tool
+from remember.mcp_tools import handle_archive_tool
 from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
@@ -46,13 +46,14 @@ from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
-from remember.models import DocumentDeletion
+from remember.models import DocumentArchive
 from remember.models import DocumentReferencesPage
 from remember.models import DocumentReferencesRequest
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentTags
 from remember.models import DocumentTagsUpdate
+from remember.models import DocumentUnarchive
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -69,7 +70,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class _ClientBackend:
-    """The write, readiness, delete, document-search, section, references and tag backend.
+    """The write, readiness, archive, document-search, section, references and tag backend.
 
     The deployment enforces its body-size limit; the tool maps the refusal.
     """
@@ -121,9 +122,13 @@ class _ClientBackend:
         """No client-side ceiling: the deployment refuses an oversized body."""
         return None
 
-    def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
-        """Delete one document through the HTTP SDK."""
-        return self._client.delete_document(doc_id=doc_id)
+    def archive_document(self, *, doc_id: UUID) -> DocumentArchive:
+        """Archive one document through the HTTP SDK (D159)."""
+        return self._client.archive_document(doc_id=doc_id)
+
+    def unarchive_document(self, *, doc_id: UUID) -> DocumentUnarchive:
+        """Unarchive one document through the HTTP SDK (D159)."""
+        return self._client.unarchive_document(doc_id=doc_id)
 
     def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
         """Run one document search through the HTTP SDK (D134)."""
@@ -241,9 +246,9 @@ class EngineMcpServer:
                 detail=f"{name!r} changes memory; this MCP server is read-only.",
                 agent_action="Tell the user this server cannot change memory.",
             )
-        if name == DELETE_DOCUMENT_TOOL_NAME:
-            return handle_delete_document_tool(
-                arguments=arguments, backend=self._backend
+        if name in ARCHIVE_TOOL_NAMES:
+            return handle_archive_tool(
+                name=name, arguments=arguments, backend=self._backend
             )
         if name == SEARCH_DOCUMENTS_TOOL_NAME:
             return handle_search_documents_tool(

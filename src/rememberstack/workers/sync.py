@@ -3,8 +3,10 @@
 The efficiency ladder's cheapest exits live here: unchanged revision → no
 fetch; a file being actively edited coalesces to one ingested version per
 stability window (the debounce discipline); identical bytes are the
-content-hash no-op downstream. Deletion observations tombstone the lineage
-loudly; the cascade is the delete worker's job.
+content-hash no-op downstream. A deletion observation archives the lineage
+(``archived_by = source``, D159); the cycle finalizer runs its cascade, and the
+file reappearing undoes it: identical bytes unarchive, changed bytes are a new
+version.
 """
 
 from collections.abc import Mapping
@@ -25,6 +27,7 @@ from rememberstack.model import SyncCycleSummary
 from rememberstack.ports.connector import WatchedSourcePort
 from rememberstack.spine.sync import SyncCatalog
 from rememberstack.workers.e0 import UploadIngestor
+from rememberstack.workers.reconcile import DocumentArchiver
 
 DEFAULT_VERSIONING_MODE_BY_KIND: Final = {
     # spike 6's starting heuristic: edit-in-place leans living;
@@ -48,11 +51,17 @@ class SyncCycleRunner:
     """Run one recorded poll cycle for one (deployment, source kind)."""
 
     def __init__(
-        self, *, catalog: SyncCatalog, ingestor: UploadIngestor, settings: SyncSettings
+        self,
+        *,
+        catalog: SyncCatalog,
+        ingestor: UploadIngestor,
+        archiver: DocumentArchiver,
+        settings: SyncSettings,
     ) -> None:
-        """Bind the runner to the cycle catalog, ingest path, and settings."""
+        """Bind the runner to the cycle catalog, ingest path, archive, settings."""
         self._catalog = catalog
         self._ingestor = ingestor
+        self._archiver = archiver
         self._settings = settings
 
     def run_cycle(
@@ -140,7 +149,6 @@ class SyncCycleRunner:
                 deployment_id=deployment_id,
                 source_kind=source_kind,
                 source_ref=item.source_ref,
-                cycle_id=cycle_id,
             )
             return ("deleted", lineage)
         if known.get(item.source_ref) == item.revision:
@@ -166,4 +174,9 @@ class SyncCycleRunner:
         )
         if result.created:
             return ("ingested", result.version_id)
+        # The same bytes again: a file the source had deleted is back, which
+        # undoes its source archive (never a caller's archive, D159 §2.3).
+        self._archiver.unarchive_document(
+            deployment_id=deployment_id, doc_id=result.doc_id, only_source=True
+        )
         return ("unchanged", None)  # content-hash no-op (revision churn, same bytes)

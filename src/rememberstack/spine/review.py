@@ -369,11 +369,12 @@ class ReviewQueue:
         if connection.execute(
             _CLAIM_DELETED, {"claim_id": claim_id, "deployment_id": deployment_id}
         ).scalar_one():
-            # D135: deletion is the source acting. Restoring testimony that no
-            # live version carries would bring a deleted document back.
+            # D159: an archive (or a removal) is the source acting. Restoring
+            # testimony no live version carries would bring the document back;
+            # unarchive does that, and the review applies again afterwards.
             raise ReviewDecisionError(
-                f"claim {claim_id} belongs to a deleted document or version;"
-                " its support cannot be restored"
+                f"claim {claim_id} belongs to an archived or removed document or"
+                " version; its support cannot be restored"
             )
         doc_id = connection.execute(
             _CLAIM_DOC, {"claim_id": claim_id, "deployment_id": deployment_id}
@@ -607,12 +608,11 @@ def _lock_support_review(
             raise ReviewDecisionError("invalid support review fact plane")
         fact_id, claim_id = UUID(candidate["fact_id"]), UUID(candidate["claim_id"])
         params = {"dep": deployment_id, "fact": fact_id, "claim": claim_id}
-        # D135: serialize with document deletion BEFORE any deletion check or
-        # currency write. A deletion takes the lineage row, then its version
-        # rows, then claims; a verdict takes the same rows in the same order
-        # (shared), so either the deletion commits first and the verdict sees
-        # it, or the verdict commits first and the deletion retires what it
-        # restored.
+        # D159: serialize with archive BEFORE any archive check or currency
+        # write. An archive takes the lineage row exclusively; a verdict takes
+        # it (then its version rows) shared, so either the archive commits
+        # first and the verdict sees it, or the verdict commits first and the
+        # archive retires what it restored.
         connection.execute(_LOCK_CLAIM_LINEAGE, params)
         connection.execute(_LOCK_CLAIM_VERSIONS, params)
         table = "relations" if kind == "relation" else "observations"
@@ -778,7 +778,8 @@ _CLAIM_DELETED = text(
     f"""
     SELECT EXISTS (
                SELECT 1 FROM documents dd
-               WHERE dd.doc_id = cl.doc_id AND dd.deleted_at IS NOT NULL
+               WHERE dd.doc_id = cl.doc_id
+                 AND (dd.deleted_at IS NOT NULL OR dd.archived_at IS NOT NULL)
            )
         OR (
             EXISTS (
@@ -794,7 +795,7 @@ _CLAIM_DELETED = text(
     WHERE cl.claim_id = :claim_id AND cl.deployment_id = :deployment_id
     """
 )
-"""A claim of a deleted lineage, or one only deleted versions carry (D135)."""
+"""A claim of an archived or hidden lineage, or one only removed versions carry."""
 
 _CLAIM_DOC = text(
     """

@@ -69,7 +69,7 @@ from starlette.types import Scope
 from starlette.types import Send
 
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
-from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
@@ -111,10 +111,11 @@ from rememberstack.model import ConnectorNotFoundError
 from rememberstack.model import ContentDetectionError
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBuildInfo
-from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentArchive
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
+from rememberstack.model import DocumentUnarchive
 from rememberstack.model import DocumentUpload
 from rememberstack.model import DocumentVersionNotFoundError
 from rememberstack.model import EffectivePeriodConflictError
@@ -360,11 +361,17 @@ class DocumentInventoryPort(Protocol):
     ) -> DocumentPage: ...
 
 
-class DocumentDeletionPort(Protocol):
-    """Remove one document's contribution to the live memory (D135)."""
+class DocumentArchivePort(Protocol):
+    """Archive and unarchive documents (D159): end or restore their testimony."""
 
-    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
-        """Delete the lineage, or raise ``DocumentNotFoundError`` when absent."""
+    def archive_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentArchive:
+        """Archive the lineage, or raise ``DocumentNotFoundError`` when absent."""
+        ...
+
+    def unarchive_document(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> DocumentUnarchive:
+        """Undo the archive, or raise ``DocumentNotFoundError`` when absent."""
         ...
 
 
@@ -575,7 +582,7 @@ class ApiDeployment:
     section_history: SectionHistoryPort | None = None
     references: ReferencesPort | None = None
     document_references: DocumentReferencesPort | None = None
-    deletion: DocumentDeletionPort | None = None
+    archive: DocumentArchivePort | None = None
     effective_time: EffectiveTimePort | None = None
     tags: TagPort | None = None
     graph: GraphQueryPort | None = None
@@ -680,7 +687,7 @@ def build_api(
     section_history: SectionHistoryPort | None = None,
     references: ReferencesPort | None = None,
     document_references: DocumentReferencesPort | None = None,
-    deletion: DocumentDeletionPort | None = None,
+    archive: DocumentArchivePort | None = None,
     effective_time: EffectiveTimePort | None = None,
     tags: TagPort | None = None,
     graph: GraphQueryPort | None = None,
@@ -696,8 +703,8 @@ def build_api(
 
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
-    deployment-side connector configuration; `deletion` adds
-    `DELETE /documents/{doc_id}` (D135); `effective_time` adds
+    deployment-side connector configuration; `archive` adds
+    `POST /documents/{doc_id}/archive` and `/unarchive` (D159); `effective_time` adds
     `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` and
     `DELETE /documents/{doc_id}/effective-periods` (D140); `tags` adds
     `GET|POST /tags`, `PATCH|DELETE /tags/{tag_id}` and
@@ -749,7 +756,7 @@ def build_api(
         section_history=section_history,
         references=references,
         document_references=document_references,
-        deletion=deletion,
+        archive=archive,
         effective_time=effective_time,
         tags=tags,
         graph=graph,
@@ -1026,8 +1033,8 @@ def build_api(
         _mount_references(app=app)
     if document_references is not None:
         _mount_document_references(app=app)
-    if deletion is not None:
-        _mount_document_deletion(app=app)
+    if archive is not None:
+        _mount_document_archive(app=app)
     if effective_time is not None:
         _mount_effective_time(app=app)
     if tags is not None:
@@ -1167,10 +1174,9 @@ def install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
         # named origin ride a session cookie it should never see.
         # OPTIONS is absent deliberately: the middleware answers preflight
         # itself, so listing it would only advertise a method no route serves.
-        # DELETE and PUT are listed because `DELETE /documents/{doc_id}` and
-        # the D140 effective-period routes exist; they grant nothing by
-        # themselves, since those routes still demand a credential with full
-        # write scope.
+        # DELETE and PUT are listed because the D140 effective-period and
+        # D156 tag routes use them; they grant nothing by themselves, since
+        # those routes still demand a credential with full write scope.
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         # Exactly the two headers a browser client sends. `Idempotency-Key`
         # was here for a contract nothing implements — advertising a header no
@@ -1189,7 +1195,7 @@ def _served_tools(
     open_query: bool,
     ingest: bool,
     pipeline_readiness: bool,
-    deletion: bool,
+    archive: bool,
     document_search: bool,
     section_history: bool,
     document_references: bool = False,
@@ -1206,8 +1212,8 @@ def _served_tools(
         names.append(INGEST_TOOL_NAME)
     if pipeline_readiness:
         names.append(PIPELINE_READINESS_TOOL_NAME)
-    if deletion:
-        names.append(DELETE_DOCUMENT_TOOL_NAME)
+    if archive:
+        names.extend(ARCHIVE_TOOL_NAMES)
     if document_search:
         names.append(SEARCH_DOCUMENTS_TOOL_NAME)
     if section_history:
@@ -1231,7 +1237,7 @@ def _deployment_tools(deployment: ApiDeployment) -> dict[str, int]:
         open_query=deployment.open_query is not None,
         ingest=deployment.ingest is not None,
         pipeline_readiness=deployment.pipeline_readiness is not None,
-        deletion=deployment.deletion is not None,
+        archive=deployment.archive is not None,
         document_search=deployment.document_search is not None,
         section_history=deployment.section_history is not None,
         document_references=deployment.document_references is not None,
@@ -1936,37 +1942,56 @@ def _mount_document_references(*, app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _mount_document_deletion(*, app: FastAPI) -> None:
-    """Expose the lineage-grain delete (D135). Requires write scope."""
+def _mount_document_archive(*, app: FastAPI) -> None:
+    """Expose archive and unarchive (D159). Both require write scope."""
 
-    @app.delete(
-        "/documents/{doc_id}",
-        response_model=DocumentDeletion,
+    @app.post(
+        "/documents/{doc_id}/archive",
+        response_model=DocumentArchive,
         responses={404: {"description": "document_not_found"}},
     )
-    def delete_document(deployment: _Deployment, doc_id: UUID) -> DocumentDeletion:
-        """Remove one document from the live memory.
+    def archive_document(deployment: _Deployment, doc_id: UUID) -> DocumentArchive:
+        """Archive one document: the memory stops believing it.
 
-        Its claims stop counting as current testimony, facts that no other
-        document supports are closed with a recorded retraction, and it
-        leaves the inventory and every read. The claims and the stored
-        original are kept as history: this is not an erasure.
+        Its claims stop counting as current testimony and facts that no other
+        document supports are closed with a recorded retraction. The document
+        stays readable as history: lists, search and the context operations
+        include it only with ``include_archived=true``. Unarchive undoes it.
 
-        The deletion is all or nothing. An unknown id and an already deleted
-        document are both 404: from the caller's side each is absent. A
-        document hidden by another path whose evidence was never updated is
-        finished and answers 200 instead.
+        The archive is all or nothing. A repeat answers the same
+        ``archived_at`` with zero counts; an unknown id is 404.
         """
         try:
-            return _served(deployment.deletion).delete_document(
+            return _served(deployment.archive).archive_document(
                 deployment_id=deployment.deployment_id, doc_id=doc_id
             )
         except DocumentNotFoundError as error:
             raise HTTPException(status_code=404, detail="document_not_found") from error
         except ForgetInProgressError as error:
-            # Admission was open when the request arrived, but a hard forget
-            # was already preparing when the delete took the D74 fence. The
-            # delete ran no statement; answer exactly as admission would.
+            raise HTTPException(
+                status_code=503, detail={"code": "forget_in_progress"}
+            ) from error
+
+    @app.post(
+        "/documents/{doc_id}/unarchive",
+        response_model=DocumentUnarchive,
+        responses={404: {"description": "document_not_found"}},
+    )
+    def unarchive_document(deployment: _Deployment, doc_id: UUID) -> DocumentUnarchive:
+        """Undo an archive exactly.
+
+        The testimony the archive ended is current again and the facts it
+        closed reopen when they have support again; processing the archive cut
+        short continues. A document that is not archived answers zero counts;
+        an unknown id is 404.
+        """
+        try:
+            return _served(deployment.archive).unarchive_document(
+                deployment_id=deployment.deployment_id, doc_id=doc_id
+            )
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ForgetInProgressError as error:
             raise HTTPException(
                 status_code=503, detail={"code": "forget_in_progress"}
             ) from error

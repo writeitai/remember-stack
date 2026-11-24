@@ -205,10 +205,10 @@ class DocumentCatalog:
                 .mappings()
                 .one_or_none()
             )
-            # A deleted latest version is never the no-op target: the bytes
-            # returning after a deletion are a new observation and must be
+            # A removed latest version is never the no-op target: bytes
+            # returning after a removal are a new observation and must be
             # processed again, or the document would come back live while
-            # contributing nothing (D135).
+            # contributing nothing.
             if record.version_key is not None:
                 # D140: a key new to the lineage always creates a version; an
                 # existing one is only an idempotent retry of the latest
@@ -227,6 +227,12 @@ class DocumentCatalog:
                     or latest["deleted_at"] is not None
                 )
             version_id = uuid4() if created or latest is None else latest["version_id"]
+            if created and lineage["archived_at"] is not None:
+                # D159 §2.3: a changed version of an archived document is
+                # ordinary ingest — the lineage is live again, and D56 reuse
+                # may draw on its archived versions. Identical bytes (the no-op
+                # above) leave it archived.
+                connection.execute(_UNARCHIVE_LINEAGE, {"doc_id": doc_id})
             principal_id: UUID | None = None
             if created and record.ingested_by is not None:
                 # Attribution is creation-scoped: only a NEW version records a
@@ -918,13 +924,14 @@ _INSERT_DOCUMENT = text(
         CAST(:versioning_mode AS versioning_mode)
     )
     ON CONFLICT (deployment_id, source_kind, source_ref) DO NOTHING
-    RETURNING doc_id, title, versioning_mode::text AS versioning_mode
+    RETURNING doc_id, title, versioning_mode::text AS versioning_mode, archived_at
     """
 )
 
 _SELECT_DOCUMENT_LOCKED = text(
     """
-    SELECT doc_id, title, versioning_mode::text AS versioning_mode FROM documents
+    SELECT doc_id, title, versioning_mode::text AS versioning_mode, archived_at
+    FROM documents
     WHERE deployment_id = :deployment_id
       AND source_kind = :source_kind
       AND source_ref = :source_ref
@@ -1010,9 +1017,13 @@ _ADVANCE_VERSION_CURSOR = text(
 _RESURRECT_LINEAGE = text(
     """
     UPDATE documents
-    SET deleted_at = NULL, deleted_sync_cycle_id = NULL
+    SET deleted_at = NULL
     WHERE doc_id = :doc_id AND deleted_at IS NOT NULL
     """
+)
+
+_UNARCHIVE_LINEAGE = text(
+    "UPDATE documents SET archived_at = NULL, archived_by = NULL WHERE doc_id = :doc_id"
 )
 
 _INSERT_VERSION = text(
