@@ -164,17 +164,15 @@ covers:
 - **Keep the separate manifest store and replay on every start.** Rejected (§2).
 - **Keep a separate copy but replay only on demand.** Still a second store to provision and
   keep healthy for a case remember.dev does not have. Rejected.
-- **Chosen: one PostgreSQL row per forget, plus an operator command.** The row holds only the
+- **An export file and a replay before traffic** (`forget-export` / `forget-reapply --from`,
+  explored in review). Rejected as restore machinery the owner does not want for an extreme
+  outlier.
+- **Chosen: one PostgreSQL row per forget, plus one ordinary command.** The row holds only the
   document's ID, version IDs, content hashes and source-identity hash. Because the sweep is
-  keyed by exactly those, the row is all `remember ops forget-reapply` needs to erase again
-  after a restore, whichever stores were restored; no object-key inventory is kept.
-  `remember ops forget-export` writes the records for the operator to keep outside the
-  database backup.
-
-  The honest limitation: a database restored from before a forget no longer contains that
-  forget's row; the operator re-applies it from the export, as with any erasure log a
-  controller keeps. Restore is an operator action (D60), so the operator is present; the
-  engine never blocks starting on it. remember.dev keeps no database backups.
+  keyed by exactly those, `remember ops forget-reapply` can re-run it for every record after
+  object storage, the corpus bucket or the K repository is restored. It is not a startup step
+  and nothing waits for it. A database restored from before a forget no longer has that record;
+  the operator forgets the document again. remember.dev keeps no database backups.
 
 ### 3.6 Adding a forgotten document back
 

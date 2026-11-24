@@ -3023,8 +3023,8 @@ restore canary is green; design resolution alone does not pretend the runtime co
 ## D75. Portability is a state-and-ordering contract; operators move bytes (refines D60, D62, D74)
 
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-hides-at-once-and-sweeps-until-clean) (2026-11-24).** There is no manifest root to transfer and no readiness
-> replay; clauses about them below are history. A restore ends with `remember ops forget-reapply`
-> (with the exported forget records) before traffic.
+> replay; clauses about them below are history. After a restore the operator runs
+> `remember ops forget-reapply` to re-run the sweep for every forget record.
 
 **Decision.** The OSS library defines which deployment state is authoritative and the only safe
 restore order; it does not implement `remember export` / `remember import`, a universal archive
@@ -8544,8 +8544,9 @@ no deprecation).
 Forget adds no lock, barrier, admission gate or startup step beyond the lineage row lock ingest
 already takes; nothing else waits for it. Its record is one content-free PostgreSQL row, which
 also guards re-ingest: forgotten content is refused with `document_forgotten` unless that one
-request sets `allow_forgotten=true`. After restoring a backup the operator runs
-`remember ops forget-reapply` (with an exported record list) before traffic.
+request sets `allow_forgotten=true`. After restoring stores from a backup the operator can run
+`remember ops forget-reapply`, an ordinary command that re-runs the sweep for every forget
+record.
 
 **Why.** D135's delete was neither archive nor erasure. D74's erasure was disproportionate: a
 deployment-wide outage per forget, a refusal while authored pages cite the document, a replay of
