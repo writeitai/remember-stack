@@ -174,7 +174,9 @@ def test_item_failure_logs_retry_as_warning_and_last_attempt_as_error(
     assert _coded(caplog) == [coded]
     assert handler.finalized == (outcome is RunResultOutcome.DEAD_LETTERED)
     record = next(r for r in caplog.records if "error_code" in r.__dict__)
-    assert record.exc_info is not None and "processing_id" in record.__dict__
+    # Rule 4: the type and ids, never the exception's text or traceback.
+    assert record.exc_info is None and "processing_id" in record.__dict__
+    assert record.__dict__["exception_type"] == type(error).__name__
 
 
 @pytest.mark.parametrize(
@@ -192,7 +194,7 @@ def test_a_failure_after_losing_the_lease_is_one_lease_lost_warning(
     assert result.outcome is RunResultOutcome.LEASE_LOST
     assert _coded(caplog) == [("WARNING", "worker_lease_lost")]
     record = caplog.records[0]
-    assert record.exc_info is not None and record.exc_info[1] is error
+    assert record.exc_info is None
     assert record.__dict__["exception_type"] == type(error).__name__
 
 

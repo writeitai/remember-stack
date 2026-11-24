@@ -189,23 +189,6 @@ class StageHandler(Protocol):
         ...
 
 
-def _loggable(exception: BaseException) -> BaseException | None:
-    """The exception to attach as ``exc_info``, or None when it may hold input.
-
-    Provider errors can carry the upstream response, which may echo document
-    text (D158 Rule 4); for those, and anything they caused, the record keeps
-    ``exception_type`` only.
-    """
-    seen: set[int] = set()
-    current: BaseException | None = exception
-    while current is not None and id(current) not in seen:
-        if isinstance(current, ProviderCallError):
-            return None
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-    return exception
-
-
 class _LedgerCostMeter:
     """Bind provider accounting to one claimed processing attempt."""
 
@@ -286,7 +269,7 @@ class _LeaseRenewal:
                 _logger.warning(
                     "lease renewal refused; the claim was taken back",
                     extra={
-                        "error_code": "worker_lease_lost",
+                        "error_code": "worker_lease_renewal_refused",
                         "processing_id": str(self._work.processing_id),
                         "stage": self._work.stage.value,
                         "attempt": self._work.attempt,
@@ -489,7 +472,6 @@ class Worker:
             # Logged once the ledger accepted the terminal transition.
             _logger.error(
                 "non-retryable worker item failure",
-                exc_info=_loggable(exception),
                 extra={
                     "error_code": "worker_item_failed",
                     "exception_type": type(exception).__name__,
@@ -533,11 +515,13 @@ class Worker:
                     claimed=claimed, started_ns=started_ns, failure=exception
                 )
             # D158: a retry that will run again is expected (WARNING); the
-            # last attempt failing is the item's one ERROR.
+            # last attempt failing is the item's one ERROR. Item records carry
+            # the exception type, never its text or traceback: converter and
+            # provider errors can quote the document (Rule 4). The ledger row
+            # keeps the full traceback for `remember ops inspect`.
             if retry_at is not None:
                 _logger.warning(
                     "retryable worker item failure",
-                    exc_info=_loggable(exception),
                     extra={
                         "error_code": "worker_item_retry",
                         "exception_type": type(exception).__name__,
@@ -549,7 +533,6 @@ class Worker:
             else:
                 _logger.error(
                     "worker item failed with no retry left",
-                    exc_info=_loggable(exception),
                     extra={
                         "error_code": "worker_item_failed",
                         "exception_type": type(exception).__name__,
@@ -729,7 +712,6 @@ class Worker:
         """
         _logger.warning(
             "attempt finished after losing its lease; its result is discarded",
-            exc_info=None if failure is None else _loggable(failure),
             extra={
                 "error_code": "worker_lease_lost",
                 "exception_type": None if failure is None else type(failure).__name__,
@@ -761,11 +743,14 @@ class Worker:
             return
         try:
             handler.finalize_terminal_failure(work=claimed, error=str(exception))
-        except Exception:  # noqa: BLE001 — finalization must not mask the DLQ
-            _logger.exception(
+        except Exception as error:  # noqa: BLE001 — finalization must not mask the DLQ
+            # No traceback: it would chain the item's failure, whose text
+            # can quote the document (Rule 4).
+            _logger.error(
                 "terminal-failure finalizer failed",
                 extra={
                     "error_code": "worker_finalizer_failed",
+                    "exception_type": type(error).__name__,
                     "processing_id": str(claimed.processing_id),
                     "stage": claimed.stage.value,
                 },
@@ -790,9 +775,13 @@ class Worker:
                 "failed to persist usage from the failed provider response:"
                 f" {accounting_exception}"
             )
-            _logger.exception(
+            # No traceback: it would chain the provider's error text (Rule 4).
+            _logger.error(
                 "failed to meter a usage-bearing provider exception",
-                extra={"error_code": "provider_usage_unrecorded"},
+                extra={
+                    "error_code": "provider_usage_unrecorded",
+                    "exception_type": type(accounting_exception).__name__,
+                },
             )
 
     def _export_event(self, *, event: TelemetryEvent) -> None:
