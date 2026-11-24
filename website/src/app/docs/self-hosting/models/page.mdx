@@ -107,6 +107,11 @@ REMEMBERSTACK_TYPESAFE_ROUTE=openrouter
 REMEMBERSTACK_OPENROUTER_ZDR=true
 ```
 
+With Docker Compose, put these in the project `.env`. The services read
+`REMEMBERSTACK_OPENROUTER_ZDR` and `REMEMBERSTACK_OPENROUTER_BASE_URL` only
+from there (`env_file`), so a value exported in your shell does not reach the
+engine, and an alternate `--env-file` cannot override or clear them.
+
 ## Change a model
 
 Put the new model id in `.env` and apply it:

@@ -113,7 +113,7 @@ Accepting the current limitation does not remove that requirement or claim it
 is fulfilled. Historical-belief queries require retained revision history
 where that is their contract. A per-fact transcript can explain a known fact's
 recorded decisions; it is not a collection-wide historical query and must not
-be described as an equivalent replacement. Hard forget may erase transcript
+be described as an equivalent replacement. Forget may erase transcript
 payloads, and erased before-images must never be replayed.
 
 This clarification introduces no window-history table, second write path or
@@ -237,8 +237,8 @@ Required properties apply equally to relations and observations:
 4. Reuse one stored completed answer per exact prepared attempt. An obsolete
    attempt cannot publish an answer for a replacement attempt. Provider failure
    before durable completion follows existing retry and cost rules.
-5. Apply under the deployment forget/acceptance fence, identity coordination,
-   canonical block locks, and affected fact locks in stable order. All writers of
+5. Apply under identity coordination, canonical block locks, and affected fact
+   locks in stable order. All writers of
    consumed inputs participate in the same coordination. No model call holds
    those locks. An implementation must document the exact acquisition order and
    demonstrate concurrent helper and forget behavior before acceptance.
@@ -335,16 +335,16 @@ article about 2022 does not establish that the event stopped happening on the
 withdrawal day. Keep historical testimony according to the existing withdrawal
 contract and record the actual system transition time.
 
-Hard forget is different: deleted source content must not survive in facts,
+Forget (D159) is different: forgotten source content must not survive in facts,
 prepared inputs, completed answers, adjudication payloads, evidence links,
 profiles, K pages or derived indexes. Every new durable field belongs in the
-existing deletion inventory and tests. No temporal-specific store is exempt.
+forget sweep and its schema-coverage test. No temporal-specific store is exempt.
 
 When surviving evidence independently supports a date, ordinary adjudication may
 retain it. Otherwise clear unsupported dates or remove the unsupported fact
-according to the existing forget contract. Do not invent a replacement date.
-Invalidate pending work and ensure late provider replies and retries cannot
-restore erased payloads. Erasure completion must cover derived payloads, not only
+according to the [forget contract](archive_and_forget_design.md#33-the-sweep). Do not
+invent a replacement date. Forget's hide skips pending work, and anything a late provider
+reply or retry writes is removed by the next sweep. Erasure completion must cover derived payloads, not only
 the source row. Rebuild uses surviving claims and permitted recorded decisions;
 it must not replay erased before-images. This requirement remains even though
 the old per-endpoint compensation/checkpoint design is removed.
@@ -413,7 +413,7 @@ documents and DDL remain marked as historical rationale, not parallel authority.
 | D112 deterministic all-overlapping-state evidence attachment | Removed; support targets follow semantic identity, not interval overlap |
 | D113 assertion provenance, atomic support movement and stable retry result | Retained as properties (§§3.2–4); its mandatory stores and proof graph are withdrawn |
 | D43 fixed-period measurement no-cap rule | A known reporting period is the chosen finite world window. A later measurement does not automatically cap that period, and its end does not invalidate the belief (`invalidated_at` stays unchanged). Conflicting same-period figures still coexist; an open world window is not required to preserve historical belief. |
-| D41 / D55 / D74 | Claims remain immutable; world time is separate from withdrawal; hard forget still covers all durable derived copies |
+| D41 / D55 / D159 | Claims remain immutable; world time is separate from withdrawal; forget still covers all durable derived copies |
 
 Existing general review/audit capabilities are not removed. This design adds no
 dedicated date-review surface and makes no change to D108's autonomous authority

@@ -128,10 +128,10 @@ different scopes and cannot substitute for one another.
 
 ## Deletion, rollout and acceptance
 
-Selection outputs/cards are source-owned content. Include them, their occurrence
-links and pending work in hard-forget deletion and verification. Deletion and
-publication must use existing forget coordination so a late Selection/Claimify
-answer cannot resurrect erased text. Multi-version reuse does not exempt source
+Selection outputs/cards are source-owned content. Forget's hide skips their pending
+work and its sweep deletes them and their occurrence links (D159). A late
+Selection/Claimify answer for a forgotten document is invisible to reads and
+removed by the next sweep, so it cannot resurrect erased text. Multi-version reuse does not exempt source
 copies from erasure. No additional long-lived profile or quote cache.
 
 Coordinate schema/component generations with D119. Use the project's clean-store

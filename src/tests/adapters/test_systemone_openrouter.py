@@ -355,34 +355,30 @@ def test_exhausted_openrouter_rejections_classify_as_unavailable(
     )
 
 
-def test_compose_forwards_the_whole_jev_retention_policy() -> None:
-    """An exported route, ZDR flag and base URL all reach every app service.
+def test_compose_takes_the_jev_route_and_reads_zdr_only_from_dotenv() -> None:
+    """Every app service gets the route, and ZDR only from ``.env``.
 
-    The shared ``x-app`` environment is merged into the API, setup and every
-    worker, so a policy exported in the shell is not silently dropped. ZDR
-    uses ``-`` rather than ``:-`` so an explicitly blank value stops startup
-    instead of becoming ``false``.
+    ``REMEMBERSTACK_TYPESAFE_ROUTE`` is forwarded (default ``typesafe``, which
+    a ZDR deployment refuses at startup, so a missing route fails closed).
+    ``REMEMBERSTACK_OPENROUTER_ZDR`` and the OpenRouter base URL are not
+    listed under ``environment:``: they reach the services only from ``.env``
+    through ``env_file``, so a shell export or an alternate ``--env-file``
+    cannot override or clear them.
     """
     from pathlib import Path
+
+    import yaml
 
     compose = (Path(__file__).resolve().parents[3] / "compose.yaml").read_text(
         encoding="utf-8"
     )
-    shared = compose.split("\nservices:\n", maxsplit=1)[0]
-    for line in (
-        "REMEMBERSTACK_TYPESAFE_ROUTE: ${REMEMBERSTACK_TYPESAFE_ROUTE:-typesafe}",
-        "REMEMBERSTACK_OPENROUTER_ZDR: ${REMEMBERSTACK_OPENROUTER_ZDR-false}",
-        "REMEMBERSTACK_OPENROUTER_BASE_URL:"
-        " ${REMEMBERSTACK_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}",
-    ):
-        assert f"\n    {line}\n" in shared
-    import yaml
-
-    rendered = yaml.safe_load(compose)["services"]
+    services = yaml.safe_load(compose)["services"]
     for name in ("setup", "api", "worker-convert", "worker-llm"):
-        environment = rendered[name]["environment"]
-        assert environment["REMEMBERSTACK_OPENROUTER_ZDR"] == (
-            "${REMEMBERSTACK_OPENROUTER_ZDR-false}"
+        service = services[name]
+        environment = service["environment"]
+        assert environment["REMEMBERSTACK_TYPESAFE_ROUTE"] == (
+            "${REMEMBERSTACK_TYPESAFE_ROUTE:-typesafe}"
         )
-        assert "REMEMBERSTACK_TYPESAFE_ROUTE" in environment
-        assert "REMEMBERSTACK_OPENROUTER_BASE_URL" in environment
+        assert "REMEMBERSTACK_OPENROUTER_ZDR" not in environment
+        assert "REMEMBERSTACK_OPENROUTER_BASE_URL" not in environment
+        assert service["env_file"] == [{"path": ".env", "required": False}]

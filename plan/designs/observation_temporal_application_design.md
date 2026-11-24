@@ -1,5 +1,7 @@
 # Observation application receipts and support provenance (D113)
 
+> **D159 (2026-11-24).** Hard-forget (D74) references below are historical; forget is now the [archive and forget design](archive_and_forget_design.md).
+
 > **D118 supersession (2026-09-07; effective when merged).** D113 storage, proof graph and incorporated SQL are withdrawn. D118 retains the requirements for assertion provenance, atomic support changes and stable retry results.
 > The [mutable fact window design](mutable_fact_windows_design.md) is the current
 > authority. The text

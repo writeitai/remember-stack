@@ -56,7 +56,7 @@ An engine request has exactly:
 The capture identity is SHA256 of the contract's ASCII bytes, one NUL byte and
 canonical request JSON. Same identity/different input conflicts. Bindings
 identify the native PostgreSQL store and every configured canonical, artifact,
-corpus, forget and K store,
+corpus and K store,
 with role, exact store identity and admitted representation/profile. No
 customer prefix or filesystem display name repairs an incomplete binding.
 An absent component is zero only when configuration and the closed writer
@@ -128,16 +128,17 @@ The provider capability captures one nonempty exact set of distinct filesystem
 IDs in one organisation and cell. Cardinality belongs to its qualified native
 transport/batch/work bounds, not a customer quota or an integration's role count.
 The managed adapter consumes that one fsit D63 protocol and independently
-requires its exact four distinct raw/artifacts/corpus/forget role filesystems.
+requires its exact three distinct raw/artifacts/corpus role filesystems (D159 removed
+the separate forget store).
 It rejects missing roles, extra requested scope and implicit sibling expansion;
-other provider consumers need not pad their own valid scope to four.
+other provider consumers need not pad their own valid scope to three.
 Its request remains fsit-capture-v1 with the existing
 organisation UUID32, literal cell ID, sorted canonical filesystem IDs and
 cut_at_unix_us. Each filesystem is sixteen bytes encoded as 26 lowercase
 unpadded base32 characters; decode/re-encode exactly. Path and alias framing
 uses those decoded bytes, never a synthetic UUID alias.
-The same four-ID request retains exactly the same canonical bytes and hashes;
-there is one current protocol/decoder, not a four-ID compatibility path.
+The same three-ID request retains exactly the same canonical bytes and hashes;
+there is one current protocol/decoder, not a compatibility path.
 
 The agreed item boundary has exactly filesystem_id, path_id, version_id,
 entry_kind, logical_bytes, inline_bytes, alias_group and storage_flags.
@@ -155,7 +156,7 @@ the engine adapter validates that one versioned protocol, not a second
 decoder or substitute API. The complete manifest binds request/scope,
 qualified provider/filer/schema profile, actual writer/process lifecycle,
 both original views, clock/guard/release evidence, one explicit scoped set per
-requested filesystem (four under the managed binding), counts and ordered page
+requested filesystem (three under the managed binding), counts and ordered page
 digests, completion and expiry. One empty set is
 not a missing set. Page ordinals are contiguous and replay returns the exact
 same immutable result. The authenticated transport/current scoped grant
@@ -202,7 +203,7 @@ subtract guessed dead/free pages.
 
 Purpose classification distinguishes canonical raw/referenced artifacts,
 truth-defining provenance, K repository origin/history, P3 durable origin,
-privacy-control intent, staging/failed attempts, paid-work checkpoints,
+staging/failed attempts, paid-work checkpoints,
 audit/operations, scratch/rebuilds, caches and serving replicas. Hot/cold
 placement is a different field. The closed source inventory, not a name
 prefix, owns these classes. Unknown/mixed purpose remains explicit and cannot
@@ -235,7 +236,6 @@ raw/artifact and P3 objects stay distinct resources even when their payloads
 match; the operator's accepted mapping determines permitted inclusion without
 invented content-hash deduplication. K uses qualified actual repository object/
 pack ownership and retained byte evidence, not one charge per checkout.
-Forget control is separately durable and is not a customer funding authority.
 
 Only a complete capture with a current matching mapping may produce the four
 operator component amounts and their checked sum. Missing qualification,
@@ -401,7 +401,7 @@ sent with the content-free receipt.
 
 Capture never repairs a failed historical cut with present bytes. Take a newly
 named forward cut; the operator applies its existing missing-data rule. Reads,
-hard-forget intent, deletion and ordinary forward fixes do not depend on a
+archive, forget and ordinary forward fixes do not depend on a
 successful capture ACK. Short native locks release on timeout/process loss;
 there is no release recovery coordinator or historical rollout settlement.
 An unproved release/view lifetime gives no completed receipt.

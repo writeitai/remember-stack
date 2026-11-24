@@ -257,8 +257,8 @@ bounded keyset pages, verifies them, and sets the generation only after completi
 For pre-D102 rows it conservatively expands the resolved entity's canonical
 aliases within each document; extra rows merely disable replay. Clearing the
 generation disables the shortcut during repair. Rebuild from D102 decision
-features restores exact rows and anchor source coordinates. D74 hard forget
-deletes every binding for the document and verifies zero residual rows.
+features restores exact rows and anchor source coordinates. Forget's sweep
+deletes every binding for the document (D159).
 
 This deliberately prefers source-local consistency over distinguishing two
 same-named people in one document after the first anchor. A wrong first T4
@@ -337,7 +337,7 @@ fact cannot expire without an evidence event to trigger refresh), joins the lead
 into `profile_summary`, and
 embeds `name + summary + salient facts` under `entity-profile-v2`. It is
 composed synchronously after evidence add/recount/supersession, merge/un-merge, terminal human
-review, normal deletion, and the D74 lineage scrub. Survivor profiles aggregate the complete
+review, archive, and the forget sweep. Survivor profiles aggregate the complete
 redirect closure. Merged members retain separately attested member-local profiles solely for
 joint neighborhood re-decision; retired rows clear, and public resolution/search still exposes
 only active survivors. Deployment setup keyset-
@@ -367,8 +367,8 @@ Merge application also resolves a queued survivor to its live terminal root and 
 absorbed target to remain active. A target that joined another cluster after proposal creation is
 rejected for re-evaluation rather than silently extending the stale proposal's blast radius.
 
-Worker refresh calls retain their processing-attempt meter. Setup backfill, human-review, and
-hard-forget readiness replay have no worker identity, so they write provider receipts to the
+Worker refresh calls retain their processing-attempt meter. Setup backfill and human-review
+have no worker identity, so they write provider receipts to the
 operational surface-cost ledger instead of disappearing between ledgers.
 
 Production `_T4_PROMPT` includes:
@@ -481,8 +481,7 @@ This replaces D99's whole-candidate/profile equality requirement. See
 
 Each attempt has three parts:
 
-1. In a short transaction, use the existing hard-forget shared fence, require and
-   share-lock the live source lineage, then take the shared deployment identity
+1. In a short transaction, require and share-lock the live source lineage, then take the shared deployment identity
    epoch and the normalized-lemma lock. Use a valid document-local T0 anchor or
    load the bounded candidate/profile evidence and local memberships. Commit.
 2. Run T3/T4 without any database transaction or advisory lock held.
@@ -519,10 +518,11 @@ commit policy and deterministic input-snapshot digest are audit evidence.
 Do not copy raw profile snapshots into another prose store. The digest does not
 reconstruct the prompt; it attests the bounded candidate/binding input.
 
-The production resolver runs within ordinary worker attempts. D74 establishes
-its barrier and drains those attempts before scrubbing; an active forget stops
-late commits. The live lineage lock serializes commits with D135 deletion.
-These source/forget checks remain mandatory. Provider work holds no such lock.
+The production resolver runs within ordinary worker attempts. The live lineage
+lock serializes commits with archive and with forget's hide; a commit after the
+hide finds the source no longer live and is refused, and anything a late attempt
+still writes is invisible and removed by forget's next sweep (D159). These source
+checks remain mandatory. Provider work holds no such lock.
 Profile embeddings still require exact input-hash revalidation: a vector is a
 representation of particular text, unlike an identity ID.
 
@@ -548,7 +548,7 @@ policy is not silently introduced: it requires a D22 curve covering both
 same-referent positives and father/son or same-name-colleague negatives, followed
 by an explicit D95 amendment.
 
-**Forget (D74).** Hard-forget is lineage-scoped: a fact evidenced by
+**Forget (D159).** Forget is lineage-scoped: a fact evidenced by
 another remaining document stays. The **profile** is a derived cache, so
 forgetting document A on a **shared** entity must **invalidate and
 recompute** that entity’s `profile_summary`, salient-observation set, and
@@ -885,12 +885,12 @@ Minimum rows:
 | resolution decision method | keep `T4_small` for the configured simple-model seat; `resolver_version` and features distinguish D99 pairwise rows from D100 joint rows; retain `T4_frontier` only for historical readability |
 | `resolution_exclusions` | a T4 `new` may write supported-different rows only for candidates supplied to that joint decision; historical D99 and human rows retain their existing basis/effectiveness rules |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
-| Profile refresher | deterministic current-fact projection under `entity-profile-v2`; rewrite `profile_summary` + vector attestation from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
+| Profile refresher | deterministic current-fact projection under `entity-profile-v2`; rewrite `profile_summary` + vector attestation from remaining observations/relations; shared-entity forget recomputes, not exclusive-id scrub only |
 | convergence composition | after a current relation/observation profile refresh, nominate distinct touched alias lemmas to the existing bounded clusterer; deduplicate equivalent open review proposals |
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |
-| normal version/lineage delete | clear every binding for the affected `doc_id` under the existing deletion admission barrier; a surviving or reingested version earns a new anchor rather than reusing deleted evidence |
+| version removal / lineage archive | clear every binding for the affected `doc_id` in the archive transaction; a surviving or reingested version earns a new anchor rather than reusing archived evidence |
 | `GraphQueries.neighborhood` | empty predicates = all `RELATES` (keep) |
 | `judge_pair` | lemma equality is not automatic match |
 | E3 prompt | names + governed predicates; no REGISTRY TYPES; bare-noun refusal |
@@ -966,12 +966,12 @@ generations are abandoned, not dual-run. Sequencing:
   response each. Competing same-lemma creation checks prevent duplicate
   empty-registry mints and reconsider a newly created candidate.
 - A selected entity merged during inference resolves to its live canonical
-  root; retirement, source deletion and a native forget barrier remain checked.
-- D74 removes document bindings; clearing readiness disables replay; rebuild
+  root; retirement, source archive and forget remain checked.
+- Archive and forget remove document bindings; clearing readiness disables replay; rebuild
   restores D102 rows and conservatively over-blocks ambiguous historical rows.
 - Human re-decision/unmerge restore writes binding membership before it can
-  expose a split; normal version or lineage deletion clears the document's
-  bindings so reingest cannot reuse deleted evidence.
+  expose a split; version removal or lineage archive clears the document's
+  bindings so reingest cannot reuse archived evidence.
 - T4 sees both candidates jointly when several exist.
 - Compatible same-name evidence with different topics selects an existing
   candidate. Explicit father/son and same-name-colleague evidence selects
@@ -1010,7 +1010,7 @@ generations are abandoned, not dual-run. Sequencing:
 - A lemma linking many entities is ranked on merit, never demoted (D103).
 - Forget: exclusive entity still fully purged; **shared** survivor
   profile no longer contains the forgotten document’s distinctive
-  phrase (D74).
+  phrase (D159).
 - The benchmark answer loop cannot accept `Unknown` after only
   `resolve_entity`; one bounded content-bearing read is required. Existing
   malformed-answer retries remain bounded and accounted.

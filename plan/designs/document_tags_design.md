@@ -12,7 +12,7 @@ context operations, and changes which fact evidence a filtered read returns.
 schemas and operation versions, and §3.2's view catalog; the
 [MCP catalogue](one_key_client_surfaces_design.md) tool list.
 **Composes with:** D140 time scope, D142/D153 eligibility before ranking, D54
-counting by lineage, D56 reuse, D135 deletion and D74 hard forget.
+counting by lineage, D56 reuse, and D159 archive and forget.
 
 ## 1. The problem
 
@@ -154,7 +154,7 @@ resubmission of the lineage's latest live version (D134's
 metadata-observation rule) stays one when it carries tags: the tags are
 added, nothing is processed, and the existing version is returned with
 `created=False`. Whether an ingest creates a version is decided exactly as
-today (bytes, D140 `version_key`, reversion and D135 deletion rules); tags
+today (bytes, D140 `version_key`, reversion and D159 archive rules); tags
 take no part in it.
 
 **By update.** `update_document_tags(doc_id, add?, remove?)` adds and
@@ -187,11 +187,11 @@ The same separation keeps the memory's content independent of how it is
 labelled. Tagging a document `project:legalit` cannot change a claim
 extracted from it, an entity it mentions, or a fact it supports.
 
-### 3.5 Deletion and hard forget
+### 3.5 Archive and forget
 
-Normal deletion (D135) keeps a lineage's assignment rows for audit, like its
-D134 metadata rows; a deleted lineage never matches a filter and its tags
-are never returned. D74 hard forget deletes the
+Archive (D159) keeps a lineage's assignment rows, like its D134 metadata rows;
+an archived lineage does not match a filter and its tags are not returned
+unless the caller sets `include_archived=true`. Forget's sweep deletes the
 lineage's assignment rows. The registry itself is the deployment's
 vocabulary, not content from any source, and is unaffected by forgetting a
 document; a tag whose name or description must go is removed with
@@ -471,6 +471,6 @@ coordinate.
   of force and whose in-force support is untagged is not returned.
 - A tag-filtered read stopped by a work bound reports `boundary`, not
   `known_empty`.
-- Deletion keeps assignment rows but never matches or returns them;
-  hard forget removes them and leaves the registry unchanged.
+- Archive keeps assignment rows but does not match or return them by default;
+  forget removes them and leaves the registry unchanged.
 - `resolve_entity` results are unaffected by any tag state.
