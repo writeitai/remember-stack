@@ -1314,6 +1314,33 @@ def test_malformed_embedding_allowlist_is_refused_not_dropped(
         OpenRouterSettings()  # pyright: ignore[reportCallIssue]
 
 
+@pytest.mark.parametrize(
+    ("variable", "field"),
+    (
+        (
+            "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER",
+            "embedding_provider_order",
+        ),
+        ("REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "chat_provider_order"),
+        ("REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY", "chat_provider_only"),
+    ),
+)
+def test_existing_provider_lists_keep_their_tolerant_parsing(
+    monkeypatch: pytest.MonkeyPatch, variable: str, field: str
+) -> None:
+    """Upgrading never stops a deployment whose existing list has a stray comma.
+
+    Only the new embedding allowlist is strict; the existing shortlists keep
+    dropping blank entries exactly as before.
+    """
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv(variable, "openai/flex,openai,")
+
+    settings = OpenRouterSettings()  # pyright: ignore[reportCallIssue]
+
+    assert getattr(settings, field) == ["openai/flex", "openai"]
+
+
 def test_blank_embedding_allowlist_env_is_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -77,8 +77,9 @@ therefore also be set to ZDR-only; the request flag cannot turn that off.
    deployment that already sets `REMEMBERSTACK_OPENROUTER_ZDR=true` gets
    `zdr: true` and `data_collection: deny` on its embedding requests too,
    without setting anything new; that is the intended fix. A malformed
-   provider list (a blank or non-string entry, or a JSON scalar for the
-   allowlist) is now refused at startup instead of being read as unset.
+   allowlist (a blank or non-string entry, an empty comma-separated entry, or
+   a JSON scalar) is refused at startup instead of being read as unset; the
+   existing shortlists keep their tolerant parsing.
 
 For the allowlist on its own, chat sends `allow_fallbacks: false`, which pins
 each request to the one host OpenRouter picks. For embeddings that would make

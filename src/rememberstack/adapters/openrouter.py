@@ -62,15 +62,18 @@ _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
 _logger = logging.getLogger(__name__)
 
 
-def _parse_provider_name_list(*, value: object, field_name: str) -> object:
+def _parse_provider_name_list(
+    *, value: object, field_name: str, strict: bool = False
+) -> object:
     """Parse comma-separated or JSON list of OpenRouter provider slugs.
 
     An absent value or a blank string (Compose unset optionals) becomes
-    ``None``. Anything else must name at least one host: a list or
-    comma-separated value with a blank or non-string entry is refused rather
-    than dropped, so a malformed hard allowlist can never collapse into "no
-    allowlist" or silently lose a host.
-    Used by the embedding and chat shortlists and allowlists.
+    ``None``. The existing shortlists (``strict=False``) keep their historical
+    tolerance: blank entries are dropped, so ``nebius,deepinfra,`` still names
+    two hosts. The hard embedding allowlist (``strict=True``) must name at
+    least one host and refuses a blank or non-string entry, an empty
+    comma-separated entry and a JSON scalar, so a malformed allowlist can never
+    collapse into "no allowlist" or silently lose a host.
     """
     if value is None:
         return None
@@ -85,6 +88,8 @@ def _parse_provider_name_list(*, value: object, field_name: str) -> object:
                 raise ValueError(
                     f"{field_name} must be comma-separated names or a JSON list"
                 ) from error
+        elif not strict:
+            value = [part.strip() for part in stripped.split(",") if part.strip()]
         else:
             try:
                 json.loads(stripped)
@@ -106,6 +111,9 @@ def _parse_provider_name_list(*, value: object, field_name: str) -> object:
             value = parts
     if not isinstance(value, list) or not value:
         raise ValueError(f"{field_name} must be a non-empty list of strings")
+    if not strict:
+        legacy = [str(item).strip() for item in value if str(item).strip()]
+        return legacy or None
     names: list[str] = []
     for item in cast(list[object], value):
         if not isinstance(item, str) or not item.strip():
@@ -266,7 +274,7 @@ class OpenRouterSettings(BaseSettings):
     def parse_embedding_provider_only(cls, value: object) -> object:
         """Parse comma-separated or JSON list of OpenRouter provider slugs."""
         return _parse_provider_name_list(
-            value=value, field_name="embedding_provider_only"
+            value=value, field_name="embedding_provider_only", strict=True
         )
 
     @field_validator("chat_provider_only", mode="before")

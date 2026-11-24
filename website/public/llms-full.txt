@@ -7866,9 +7866,14 @@ models are in **OpenAI**; Qwen embeddings and the Z.ai chat models are in
 field changes these settings. If you need strict zero retention, set your
 OpenRouter account, or the guardrail on every key the engine uses, to enforce
 ZDR for every group your models fall in, with Safety Retention excluded for
-Google and All other models. Check that the endpoints you pin stay eligible,
-and confirm all of it before you send customer content. See OpenRouter's
-[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#per-model-group-zdr-enforcement).
+Google and All other models. OpenRouter's own logging is separate from
+provider routing: exclude the engine's keys from Input & Output Logging and
+keep the account's data-sharing logging opt-in off, or OpenRouter itself can
+store prompts and completions. Check that the endpoints you pin stay
+eligible, and confirm all of it before you send customer content. See
+OpenRouter's
+[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#per-model-group-zdr-enforcement)
+and [logging guide](https://openrouter.ai/docs/guides/features/input-output-logging).
 
 With Docker Compose, set `REMEMBERSTACK_OPENROUTER_ZDR` and
 `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` in the project `.env` as
@@ -7878,9 +7883,13 @@ there (`env_file`): a value exported in your shell, or one in an alternate
 what `.env` says. A blank `REMEMBERSTACK_OPENROUTER_ZDR` stops startup; a
 blank allowlist means no allowlist.
 
-These settings need an engine image that includes them; an older image
-ignores them without an error. Before you send customer content, check
+These embedding settings need an engine image that includes them; an older
+image ignores them without an error (it still honours
+`REMEMBERSTACK_OPENROUTER_ZDR` for chat). Until a release includes them, check
+out a revision that does and build from it with
+`docker compose up --build -d --wait`. Before you send customer content, check
 `GET /deployment` (see [deployment](https://remember.dev/docs/reference/http-api/deployment)):
+`build_revision` must be that revision and
 `model_bindings.openrouter_embedding_provider_only` must list your hosts. An
 image without this feature does not report that key.
 

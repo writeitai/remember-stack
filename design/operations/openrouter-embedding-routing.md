@@ -70,16 +70,20 @@ SpaceXSI, All other models), so enforce ZDR for the groups of the other roles
 too (OpenAI for the default chat and image-description models). The request
 flag follows those settings: a Safety Retention endpoint may keep any request,
 flagged or not, for abuse prevention, self-serve accounts allow it by
-default, and no request field can turn it off. Verify the settings for each
-group and key before sending customer content.
+default, and no request field can turn it off. OpenRouter's own Input &
+Output Logging is separate: exclude the deployment's keys from it and keep the
+account's data-sharing logging opt-in off. Verify the settings for each group
+and key before sending customer content.
 
 With Docker Compose, set the allowlist and `REMEMBERSTACK_OPENROUTER_ZDR` in
 the project `.env` as literal values. `compose.yaml` deliberately does not
 list them under `environment:`, so the services read them only from `.env`
 through `env_file`; a shell export or an alternate `--env-file` cannot
-override or clear them. Confirm the running image has this feature:
-`GET /deployment` must report `openrouter_embedding_provider_only` with the
-listed hosts. (The embedding order and pin are
+override or clear them. An older engine image ignores both embedding
+settings (it still honours ZDR for chat); until a release includes them, build
+from a revision that does (`docker compose up --build -d --wait`), then
+confirm on `GET /deployment` that `build_revision` is that revision and
+`openrouter_embedding_provider_only` lists the hosts. (The embedding order and pin are
 still interpolated, so keep them empty in every env file you use.) Image
 descriptions need `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` separately; it is
 part of the image route's version, so turning it on refreshes the vision lane
