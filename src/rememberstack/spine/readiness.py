@@ -130,7 +130,7 @@ class PipelineReadinessCatalog:
             rows = (
                 connection.execute(
                     _VERSION_WORK,
-                    {"deployment_id": deployment_id, "version_ids": version_ids},
+                    {"deployment_id": deployment_id, "version_ids": lookup_ids},
                 )
                 .mappings()
                 .all()

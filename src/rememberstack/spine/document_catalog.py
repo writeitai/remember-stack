@@ -923,8 +923,19 @@ def _lineage_locked(*, connection: Connection, record: UploadRecord) -> RowMappi
             },
         )
         .mappings()
-        .one()
+        .one_or_none()
     )
+    if lineage is None:
+        # The row existed at the insert and is gone now: a forget's sweep
+        # erased it in between. Its record refuses this ingest (D159 §3.6).
+        guard_forgotten_on(
+            connection=connection,
+            deployment_id=record.deployment_id,
+            source_kind=record.source_kind,
+            source_ref=record.source_ref,
+            content_hash=record.content_hash,
+        )
+        raise RuntimeError("the lineage row disappeared during registration")
     connection.execute(_RESURRECT_LINEAGE, {"doc_id": lineage["doc_id"]})
     return lineage
 

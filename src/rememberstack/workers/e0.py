@@ -362,27 +362,27 @@ class UploadIngestor:
         nor moves it, and records ``key`` as the version's raw object. If the
         deployment already holds identical bytes under another key, that
         version answers, keeps its own raw object, and the engine deletes the
-        object at ``key`` (only the kept object is ever purged by hard
-        forget). A repeated registration of the same key changes nothing.
-        Callers never delete registered objects; hard forget removes them.
+        object at ``key`` (only the kept object is ever purged by a forget).
+        A repeated registration of the same key changes nothing. Callers
+        never delete registered objects; a forget removes them.
 
-        A refusal (declared size, content type, a forgotten
-        identity, invalid metadata) raises :class:`StoredObjectRefusedError`
+        A refusal (declared size, content type, a forgotten document's bytes
+        (:class:`DocumentForgottenError`), invalid metadata) raises
+        :class:`StoredObjectRefusedError`
         carrying the original refusal. The engine deletes the refused object
         unless a content keeps ``key`` as its raw object (a refused
         re-registration of a registered key keeps it), and the error's
         ``raw_object_deleted`` says which. Other failures (storage or
-        database errors, admission paused for a forget in progress) raise
+        database errors) raise
         unchanged and delete nothing, so a retry can succeed;
         :meth:`discard_unregistered` removes an object abandoned after such
         a failure. The caller must not register or discard the same key
         concurrently.
 
         ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
-        characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
+        characters from ``[A-Za-z0-9_-]``: a forget purges a version's raw
         key in every store, so a key outside this namespace could name
-        another object, and file names would enter the immutable forget
-        manifests. ``size`` must match the stored object. The uploader
+        another object, and file names would enter the forget record. ``size`` must match the stored object. The uploader
         chooses the storage class (D51 routing is not applied).
 
         A metered deployment measures the version in the convert stage, as
@@ -491,7 +491,7 @@ class UploadIngestor:
 
         For objects that never became a version: an upload whose registration
         was never completed or retried, swept after it is abandoned, since
-        unregistered bytes would escape hard forget. Returns ``False`` and
+        unregistered bytes would escape a forget. Returns ``False`` and
         keeps the object when a content keeps ``key`` as its raw object;
         otherwise deletes it (absence succeeds) and returns ``True``.
         :meth:`ingest_stored` uses the same rule for an object it refuses.
@@ -629,7 +629,7 @@ class UploadIngestor:
         """Remove a raw object this ingest wrote or was given but does not keep.
 
         Each content keeps one raw object, the first one recorded, and only
-        that one is purged by hard forget. A copy written under another key
+        that one is purged by a forget. A copy written under another key
         (an earlier version of these bytes arrived through another entry
         point, file name or upload key) would outlive a forget, so it is
         removed as soon as the record shows it is not the kept one.
