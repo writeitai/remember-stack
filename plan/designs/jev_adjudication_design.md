@@ -127,6 +127,40 @@ enabling backup affects newly evaluated work, not a retroactive store rewrite.
 Primary contracts and alternatives are recorded in the
 [decision-boundary analysis](../analysis/closed-decisions-and-availability-backup-20261106.md).
 
+### System One through OpenRouter
+
+OpenRouter serves a TypeSafe-compatible System One endpoint,
+`POST {openrouter base_url}/systemone`. It takes the same request
+(`model`, `state`, `questions`) and returns the same response (`model`,
+`answers`, `usage`). `TypeSafeSettings.route` selects who serves Jev:
+
+- `typesafe` (default) calls TypeSafe's own API with `TypeSafeSettings.api_key`
+  and `base_url`, sends no `provider` field, and prices usage locally (§5D).
+- `openrouter` builds the client from the **deployment's** `OpenRouterSettings`
+  (the `EngineSettings.model_provider` the profile was built from): its
+  `api_key`, `base_url` and `zdr`. `TypeSafeSettings.api_key` and `base_url`
+  are ignored. A host running many deployments in one process therefore bills
+  each deployment's Jev calls to that deployment's own OpenRouter key, and one
+  ZDR switch covers chat, embeddings and Jev.
+
+On the `openrouter` route with `OpenRouterSettings.zdr` true, every request
+carries `"provider": {"zdr": true, "data_collection": "deny"}`. OpenRouter lists
+two Jev endpoints, `typesafe` and `typesafe/zdr`; only the second is a
+zero-data-retention endpoint, and the flag makes routing choose it. No `only`
+allowlist is sent: Jev has a single provider, so it would restrict nothing that
+`zdr` does not, and it would break if the provider slug changed. Without ZDR no
+`provider` object is sent. The client refuses ZDR on the `typesafe` route,
+because TypeSafe's API has no `provider` field.
+
+Under that route with ZDR, startup refuses `backup="openai_decisions"`: the
+native backup would carry the same content to OpenAI outside OpenRouter's ZDR
+routing. A missing deployment `OpenRouterSettings` on the `openrouter` route is
+also a startup `ConfigurationError`. Readiness reports `systemone_route` only
+when it is not `typesafe`, so direct-TypeSafe bindings stay byte-identical;
+ZDR, like other OpenRouter transport settings (D127), is not a binding. The
+route changes no generation identity or paid reuse key. Rationale:
+[System One via OpenRouter analysis](../analysis/systemone-via-openrouter-zdr-20261124.md).
+
 Configuration is divided between the existing `FactAdjudicationSettings` and a
 sibling `TypeSafeSettings` class:
 
@@ -142,9 +176,10 @@ sibling `TypeSafeSettings` class:
 
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `api_key` | `str \| None` | `None` | Authentication bearer token. Plain string matching repo conventions (`OpenRouterSettings.api_key`). Required when `engine="jev"`. |
+| `api_key` | `str \| None` | `None` | Authentication bearer token. Plain string matching repo conventions (`OpenRouterSettings.api_key`). Required when `engine="jev"` on the `typesafe` route; the `openrouter` route uses the deployment's OpenRouter key. |
 | `model` | `str` | `"jev-latest"` | Model identifier. Note: `jev-latest` is an unpinned floating tag pointing to TypeSafe's flagship System One model. |
-| `base_url` | `str` | `"https://api.typesafe.ai/v1"` | API base URL. |
+| `base_url` | `str` | `"https://api.typesafe.ai/v1"` | API base URL. Ignored on the `openrouter` route. |
+| `route` | `Literal["typesafe", "openrouter"]` | `"typesafe"` | Who serves System One (see *System One through OpenRouter*). Env: `REMEMBERSTACK_TYPESAFE_ROUTE`. |
 | `timeout_s` | `float` | `30.0` | Client HTTP timeout in seconds (matching `timeout_s` convention). |
 | `fallback_to_prompt` | `bool` | `False` | When true, provider transport/network errors (HTTP 5xx, timeouts after retries) fall back to the generative prompt adjudicator. Sub-floor confidence does NOT fall back. |
 
@@ -185,9 +220,10 @@ To preserve the strict architectural separation where `spine` never imports
    Spine imports only from `ports.systemone`, never from `adapters`.
 4. **Composition Root (`src/rememberstack/profiles/selfhost.py`):**
    When constructing `FactAdjudicator`, if `fact_settings.engine == "jev"`,
-   wires `typesafe_client = TypeSafeSystemOneClient(settings=TypeSafeSettings())`
-   and passes `systemone_provider=typesafe_client`. Missing API keys fail fast
-   at startup via `ConfigurationError`.
+   wires `build_systemone_provider(settings=TypeSafeSettings(),
+   openrouter=<the profile's OpenRouterSettings>)` and passes it as
+   `systemone_provider`. The builder applies the route, ZDR and backup rules
+   above. Missing API keys fail fast at startup via `ConfigurationError`.
 
 ---
 
@@ -441,7 +477,12 @@ The TypeSafe client constructs the real, canonical `ProviderCallUsage`:
 - `tokens_in = int(usage["input_tokens"])`
 - `tokens_out = int(usage.get("output_tokens", 0))`
 - `cost_usd = Decimal(tokens_in) * Decimal("0.000000042")`, without
-  pre-persistence rounding that could erase small calls.
+  pre-persistence rounding that could erase small calls. On the `openrouter`
+  route, `cost_usd` is instead the billed `usage.cost` OpenRouter reports
+  (the same $0.042 per million input tokens in its documented example); a
+  missing, negative or non-numeric cost raises `ProviderAccountingError`, as
+  for OpenRouter chat. OpenRouter already names the serving model as
+  `typesafe/<dated id>`, so it is not prefixed twice.
 
   (TypeSafe pricing table: $0.042 per 1M input tokens, output tokens free).
 - `latency_ms = int(elapsed_s * 1000)`

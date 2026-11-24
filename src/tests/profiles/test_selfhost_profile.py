@@ -603,3 +603,68 @@ def test_query_engine_database_budget_does_not_leak_between_instances() -> None:
     )
     assert first.database_budget_seconds == 240
     assert second.database_budget_seconds == 75
+
+
+@pytest.mark.parametrize(
+    ("route", "reported"), (("openrouter", "openrouter"), ("", None))
+)
+def test_model_bindings_report_systemone_route_only_when_opted_in(
+    monkeypatch: pytest.MonkeyPatch, route: str, reported: str | None
+) -> None:
+    """Direct-TypeSafe deployments keep byte-identical bindings."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    if route:
+        monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", route)
+    else:
+        monkeypatch.delenv("REMEMBERSTACK_TYPESAFE_ROUTE", raising=False)
+
+    bindings = _model_bindings()
+
+    assert bindings.get("systemone_route") == reported
+    assert "test-key" not in bindings.values()
+
+
+@pytest.mark.parametrize(
+    "stage", (PipelineStage.NORMALIZE_RELATIONS, PipelineStage.ADJUDICATE_OBSERVATIONS)
+)
+def test_jev_via_openrouter_uses_each_deployments_own_key(
+    monkeypatch: pytest.MonkeyPatch, stage: PipelineStage
+) -> None:
+    """A multi-deployment host gives every deployment its own key and ZDR flag."""
+    import sqlalchemy
+
+    from rememberstack.adapters.openrouter import OpenRouterSettings
+    from rememberstack.profiles.selfhost import SelfHostProfile
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_API_KEY", "process-typesafe-key")
+    engine = sqlalchemy.create_engine("postgresql+psycopg://unused@127.0.0.1:1/none")
+    seen: list[tuple[str | None, str, bool]] = []
+    try:
+        for key in ("project-a-key", "project-b-key"):
+            profile = SelfHostProfile(
+                settings=SelfHostSettings(deployment_id=uuid4()),
+                engine=engine,
+                raw_store=MagicMock(),
+                artifact_store=MagicMock(),
+                corpusfs_store=MagicMock(),
+                model_provider=MagicMock(),
+                model_provider_settings=OpenRouterSettings(api_key=key, zdr=True),
+            )
+            handler = profile._handler(stage=stage)  # noqa: SLF001 - wiring seam
+            client = handler._observation_adjudicator._systemone_provider  # type: ignore[attr-defined]  # noqa: SLF001
+            seen.append(
+                (client._settings.api_key, client._settings.base_url, client._zdr)
+            )  # noqa: SLF001
+            client.close()
+    finally:
+        engine.dispose()
+
+    assert seen == [
+        ("project-a-key", "https://openrouter.ai/api/v1", True),
+        ("project-b-key", "https://openrouter.ai/api/v1", True),
+    ]

@@ -1,6 +1,7 @@
 """D61/D126 substrate adapter for TypeSafe AI System One models."""
 
 from decimal import Decimal
+from decimal import InvalidOperation
 import time
 from typing import Any
 from typing import Literal
@@ -52,6 +53,16 @@ class TypeSafeSettings(BaseSettings):
     timeout_s: float = 30.0
     fallback_to_prompt: bool = False
     backup: Literal["none", "openai_decisions"] = "none"
+    route: Literal["typesafe", "openrouter"] = "typesafe"
+    """Who serves System One. Env: ``REMEMBERSTACK_TYPESAFE_ROUTE``.
+
+    ``typesafe`` (default) calls TypeSafe's own API with ``api_key`` and
+    ``base_url``. ``openrouter`` calls OpenRouter's TypeSafe-compatible
+    ``/systemone`` endpoint with the deployment's OpenRouter settings: its
+    key, base URL and ZDR flag. ``api_key`` and ``base_url`` here are then
+    ignored, so a host serving several deployments bills each one to its own
+    OpenRouter key. Cost comes from OpenRouter's reported ``usage.cost``.
+    """
 
 
 class TypeSafeSystemOneClient(SystemOnePort):
@@ -62,13 +73,28 @@ class TypeSafeSystemOneClient(SystemOnePort):
         settings: TypeSafeSettings | None = None,
         *,
         client: httpx.Client | None = None,
+        zdr: bool = False,
     ) -> None:
-        """Initialize the client, failing fast if API key is missing."""
+        """Initialize the client, failing fast if API key is missing.
+
+        ``zdr`` sends OpenRouter's zero-data-retention routing preferences on
+        every request; TypeSafe's own API has no such field, so it requires
+        the ``openrouter`` route.
+        """
         self._settings = settings or TypeSafeSettings()
         if not self._settings.api_key or not self._settings.api_key.strip():
             raise ConfigurationError(
-                "REMEMBERSTACK_TYPESAFE_API_KEY is required for TypeSafe AI System One client"
+                "REMEMBERSTACK_OPENROUTER_API_KEY is required for System One via"
+                " OpenRouter"
+                if self._settings.route == "openrouter"
+                else "REMEMBERSTACK_TYPESAFE_API_KEY is required for TypeSafe AI"
+                " System One client"
             )
+        if zdr and self._settings.route != "openrouter":
+            raise ConfigurationError(
+                "System One ZDR routing requires REMEMBERSTACK_TYPESAFE_ROUTE=openrouter"
+            )
+        self._zdr = zdr
         self._client = client or httpx.Client(timeout=self._settings.timeout_s)
 
     def evaluate(
@@ -86,11 +112,15 @@ class TypeSafeSystemOneClient(SystemOnePort):
             "Authorization": f"Bearer {self._settings.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
+        payload: dict[str, object] = {
             "model": target_model,
             "state": dict(state),
             "questions": dict(questions),
         }
+        if self._zdr:
+            # Jev is TypeSafe-only on OpenRouter; zdr selects its ZDR endpoint.
+            payload["provider"] = {"zdr": True, "data_collection": "deny"}
+        reported_cost = self._settings.route == "openrouter"
         timeout = timeout_s if timeout_s is not None else self._settings.timeout_s
         retry_delays = (0.5, 1.0, 2.0)
         last_error: Exception | None = None
@@ -133,6 +163,7 @@ class TypeSafeSystemOneClient(SystemOnePort):
                         body=rejected,
                         target_model=target_model,
                         elapsed_s=time.monotonic() - started_at,
+                        reported_cost=reported_cost,
                     )
                     raise TypeSafeProviderError(
                         "TypeSafe error response carried completion accounting",
@@ -168,7 +199,10 @@ class TypeSafeSystemOneClient(SystemOnePort):
                 ) from error
 
             call_usage = _typesafe_usage(
-                body=data, target_model=target_model, elapsed_s=elapsed_s
+                body=data,
+                target_model=target_model,
+                elapsed_s=elapsed_s,
+                reported_cost=reported_cost,
             )
 
             answers = data.get("answers")
@@ -189,9 +223,15 @@ class TypeSafeSystemOneClient(SystemOnePort):
 
 
 def _typesafe_usage(
-    *, body: object, target_model: str, elapsed_s: float
+    *, body: object, target_model: str, elapsed_s: float, reported_cost: bool
 ) -> ProviderCallUsage:
-    """Preserve known accounting before parsing answers or considering fallback."""
+    """Preserve known accounting before parsing answers or considering fallback.
+
+    TypeSafe's own API is priced locally ($0.042 per million input tokens).
+    Through OpenRouter (``reported_cost``) the billed ``usage.cost`` is
+    required, as for OpenRouter chat; OpenRouter already names the serving
+    model in the ``typesafe/`` namespace, so it is not prefixed twice.
+    """
     if not isinstance(body, Mapping) or not isinstance(body.get("usage"), Mapping):
         raise ProviderAccountingError("TypeSafe response carries no token usage")
     usage = body["usage"]
@@ -204,10 +244,32 @@ def _typesafe_usage(
         or outgoing < 0
     ):
         raise ProviderAccountingError("TypeSafe response carries no valid token usage")
+    model = str(body.get("model") or target_model).removeprefix("~")
+    if reported_cost:
+        cost_usd = _reported_cost(raw=usage.get("cost"))
+    else:
+        cost_usd = Decimal(incoming) * Decimal("0.000000042")
     return ProviderCallUsage(
-        model_name=f"typesafe/{body.get('model') or target_model}",
+        model_name=model if model.startswith("typesafe/") else f"typesafe/{model}",
         tokens_in=incoming,
         tokens_out=outgoing,
-        cost_usd=Decimal(incoming) * Decimal("0.000000042"),
+        cost_usd=cost_usd,
         latency_ms=int(elapsed_s * 1000),
     )
+
+
+def _reported_cost(*, raw: object) -> Decimal:
+    """Parse OpenRouter's billed ``usage.cost``; absence is an accounting gap."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise ProviderAccountingError("OpenRouter System One response carries no cost")
+    try:
+        cost = Decimal(str(raw))
+    except InvalidOperation as error:
+        raise ProviderAccountingError(
+            "OpenRouter System One response carries an invalid cost"
+        ) from error
+    if not cost.is_finite() or cost < 0:
+        raise ProviderAccountingError(
+            "OpenRouter System One response carries an invalid cost"
+        )
+    return cost

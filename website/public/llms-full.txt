@@ -7719,11 +7719,35 @@ The `jev` engine needs its own key and settings:
 
 | Variable | Default |
 |---|---|
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev`; the fact workers refuse to start without it) |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe`. Set `openrouter` to call Jev through OpenRouter instead (see below). |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev` on the `typesafe` route; the fact workers refuse to start without it) |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` |
 | `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false`. When `true`, a failed TypeSafe call falls back to the `prompt` engine instead of failing the work item. |
+
+### Jev through OpenRouter
+
+OpenRouter serves a TypeSafe-compatible System One endpoint
+(`POST /api/v1/systemone`). With `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`,
+the `jev` engine calls it with `REMEMBERSTACK_OPENROUTER_API_KEY` and
+`REMEMBERSTACK_OPENROUTER_BASE_URL`, so Jev spend lands on your OpenRouter
+account and no TypeSafe key is needed. `REMEMBERSTACK_TYPESAFE_BASE_URL` and
+`REMEMBERSTACK_TYPESAFE_API_KEY` are ignored on this route. The recorded cost
+is the `usage.cost` OpenRouter reports; a response without it fails as an
+accounting error.
+
+With `REMEMBERSTACK_OPENROUTER_ZDR=true`, every Jev call also sends
+`"provider": {"zdr": true, "data_collection": "deny"}`, so OpenRouter routes
+it only to TypeSafe's zero-data-retention endpoint. In that combination the
+OpenAI Decisions backup below is refused at startup, because it would send the
+same content outside OpenRouter; keep `REMEMBERSTACK_TYPESAFE_BACKUP=none`.
+
+```bash
+REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev
+REMEMBERSTACK_TYPESAFE_ROUTE=openrouter
+REMEMBERSTACK_OPENROUTER_ZDR=true
+```
 
 ## Change a model
 
@@ -20736,7 +20760,8 @@ transports. Run a small live API check before enabling this default-off backup.
 | `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | Longest wait before retrying an overloaded provider. |
 | `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | Debug only: keep schema-invalid model answers as files. |
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe` | `typesafe`, `openrouter` | Who serves the `jev` fact engine. `openrouter` calls OpenRouter's System One endpoint with the deployment's OpenRouter key, base URL and ZDR setting, and ignores the TypeSafe key and base URL. |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine on the `typesafe` route. Also read as `TYPESAFE_AI_API_KEY`. |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | TypeSafe model. |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | TypeSafe API address. |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | TypeSafe request timeout. |

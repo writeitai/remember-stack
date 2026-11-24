@@ -6,6 +6,8 @@ from typing import Mapping
 
 from rememberstack.adapters.openai_decisions import OpenAIDecisionsClient
 from rememberstack.adapters.openai_decisions import OpenAIDecisionsSettings
+from rememberstack.adapters.openrouter import OpenRouterSettings
+from rememberstack.adapters.typesafe import ConfigurationError
 from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.adapters.typesafe import TypeSafeUnavailableError
@@ -53,15 +55,39 @@ class AvailabilityFallbackSystemOne:
         )
 
 
-def build_systemone_provider(*, settings: TypeSafeSettings) -> SystemOnePort:
-    """Keep Jev primary, and fail configuration early when an opted-in key is absent."""
+def build_systemone_provider(
+    *, settings: TypeSafeSettings, openrouter: OpenRouterSettings | None = None
+) -> SystemOnePort:
+    """Keep Jev primary, and fail configuration early when an opted-in key is absent.
+
+    With ``route="openrouter"`` the deployment's ``openrouter`` settings supply
+    the key, base URL and ZDR flag, so each deployment pays with its own key.
+    Under ZDR the native OpenAI Decisions backup is refused: it would send the
+    same content outside OpenRouter's zero-data-retention routing.
+    """
+    zdr = False
+    if settings.route == "openrouter":
+        if openrouter is None:
+            raise ConfigurationError(
+                "REMEMBERSTACK_TYPESAFE_ROUTE=openrouter needs the deployment's"
+                " OpenRouter settings"
+            )
+        settings = settings.model_copy(
+            update={"api_key": openrouter.api_key, "base_url": openrouter.base_url}
+        )
+        zdr = openrouter.zdr
+        if zdr and settings.backup != "none":
+            raise ConfigurationError(
+                "REMEMBERSTACK_TYPESAFE_BACKUP must be none when System One runs"
+                " through OpenRouter with REMEMBERSTACK_OPENROUTER_ZDR=true"
+            )
     if settings.backup == "none":
-        return TypeSafeSystemOneClient(settings=settings)
+        return TypeSafeSystemOneClient(settings=settings, zdr=zdr)
     native_settings = OpenAIDecisionsSettings()
     # Construct the backup first so a missing key cannot leak a primary transport.
     backup = OpenAIDecisionsClient(settings=native_settings)
     try:
-        primary = TypeSafeSystemOneClient(settings=settings)
+        primary = TypeSafeSystemOneClient(settings=settings, zdr=zdr)
     except Exception:
         backup.close()
         raise

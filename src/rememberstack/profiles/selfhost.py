@@ -1855,7 +1855,10 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=fact_settings,
                     systemone_provider=(
-                        build_systemone_provider(settings=TypeSafeSettings())
+                        build_systemone_provider(
+                            settings=TypeSafeSettings(),
+                            openrouter=self._model_provider_settings,
+                        )
                         if fact_settings.engine == "jev"
                         else None
                     ),
@@ -1874,7 +1877,10 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=fact_settings,
                     systemone_provider=(
-                        build_systemone_provider(settings=TypeSafeSettings())
+                        build_systemone_provider(
+                            settings=TypeSafeSettings(),
+                            openrouter=self._model_provider_settings,
+                        )
                         if fact_settings.engine == "jev"
                         else None
                     ),
@@ -2263,6 +2269,10 @@ def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str
     if facts.engine == "jev":
         settings = TypeSafeSettings.model_validate({})
         bindings["systemone_backup"] = settings.backup
+        if settings.route != "typesafe":
+            # Present only when opted in, so direct-TypeSafe bindings and
+            # benchmark fingerprints stay byte-identical.
+            bindings["systemone_route"] = settings.route
         if settings.backup == "openai_decisions":
             from rememberstack.adapters.openai_decisions import OpenAIDecisionsSettings
 

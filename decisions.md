@@ -6415,6 +6415,18 @@ building a managed mount/download service were also rejected. Full contract:
 
 ## D126. Configurable System One Jev fact adjudication engine
 
+**OpenRouter routing clarification, 2026-11-24:** Jev may also be served by
+OpenRouter's TypeSafe-compatible `/systemone` endpoint.
+`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter` builds the client from the
+deployment's OpenRouter settings (key, base URL, ZDR), so a multi-deployment
+host bills each deployment to its own key. With OpenRouter ZDR on, every call
+sends `provider: {zdr: true, data_collection: deny}` and the native Decisions
+backup is refused. The billed `usage.cost` is required. The default `typesafe`
+route is unchanged. The owner requires remember.dev to send customer content
+only to ZDR endpoints. See the
+[binding contract](plan/designs/jev_adjudication_design.md#system-one-through-openrouter)
+and [analysis](plan/analysis/systemone-via-openrouter-zdr-20261124.md).
+
 **Availability-backup amendment, 2026-11-06:** Jev remains primary. An explicit
 `openai_decisions` backup can implement the same System One port using native
 GPT-6 Luna choice/predicate/score requests, after classified unavailability.
