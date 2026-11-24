@@ -144,6 +144,8 @@ class ImageDescriptionSettings(BaseSettings):
 
     Env: ``REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR``. Sends ``zdr: true`` with
     ``data_collection: deny``, as the chat adapter's ``REMEMBERSTACK_OPENROUTER_ZDR``.
+    OpenRouter may still use endpoints with safety retention when the account
+    allows them; strict zero retention also needs the account set to ZDR only.
     """
 
     @field_validator("reasoning_effort", mode="before")

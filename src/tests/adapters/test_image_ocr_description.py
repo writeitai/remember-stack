@@ -1023,6 +1023,62 @@ def test_zdr_restricts_the_description_to_zero_retention_endpoints(
     assert converter.version != _converter(provider_only=provider_only).version
 
 
+def test_turning_zdr_on_redoes_only_vision_and_capacity_retries_keep_it() -> None:
+    """The ZDR boundary refreshes the description once and reuses paid OCR."""
+    calls: list[str] = []
+    payloads: list[dict[str, object]] = []
+    store = MemoryLaneCheckpoints()
+    _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=_description_transport(calls=calls),
+        provider_only=("azure", "openai"),
+    ).convert(content=_PNG, mime="image/png", checkpoints=store)
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Reject the first route without billing, then answer."""
+        if request.url.path.endswith("/generation"):
+            return httpx.Response(404, text="no-generation")
+        payloads.append(json.loads(request.content))
+        calls.append("description")
+        if len(payloads) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "gen-uncharged-admission",
+                    "error": {
+                        "code": 502,
+                        "message": "temporarily unavailable",
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                },
+            )
+        return httpx.Response(200, json=_description_body())
+
+    _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=httpx.MockTransport(description),
+        provider_only=("azure", "openai"),
+        zdr=True,
+    ).convert(content=_PNG, mime="image/png", checkpoints=store)
+    assert calls.count("ocr") == 1
+    assert calls.count("description") == 3
+    assert [payload["provider"] for payload in payloads] == [
+        {
+            "only": ["azure", "openai"],
+            "order": ["azure", "openai"],
+            "allow_fallbacks": True,
+            "data_collection": "deny",
+            "zdr": True,
+        },
+        {
+            "only": ["openai"],
+            "allow_fallbacks": False,
+            "data_collection": "deny",
+            "zdr": True,
+        },
+    ]
+
+
 def test_description_detail_is_explicit_and_preserves_paid_ocr() -> None:
     """Changing visual resolution refreshes vision only, using original bytes."""
     calls: list[str] = []

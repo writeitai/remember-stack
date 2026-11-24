@@ -674,3 +674,11 @@ def test_prepare_images_plan_checks_admission_limits_and_output(
             allow_unavailable=False,
         )
     assert not (tmp_path / "cache").exists()
+
+
+def test_a_profile_frozen_before_zdr_still_validates() -> None:
+    """A stored profile without ``vision.zdr`` is the same identity with zdr off."""
+    _, profile = _binding(calls=[])
+    legacy = profile.model_dump(mode="json")
+    del legacy["vision"]["zdr"]
+    assert ImageConversionProfile.model_validate(legacy).vision == legacy["vision"]

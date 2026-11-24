@@ -156,9 +156,11 @@ class ImageConversionProfile(FrozenModel):
         vision = ImageDescriptionSettings.model_validate(
             dict(self.vision, api_key=credential)
         )
-        if self.ocr != ocr.model_dump(
-            mode="json", exclude={"api_key"}
-        ) or self.vision != vision.model_dump(mode="json", exclude={"api_key"}):
+        # Profiles frozen before the zdr setting existed omit it (false).
+        if self.ocr != ocr.model_dump(mode="json", exclude={"api_key"}) or {
+            "zdr": False,
+            **self.vision,
+        } != vision.model_dump(mode="json", exclude={"api_key"}):
             raise ValueError(
                 "image profile must contain the complete canonical non-secret settings"
             )
