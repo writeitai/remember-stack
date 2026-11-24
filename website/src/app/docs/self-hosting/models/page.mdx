@@ -56,11 +56,69 @@ The `jev` engine needs its own key and settings:
 
 | Variable | Default |
 |---|---|
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev`; the fact workers refuse to start without it) |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe`. Set `openrouter` to call Jev through OpenRouter instead (see below). |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev` on the `typesafe` route; the fact workers refuse to start without it) |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` |
 | `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false`. When `true`, a failed TypeSafe call falls back to the `prompt` engine instead of failing the work item. |
+
+### Jev through OpenRouter
+
+OpenRouter serves a TypeSafe-compatible System One endpoint
+(`POST /api/v1/systemone`). With `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`,
+the `jev` engine calls it with `REMEMBERSTACK_OPENROUTER_API_KEY` and
+`REMEMBERSTACK_OPENROUTER_BASE_URL`, so Jev spend lands on your OpenRouter
+account and no TypeSafe key is needed. `REMEMBERSTACK_TYPESAFE_BASE_URL` and
+`REMEMBERSTACK_TYPESAFE_API_KEY` are ignored on this route. The recorded cost
+is the `usage.cost` OpenRouter reports; a response without it fails as an
+accounting error.
+
+With `REMEMBERSTACK_OPENROUTER_ZDR=true`, every Jev call also sends
+`"provider": {"zdr": true, "data_collection": "deny"}`, so OpenRouter routes
+it only to endpoints your account or key policy counts as zero data retention:
+TypeSafe's ZDR endpoint, plus Safety Retention endpoints if that policy allows
+them (see below). With ZDR on, the engine
+refuses to start on the default `typesafe` route, because TypeSafe's own API
+cannot be held to zero data retention, refuses a
+`REMEMBERSTACK_OPENROUTER_BASE_URL` outside the `https://openrouter.ai` origin
+(the default, `https://openrouter.ai/api/v1`, is fine; `provider.zdr` binds
+only OpenRouter), and refuses the OpenAI Decisions backup
+below, because it would send the same content outside OpenRouter; keep
+`REMEMBERSTACK_TYPESAFE_BACKUP=none`.
+
+The request flag alone does not guarantee strict zero retention. OpenRouter
+combines `zdr: true` with your account's policy (or the policy of the
+guardrail on the API key), and that policy decides whether Safety Retention
+endpoints also count. A Safety Retention endpoint may keep any request,
+flagged or not, to detect and prevent abuse. OpenRouter sets this choice
+separately for **Google models** and **All other models**; Jev is in **All
+other models**. Self-serve accounts allow Safety Retention by default, and no
+request field turns it off. For strict zero retention, set your OpenRouter
+account, or the guardrail on every key the engine uses, to ZDR only with
+Safety Retention excluded for that group, and confirm it before you send
+customer content. Also keep OpenRouter's own input and output logging turned
+off for the account, since that is a separate setting from provider routing.
+OpenRouter also screens requests for child sexual abuse material, ZDR
+traffic included: flagged content may be retained for OpenRouter's human
+review, and material reported where the law requires it is preserved for the
+legal period. No setting removes that, so check that OpenRouter's terms meet
+your retention requirement.
+See OpenRouter's
+[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
+The response names `TypeSafe` as the provider for both Jev endpoints, so it
+does not show which one served a call.
+
+```bash
+REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev
+REMEMBERSTACK_TYPESAFE_ROUTE=openrouter
+REMEMBERSTACK_OPENROUTER_ZDR=true
+```
+
+With Docker Compose, put these in the project `.env`. The services read
+`REMEMBERSTACK_OPENROUTER_ZDR` and `REMEMBERSTACK_OPENROUTER_BASE_URL` only
+from there (`env_file`), so a value exported in your shell does not reach the
+engine, and an alternate `--env-file` cannot override or clear them.
 
 ## Change a model
 
@@ -156,7 +214,7 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. Other providers remain a fallback unless the same set is also supplied as the embedding allowlist. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off, also when an order is set. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. A blank entry (including a trailing comma) stops startup. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls to zero-data-retention endpoints. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls, and Jev calls on the `openrouter` route, to endpoints your OpenRouter account or key policy counts as zero data retention (see the Safety Retention note above). |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |

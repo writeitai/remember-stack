@@ -56,7 +56,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Scaling](https://remember.dev/docs/self-hosting/scaling): The bounds a self-hosted RememberStack runs within — worker concurrency and claim rates, connection pools for retrieval and graph queries, API admission limits, and SQL query limits.
 - [Operating the pipeline](https://remember.dev/docs/self-hosting/operating): Inspect a self-hosted RememberStack pipeline, replay failed work, release parked conversions, set spend budgets, and repair the graph catalog.
 - [Troubleshooting](https://remember.dev/docs/self-hosting/troubleshooting): Symptom, first check and fix for a self-hosted RememberStack that does not start, refuses requests, never finishes a document, or gives answers you did not expect.
-- [Observability](https://remember.dev/docs/self-hosting/observability): What a self-hosted RememberStack logs, how to send its errors to Sentry or a compatible service, and how to export what it spent on models.
+- [Observability](https://remember.dev/docs/self-hosting/observability): What a self-hosted RememberStack logs, how its errors are reported and how to send them to Sentry, PostHog or OpenTelemetry, and how to export what it spent on models.
 - [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades): Move a self-hosted RememberStack to a new release, understand what setup migrates, keep the deployment id stable, and back up the data yourself.
 - [Filesystem views](https://remember.dev/docs/self-hosting/filesystem-views): Browse a live, read-only corpus of document folders containing originals, Markdown and reader assets.
 

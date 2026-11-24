@@ -39,6 +39,8 @@ from rememberstack.model.metering import ManagedIngestMeasurement
 from rememberstack.model.metering import ManagedMeterScope
 from rememberstack.model.metering import MeterAdmissionResult
 from rememberstack.model.metering import MeterReceiptConflict
+from rememberstack.model.metering import MeterReceiptUnauthorized
+from rememberstack.model.metering import MeterReceiptUnavailable
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
@@ -141,6 +143,8 @@ class ControlledReceipts(MeterReceiptPort):
         """Start approved, with an opt-in one-shot parking decision."""
         self.park_next = False
         self.conflict_next = False
+        self.fail_next: Exception | None = None
+        self.fail_outcome_next: Exception | None = None
         self.measurements: list[ManagedIngestMeasurement] = []
         self.outcomes: list[ManagedDocumentVersionOutcome] = []
         self.holds: dict[UUID, tuple[UUID, UUID]] = {}
@@ -150,6 +154,9 @@ class ControlledReceipts(MeterReceiptPort):
     ) -> MeterAdmissionResult:
         """Return one-shot parked or an idempotent two-hold approval."""
         self.measurements.append(measurement)
+        if self.fail_next is not None:
+            error, self.fail_next = self.fail_next, None
+            raise error
         if self.conflict_next:
             self.conflict_next = False
             raise MeterReceiptConflict("synthetic changed receipt")
@@ -169,6 +176,9 @@ class ControlledReceipts(MeterReceiptPort):
 
     def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcome) -> None:
         """Capture the terminal receipt as the durable remote acknowledgement."""
+        if self.fail_outcome_next is not None:
+            error, self.fail_outcome_next = self.fail_outcome_next, None
+            raise error
         self.outcomes.append(outcome)
 
 
@@ -279,6 +289,9 @@ def _due(*, engine: Engine) -> None:
                 "UPDATE managed_ingest_measurements SET next_attempt_at = NULL,"
                 " outcome_next_attempt_at = NULL"
             )
+        )
+        connection.execute(
+            text("UPDATE managed_ingest_outcomes SET next_attempt_at = NULL")
         )
 
 
@@ -835,3 +848,63 @@ def test_a_by_url_pdf_is_counted_from_its_url(
     assert rig.meter.drain_once().measurements_accepted == 1
     assert rig.convert() is RunResultOutcome.SUCCEEDED
     assert pdf.ocr_calls == 1
+
+
+def _coded(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
+    """(level, error_code) of every engine WARNING+ record; uncoded is ``"-"``."""
+    return [
+        (record.levelname, record.__dict__.get("error_code", "-"))
+        for record in caplog.records
+        if record.name.startswith("rememberstack") and record.levelno >= 30
+    ]
+
+
+def test_refused_and_unavailable_receipts_are_coded_and_replay_continues(
+    database_engine: Engine, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """D158: a rejected credential is an ERROR, an outage a WARNING; both retry."""
+    rig = _rig(
+        engine=database_engine,
+        tmp_path=tmp_path,
+        routes={"text/plain": MarkdownPassthroughConverter()},
+    )
+    version = rig.upload(name="refused.txt", mime="text/plain", content=b"refused")
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    with caplog.at_level("WARNING", logger="rememberstack"):
+        rig.receipts.fail_next = MeterReceiptUnauthorized("credential rejected")
+        assert rig.meter.drain_once().measurements_parked == 1
+        _due(engine=database_engine)
+        rig.receipts.fail_next = MeterReceiptUnavailable("control plane down")
+        assert rig.meter.drain_once().measurements_parked == 1
+        _due(engine=database_engine)
+        assert rig.meter.drain_once().measurements_accepted == 1
+        assert rig.convert() is RunResultOutcome.SUCCEEDED
+        rig.readiness.stage_status[version] = "dead_letter"
+        _due(engine=database_engine)
+        injected: list[Exception] = [
+            MeterReceiptUnauthorized("rejected"),
+            MeterReceiptUnavailable("down"),
+            MeterReceiptConflict("changed"),
+        ]
+        for error in injected:
+            rig.receipts.fail_outcome_next = error
+            assert rig.meter.drain_once().outcomes_accepted == 0
+            _due(engine=database_engine)
+        assert rig.meter.drain_once().outcomes_accepted == 1
+    assert _coded(caplog) == [
+        ("ERROR", "meter_receipt_unauthorized"),
+        ("WARNING", "meter_receipt_retry"),
+        ("ERROR", "meter_receipt_unauthorized"),
+        ("WARNING", "meter_receipt_retry"),
+        ("ERROR", "meter_receipt_conflict"),
+    ]
+    coded = [r for r in caplog.records if "error_code" in r.__dict__]
+    assert all("measurement_id" in record.__dict__ for record in coded)
+    # Each ERROR carries the original receipt exception.
+    errors = [r for r in coded if r.levelname == "ERROR"]
+    assert [r.exc_info[1] if r.exc_info else None for r in errors[1:]] == [
+        injected[0],
+        injected[2],
+    ]
+    assert errors[0].exc_info is not None
+    assert isinstance(errors[0].exc_info[1], MeterReceiptUnauthorized)

@@ -10,15 +10,20 @@ resuming really releases it — are proved against PostgreSQL in
 `test_e0_chain.py`.
 """
 
+from collections.abc import Callable
 from collections.abc import Collection
 from collections.abc import Iterator
+from pathlib import Path
+import tempfile
 from typing import cast
 from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
 from uuid import uuid5
 
+import pandas as pd
 from pydantic import SecretStr
+import pyreadstat
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
@@ -35,6 +40,20 @@ from rememberstack.workers.e0 import UploadIngestor
 
 _DEPLOYMENT_ID = UUID("106a0000-0000-0000-0000-000000000001")
 _ROUTES = {"text/markdown": "passthrough", "text/plain": "passthrough"}
+
+
+def _por_bytes() -> bytes:
+    """A real SPSS Portable file: a text encoding, so its bytes classify as text."""
+    with tempfile.TemporaryDirectory() as work:
+        path = Path(work) / "survey.por"
+        # pyreadstat's frame type is not pandas-stubs'; the data profile
+        # tests pass their writers the same way.
+        write: Callable[..., None] = pyreadstat.write_por
+        write(pd.DataFrame({"name": ["a", "b"], "n": [1, 2]}), str(path))
+        return path.read_bytes()
+
+
+_POR_BYTES = _por_bytes()
 _PARQUET_BYTES = b"PAR1meta" + (4).to_bytes(length=4, byteorder="little") + b"PAR1"
 _PSD_BYTES = (
     b"8BPS\x00\x01"
@@ -252,6 +271,13 @@ def test_unknown_archive_uses_registry_card_family() -> None:
             "application/x-ipynb+json",
         ),
         ("letter.rtf", "application/rtf", b"{\\rtf1 Hello}", "application/rtf"),
+        ("survey.por", "application/x-spss-por", _POR_BYTES, "application/x-spss-por"),
+        (
+            "survey.por",
+            "application/octet-stream",
+            _POR_BYTES,
+            "application/x-spss-por",
+        ),
         ("data.csv", "text/csv", b"name,value\na,1\n", "text/csv"),
         (
             "book.epub",

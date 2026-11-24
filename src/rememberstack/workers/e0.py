@@ -71,6 +71,7 @@ from rememberstack.core.file_card import CardConverter
 from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.format_registry import family_for_mime
+from rememberstack.core.format_registry import FORMAT_MIMES
 from rememberstack.core.metering import cost_class_for_route
 from rememberstack.core.metering import DOC_SCAN_ALGORITHM_VERSION
 from rememberstack.core.metering import DOC_TEXT_ALGORITHM_VERSION
@@ -187,6 +188,10 @@ representation without model calls (D138 §1)."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """The one-shot upload connector's source kind (D55 lineage identity)."""
+
+_TEXT_DOCUMENT_MIMES: Final = frozenset({FORMAT_MIMES["rtf"], FORMAT_MIMES["por"]})
+"""Text-class bytes whose registry type keeps its own reader: RTF, and SPSS
+Portable (a text encoding of a dataset)."""
 
 _STORED_CHUNK_BYTES: Final = 1 << 20
 """Read size while a stored object is streamed for registration (D147)."""
@@ -699,7 +704,7 @@ class UploadIngestor:
                     "notebook",
                     "html",
                 }
-                or routed == "application/rtf"
+                or routed in _TEXT_DOCUMENT_MIMES
             ):
                 detected = routed
             elif detected == "application/octet-stream" and family in {
