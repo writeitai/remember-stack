@@ -791,10 +791,16 @@ def build_api(
     app.router.route_class = _HeldRoute
 
     @app.exception_handler(ProviderCallError)
-    def model_provider_unavailable(
-        _request: Request, _error: Exception
-    ) -> JSONResponse:
+    def model_provider_unavailable(_request: Request, error: Exception) -> JSONResponse:
         """Any route whose embedding call fails answers 503, never 500."""
+        # Provider errors can echo the request (Rule 4): type only, no text.
+        logger.error(
+            "model provider call failed; answering 503",
+            extra={
+                "error_code": "provider_call_failed",
+                "exception_type": type(error).__name__,
+            },
+        )
         return JSONResponse(
             status_code=503, content={"detail": "model provider unavailable"}
         )
@@ -1285,20 +1291,45 @@ def _graph_errors() -> Iterator[None]:
     try:
         yield
     except GraphBusyError as error:
+        logger.warning(
+            "live graph is busy; answering 503",
+            extra={"error_code": "graph_capacity_exhausted"},
+        )
         raise HTTPException(status_code=503, detail="live graph is busy") from error
     except GraphHydrationError as error:
+        logger.exception(
+            "live graph result could not be hydrated; answering 503",
+            extra={"error_code": "graph_hydration_mismatch"},
+        )
         raise HTTPException(
             status_code=503, detail="live graph result unavailable"
         ) from error
     except (TimeoutError, OperationalError) as error:
         # A statement or lock timeout (or a lost connection) inside the
         # bounded traversal: the graph could not answer in time.
+        # Driver errors can carry bound predicates (Rule 4): type only.
+        logger.error(
+            "live graph query failed; answering 503",
+            extra={
+                "error_code": "graph_query_failed",
+                "exception_type": type(error).__name__,
+                "sqlstate": getattr(getattr(error, "orig", None), "sqlstate", None),
+            },
+        )
         raise HTTPException(status_code=503, detail="live graph timed out") from error
     except InternalError as error:
         # PostgreSQL reports transaction_timeout (SQLSTATE 25P04) as an
         # internal error class; anything else in that class stays a 500.
         if getattr(error.orig, "sqlstate", None) != _TRANSACTION_TIMEOUT:
             raise
+        logger.error(
+            "live graph query failed; answering 503",
+            extra={
+                "error_code": "graph_query_failed",
+                "exception_type": type(error).__name__,
+                "sqlstate": _TRANSACTION_TIMEOUT,
+            },
+        )
         raise HTTPException(status_code=503, detail="live graph timed out") from error
 
 
