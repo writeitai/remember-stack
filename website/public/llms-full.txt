@@ -9565,7 +9565,7 @@ Source: https://remember.dev/docs/self-hosting/observability
 # Observability
 
 A self-hosted deployment tells you what it is doing in four ways: container
-logs, an optional error tracker, the pipeline report from
+logs, coded error records you can send to a tracker, the pipeline report from
 `remember ops inspect`, and a cost export of every billed model call. None
 of them sends anything off the machine unless you configure it to.
 
@@ -9603,14 +9603,57 @@ For the state of the pipeline as a whole (what is pending, what has failed
 for good), use `remember ops inspect`; see
 [Operating the pipeline](https://remember.dev/docs/self-hosting/operating#inspect-the-pipeline).
 
-## Error tracking
+## Errors
 
-The engine can send errors to any service that speaks the Sentry protocol:
-Sentry, GlitchTip or Bugsink. It is off unless you set a DSN.
+### What the engine reports
+
+Every unexpected failure in the engine ends one of two ways:
+
+- **It is raised.** It leaves the engine as an exception, and whatever runs
+  the engine reports it: Uvicorn's error log for a request, the process exit
+  for a command.
+- **It is logged once at ERROR.** When the engine turns the failure into a
+  response, a retry, a skipped item or a fallback, it logs one record on a
+  `rememberstack.*` logger, at the point where it does so.
+
+Every such record carries a stable code in `error_code`, for example
+`worker_item_failed`, `graph_query_failed` or `meter_receipt_unauthorized`.
+A code is lowercase letters, digits and underscores, 3 to 64 characters, and
+stays the same across releases; a renamed or removed code is listed in the
+changelog. Expected outcomes, such as a retry that will run again or a busy
+graph, are logged at WARNING with a code too. The message is a fixed
+sentence. Identifiers such as `processing_id`, `stage`, `attempt` or
+`sqlstate` are separate fields on the record, not part of the message.
+
+Some failures can carry your content in their text: a model provider's error
+can quote the request, and a database error can quote a query's values. For
+those, the record holds only the exception's type, in `exception_type`, and
+no traceback.
+
+The main places the engine logs:
+
+| Where | Code | Level |
+|---|---|---|
+| A worker item fails and will be retried | `worker_item_retry` | WARNING |
+| A worker item fails with no retry left, or cannot be retried | `worker_item_failed` | ERROR |
+| An expired lease is requeued / dead-lettered | `worker_lease_expired_retry` / `worker_lease_expired` | WARNING / ERROR |
+| A run finishes after losing its lease | `worker_lease_lost` | WARNING |
+| A model provider call fails on a request (503) | `provider_call_failed` | ERROR |
+| A live graph query fails or times out (503) | `graph_query_failed` | ERROR |
+| The live graph has no free slot (503) | `graph_capacity_exhausted` | WARNING |
+| An MCP tool fails unexpectedly | `mcp_tool_failed` | ERROR |
+
+The engine sends nothing anywhere itself. To collect these records, attach a
+handler to the `rememberstack` logger, as below.
+
+### Sentry, GlitchTip or Bugsink
+
+The engine has a built-in Sentry-protocol reporter. It is off unless you set
+a DSN.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `REMEMBERSTACK_SENTRY_DSN` | unset | The project DSN. Unset or empty keeps error tracking off. |
+| `REMEMBERSTACK_SENTRY_DSN` | unset | The project DSN. Unset or empty keeps it off. |
 | `REMEMBERSTACK_SENTRY_ENVIRONMENT` | the deployment slug | The environment name on each event. |
 | `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | Share of error events sent, from 0.0 to 1.0. |
 
@@ -9621,9 +9664,123 @@ processes report errors; the one-shot projection command does not.
 Events are stripped to metadata before they leave the process: the
 exception type and stack trace stay; the exception message is replaced by
 `[redacted]`; request bodies, breadcrumbs, local variables, user data and
-extras are removed. A worker failure carries the tags `stage`, `lane` and
-`processing_id`, which you can look up with `remember ops inspect`.
+extras are removed. Because extras are removed, the `error_code` is not on
+the event. A worker failure is reported once, with the tags `stage`, `lane`
+and `processing_id`, which you can look up with `remember ops inspect`.
 Performance tracing is off.
+
+To keep the codes, leave `REMEMBERSTACK_SENTRY_DSN` unset and initialise the
+SDK yourself in a bootstrap module (see [Where the setup runs](#where-the-setup-runs)):
+
+```python
+import logging
+
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
+
+sentry_sdk.init(
+    dsn="https://…",
+    send_default_pii=False,
+    integrations=[LoggingIntegration(level=None, event_level=logging.ERROR)],
+)
+```
+
+Sentry's logging integration then sends each ERROR record, with its fields,
+as an event.
+
+### PostHog
+
+A short handler sends each ERROR record to PostHog Error Tracking, with the
+code as a property:
+
+```python
+import logging
+
+from posthog import Posthog
+
+client = Posthog("phc_…", host="https://eu.i.posthog.com")
+
+class PostHogErrors(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        code = getattr(record, "error_code", "uncoded")
+        error = record.exc_info[1] if record.exc_info else RuntimeError(code)
+        client.capture_exception(
+            error,
+            distinct_id="rememberstack",
+            properties={"error_code": code, "logger": record.name},
+        )
+
+logging.getLogger("rememberstack").addHandler(PostHogErrors(level=logging.ERROR))
+```
+
+PostHog's SDK also sends the exception's message. If your policy allows
+metadata only, drop it in the client's `before_send` hook. PostHog also accepts OpenTelemetry
+logs at `https://eu.i.posthog.com/i/v1/logs`, which feeds PostHog Logs rather
+than Error Tracking.
+
+### OpenTelemetry
+
+Run the engine under `opentelemetry-instrument` with
+`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true` to export log records
+with no code changes, or attach the SDK's handler in a bootstrap module:
+
+```python
+import logging
+
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+provider = LoggerProvider()
+provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
+set_logger_provider(provider)
+logging.getLogger("rememberstack").addHandler(
+    LoggingHandler(level=logging.ERROR, logger_provider=provider)
+)
+```
+
+The record's fields, `error_code` among them, become log attributes.
+
+### Where the setup runs
+
+Add a handler before the engine starts, in a small module that then runs
+the engine's own command. Keep a handler that writes to standard output, so
+`docker compose logs` still works: adding any handler turns off Python's
+fallback output.
+
+```python
+# bootstrap/remember_logging.py
+import logging
+import sys
+
+from rememberstack.profiles.selfhost import main
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+# … attach the tracker handler from one of the sections above …
+
+sys.exit(main(sys.argv[1:]))
+```
+
+Mount it and use it as the entrypoint for each service, in a
+`compose.override.yaml` next to `compose.yaml`:
+
+```yaml
+# compose.override.yaml
+x-bootstrap: &bootstrap
+  entrypoint: ["python", "/bootstrap/remember_logging.py"]
+  volumes:
+    - ./bootstrap:/bootstrap:ro
+
+services:
+  api: *bootstrap
+  worker-convert: *bootstrap
+  worker-llm: *bootstrap
+```
+
+Each service keeps its own `command`. Install your tracker's package in an
+image built on the engine's, or add it to the mounted directory and put that
+directory on `PYTHONPATH`.
 
 ## Model-call tracing
 
