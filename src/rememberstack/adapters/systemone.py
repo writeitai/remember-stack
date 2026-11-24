@@ -3,12 +3,12 @@
 import logging
 from typing import Any
 from typing import Mapping
-from urllib.parse import urlsplit
 
 from rememberstack.adapters.openai_decisions import OpenAIDecisionsClient
 from rememberstack.adapters.openai_decisions import OpenAIDecisionsSettings
 from rememberstack.adapters.openrouter import OpenRouterSettings
 from rememberstack.adapters.typesafe import ConfigurationError
+from rememberstack.adapters.typesafe import require_openrouter_origin
 from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.adapters.typesafe import TypeSafeUnavailableError
@@ -86,27 +86,11 @@ def validate_systemone_routing(
             " cannot be held to zero data retention"
         )
     if zdr and settings.route == "openrouter" and openrouter is not None:
-        _require_openrouter_origin(base_url=openrouter.base_url)
+        require_openrouter_origin(base_url=openrouter.base_url)
     if zdr and settings.backup != "none":
         raise ConfigurationError(
             "REMEMBERSTACK_TYPESAFE_BACKUP must be none when"
             " REMEMBERSTACK_OPENROUTER_ZDR=true"
-        )
-
-
-#: Hosts that serve OpenRouter's API. ``provider.zdr`` only has authority
-#: there; any other host (TypeSafe's own API, a proxy) is not bound by it.
-_OPENROUTER_HOSTS: frozenset[str] = frozenset({"openrouter.ai"})
-
-
-def _require_openrouter_origin(*, base_url: str) -> None:
-    """Under ZDR, System One may only be sent to OpenRouter itself over HTTPS."""
-    parsed = urlsplit(base_url)
-    if parsed.scheme != "https" or (parsed.hostname or "") not in _OPENROUTER_HOSTS:
-        raise ConfigurationError(
-            "REMEMBERSTACK_OPENROUTER_ZDR=true with REMEMBERSTACK_TYPESAFE_ROUTE="
-            "openrouter needs REMEMBERSTACK_OPENROUTER_BASE_URL on"
-            " https://openrouter.ai: provider.zdr has no authority over another host"
         )
 
 

@@ -81,8 +81,9 @@ TypeSafe's ZDR endpoint, plus Safety Retention endpoints if that policy allows
 them (see below). With ZDR on, the engine
 refuses to start on the default `typesafe` route, because TypeSafe's own API
 cannot be held to zero data retention, refuses a
-`REMEMBERSTACK_OPENROUTER_BASE_URL` other than `https://openrouter.ai`
-(`provider.zdr` binds only OpenRouter), and refuses the OpenAI Decisions backup
+`REMEMBERSTACK_OPENROUTER_BASE_URL` outside the `https://openrouter.ai` origin
+(the default, `https://openrouter.ai/api/v1`, is fine; `provider.zdr` binds
+only OpenRouter), and refuses the OpenAI Decisions backup
 below, because it would send the same content outside OpenRouter; keep
 `REMEMBERSTACK_TYPESAFE_BACKUP=none`.
 

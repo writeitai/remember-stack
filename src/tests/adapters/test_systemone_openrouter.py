@@ -399,13 +399,19 @@ def test_zdr_openrouter_route_refuses_a_host_other_than_openrouter(
 
     The refusal happens before a client exists, so no request can leave.
     """
+    openrouter = OpenRouterSettings(api_key="project-key", base_url=base_url, zdr=True)
     with pytest.raises(ConfigurationError, match="openrouter.ai"):
         build_systemone_provider(
-            settings=TypeSafeSettings(route="openrouter"),
-            openrouter=OpenRouterSettings(
-                api_key="project-key", base_url=base_url, zdr=True
-            ),
+            settings=TypeSafeSettings(route="openrouter"), openrouter=openrouter
         )
+    seen: list[httpx.Request] = []
+    with pytest.raises(ConfigurationError, match="openrouter.ai"):
+        TypeSafeSystemOneClient(
+            settings=TypeSafeSettings(route="openrouter"),
+            openrouter=openrouter,
+            client=httpx.Client(transport=_capture(body=_OPENROUTER_BODY, seen=seen)),
+        )
+    assert seen == []
 
 
 def test_deployment_openrouter_settings_cannot_change_after_checks() -> None:

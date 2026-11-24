@@ -158,7 +158,9 @@ route: TypeSafe's own API has no zero-data-retention control, so the direct
 route is refused rather than silently sending customer content there. Under
 ZDR, `backup="openai_decisions"` is refused too: the native backup would carry
 the same content to OpenAI outside OpenRouter's ZDR routing. Under ZDR the
-deployment's OpenRouter base URL must be `https://openrouter.ai`, because
+deployment's OpenRouter base URL (default `https://openrouter.ai/api/v1`)
+must have the origin `https://openrouter.ai`, checked by the profile and by
+`TypeSafeSystemOneClient` itself, because
 `provider.zdr` has no authority over any other host. `OpenRouterSettings` is
 frozen, so a deployment's key, endpoint and ZDR flag cannot change after the
 profile checked them. A missing

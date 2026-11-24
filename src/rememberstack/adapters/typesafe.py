@@ -6,6 +6,7 @@ import time
 from typing import Any
 from typing import Literal
 from typing import Mapping
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import AliasChoices
@@ -66,6 +67,26 @@ class TypeSafeSettings(BaseSettings):
     """
 
 
+#: Hosts that serve OpenRouter's API. ``provider.zdr`` only has authority
+#: there; any other host (TypeSafe's own API, a proxy) is not bound by it.
+_OPENROUTER_HOSTS: frozenset[str] = frozenset({"openrouter.ai"})
+
+
+def require_openrouter_origin(*, base_url: str) -> None:
+    """Under ZDR, System One may only be sent to OpenRouter itself over HTTPS.
+
+    The base URL is OpenRouter's API root, e.g. ``https://openrouter.ai/api/v1``;
+    its origin must be ``https://openrouter.ai``.
+    """
+    parsed = urlsplit(base_url)
+    if parsed.scheme != "https" or (parsed.hostname or "") not in _OPENROUTER_HOSTS:
+        raise ConfigurationError(
+            "REMEMBERSTACK_OPENROUTER_ZDR=true with REMEMBERSTACK_TYPESAFE_ROUTE="
+            "openrouter needs REMEMBERSTACK_OPENROUTER_BASE_URL on"
+            " https://openrouter.ai: provider.zdr has no authority over another host"
+        )
+
+
 class TypeSafeSystemOneClient(SystemOnePort):
     """TypeSafe AI System One client implementing SystemOnePort (D61/D126)."""
 
@@ -98,6 +119,8 @@ class TypeSafeSystemOneClient(SystemOnePort):
                 update={"api_key": openrouter.api_key, "base_url": openrouter.base_url}
             )
             zdr = openrouter.zdr
+            if zdr:
+                require_openrouter_origin(base_url=openrouter.base_url)
         elif openrouter is not None and openrouter.zdr:
             raise ConfigurationError(
                 "REMEMBERSTACK_OPENROUTER_ZDR=true needs"
