@@ -6649,13 +6649,16 @@ and follows D139's every-page OCR route.
 **Refined 2026-11-24 (content sniffing for formats the readers already
 decode).** A legacy OLE container takes its Word, Excel or PowerPoint subtype
 from its root storage's streams (`WordDocument`, `Workbook` or `Book`,
-`PowerPoint Document`; MS-CFB, bounded reads). When they name none, more
-than one, or the compound file is malformed, the upload is
-`ambiguous_office_format`; a declaration never decides it. Two text encodings that are not UTF-8 are admitted
-for the families whose readers decode them: UTF-16 with a byte-order mark
-and a delimiter on its first line for delimited files, and an Internet
-message (a `From` address and another mail field, a body without binary
-controls) for email with an 8-bit body. A declaration spelled as a registry alias of the detected
+`PowerPoint Document`, compared without case; MS-CFB, bounded and strict
+reads). When they name none, more than one, or the compound file is
+malformed, the upload is `ambiguous_office_format`; a declaration never
+decides it. Two text encodings that are not UTF-8 are admitted
+for the families whose readers decode them: UTF-16 with a byte-order mark,
+clean to the end of the file and with consistent multi-field records, for
+delimited files; and an Internet message (a `From` mailbox and another
+non-empty mail field, a body without binary controls to the end) for email
+with an 8-bit body. UTF-16 text is never taken for MPEG audio, whose frame
+sync its byte-order mark resembles. A declaration spelled as a registry alias of the detected
 family (Office templates and slideshows, SVG, XHTML) is compatible. The file
 name still never decides a class the bytes do not establish.
 

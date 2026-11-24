@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import codecs
+import csv
+from email.parser import BytesHeaderParser
+from email.utils import parseaddr
 import io
 import itertools
 import mmap
@@ -416,14 +419,16 @@ def _office_zip_mime(*, content: Content) -> str | None:
 
 _CFB_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _CFB_STREAM_MIMES = {
-    "WordDocument": "application/msword",
-    "Workbook": "application/vnd.ms-excel",
-    "Book": "application/vnd.ms-excel",
-    "PowerPoint Document": "application/vnd.ms-powerpoint",
+    "worddocument": "application/msword",
+    "workbook": "application/vnd.ms-excel",
+    "book": "application/vnd.ms-excel",
+    "powerpoint document": "application/vnd.ms-powerpoint",
 }
-"""Root streams that name a legacy Office subtype (MS-DOC, MS-XLS, MS-PPT)."""
+"""Root streams that name a legacy Office subtype (MS-DOC, MS-XLS, MS-PPT),
+case-folded: compound-file names compare without case."""
 _CFB_LAST_SECTOR = 0xFFFFFFFA
 _CFB_END_OF_CHAIN = 0xFFFFFFFE
+_CFB_NO_STREAM = 0xFFFFFFFF
 _CFB_MAX_SECTORS = 4096
 """Directory, FAT and DIFAT sectors read at most: a bound on crafted chains."""
 
@@ -436,12 +441,14 @@ def _u32(data: bytes, offset: int) -> int:
 def _ole_office_mime(*, content: Content) -> str | None:
     """The legacy Office subtype an OLE file's root streams name, or None.
 
-    Reads the compound file's header, the FAT and DIFAT sectors it needs and
-    the directory chain (MS-CFB), bounded by :data:`_CFB_MAX_SECTORS`. Any
-    malformed chain (a sector outside the file or past the header's FAT
-    count, a repeated sector, a chain not ended by ENDOFCHAIN) gives None.
-    Only the root storage's own children count, so an embedded object's
-    streams do not; None when no subtype or more than one is named.
+    Reads the compound file's header, its whole DIFAT (the declared number of
+    DIFAT sectors, ended by ENDOFCHAIN), the FAT sectors it needs and the
+    directory chain (MS-CFB), bounded by :data:`_CFB_MAX_SECTORS`. Any
+    malformed structure (a sector outside the file, a repeated sector, a
+    chain not ended by ENDOFCHAIN, a directory link that is neither NOSTREAM
+    nor an entry, a revisited entry) gives None. Only the root storage's own
+    children count, so an embedded object's streams do not; None when no
+    subtype or more than one is named.
     """
     header = bytes(content[:512])
     if len(header) < 512 or not header.startswith(_CFB_SIGNATURE):
@@ -451,10 +458,6 @@ def _ole_office_mime(*, content: Content) -> str | None:
         return None
     size = 1 << shift
     per_sector = size // 4
-    fat_sectors = _u32(header, 44)
-    difat = [_u32(header, 76 + 4 * index) for index in range(109)]
-    next_difat = _u32(header, 68)
-    difat_seen: set[int] = set()
     reads = 0
 
     def sector(sid: int) -> bytes | None:
@@ -466,36 +469,45 @@ def _ole_office_mime(*, content: Content) -> str | None:
         data = bytes(content[start : start + size])
         return data if len(data) == size else None
 
-    def next_sector(sid: int) -> int | None:
-        nonlocal next_difat
-        index, slot = divmod(sid, per_sector)
-        if index >= fat_sectors:
+    fat_count = _u32(header, 44)
+    difat = [_u32(header, 76 + 4 * index) for index in range(109)]
+    next_difat = _u32(header, 68)
+    difat_seen: set[int] = set()
+    for _ in range(_u32(header, 72)):
+        if next_difat in difat_seen:
             return None
-        while index >= len(difat):
-            if next_difat > _CFB_LAST_SECTOR or next_difat in difat_seen:
-                return None
-            difat_seen.add(next_difat)
-            block = sector(next_difat)
-            if block is None:
-                return None
-            difat.extend(_u32(block, 4 * i) for i in range(per_sector - 1))
-            next_difat = _u32(block, size - 4)
-        fat = sector(difat[index])
-        return None if fat is None else _u32(fat, 4 * slot)
+        difat_seen.add(next_difat)
+        block = sector(next_difat)
+        if block is None:
+            return None
+        difat.extend(_u32(block, 4 * i) for i in range(per_sector - 1))
+        next_difat = _u32(block, size - 4)
+    fats = difat[:fat_count]
+    if (
+        next_difat != _CFB_END_OF_CHAIN
+        or len(fats) < fat_count
+        or len(set(fats)) < fat_count
+        or any(fat > _CFB_LAST_SECTOR for fat in fats)
+    ):
+        return None
 
     entries: list[bytes] = []
     directory_seen: set[int] = set()
     sid = _u32(header, 48)
     while sid != _CFB_END_OF_CHAIN:
-        if sid in directory_seen:
+        index, slot = divmod(sid, per_sector)
+        if sid in directory_seen or index >= fat_count:
             return None
         directory_seen.add(sid)
         data = sector(sid)
-        following = None if data is None else next_sector(sid)
-        if data is None or following is None:
+        fat = sector(fats[index])
+        if data is None or fat is None:
             return None
         entries.extend(data[offset : offset + 128] for offset in range(0, size, 128))
-        sid = following
+        sid = _u32(fat, 4 * slot)
+    declared_sectors = _u32(header, 40)
+    if shift == 12 and declared_sectors != len(directory_seen):
+        return None
     if not entries or entries[0][66] != 5:
         return None
     found: set[str] = set()
@@ -503,77 +515,120 @@ def _ole_office_mime(*, content: Content) -> str | None:
     seen: set[int] = set()
     while pending:
         index = pending.pop()
-        if index >= len(entries) or index in seen:
+        if index == _CFB_NO_STREAM:
             continue
+        if index >= len(entries) or index in seen:
+            return None
         seen.add(index)
         entry = entries[index]
         length = int.from_bytes(entry[64:66], "little")
         if entry[66] == 2 and 2 <= length <= 64:
             name = entry[: length - 2].decode("utf-16-le", errors="replace")
-            if name in _CFB_STREAM_MIMES:
-                found.add(_CFB_STREAM_MIMES[name])
+            if name.casefold() in _CFB_STREAM_MIMES:
+                found.add(_CFB_STREAM_MIMES[name.casefold()])
         pending.extend((_u32(entry, 68), _u32(entry, 72)))
     return found.pop() if len(found) == 1 else None
 
 
 _RFC822_HEADER = re.compile(rb"[\x21-\x39\x3b-\x7e]+:")
-_RFC822_MAIL_FIELDS = frozenset(
-    {b"to", b"date", b"subject", b"message-id", b"received", b"mime-version"}
-)
+_RFC822_MAIL_FIELDS = ("To", "Date", "Subject", "Message-ID", "Received")
 """Fields besides ``From`` that mark a header block as an Internet message."""
 _DELIMITERS = (",", "\t", ";", "|")
+_SAMPLE_RECORDS = 20
+"""Complete records the UTF-16 delimited check compares."""
 _UTF16_TEXT_MIMES = frozenset({"text/csv", "text/tab-separated-values"})
 """Text the delimited reader decodes from a UTF-16 byte-order mark."""
+
+
+def _clean_through_end(*, content: Content, decoder: Any, skip: int) -> bool:
+    """Decode the whole file a window at a time; no error, no control character."""
+    for start in range(skip, max(len(content), skip + 1), _TEXT_CHUNK_BYTES):
+        window = bytes(content[start : start + _TEXT_CHUNK_BYTES])
+        try:
+            text = decoder.decode(window, final=start + len(window) >= len(content))
+        except UnicodeDecodeError:
+            return False
+        if _CONTROL_CHARACTERS.search(text):
+            return False
+    return True
+
+
+def _starts_as_utf16_text(*, content: Content) -> bool:
+    """A UTF-16 byte-order mark, then a sample of text without control characters."""
+    head = bytes(content[:SNIFF_BYTES])
+    if head[:2] not in {codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE}:
+        return False
+    try:
+        text = codecs.getincrementaldecoder("utf-16")().decode(head[: len(head) & ~1])
+    except UnicodeDecodeError:
+        return False
+    return bool(text) and not _CONTROL_CHARACTERS.search(text)
+
+
+def _is_utf16_text(*, content: Content) -> bool:
+    """A UTF-16 byte-order mark, then text without control characters to the end."""
+    return bytes(content[:2]) in {
+        codecs.BOM_UTF16_LE,
+        codecs.BOM_UTF16_BE,
+    } and _clean_through_end(
+        content=content, decoder=codecs.getincrementaldecoder("utf-16")(), skip=0
+    )
 
 
 def _looks_like_utf16_text(*, content: Content) -> bool:
     """Delimited text in UTF-16 with a byte-order mark.
 
-    The sample decodes strictly (to the end when the file fits in it), has
-    no control characters, and its first line holds a delimiter.
+    The whole file decodes as UTF-16 without control characters, and its
+    first complete records (at most :data:`_SAMPLE_RECORDS`) all have the
+    same number of fields, at least two, for one delimiter.
     """
+    if not _is_utf16_text(content=content):
+        return False
     head = bytes(content[:SNIFF_BYTES])
-    if not head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+    text = head[: len(head) & ~1].decode("utf-16", errors="ignore")
+    lines = text.splitlines()
+    if len(content) > SNIFF_BYTES:
+        lines = lines[:-1]  # the sample may cut the last line
+    lines = [line for line in lines if line.strip()][:_SAMPLE_RECORDS]
+    if len(lines) < 2:
         return False
-    whole = len(content) <= SNIFF_BYTES
-    try:
-        text = codecs.getincrementaldecoder("utf-16")().decode(
-            head if whole else head[: len(head) & ~1], final=whole
-        )
-    except UnicodeDecodeError:
-        return False
-    first_line = text.split("\n", 1)[0]
-    return not _CONTROL_CHARACTERS.search(text) and any(
-        delimiter in first_line for delimiter in _DELIMITERS
-    )
+    for delimiter in _DELIMITERS:
+        widths = {len(row) for row in csv.reader(lines, delimiter=delimiter)}
+        if len(widths) == 1 and widths.pop() >= 2:
+            return True
+    return False
 
 
 def _looks_like_rfc822(*, content: Content) -> bool:
     """An Internet message: mail header fields, a blank line, a text body.
 
     For a message whose body is not UTF-8 (an 8-bit transfer encoding); a
-    UTF-8 message is already text. The header block holds a ``From`` with an
-    address and another mail field, and has no NUL; the sampled body has no
-    binary control characters.
+    UTF-8 message is already text. The header block parses as mail headers
+    with a ``From`` mailbox and another non-empty mail field, and the whole
+    body (decoded as Latin-1) has no binary control characters.
     """
-    head = bytes(content[:SNIFF_BYTES]).replace(b"\r\n", b"\n")
-    block, separator, body = head.partition(b"\n\n")
-    if not separator or b"\x00" in block:
+    head = bytes(content[:SNIFF_BYTES])
+    end = head.find(b"\r\n\r\n")
+    end = head.find(b"\n\n") if end < 0 else end
+    if end < 0 or b"\x00" in head[:end]:
         return False
-    names: set[bytes] = set()
-    sender = False
+    block = head[:end].replace(b"\r\n", b"\n")
     for line in block.split(b"\n"):
-        if line[:1] in {b" ", b"\t"} and names:
-            continue
-        if not _RFC822_HEADER.match(line):
+        if line[:1] not in {b" ", b"\t"} and not _RFC822_HEADER.match(line):
             return False
-        name, _, value = line.partition(b":")
-        names.add(name.lower())
-        sender = sender or (name.lower() == b"from" and b"@" in value)
-    return (
-        sender
-        and bool(names & _RFC822_MAIL_FIELDS)
-        and not _CONTROL_CHARACTERS.search(body.decode("latin-1"))
+    headers = BytesHeaderParser().parsebytes(block + b"\n\n")
+    _, sender = parseaddr(str(headers.get("From", "")))
+    local, at, domain = sender.partition("@")
+    corroborated = any(
+        str(headers.get(name, "")).strip() for name in _RFC822_MAIL_FIELDS
+    )
+    if not (local and at and "." in domain and corroborated):
+        return False
+    body_start = end + (4 if head[end : end + 4] == b"\r\n\r\n" else 2)
+    return _clean_through_end(
+        content=content,
+        decoder=codecs.getincrementaldecoder("latin-1")(),
+        skip=body_start,
     )
 
 
@@ -635,9 +690,12 @@ def _detected_mime(*, content: Content) -> str:
     bmff = _bmff_mime(content=content)
     if bmff is not None:
         return bmff
-    if _looks_like_adts(content=content):
+    # A UTF-16 little-endian byte-order mark is also an MPEG frame sync, so
+    # a file whose sample reads as UTF-16 text is not taken for audio.
+    utf16 = _starts_as_utf16_text(content=content)
+    if not utf16 and _looks_like_adts(content=content):
         return "audio/aac"
-    if _looks_like_mpeg_frame(content=content):
+    if not utf16 and _looks_like_mpeg_frame(content=content):
         return "audio/mpeg"
     if _starts(content, b"PK\x03\x04"):
         office = _office_zip_mime(content=content)

@@ -48,6 +48,8 @@ _PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentati
 _DOTX = "application/vnd.openxmlformats-officedocument.wordprocessingml.template"
 _PPSX = "application/vnd.openxmlformats-officedocument.presentationml.slideshow"
 _UTF16_CSV = "name,value\na,1\n".encode("utf-16")
+_LONG_UTF16_CSV = "a,b\n".encode("utf-16") + "1,2\n".encode("utf-16-le") * 20000
+"""Past the 64 KiB sample, and its byte-order mark is also an MPEG frame sync."""
 _UTF16_TSV = "name\tvalue\na\t1\n".encode("utf-16-be")
 _UTF16_TSV = b"\xfe\xff" + _UTF16_TSV
 _LATIN1_EMAIL = (
@@ -55,6 +57,10 @@ _LATIN1_EMAIL = (
     b"Date: Thu, 1 Jan 2026 00:00:00 +0000\r\n"
     b"Content-Type: text/plain; charset=iso-8859-1\r\n"
     b"Content-Transfer-Encoding: 8bit\r\n\r\nCaf\xe9.\r\n"
+)
+_FOLDED_EMAIL = (
+    b"From: Ann Example\r\n <ann@example.org>\r\nTo: b@example.org\r\n"
+    b"Subject: Hi\r\n\r\nCaf\xe9.\r\n"
 )
 _XLS_BYTES = (
     Path(__file__).parents[1] / "adapters" / "fixtures" / "tiny_budget.xls"
@@ -75,7 +81,7 @@ _END, _FREE, _FAT_SECTOR, _NO_ENTRY = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD, 0xFFFF
 
 
 def _cfb_entries(
-    *, streams: list[str], embedded: tuple[str, ...], loop: bool
+    *, streams: list[str], embedded: tuple[str, ...], last_right: int
 ) -> list[bytes]:
     """Directory entries: the root, its streams, and an embedded storage."""
 
@@ -96,8 +102,7 @@ def _cfb_entries(
     names = [(name, 2) for name in streams] + ([("ObjectPool", 1)] if embedded else [])
     entries = [entry(name="Root Entry", kind=5, child=1)]
     for index, (name, kind) in enumerate(names, start=1):
-        last = index == len(names)
-        right = (index if loop else _NO_ENTRY) if last else index + 1
+        right = last_right if index == len(names) else index + 1
         child = len(names) + 1 if kind == 1 else _NO_ENTRY
         entries.append(entry(name=name, kind=kind, right=right, child=child))
     for index, name in enumerate(embedded):
@@ -110,18 +115,20 @@ def _cfb(
     *,
     streams: list[str],
     embedded: tuple[str, ...] = (),
-    loop: bool = False,
+    last_right: int = _NO_ENTRY,
     shift: int = 9,
     terminator: int = _END,
     far: bool = False,
+    difat_loop: bool = False,
 ) -> bytes:
     """A small OLE compound file (MS-CFB) with these root streams.
 
     ``embedded`` streams sit in a child storage (an embedded object);
-    ``loop`` makes the last root sibling point back at itself; ``shift`` 12
+    ``last_right`` is the last root stream's right sibling; ``shift`` 12
     gives a version 4 file with 4096-byte sectors; ``terminator`` ends the
     directory chain in the FAT; ``far`` places the directory past the 109
-    FAT sectors the header lists, so finding it needs a DIFAT sector.
+    FAT sectors the header lists, so finding it needs a DIFAT sector, and
+    ``difat_loop`` makes that DIFAT sector name itself as the next one.
     """
     size = 1 << shift
     per_sector = size // 4
@@ -129,20 +136,32 @@ def _cfb(
     def u32s(values: list[int]) -> bytes:
         return b"".join(value.to_bytes(4, "little") for value in values)
 
-    entries = _cfb_entries(streams=streams, embedded=embedded, loop=loop)
+    entries = _cfb_entries(streams=streams, embedded=embedded, last_right=last_right)
     while len(entries) % (size // 128):
         entries.append(bytes(128))
     directory = b"".join(entries)
     directory_sectors = len(directory) // size
     if far:
+        # Sector 0 is FAT 0, 1 the DIFAT sector, 2 FAT 109 (the directory's),
+        # 3-110 FATs 1-108; the directory follows at sector 109 * 128.
         directory_sid = 109 * per_sector
-        header_difat = [0] * 109
-        fat_count, first_difat, difat_count = 110, 1, 1
-        fat0 = u32s([_FAT_SECTOR, 0xFFFFFFFC, _FAT_SECTOR]).ljust(size, b"\xff")
-        difat_sector = u32s([2] + [_FREE] * (per_sector - 2) + [_END])
+        header_difat = [0, *range(3, 111)]
+        fat_count, first_difat = 110, 1
+        difat_count = 2 if difat_loop else 1
+        fat0 = u32s([_FAT_SECTOR, 0xFFFFFFFC] + [_FAT_SECTOR] * 109)
+        next_difat = 1 if difat_loop else _END
+        difat_sector = u32s([2] + [_FREE] * (per_sector - 2) + [next_difat])
         fat_far = u32s([terminator]).ljust(size, b"\xff")
-        filler = bytes(size * (directory_sid - 3))
-        body = fat0 + difat_sector + fat_far + filler + directory
+        free_fats = b"\xff" * size * 108
+        filler = bytes(size * (directory_sid - 111))
+        body = (
+            fat0.ljust(size, b"\xff")
+            + difat_sector
+            + fat_far
+            + free_fats
+            + filler
+            + directory
+        )
     else:
         directory_sid = 1
         header_difat = [0] + [_FREE] * 108
@@ -160,7 +179,8 @@ def _cfb(
         + b"\xfe\xff"
         + shift.to_bytes(2, "little")
         + (6).to_bytes(2, "little")
-        + bytes(10)
+        + bytes(6)
+        + u32s([directory_sectors if shift == 12 else 0])
         + u32s([fat_count, directory_sid, 0, 4096, _END, 0, first_difat, difat_count])
         + u32s(header_difat)
     )
@@ -405,6 +425,7 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ("data.csv", "text/csv", b"name,value\na,1\n", "text/csv"),
         ("data.csv", "text/csv", _UTF16_CSV, "text/csv"),
         ("data.csv", "application/octet-stream", _UTF16_CSV, "text/csv"),
+        ("long.csv", "application/octet-stream", _LONG_UTF16_CSV, "text/csv"),
         (
             "data.tsv",
             "application/octet-stream",
@@ -413,6 +434,7 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ),
         ("note.eml", "message/rfc822", _LATIN1_EMAIL, "message/rfc822"),
         ("note.eml", "application/octet-stream", _LATIN1_EMAIL, "message/rfc822"),
+        ("fold.eml", "application/octet-stream", _FOLDED_EMAIL, "message/rfc822"),
         ("budget.xls", "application/octet-stream", _XLS_BYTES, _XLS),
         ("budget.xls", "application/msword", _XLS_BYTES, _XLS),
         ("deck.ppt", "application/octet-stream", _PPT_BYTES, _PPT),
@@ -473,6 +495,19 @@ def test_registry_family_survives_compatible_byte_class(
         ("mail.eml", b"Subject: only one field\nX-A: b\n\nbody \xff"),
         ("data.csv", b"\xff\xfe" + b"\x01\x00" * 8),
         ("prose.csv", "Plain words and no columns.\nMore prose.\n".encode("utf-16")),
+        ("note.csv", "Hi, team.\nSee you tomorrow.\n".encode("utf-16")),
+        (
+            "long.csv",
+            "a,b\n".encode("utf-16") + "1,2\n".encode("utf-16-le") * 20000 + b"\x00",
+        ),
+        (
+            "pair.csv",
+            "a,b\n".encode("utf-16")
+            + "1,2\n".encode("utf-16-le") * 20000
+            + b"\x00\xd8,\x00",
+        ),
+        ("ann.eml", b"From: Ann (ask @dev)\r\nSubject:\r\n\r\nCaf\xe9\r\n"),
+        ("late.eml", _LATIN1_EMAIL + b"x" * 70000 + b"\x00"),
         ("short.csv", "a,b\n".encode("utf-16") + b"\x00"),
         ("note.eml", b"From: Ann\r\nX-Note: hi\r\n\r\nCaf\xe9\r\n"),
         ("note.eml", b"From: a@example.org\r\nTo: b@example.org\r\n\r\n\xe9\x00\x01"),
@@ -513,8 +548,9 @@ def test_an_embedded_object_does_not_decide_the_office_subtype() -> None:
     [
         (_cfb(streams=["PowerPoint Document"], shift=12), _PPT),
         (_cfb(streams=["WordDocument"], far=True), "application/msword"),
+        (_cfb(streams=["WORKBOOK"]), _XLS),
     ],
-    ids=["version-4", "difat-chain"],
+    ids=["version-4", "difat-chain", "upper-case-name"],
 )
 def test_a_compound_file_is_read_from_bytes_and_from_a_map(
     tmp_path: Path, content: bytes, expected: str
@@ -537,8 +573,19 @@ def test_a_compound_file_is_read_from_bytes_and_from_a_map(
         (_cfb(streams=["WordDocument"], far=True, terminator=_FREE), ""),
         (_cfb(streams=["Workbook", "WordDocument"]), _PPT),
         (_cfb(streams=["__properties_version1.0"]), "application/msword"),
+        (_cfb(streams=["WordDocument"], far=True, difat_loop=True), ""),
+        (_cfb(streams=["Current User", "WordDocument"], last_right=2), ""),
+        (_cfb(streams=["WordDocument"], last_right=40), ""),
     ],
-    ids=["broken-chain", "broken-far-chain", "two-subtypes", "outlook-as-word"],
+    ids=[
+        "broken-chain",
+        "broken-far-chain",
+        "two-subtypes",
+        "outlook-as-word",
+        "difat-cycle",
+        "sibling-cycle",
+        "sibling-out-of-range",
+    ],
 )
 def test_a_declaration_never_decides_an_unreadable_compound_file(
     content: bytes, declared: str
@@ -555,14 +602,6 @@ def test_declared_delimited_prose_in_utf16_is_refused() -> None:
     with pytest.raises(ContentDetectionError) as raised:
         detect_content_mime(content=content, declared_mime="text/csv")
     assert raised.value.code == "content_type_mismatch"
-
-
-def test_a_cyclic_compound_directory_is_read_once() -> None:
-    """A sibling that points back at itself ends the walk instead of looping."""
-    content = _cfb(streams=["Current User", "WordDocument"], loop=True)
-    assert detect_content_mime(content=content, declared_mime="") == (
-        "application/msword"
-    )
 
 
 @pytest.mark.parametrize(
