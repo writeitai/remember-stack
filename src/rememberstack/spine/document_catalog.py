@@ -934,6 +934,7 @@ def _lineage_locked(*, connection: Connection, record: UploadRecord) -> RowMappi
             source_kind=record.source_kind,
             source_ref=record.source_ref,
             content_hash=record.content_hash,
+            allow_forgotten=record.allow_forgotten,
         )
         raise RuntimeError("the lineage row disappeared during registration")
     connection.execute(_RESURRECT_LINEAGE, {"doc_id": lineage["doc_id"]})

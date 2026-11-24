@@ -515,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "d56395d9527b1a87a55437f280dfcc1567275abe5a434c4cc9fb9598e70d8e24",
-      "source_digest": "3c9c6906e89324061e7bdc11307bf17c9a06ae19921e7a03f17be944fce8c037"
+      "schema_profile_digest": "9f8aaa7371bfc564b426b64b0183f2e5d7a43dea4114b9faf2eff26963399e9d",
+      "source_digest": "518c6e70579729b78bce8d8253072699b38611274d57979b26690091df3b4a35"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "1b8d0bada975e8f819c2bddd4f433ab3e396b14645efaf2d6846f816b6740228",
+      "classification_digest": "eea82c860d979a2743fdfe39fc2cedd07502b784136829c4c349057aa672cb65",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,24 +1150,24 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "6c050674917ab4c0e71bd71bbb183e00c9f70bd5e51b05ad7d17d2204ba55b1a",
+      "profile_digest": "0c9b27b0fd5ce1936b3b38d3c8c65a7be831b26ddcd4353df19530c70594ec4c",
       "release_margin_us": 500000,
-      "schema_digest": "bc19b6ee214cc4d3f72e73b67bc26d32135270093ce85018b05745639fd20697",
-      "schema_profile_digest": "d56395d9527b1a87a55437f280dfcc1567275abe5a434c4cc9fb9598e70d8e24",
-      "source_digest": "3c9c6906e89324061e7bdc11307bf17c9a06ae19921e7a03f17be944fce8c037",
+      "schema_digest": "1fe5eeafbe486387bf6e55300e736adc8257b46b7a1d7a1bbd8c811b1ae8bf88",
+      "schema_profile_digest": "9f8aaa7371bfc564b426b64b0183f2e5d7a43dea4114b9faf2eff26963399e9d",
+      "source_digest": "518c6e70579729b78bce8d8253072699b38611274d57979b26690091df3b4a35",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "1b8d0bada975e8f819c2bddd4f433ab3e396b14645efaf2d6846f816b6740228",
+    "classification_digest": "eea82c860d979a2743fdfe39fc2cedd07502b784136829c4c349057aa672cb65",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "6c050674917ab4c0e71bd71bbb183e00c9f70bd5e51b05ad7d17d2204ba55b1a",
-    "operator_mapping_digest": "b567098a9eacdab5e5f85afb2221b03444cc258bdcad23445392c2107f8ca4ed",
-    "schema_profile_digest": "d56395d9527b1a87a55437f280dfcc1567275abe5a434c4cc9fb9598e70d8e24",
+    "native_capture_profile_digest": "0c9b27b0fd5ce1936b3b38d3c8c65a7be831b26ddcd4353df19530c70594ec4c",
+    "operator_mapping_digest": "4282717664e553cc62e9b23bf75ef287d0f8127d30bada5611359a1e328571a9",
+    "schema_profile_digest": "9f8aaa7371bfc564b426b64b0183f2e5d7a43dea4114b9faf2eff26963399e9d",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
@@ -1686,7 +1686,7 @@
       "p9_51_0072_corpus_paths.py": "43840fe88f2a637bc48517174fadd273eb5eb88eeb51e60505824306a927d668",
       "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255",
       "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a",
-      "p9_54_0075_forget_records.py": "6ce58f7fc3289914c7ff754ce77e4986c0ba9750cccb220007604f7e81f68dca"
+      "p9_54_0075_forget_records.py": "12d4f1232f5cfa0ffc481002dc0a597324684d814ed37f15eda45a576ab66e30"
     },
     "records": {
       "NativeCatalogAcquisition": {
