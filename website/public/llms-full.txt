@@ -7815,9 +7815,10 @@ These settings apply to every call through OpenRouter.
 |---|---|---|
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback unless the same set is also supplied as the hard allowlist. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. Alone it disables fallback. Combine with an order naming exactly the same unique slugs to allow fallback within this set. |
-| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. Other providers remain a fallback unless the same set is also supplied as the embedding allowlist. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off, also when an order is set. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. A blank entry (including a trailing comma) stops startup. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls to zero-data-retention endpoints. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |
@@ -7829,6 +7830,67 @@ These settings apply to every call through OpenRouter.
 When you set a provider list or ZDR, each chat call also tells OpenRouter
 not to route to providers that collect data (`data_collection: deny`). With
 none of them set, OpenRouter applies your account's own routing settings.
+
+With `REMEMBERSTACK_OPENROUTER_ZDR=true`, every chat and embedding call
+carries `zdr: true` and `data_collection: deny`, even when no provider list
+is set, so a fallback can only reach a zero-data-retention endpoint. To keep
+embeddings on approved zero-data-retention hosts, combine it with the
+allowlist:
+
+```bash
+REMEMBERSTACK_OPENROUTER_ZDR=true
+REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY=nebius,deepinfra
+# Leave both empty: a pin stops startup, and an order adds an "order" field.
+REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER=
+REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=
+```
+
+Each embedding call then sends
+`{"only": ["nebius", "deepinfra"], "allow_fallbacks": true, "data_collection": "deny", "zdr": true}`.
+An embedding order alone (without the allowlist) may fall back to any host
+serving the model. The image-description converter has its own switch,
+`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`; see
+[converters](https://remember.dev/docs/self-hosting/converters).
+
+The request flags alone do not guarantee strict zero retention. OpenRouter
+combines `zdr: true` with your account's ZDR settings (or those of the
+guardrail on the API key), which are set per model group: **OpenAI**,
+**Anthropic**, **Google**, **SpaceXSI** and **All other models**. For
+**Google** and **All other models** they also decide whether Safety Retention
+endpoints count. A Safety Retention endpoint may keep the prompt and response
+of any request, flagged or not, to detect and prevent abuse, and self-serve
+accounts allow it by default. The default OpenAI chat and image-description
+models are in **OpenAI**; Qwen embeddings and the Z.ai chat models are in
+**All other models**; a Google model in any role adds **Google**. No request
+field changes these settings. If you need strict zero retention, set your
+OpenRouter account, or the guardrail on every key the engine uses, to enforce
+ZDR for every group your models fall in, with Safety Retention excluded for
+Google and All other models. OpenRouter's own logging is separate from
+provider routing: exclude the engine's keys from Input & Output Logging and
+keep the account's data-sharing logging opt-in off, or OpenRouter itself can
+store prompts and completions. Check that the endpoints you pin stay
+eligible, and confirm all of it before you send customer content. See
+OpenRouter's
+[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#per-model-group-zdr-enforcement)
+and [logging guide](https://openrouter.ai/docs/guides/features/input-output-logging).
+
+With Docker Compose, set `REMEMBERSTACK_OPENROUTER_ZDR` and
+`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` in the project `.env` as
+literal values (no `${...}` references). The services read them only from
+there (`env_file`): a value exported in your shell, or one in an alternate
+`--env-file`, does not reach the engine, so neither can override or clear
+what `.env` says. A blank `REMEMBERSTACK_OPENROUTER_ZDR` stops startup; a
+blank allowlist means no allowlist.
+
+These embedding settings need an engine image that includes them; an older
+image ignores them without an error (it still honours
+`REMEMBERSTACK_OPENROUTER_ZDR` for chat). Until a release includes them, check
+out a revision that does and build from it with
+`docker compose up --build -d --wait`. Before you send customer content, check
+`GET /deployment` (see [deployment](https://remember.dev/docs/reference/http-api/deployment)):
+`build_revision` must be that revision and
+`model_bindings.openrouter_embedding_provider_only` must list your hosts. An
+image without this feature does not report that key.
 
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither
@@ -7983,7 +8045,17 @@ without admitting hosts outside the list. For Flex followed by normal OpenAI
 Luna, use `["openai/flex","openai"]`. An explicit uncharged capacity rejection
 advances to the next approved endpoint without a generation-cost lookup. A
 response with choices or usage, or a generic ID-bearing error, never triggers
-that replay. OCR keeps its independent provider settings.
+that replay. Set `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to send every
+description call only to zero-data-retention endpoints (`zdr: true` and
+`data_collection: deny`), with or without an allowlist; it is separate from
+`REMEMBERSTACK_OPENROUTER_ZDR`. The flag is part of the route version, so
+turning it on refreshes the vision lane once and reuses a successful OCR
+lane. As with the engine-wide flag, strict zero retention also needs the OpenRouter
+account or key guardrail set to enforce ZDR for the description model's
+group (**OpenAI** for the default model, **Google** for a Gemini model, with
+Safety Retention excluded for Google and All other models); see
+[models](https://remember.dev/docs/self-hosting/models). OCR keeps its independent provider
+settings.
 
 Existing multi-entry lists now permit ordered fallback within the same set.
 That transport change does not change an unchanged list's checkpoint identity;
@@ -13880,7 +13952,7 @@ None.
 | Field | Meaning |
 |---|---|
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
-| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
+| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`, plus `openrouter_embedding_provider_only` when the embedding host allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) is set. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
 | `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, `search_documents`
 only when document search is, and `section_history` and
@@ -20758,8 +20830,9 @@ transports. Run a small live API check before enabling this default-off backup.
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred chat providers, with fallback. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers. Alone it disables fallback; combine with an order naming the same unique slugs to allow fallback within the set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these embedding providers. Two or more allow fallback within the set; one disables fallback. An embedding order used with it must name the same unique slugs. Not combinable with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat and embeddings (`zdr: true`, `data_collection: deny`). Strict zero retention also needs the OpenRouter account or key guardrail to enforce ZDR for each model group used, with Safety Retention excluded; see [models](https://remember.dev/docs/self-hosting/models). |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Reasoning effort for every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | Reasoning effort per model id; wins over the global value. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
@@ -20817,7 +20890,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL` | `high` | `auto`, `low`, `high`, `original` | Explicit provider observation resolution. High requests bounded preprocessing of the original image; exact sizing and supported values depend on the model. Changes refresh the description checkpoint while retaining matching OCR. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Approved endpoints in preference order. One entry disables fallback; multiple entries allow fallback only within the list. The LoCoMo profile uses `["openai/flex","openai"]`. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | bool | Ask for zero-data-retention endpoints for the image description (`zdr: true`); strict zero retention also needs the OpenRouter account set to ZDR only. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | bool | Ask for zero-data-retention endpoints for the image description (`zdr: true`, `data_collection: deny`). Part of the route version: turning it on refreshes the vision lane once and reuses OCR. Strict zero retention also needs the account or key guardrail settings described under `REMEMBERSTACK_OPENROUTER_ZDR`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |

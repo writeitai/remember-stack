@@ -2230,6 +2230,12 @@ def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str
         if openrouter.reasoning_effort_map
         else "unset",
     }
+    if openrouter.embedding_provider_only:
+        # Present only when set, so deployments without the allowlist keep
+        # byte-identical bindings (and benchmark fingerprints).
+        bindings["openrouter_embedding_provider_only"] = ",".join(
+            openrouter.embedding_provider_only
+        )
     if facts.engine == "jev":
         settings = TypeSafeSettings.model_validate({})
         bindings["systemone_backup"] = settings.backup

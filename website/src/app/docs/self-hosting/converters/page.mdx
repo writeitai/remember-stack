@@ -79,7 +79,17 @@ without admitting hosts outside the list. For Flex followed by normal OpenAI
 Luna, use `["openai/flex","openai"]`. An explicit uncharged capacity rejection
 advances to the next approved endpoint without a generation-cost lookup. A
 response with choices or usage, or a generic ID-bearing error, never triggers
-that replay. OCR keeps its independent provider settings.
+that replay. Set `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to send every
+description call only to zero-data-retention endpoints (`zdr: true` and
+`data_collection: deny`), with or without an allowlist; it is separate from
+`REMEMBERSTACK_OPENROUTER_ZDR`. The flag is part of the route version, so
+turning it on refreshes the vision lane once and reuses a successful OCR
+lane. As with the engine-wide flag, strict zero retention also needs the OpenRouter
+account or key guardrail set to enforce ZDR for the description model's
+group (**OpenAI** for the default model, **Google** for a Gemini model, with
+Safety Retention excluded for Google and All other models); see
+[models](/docs/self-hosting/models). OCR keeps its independent provider
+settings.
 
 Existing multi-entry lists now permit ordered fallback within the same set.
 That transport change does not change an unchanged list's checkpoint identity;

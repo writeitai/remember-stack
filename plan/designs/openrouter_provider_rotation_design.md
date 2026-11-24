@@ -156,6 +156,8 @@ rotation, a split throttle budget, and per-call host recording.
   and are excluded from `_model_bindings()` in `profiles/selfhost.py`** — unlike
   `embedding_provider_order`, which is in bindings today, so an implementer copying that
   precedent without this exclusion would break the benchmark equality gate. The
+  embedding allowlist (§5) is disclosed as `openrouter_embedding_provider_only`
+  only when it is set, so bindings without it stay byte-identical. The
   implementing PR asserts all three fingerprints stable across serving hosts.
   A benchmark's configured execution policy and worker environment are separately
   fingerprinted: changing the approved endpoints or pricing policy requires a
@@ -163,11 +165,83 @@ rotation, a split throttle budget, and per-call host recording.
 
 ### 5. Zero-retention enforcement
 
-- Chat payloads always send `data_collection: deny` in the provider dict.
-- `zdr: bool = False` (env `REMEMBERSTACK_OPENROUTER_ZDR`): when true, sends
-  `zdr: true` to restrict routing to zero-data-retention endpoints. Provider picks
+A zero-data-retention (ZDR) endpoint is one whose host does not store prompts
+or outputs after answering. OpenRouter filters candidate hosts, fallbacks
+included, by two `provider` fields: `zdr: true` (ZDR endpoints only) and
+`data_collection: "deny"` (no hosts that collect user data). Every OpenRouter
+call that carries customer content can be held to both.
+
+- Chat payloads always send `data_collection: deny` in the provider dict when
+  any provider list or ZDR is configured.
+- `zdr: bool = False` (env `REMEMBERSTACK_OPENROUTER_ZDR`): when true, every chat
+  **and embedding** request's provider dict carries `zdr: true` and
+  `data_collection: deny`, also when no provider list is configured (the dict
+  is then exactly `{"data_collection": "deny", "zdr": true}`). Provider picks
   already exclude retaining hosts by default (see order above); the flag is the
-  enforcement, not the pick.
+  enforcement, not the pick. Because both fields filter fallbacks too, the
+  retention guarantee does not depend on how OpenRouter treats `only` or
+  `order` during failover.
+- The request flags are necessary but not sufficient for strict zero
+  retention. OpenRouter combines a request's `zdr: true` with the account's
+  (or the API key's guardrail's) ZDR settings, which are set per model group:
+  **OpenAI**, **Anthropic**, **Google**, **SpaceXSI** and **All other models**
+  (guardrail fields `enforce_zdr_openai`, `enforce_zdr_anthropic`,
+  `enforce_zdr_google`, `enforce_zdr_xai`, `enforce_zdr_other`). For **Google
+  models** and **All other models** the settings also decide whether Safety
+  Retention endpoints count as ZDR (`allow_safety_retention_google`,
+  `allow_safety_retention_other`). A Safety Retention endpoint may keep the
+  prompt and response of any request, flagged or not, to detect and prevent
+  abuse; it is not zero retention. Self-serve accounts allow Safety Retention
+  by default. The default models fall in two groups: the OpenAI chat models and
+  the OpenAI image-description model in **OpenAI**; Qwen embeddings and the
+  Z.ai chat models in **All other models**. A Google model in any role adds
+  the Google group. A deployment that requires strict zero retention
+  therefore sets the account, or the guardrail on every API key it uses, to
+  enforce ZDR for every group its models fall in, with Safety Retention
+  excluded for Google and All other models, checks that its pinned endpoints
+  stay eligible, and verifies all of it before sending customer content. No
+  request field can change these settings, so the engine cannot enforce them;
+  they are an operator obligation, stated here and in the public docs.
+- Embedding host allowlist, `embedding_provider_only: list[str] | None` (env
+  `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`, comma-separated or JSON
+  slugs, parsed like `chat_provider_only`). It bounds price and hosts the way
+  `embedding_provider_order` alone cannot: `order` is only a preference, and
+  with `allow_fallbacks: true` OpenRouter may fail over to any host serving the
+  model. Payloads (ZDR fields added when `zdr` is true):
+
+  | Embedding settings | `provider` object |
+  | --- | --- |
+  | `only` with two or more hosts | `{"only": [...], "allow_fallbacks": true}`: OpenRouter picks among the listed hosts and fails over only within them |
+  | `only` with one host | `{"only": [x], "allow_fallbacks": false}` |
+  | `only` plus an `order` naming the same two or more hosts | `{"order": [...], "only": [...], "allow_fallbacks": true}`: tried in that order, never outside `only` |
+  | `only` plus an `order` naming the same single host | `{"order": [x], "only": [x], "allow_fallbacks": false}` |
+  | `order` alone | `{"order": [...], "allow_fallbacks": true}`: may leave the list |
+  | single `embedding_provider` pin | `{"only": [x], "allow_fallbacks": false}`; an `order` wins over it, as before |
+  | nothing, ZDR off | no `provider` object |
+
+  Validation refuses contradictory routing at startup: `embedding_provider_only`
+  with the single `embedding_provider` pin (two hard allowlists), an allowlist
+  naming a host twice, and an `order` that does not name exactly the allowlist's
+  hosts once. `allow_fallbacks` follows the allowlist's length, with or without
+  an order: true for two or more hosts, false for one. A malformed allowlist (an
+  empty JSON list, or a blank or non-string entry) is refused at startup rather
+  than read as unset, so it can never silently re-open marketplace fallback.
+  Unlike chat, the allowlist alone allows fallback within it,
+  because an embedding batch pinned to one failing host would dead-letter the
+  stage; chat gets the same in-set failover from its local rotation.
+- The image-description converter posts pixels through its own client and
+  settings, so it has its own flag, `ImageDescriptionSettings.zdr` (env
+  `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`). When true, every description attempt,
+  including endpoint-rotation retries, adds `zdr: true` and
+  `data_collection: deny`, with or without its `provider_only` list. The flag
+  is part of the route version, so turning it on refreshes the vision lane
+  once and reuses a matching OCR lane; that reuse boundary is declared in the
+  [media design](media_design.md).
+- Providers outside OpenRouter (Mistral OCR, TypeSafe SystemOne, the OpenAI
+  Decisions backup, Vertex) are not governed by these flags; their retention
+  is an account or contract setting of the deployment. Rationale and the
+  OpenRouter documentation this relies on:
+  [embedding ZDR analysis](../analysis/openrouter-embedding-zdr-20261124.md).
 
 ## Failure / recovery
 
