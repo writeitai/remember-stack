@@ -6,6 +6,7 @@ No timestamp validation is implemented by this fixture.
 """
 
 from datetime import datetime
+import inspect
 from typing import cast
 from uuid import UUID
 
@@ -32,7 +33,10 @@ def record(*, method: str, arguments: dict[str, object]) -> None:
 
 
 class Boundary:
-    """Open only the fixture's admission and startup gates."""
+    """Open the admission and startup gates of engines that still take them.
+
+    Engines before D159 required both; current engines take neither.
+    """
 
     def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
         """Permit startup without database access."""
@@ -65,12 +69,16 @@ class Graph:
 
 
 boundary = Boundary()
+_GATES = {
+    name: boundary
+    for name in ("admission", "readiness")
+    if name in inspect.signature(build_api).parameters
+}
 app = build_api(
     engine=cast(QueryEngine, Engine()),
     deployment_id=_DEPLOYMENT,
-    admission=boundary,
-    readiness=boundary,
     graph=cast(GraphQueryPort, Graph()),
+    **_GATES,  # type: ignore[arg-type]
 )
 
 

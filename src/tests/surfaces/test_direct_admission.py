@@ -288,12 +288,17 @@ def test_a_negative_limit_is_refused(field: str) -> None:
 
 
 class _Open:
-    """The D74 barrier: open, unless told to block like a slow database."""
+    """A synchronous route body: open, unless told to block like a slow database."""
 
     def __init__(self) -> None:
         self.gate = threading.Event()
         self.gate.set()
         self.entered = 0
+
+    def __call__(self) -> dict[str, str]:
+        self.entered += 1
+        assert self.gate.wait(timeout=10)
+        return {"status": "ok"}
 
 
 class _Auth:
@@ -368,6 +373,9 @@ def _app(
     )
     probe = _Probe()
     app.get("/probe")(probe)
+    if barrier is not None:
+        # A ``def`` route runs on a worker thread, like any sync dependency.
+        app.get("/blocking")(barrier)
     # `POST /ingest` is spend-gated; this stand-in lets the order of
     # authentication, admission and the spend hold be observed.
     app.post("/ingest")(probe)
@@ -517,8 +525,8 @@ async def test_a_disconnect_keeps_the_slot_until_the_handler_thread_ends(
 async def test_a_disconnect_keeps_the_slot_while_a_sync_dependency_runs(
     auth: bool,
 ) -> None:
-    """The D74 barrier check is a ``def`` dependency on a worker thread; a
-    cancelled request keeps its slot until that thread returns too."""
+    """A ``def`` route body runs on a worker thread; a cancelled request
+    keeps its slot until that thread returns too."""
     admission = _admission(key_in_flight=1, deployment_in_flight=1)
     barrier = _Open()
     app, _ = _app(admission, auth=auth, barrier=barrier)
@@ -526,7 +534,7 @@ async def test_a_disconnect_keeps_the_slot_while_a_sync_dependency_runs(
     barrier.gate.clear()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
-        first = asyncio.create_task(client.get("/probe", headers=headers))
+        first = asyncio.create_task(client.get("/blocking", headers=headers))
         await _until(lambda: barrier.entered == 1)
         first.cancel()
         await asyncio.sleep(0.05)

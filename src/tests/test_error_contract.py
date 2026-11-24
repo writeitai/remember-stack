@@ -91,7 +91,7 @@ BASELINE: dict[str, int] = {
     "adapters/vertex.py::_try_usage": 1,
     "core/content_detection.py::_office_zip_mime": 1,
     "profiles/storage_capture_batch.py::capture_storage_batch": 3,
-    "spine/corpus_publication.py::CorpusPublicationCatalog.locked": 2,
+    "spine/corpus_publication.py::CorpusPublicationCatalog.locked": 1,
     "spine/managed_metering.py::ManagedMeterCatalog._deliver_measurements": 1,
     "spine/managed_metering.py::ManagedMeterCatalog._deliver_outcomes": 1,
     "spine/readiness.py::_live_graph_status": 2,

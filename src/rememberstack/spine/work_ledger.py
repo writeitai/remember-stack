@@ -1846,6 +1846,7 @@ def enqueue_on(*, connection: Connection, work: EnqueueWork) -> EnqueueOutcome:
                 "payload": work.payload,
                 "not_before": work.not_before,
                 "defer_reason": work.defer_reason,
+                "max_attempts": work.max_attempts,
             },
         )
         .mappings()
@@ -1971,11 +1972,13 @@ _INSERT_WORK = text(
     """
     INSERT INTO processing_state (
         processing_id, deployment_id, target_kind, target_id, stage,
-        component_version, content_hash, lane, payload, not_before, defer_reason
+        component_version, content_hash, lane, payload, not_before, defer_reason,
+        max_attempts
     ) VALUES (
         :processing_id, :deployment_id, :target_kind, :target_id, :stage,
         :component_version, :content_hash, :lane,
-        :payload, COALESCE(:not_before, now()), :defer_reason
+        :payload, COALESCE(:not_before, now()), :defer_reason,
+        COALESCE(CAST(:max_attempts AS smallint), 3)
     )
     ON CONFLICT (deployment_id, target_kind, target_id, stage, component_version)
     DO NOTHING

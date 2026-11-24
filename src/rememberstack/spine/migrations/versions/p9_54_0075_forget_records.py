@@ -234,10 +234,10 @@ def _convert(*, connection, row) -> None:  # noqa: ANN001
         text("""
         INSERT INTO processing_state (
           processing_id, deployment_id, target_kind, target_id, stage,
-          component_version, content_hash, lane, payload
+          component_version, content_hash, lane, payload, max_attempts
         ) VALUES (
           :processing_id, :d, 'forget', :forget_id, 'forget', :version,
-          :content_hash, NULL, CAST(:payload AS jsonb)
+          :content_hash, NULL, CAST(:payload AS jsonb), 32767
         ) ON CONFLICT DO NOTHING
         """),
         {
@@ -247,7 +247,14 @@ def _convert(*, connection, row) -> None:  # noqa: ANN001
             "version": f"{FORGET_COMPONENT_VERSION}/1",
             "content_hash": str(row["forget_id"]),
             "payload": json.dumps(
-                {"forget_id": str(row["forget_id"]), "sweep": 1, "failures": 0}
+                {
+                    "forget_id": str(row["forget_id"]),
+                    "sweep": 1,
+                    "failures": 0,
+                    "first": True,
+                    "reapply": False,
+                    "series": "",
+                }
             ),
         },
     )

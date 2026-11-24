@@ -293,7 +293,7 @@ class UploadIngestor:
             )
         except ObjectAlreadyExistsError:
             pass  # identical bytes already landed — ingest retries are no-ops
-        ingested = self._catalog.record_upload(
+        ingested = self._register(
             record=UploadRecord(
                 deployment_id=deployment_id,
                 doc_id=doc_id,
@@ -311,10 +311,8 @@ class UploadIngestor:
                 source_path=upload.source_path,
                 tags=upload.tags,
             ),
-            convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
-            metered=self._meter_scope is not None,
-            routable_mimes=self._routable_for(upload=upload),
+            upload=upload,
         )
         self._release_unretained(
             deployment_id=deployment_id,
@@ -566,19 +564,41 @@ class UploadIngestor:
             )
         except ObjectAlreadyExistsError:
             pass
-        ingested = self._catalog.record_upload(
-            record=record,
-            convert_component_version=E0_CONVERT_VERSION,
-            lane=lane,
-            metered=self._meter_scope is not None,
-            routable_mimes=self._routable_for(upload=upload),
-        )
+        ingested = self._register(record=record, lane=lane, upload=upload)
         self._release_unretained(
             deployment_id=deployment_id,
             content_hash=content_hash,
             key=ObjectKey(raw_uri),
         )
         return ingested
+
+    def _register(
+        self, *, record: UploadRecord, lane: ProcessingLane, upload: DocumentUpload
+    ) -> IngestedVersion:
+        """Register a written original; a forget that won the race keeps nothing.
+
+        The re-ingest guard runs again under the lineage row lock. When it
+        refuses, the original this ingest just wrote is removed unless some
+        content already keeps that key (D159 §3.6).
+        """
+        try:
+            return self._catalog.record_upload(
+                record=record,
+                convert_component_version=E0_CONVERT_VERSION,
+                lane=lane,
+                metered=self._meter_scope is not None,
+                routable_mimes=self._routable_for(upload=upload),
+            )
+        except DocumentForgottenError:
+            if isinstance(
+                self._raw_store, ObjectPurgePort
+            ) and not self._catalog.raw_object_registered(
+                deployment_id=record.deployment_id, key=record.raw_uri
+            ):
+                self._raw_store.purge_objects(
+                    keys=(ObjectKey(record.raw_uri),), prefixes=()
+                )
+            raise
 
     def _release_unretained(
         self, *, deployment_id: UUID, content_hash: str, key: ObjectKey

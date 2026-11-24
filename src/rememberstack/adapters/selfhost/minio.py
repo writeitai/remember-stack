@@ -122,6 +122,7 @@ class _MultipartUpload(TypedDict):
 class _ObjectVersion(TypedDict):
     Key: str
     VersionId: str
+    IsLatest: NotRequired[bool]
 
 
 class _ListVersionsOutput(TypedDict):
@@ -485,24 +486,31 @@ class MinIOObjectStore:
         keys: tuple[ObjectKey, ...],
         prefixes: tuple[ObjectKey, ...],
         before_write: Callable[[], None] | None = None,
+        keep: tuple[ObjectKey, ...] = (),
     ) -> int:
         """Delete exact keys/descendants; return how many objects were removed.
 
-        The count covers current objects, retained versions and delete markers,
-        and unfinished uploads, so a caller can tell erasure from absence.
+        The count covers current objects, retained versions and unfinished
+        uploads, so a caller can tell erasure from absence. Only existing
+        objects are deleted, so a versioned bucket gains no delete marker for
+        an absent key. ``keep`` names exact keys (with their versions) that
+        are never touched.
         """
         # Validate all destructive inputs before touching the store.
-        exact = {_validated_key(key=key) for key in keys}
+        kept = {_validated_key(key=key) for key in keep}
+        exact = {_validated_key(key=key) for key in keys} - kept
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         removed = 0
-        for key in keys:
-            if before_write:
-                before_write()
-            if self._exists(normalized=_validated_key(key=key)):
+        for name in sorted(exact):
+            if self._exists(normalized=name):
+                if before_write:
+                    before_write()
+                self.delete(key=ObjectKey(name))
                 removed += 1
-            self.delete(key=key)
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
+                if key.root in kept:
+                    continue
                 if before_write:
                     before_write()
                 self.delete(key=key)
@@ -511,6 +519,8 @@ class MinIOObjectStore:
         # confuse an empty current listing with erasure of those bytes.
         if self._has_versions():
             for name, version in self._iter_versions(prefix=""):
+                if name in kept:
+                    continue
                 if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
@@ -523,6 +533,8 @@ class MinIOObjectStore:
                     removed += 1
         try:
             for name, upload_id in self._iter_uploads(prefix=""):
+                if name in kept:
+                    continue
                 if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
@@ -532,7 +544,7 @@ class MinIOObjectStore:
                     self._abort_upload(name=name, upload_id=upload_id)
                     removed += 1
         except _UploadListingNotImplemented:
-            pass  # the provider's lifecycle rule cleans unfinished uploads
+            pass  # logged by _iter_uploads; the provider's cleanup policy applies
         return removed
 
     def verify_objects_purged(
@@ -577,11 +589,10 @@ class MinIOObjectStore:
         """Delete non-current versions of exact keys whose bytes contain ``needle``."""
         if not keys or not self._has_versions():
             return 0
+        names = {_validated_key(key=key) for key in keys}
         removed = 0
-        for key in keys:
-            name = _validated_key(key=key)
-            page = self._client.list_object_versions(Bucket=self._bucket, Prefix=name)
-            for item in page.get("Versions", ()):
+        for name in sorted(names):
+            for item in self._iter_version_items(prefix=name):
                 if item["Key"] != name or item.get("IsLatest", False):
                     continue
                 body = self._client.get_object(
@@ -627,6 +638,13 @@ class MinIOObjectStore:
         return status in {"Enabled", "Suspended"}
 
     def _iter_versions(self, *, prefix: str) -> Iterator[tuple[str, str]]:
+        for item in self._iter_version_items(prefix=prefix, markers=True):
+            yield item["Key"], item["VersionId"]
+
+    def _iter_version_items(
+        self, *, prefix: str, markers: bool = False
+    ) -> Iterator[_ObjectVersion]:
+        """Every object version (and, with ``markers``, delete marker), all pages."""
         key_marker = version_marker = ""
         seen: set[tuple[str, str]] = set()
         while True:
@@ -636,8 +654,9 @@ class MinIOObjectStore:
                 KeyMarker=key_marker,
                 VersionIdMarker=version_marker,
             )
-            for item in (*page.get("Versions", ()), *page.get("DeleteMarkers", ())):
-                yield item["Key"], item["VersionId"]
+            yield from page.get("Versions", ())
+            if markers:
+                yield from page.get("DeleteMarkers", ())
             if not page.get("IsTruncated", False):
                 return
             key_marker = page.get("NextKeyMarker", "")

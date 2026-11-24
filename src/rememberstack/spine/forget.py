@@ -15,6 +15,7 @@ import json
 from typing import Any
 from typing import Final
 from uuid import UUID
+from uuid import uuid4
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -36,6 +37,9 @@ from rememberstack.spine.work_ledger import FORGOTTEN_WORK
 
 FORGET_COMPONENT_VERSION: Final = "forget-v1"
 """The sweep generation; each sweep's work row is ``forget-v1/<sweep>``."""
+
+MAX_SWEEP_ATTEMPTS: Final = 32_767
+"""A sweep row's attempt ceiling: a crashed worker's sweep is simply retried."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """A one-shot upload's lineage is its bytes; the content hash guards it."""
@@ -66,19 +70,26 @@ def sweep_work(
     not_before: datetime | None,
     first: bool = False,
     reapply: bool = False,
+    series: str = "",
 ) -> EnqueueWork:
     """One sweep's work row: it targets the record, one row per sweep (D159 §3.4).
 
     ``first`` marks the sweep right after a hide or a reapply: it is never the
     last one, because it does not follow a quiet period. ``reapply`` marks a
-    series ``forget-reapply`` started after a restore.
+    series ``forget-reapply`` started after a restore. ``series`` names the
+    current series of sweeps (empty for the one the hide starts); a sweep of an
+    older series does nothing. The row has no practical attempt cap.
     """
     return EnqueueWork(
         deployment_id=deployment_id,
         target_kind=ProcessingTarget.FORGET,
         target_id=forget_id,
         stage=PipelineStage.FORGET,
-        component_version=f"{FORGET_COMPONENT_VERSION}/{sweep}",
+        component_version=(
+            f"{FORGET_COMPONENT_VERSION}/{series}/{sweep}"
+            if series
+            else f"{FORGET_COMPONENT_VERSION}/{sweep}"
+        ),
         content_hash=str(forget_id),
         lane=None,
         payload={
@@ -87,8 +98,10 @@ def sweep_work(
             "failures": failures,
             "first": first,
             "reapply": reapply,
+            "series": series,
         },
         not_before=not_before,
+        max_attempts=MAX_SWEEP_ATTEMPTS,
     )
 
 
@@ -194,13 +207,32 @@ class ForgetCatalog:
             raise RuntimeError(f"forget record for {doc_id} vanished on conflict")
         return existing, False
 
-    def rearm_on(self, *, connection: Connection, forget: Forget) -> None:
-        """``forget-reapply``: the record is erasing again until its sweeps finish."""
+    def rearm_on(self, *, connection: Connection, forget: Forget) -> str:
+        """``forget-reapply``: erasing again under a new series of sweeps.
+
+        Returns the new series; sweeps of an older series do nothing, so one
+        still waiting out its quiet period cannot complete the record early.
+        """
+        series = uuid4().hex
         connection.execute(
-            text("""UPDATE forgets SET status = 'erasing', completed_at = NULL
+            text("""UPDATE forgets SET status = 'erasing', completed_at = NULL,
+            collected = jsonb_set(COALESCE(collected, '{}'::jsonb), '{series}',
+                                  to_jsonb(CAST(:series AS text)))
             WHERE deployment_id = :d AND forget_id = :f"""),
-            {"d": forget.deployment_id, "f": forget.forget_id},
+            {"d": forget.deployment_id, "f": forget.forget_id, "series": series},
         )
+        return series
+
+    def current_series(self, *, forget: Forget) -> str:
+        """The series of sweeps currently allowed to finish the record."""
+        with self._engine.connect() as connection:
+            return str(
+                connection.execute(
+                    text("""SELECT COALESCE(collected->>'series', '') FROM forgets
+                    WHERE deployment_id = :d AND forget_id = :f"""),
+                    {"d": forget.deployment_id, "f": forget.forget_id},
+                ).scalar_one()
+            )
 
     def guard_ingest(
         self,
@@ -261,7 +293,7 @@ class ForgetCatalog:
         return tuple(sorted((UUID(key) for key in collected["authored"]), key=str))
 
     def finish(
-        self, *, forget: Forget, blocking_k_paths: tuple[str, ...]
+        self, *, forget: Forget, blocking_k_paths: tuple[str, ...], series: str
     ) -> ForgetStatus:
         """A clean sweep after the quiet period: complete, or wait for redaction."""
         status = (
@@ -275,12 +307,14 @@ class ForgetCatalog:
                 blocking_k_paths = CAST(:paths AS text[]), last_error = NULL,
                 completed_at = CASE WHEN :status = 'complete'
                                     THEN COALESCE(completed_at, now()) END
-                WHERE deployment_id = :d AND forget_id = :f"""),
+                WHERE deployment_id = :d AND forget_id = :f
+                  AND COALESCE(collected->>'series', '') = :series"""),
                 {
                     "d": forget.deployment_id,
                     "f": forget.forget_id,
                     "status": status.value,
                     "paths": sorted(blocking_k_paths),
+                    "series": series,
                 },
             )
         return status
@@ -303,6 +337,23 @@ class ForgetCatalog:
                     },
                 ).scalars()
             )
+
+    def clear_k_pending(
+        self, *, forget: Forget, artifact_ids: tuple[UUID, ...]
+    ) -> None:
+        """The rebuild and history erasure of these pages succeeded."""
+        done = {str(value) for value in artifact_ids}
+        with self._engine.begin() as connection:
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+                lock=True,
+            )
+            collected["k_pending"] = [
+                value for value in collected["k_pending"] if value not in done
+            ]
+            _store_collected(connection=connection, forget=forget, collected=collected)
 
     def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
         """The compiled K artifacts the record names, for a reapply."""
@@ -408,13 +459,13 @@ class _Sweep:
         profile_entities = self._shared_wording(p=p)
         self._exclusive_facts(p=p)
         self._entities(p=p)
-        compiled = self._knowledge(p=p)
+        self._mark_compiled(ids=p["compiled_artifact_ids"], p=p, collected=collected)
         for statement in _SUBTREE:
             self._exec(statement, p)
         self._retire_originals(p=p, collected=collected)
         for statement in _DEPLOYMENT_FIXTURES:
             self._exec(statement, p, residue=False)
-        self._stale_labels(collected=collected)
+        self._stale_labels(p=p, collected=collected)
         self._c.execute(
             text("""UPDATE forgets SET collected = CAST(:collected AS jsonb)
             WHERE deployment_id = :d AND forget_id = :f"""),
@@ -427,7 +478,9 @@ class _Sweep:
         return SweepFindings(
             removed=self._removed > 0,
             object_keys=tuple(ObjectKey(key) for key in collected["object_keys"]),
-            compiled_artifact_ids=compiled,
+            compiled_artifact_ids=tuple(
+                UUID(value) for value in collected["k_pending"]
+            ),
             blocking_k_paths=_blocking_paths(
                 connection=self._c, forget=forget, collected=collected
             ),
@@ -520,6 +573,10 @@ class _Sweep:
             + " AND a.page_kind = 'authored'",
             p,
         )
+        if p["linked_fact_ids"]:
+            # A fact sheet renders facts without recording citations; it is
+            # deterministic and cheap to rebuild, so every one is rebuilt.
+            compiled = sorted(set(compiled) | set(self._ids(_FACT_SHEETS, p)), key=str)
         p["compiled_artifact_ids"] = compiled
         for artifact_id in authored:
             if str(artifact_id) not in collected["authored"]:
@@ -536,7 +593,8 @@ class _Sweep:
         )
         object_keys = {
             str(value)
-            for value in self._c.execute(_OWNED_ORIGINALS, p).scalars()
+            for statement in (_OWNED_ORIGINALS, _TRANSCRIPTS)
+            for value in self._c.execute(statement, p).scalars()
             if value is not None
         }
         collected["fact_ids"] = sorted(
@@ -624,14 +682,25 @@ class _Sweep:
         for statement in _ENTITY_STATEMENTS:
             self._exec(statement, p)
 
-    def _knowledge(self, *, p: dict[str, Any]) -> tuple[UUID, ...]:
-        """Remove compiled-page citations; compiled pages are rebuilt (step 4)."""
-        if not p["compiled_artifact_ids"]:
-            return ()
-        self._exec(_DELETE_COMPILED_CITATIONS, p)
+    def _mark_compiled(
+        self, *, ids: list[UUID], p: dict[str, Any], collected: dict[str, Any]
+    ) -> None:
+        """Mark compiled pages for a rebuild; they stay pending until it succeeds.
+
+        The pending list lives on the record, so a sweep interrupted after this
+        transaction still rebuilds them (step 4) before the forget completes.
+        """
+        if not ids:
+            return
+        params = {**p, "compiled_artifact_ids": ids}
+        transcripts = self._c.execute(_TRANSCRIPTS, params).scalars()
+        collected["object_keys"] = sorted(
+            {*collected["object_keys"], *(str(key) for key in transcripts if key)}
+        )
+        self._exec(_DELETE_COMPILED_CITATIONS, params)
         for statement in _COMPILED_ARTIFACT_STATEMENTS:
-            self._exec(statement, p)
-        return tuple(p["compiled_artifact_ids"])
+            self._exec(statement, params)
+        collected["k_pending"] = sorted({*collected["k_pending"], *map(str, ids)})
 
     def _retire_originals(
         self, *, p: dict[str, Any], collected: dict[str, Any]
@@ -658,7 +727,7 @@ class _Sweep:
             {*collected["object_keys"], *(str(key) for key in retired if key)}
         )
 
-    def _stale_labels(self, *, collected: dict[str, Any]) -> None:
+    def _stale_labels(self, *, p: dict[str, Any], collected: dict[str, Any]) -> None:
         """Clear a collected relation label that no longer matches its parts.
 
         A label job started before the hide can write the old wording back
@@ -673,8 +742,14 @@ class _Sweep:
             JOIN entities s ON s.entity_id = r.subject_entity_id
             JOIN entities o ON o.entity_id = r.object_entity_id
             WHERE r.deployment_id=:d AND r.fact_label IS NOT NULL
-              AND r.relation_id=ANY(CAST(:ids AS uuid[]))"""),
-            {"d": self._forget.deployment_id, "ids": collected["fact_ids"]},
+              AND (r.relation_id=ANY(CAST(:ids AS uuid[]))
+                   OR r.subject_entity_id=ANY(CAST(:entities AS uuid[]))
+                   OR r.object_entity_id=ANY(CAST(:entities AS uuid[])))"""),
+            {
+                "d": self._forget.deployment_id,
+                "ids": collected["fact_ids"],
+                "entities": collected["entity_ids"],
+            },
         ).mappings()
         stale = [
             row["relation_id"]
@@ -696,21 +771,49 @@ class _Sweep:
                   AND relation_id=ANY(CAST(:ids AS uuid[]))"""),
                 {"deployment_id": self._forget.deployment_id, "ids": stale},
             )
+            # Compiled pages that rendered the old wording are rebuilt too.
+            pages = self._ids(
+                _CITING_ARTIFACTS.format(facts="stale_ids")
+                + " AND a.page_kind = 'compiled'",
+                {**p, "stale_ids": stale},
+            )
+            self._mark_compiled(
+                ids=sorted(set(pages) | set(self._ids(_FACT_SHEETS, p)), key=str),
+                p=p,
+                collected=collected,
+            )
 
 
 def _collected(
-    *, connection: Connection, deployment_id: UUID, forget_id: UUID
+    *, connection: Connection, deployment_id: UUID, forget_id: UUID, lock: bool = False
 ) -> dict[str, Any]:
     """The record's collected IDs, with every key present."""
     value = connection.execute(
-        text("SELECT collected FROM forgets WHERE deployment_id=:d AND forget_id=:f"),
+        text(
+            "SELECT collected FROM forgets WHERE deployment_id=:d AND forget_id=:f"
+            + (" FOR UPDATE" if lock else "")
+        ),
         {"d": deployment_id, "f": forget_id},
     ).scalar_one()
     collected: dict[str, Any] = dict(value or {})
-    for key in ("fact_ids", "entity_ids", "k_artifact_ids", "object_keys"):
+    for key in ("fact_ids", "entity_ids", "k_artifact_ids", "k_pending", "object_keys"):
         collected[key] = sorted(collected.get(key) or ())
     collected["authored"] = dict(collected.get("authored") or {})
     return collected
+
+
+def _store_collected(
+    *, connection: Connection, forget: Forget, collected: dict[str, Any]
+) -> None:
+    connection.execute(
+        text("""UPDATE forgets SET collected = CAST(:collected AS jsonb)
+        WHERE deployment_id = :d AND forget_id = :f"""),
+        {
+            "d": forget.deployment_id,
+            "f": forget.forget_id,
+            "collected": json.dumps(collected, sort_keys=True),
+        },
+    )
 
 
 def _blocking_paths(
@@ -810,14 +913,31 @@ _FORGOTTEN_INGEST = text(
     """
 )
 
+# Page bodies only: a compiled page's curation sidecar is owner text, never
+# rewritten by a forget of the page it curates.
 _K_PATHS_FOR_ARTIFACTS = text(
     """
     SELECT git_path FROM knowledge_artifacts
     WHERE deployment_id = :deployment_id AND artifact_id = ANY(:artifact_ids)
+    """
+)
+
+_FACT_SHEETS = """
+    SELECT artifact_id FROM knowledge_artifacts
+    WHERE deployment_id=:deployment_id AND page_kind='compiled'
+      AND kind='fact_sheet' AND status <> 'tombstoned'
+"""
+
+# Transcript objects of the K runs the sweep deletes (compilations of the
+# pages it rebuilds, and every plan run): collected before their rows go.
+_TRANSCRIPTS = text(
+    """
+    SELECT session_transcript_uri FROM knowledge_compilations
+    WHERE deployment_id=:deployment_id
+      AND artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
     UNION
-    SELECT curation_path FROM knowledge_artifacts
-    WHERE deployment_id = :deployment_id AND artifact_id = ANY(:artifact_ids)
-      AND curation_path IS NOT NULL
+    SELECT session_transcript_uri FROM knowledge_plan_runs
+    WHERE deployment_id=:deployment_id
     """
 )
 
@@ -1408,8 +1528,8 @@ _SUBTREE = (
                OR target_id=ANY(CAST(:version_ids AS uuid[]))
                OR target_id=ANY(CAST(:chunk_ids AS uuid[]))
                OR target_id=ANY(CAST(:claim_ids AS uuid[]))
-               OR content_hash=ANY(CAST(:content_hashes AS text[]))
-               OR payload->>'doc_id'=CAST(:doc_id AS text))
+               OR payload->>'doc_id'=CAST(:doc_id AS text)
+               OR payload->>'version_id'=ANY(CAST(CAST(:version_ids AS uuid[]) AS text[])))
         """
     ),
     text(

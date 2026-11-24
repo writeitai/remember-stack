@@ -79,6 +79,11 @@ class EnqueueWork(BaseModel):
     lane: ProcessingLane | None
     payload: dict[str, object] | None = None
     not_before: UTCDateTime | None = None
+    max_attempts: int | None = Field(default=None, ge=1, le=32_767)
+    """Handler attempts before the row dead-letters; ``None`` is the ledger default.
+
+    A forget sweep sets the ceiling: a sweep whose worker keeps dying must be
+    retried for as long as it takes (D159 §3.4)."""
     defer_reason: DeferReason | None = None
     """Land the row already deferred rather than immediately claimable.
 

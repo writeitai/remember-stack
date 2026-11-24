@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from sqlalchemy import bindparam
 from sqlalchemy import text
+from sqlalchemy import Uuid
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -118,6 +119,14 @@ class PipelineReadinessCatalog:
             checked_at = connection.execute(
                 text("SELECT statement_timestamp()")
             ).scalar_one()
+            # D159: a forgotten version answers exactly as an unknown one.
+            forgotten = set(
+                connection.execute(
+                    _FORGOTTEN_VERSIONS,
+                    {"deployment_id": deployment_id, "version_ids": list(version_ids)},
+                ).scalars()
+            )
+            lookup_ids = tuple(v for v in version_ids if v not in forgotten)
             rows = (
                 connection.execute(
                     _VERSION_WORK,
@@ -138,7 +147,7 @@ class PipelineReadinessCatalog:
                         _EXTRACT_CHUNK_STATUS,
                         {
                             "deployment_id": deployment_id,
-                            "version_ids": version_ids,
+                            "version_ids": lookup_ids,
                             "extractor_version": component_version,
                             "chunker_version": chunk_version,
                             "extraction_stage": stage.value,
@@ -158,7 +167,7 @@ class PipelineReadinessCatalog:
                         _NORMALIZE_CLAIM_STATUS,
                         {
                             "deployment_id": deployment_id,
-                            "version_ids": version_ids,
+                            "version_ids": lookup_ids,
                             "normalize_version": normalize_version,
                             "chunker_version": chunk_version,
                             "extractor_version": extract_version,
@@ -174,7 +183,7 @@ class PipelineReadinessCatalog:
                         _ENTITY_OBS_FLUSH_STATUS,
                         {
                             "deployment_id": deployment_id,
-                            "version_ids": version_ids,
+                            "version_ids": lookup_ids,
                             "obs_flush_version": obs_flush_version,
                             "normalizer_version": normalize_version,
                         },
@@ -190,7 +199,7 @@ class PipelineReadinessCatalog:
                 (UUID(str(row["version_id"])), ProcessingLayer(str(row["layer"])))
                 for row in connection.execute(
                     _DISCHARGED_GAPS,
-                    {"deployment_id": deployment_id, "version_ids": version_ids},
+                    {"deployment_id": deployment_id, "version_ids": lookup_ids},
                 ).mappings()
             }
             claims_reconcile_rows = (
@@ -200,7 +209,7 @@ class PipelineReadinessCatalog:
                     _CLAIMS_RECONCILE_WORK,
                     {
                         "deployment_id": deployment_id,
-                        "version_ids": version_ids,
+                        "version_ids": lookup_ids,
                         "claims_version": RECONCILE_CLAIMS_VERSION,
                     },
                 )
@@ -416,6 +425,14 @@ def _corpus_readiness_on(
     return True, "ready", revisions[0] if len(revisions) == 1 else None
 
 
+_FORGOTTEN_VERSIONS = text(
+    """
+    SELECT DISTINCT v FROM forgets, unnest(version_ids) v
+    WHERE deployment_id = :deployment_id
+      AND version_ids && CAST(:version_ids AS uuid[])
+    """
+)
+
 _VERSION_WORK = text(
     """
     SELECT target_id, stage::text AS stage, component_version,
@@ -425,7 +442,7 @@ _VERSION_WORK = text(
       AND target_kind = 'document_version'
       AND target_id IN :version_ids
     """
-).bindparams(bindparam("version_ids", expanding=True))
+).bindparams(bindparam("version_ids", expanding=True, type_=Uuid()))
 
 _DISCHARGED_GAPS = text(
     """
@@ -435,7 +452,7 @@ _DISCHARGED_GAPS = text(
       AND version_id IN :version_ids
       AND discharged_at IS NOT NULL
     """
-).bindparams(bindparam("version_ids", expanding=True))
+).bindparams(bindparam("version_ids", expanding=True, type_=Uuid()))
 
 _CLAIMS_RECONCILE_WORK = text(
     """
@@ -448,7 +465,7 @@ _CLAIMS_RECONCILE_WORK = text(
       AND stage = 'reconcile'
       AND component_version = :claims_version
     """
-).bindparams(bindparam("version_ids", expanding=True))
+).bindparams(bindparam("version_ids", expanding=True, type_=Uuid()))
 
 _P1_READY = text(
     """
@@ -790,7 +807,7 @@ _EXTRACT_CHUNK_STATUS = text(
     
     ) derived
     """
-).bindparams(bindparam("version_ids", expanding=True))
+).bindparams(bindparam("version_ids", expanding=True, type_=Uuid()))
 
 # D88: normalize_relations primary rows target claims; derive version status.
 # dead_letter blocks readiness. Version-level coordinator success is ignored.
@@ -860,7 +877,7 @@ _NORMALIZE_CLAIM_STATUS = text(
     GROUP BY v.version_id
     ) derived
     """
-).bindparams(bindparam("version_ids", expanding=True))
+).bindparams(bindparam("version_ids", expanding=True, type_=Uuid()))
 
 # D90: derive adjudicate_observations from entity units / version_state.
 # State and membership are pinned to the active normalizer generation so an
@@ -912,4 +929,4 @@ _ENTITY_OBS_FLUSH_STATUS = text(
     GROUP BY v.version_id
     ) derived
     """
-).bindparams(bindparam("version_ids", expanding=True))
+).bindparams(bindparam("version_ids", expanding=True, type_=Uuid()))

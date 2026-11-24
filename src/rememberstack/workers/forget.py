@@ -14,8 +14,6 @@ from typing import Protocol
 from uuid import UUID
 from uuid import uuid4
 
-from sqlalchemy import text
-from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClaimedWork
@@ -147,17 +145,18 @@ class ForgetService:
                     deployment_id=deployment_id,
                     doc_id=forget.doc_id,
                 )
-                self._catalog.rearm_on(connection=connection, forget=forget)
+                series = self._catalog.rearm_on(connection=connection, forget=forget)
                 enqueue_on(
                     connection=connection,
                     work=sweep_work(
                         deployment_id=deployment_id,
                         forget_id=forget.forget_id,
-                        sweep=_next_sweep_on(connection=connection, forget=forget),
+                        sweep=1,
                         failures=0,
                         not_before=None,
                         first=True,
                         reapply=True,
+                        series=series,
                     ),
                 )
             reapplied.append(forget.forget_id)
@@ -171,15 +170,16 @@ class _SweepPayload:
     failures: int
     first: bool
     reapply: bool
+    series: str
 
 
 class ForgetHandler:
     """Run one sweep; schedule the next until a sweep finds nothing (D159 §3.4).
 
-    The work item has no attempt cap: a failed sweep records a content-free
-    error code on the record and schedules the next sweep with backoff; a
-    sweep whose worker died and used its attempts does the same through the
-    terminal-failure finalizer. The document stays hidden throughout.
+    The work item has no practical attempt cap: a failed sweep records a
+    content-free error code on the record and schedules the next sweep with
+    backoff, and a sweep whose worker died is retried when its lease expires.
+    The document stays hidden throughout.
     """
 
     def __init__(
@@ -214,14 +214,17 @@ class ForgetHandler:
         forget = self._catalog.record(
             deployment_id=work.deployment_id, forget_id=payload.forget_id
         )
+        if payload.series != self._catalog.current_series(forget=forget):
+            # A forget-reapply started a newer series; this one stops here.
+            return HandlerOutcome()
         try:
             found = self.sweep(forget=forget, payload=payload, meter=meter)
         except Exception as error:  # noqa: BLE001 — retried with backoff, never capped
-            _logger.warning(
+            _logger.exception(
                 "forget.sweep_failed forget_id=%s sweep=%s",
                 forget.forget_id,
                 payload.sweep,
-                exc_info=True,
+                extra={"error_code": "forget_sweep_failed"},
             )
             self._catalog.record_error(forget=forget, code=type(error).__name__)
             return HandlerOutcome(
@@ -245,7 +248,9 @@ class ForgetHandler:
                     forget_id=forget.forget_id,
                     artifact_ids=authored,
                 )
-        status = self._catalog.finish(forget=forget, blocking_k_paths=blocking)
+        status = self._catalog.finish(
+            forget=forget, blocking_k_paths=blocking, series=payload.series
+        )
         if status is ForgetStatus.WAITING_FOR_REDACTION:
             # The one wait: authored pages. Look again after a quiet period.
             return HandlerOutcome(
@@ -254,17 +259,6 @@ class ForgetHandler:
                 )
             )
         return HandlerOutcome()
-
-    def finalize_terminal_failure(self, *, work: ClaimedWork, error: str) -> None:
-        """A sweep that used its attempts (a crashed worker) is rescheduled."""
-        payload = _payload(work=work)
-        forget = self._catalog.record(
-            deployment_id=work.deployment_id, forget_id=payload.forget_id
-        )
-        self._catalog.record_error(forget=forget, code="SweepAttemptsExhausted")
-        self._catalog.schedule(
-            work=self._retry(deployment_id=work.deployment_id, payload=payload)
-        )
 
     def sweep(
         self, *, forget: Forget, payload: _SweepPayload, meter: CostMeterPort | None
@@ -284,14 +278,25 @@ class ForgetHandler:
                     call_key=f"profile:forget:{forget.forget_id}:{payload.sweep}",
                 )
             except Exception:  # noqa: BLE001 — cleared profiles stay cleared
-                _logger.warning(
+                _logger.exception(
                     "forget.profile_refresh_failed forget_id=%s",
                     forget.forget_id,
-                    exc_info=True,
+                    extra={"error_code": "forget_profile_refresh_failed"},
                 )
-        keys, prefixes = self._object_targets(forget=forget, keys=findings.object_keys)
+        # Everything under the document's prefix and every collected original
+        # key, except an original another lineage still uses: it keeps the
+        # key it was first stored under, which can be under this prefix.
+        live = tuple(
+            ObjectKey(key)
+            for key in sorted(self._catalog.live_originals(forget=forget))
+        )
         for purger in self._object_purgers:
-            found |= purger.purge_objects(keys=keys, prefixes=prefixes) > 0
+            removed = purger.purge_objects(
+                keys=findings.object_keys,
+                prefixes=(ObjectKey(f"{forget.doc_id}/"),),
+                keep=live,
+            )
+            found |= removed > 0
         found |= self._projection_purger.erase_document(
             deployment_id=forget.deployment_id, doc_id=forget.doc_id
         )
@@ -308,30 +313,9 @@ class ForgetHandler:
                 forget_id=forget.forget_id,
                 artifact_ids=compiled,
             )
+            self._catalog.clear_k_pending(forget=forget, artifact_ids=compiled)
+            found = True
         return found
-
-    def _object_targets(
-        self, *, forget: Forget, keys: tuple[ObjectKey, ...]
-    ) -> tuple[tuple[ObjectKey, ...], tuple[ObjectKey, ...]]:
-        """Every object under the document's prefix, except live shared originals.
-
-        A raw original another lineage still uses keeps the key it was first
-        stored under, which can be under this document's prefix; it is never
-        touched. Its conversion checkpoints are still this document's.
-        """
-        live = self._catalog.live_originals(forget=forget)
-        targets = tuple(key for key in keys if key.root not in live)
-        prefix = f"{forget.doc_id}/"
-        if not any(key.startswith(prefix) for key in live):
-            return targets, (ObjectKey(prefix),)
-        prefixes: list[ObjectKey] = []
-        for content_hash in forget.content_hashes:
-            base = f"{forget.doc_id}/{content_hash}/"
-            if any(key.startswith(base) for key in live):
-                prefixes.append(ObjectKey(base + "conversion-checkpoints"))
-            else:
-                prefixes.append(ObjectKey(base))
-        return targets, tuple(prefixes)
 
     def _next(self, *, deployment_id: UUID, payload: _SweepPayload) -> EnqueueWork:
         return sweep_work(
@@ -342,6 +326,7 @@ class ForgetHandler:
             not_before=utc_now()
             + retry_delay(quiet_period_s=self._quiet_period_s, failures=0),
             reapply=payload.reapply,
+            series=payload.series,
         )
 
     def _retry(self, *, deployment_id: UUID, payload: _SweepPayload) -> EnqueueWork:
@@ -355,17 +340,8 @@ class ForgetHandler:
             + retry_delay(quiet_period_s=self._quiet_period_s, failures=failures),
             first=payload.first,
             reapply=payload.reapply,
+            series=payload.series,
         )
-
-
-def _next_sweep_on(*, connection: Connection, forget: Forget) -> int:
-    """One more than the highest sweep ordinal this record's work rows used."""
-    highest = connection.execute(
-        text("""SELECT max(CAST(payload->>'sweep' AS integer)) FROM processing_state
-        WHERE deployment_id = :d AND target_kind = 'forget' AND target_id = :f"""),
-        {"d": forget.deployment_id, "f": forget.forget_id},
-    ).scalar_one_or_none()
-    return int(highest or 0) + 1
 
 
 def _payload(*, work: ClaimedWork) -> _SweepPayload:
@@ -378,6 +354,7 @@ def _payload(*, work: ClaimedWork) -> _SweepPayload:
             failures=int(str(payload.get("failures", 0))),
             first=bool(payload.get("first", False)),
             reapply=bool(payload.get("reapply", False)),
+            series=str(payload.get("series", "")),
         )
     except (KeyError, ValueError) as error:
         raise NonRetryableHandlerError(

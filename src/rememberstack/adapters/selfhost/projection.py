@@ -38,7 +38,7 @@ class SelfHostProjectionPurger:
                 self._caches.invalidate(
                     deployment_id=deployment_id, doc_id=doc_id, paths=rewritten
                 )
-            except Exception:  # noqa: BLE001 — best effort, never holds a forget open
+            except Exception:  # error-contract: expected  # noqa: BLE001
                 _logger.warning(
                     "forget.mount_invalidation_failed doc_id=%s", doc_id, exc_info=True
                 )

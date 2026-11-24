@@ -223,26 +223,6 @@ def test_malformed_cursor_is_422() -> None:
     assert "receipts" not in response.json() or "detail" in response.json()
 
 
-def test_forget_in_progress_on_customer_app_does_not_stop_export() -> None:
-    """D74 admission is a customer-app dependency; export has none."""
-    customer = build_api(engine=cast(QueryEngine, object()), deployment_id=_DEPLOYMENT)
-    export = build_cost_export_app(
-        reader=_FakeReader(),
-        deployment_id=_DEPLOYMENT,
-        token=_EXPORT_TOKEN,
-        bucket=_TokenBucket(rate_per_s=10.0, capacity=10.0),
-    )
-    assert TestClient(customer).get("/resolve", params={"name": "x"}).status_code == 503
-    assert (
-        TestClient(export)
-        .get(
-            "/ops/cost-export/v1", headers={"Authorization": f"Bearer {_EXPORT_TOKEN}"}
-        )
-        .status_code
-        == 200
-    )
-
-
 def test_rate_limit_is_one_request_per_second() -> None:
     """The in-process bucket starts at 1 req/s."""
     clock = {"now": 0.0}

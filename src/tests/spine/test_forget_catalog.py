@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import UTC
 import json
 from pathlib import Path
+import re
 from uuid import UUID
 from uuid import uuid4
 
@@ -209,14 +210,20 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
     assert findings.removed
     assert findings.compiled_artifact_ids == (_ARTIFACT_ID,)
     assert {key.root for key in findings.object_keys} == {
-        f"{_TARGET_DOC_ID}/{_TARGET_CONTENT_HASH}/original.txt"
+        f"{_TARGET_DOC_ID}/{_TARGET_CONTENT_HASH}/original.txt",
+        # transcripts of the rebuilt page's compilation and of every plan run
+        "mem://artifacts/writer-transcript.json",
+        "mem://artifacts/planner-transcript.json",
     }
     assert findings.blocking_k_paths == ()
     _assert_scrubbed_and_control_survives(engine=seeded_engine)
     assert _control_counts(engine=seeded_engine) == before
     again = catalog.sweep_postgres(forget=forget)
     assert not again.removed
-    assert again.compiled_artifact_ids == ()
+    # The rebuild stays pending on the record until step 4 succeeds.
+    assert again.compiled_artifact_ids == (_ARTIFACT_ID,)
+    catalog.clear_k_pending(forget=forget, artifact_ids=(_ARTIFACT_ID,))
+    assert catalog.sweep_postgres(forget=forget).compiled_artifact_ids == ()
 
 
 _ID_COLUMNS = (
@@ -1984,3 +1991,26 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
             ).scalar_one()
             == 0
         )
+
+
+def test_readiness_answers_for_a_forgotten_version_as_for_an_unknown_one(
+    seeded_engine: Engine,
+) -> None:
+    """§5 tests 1 and 4: public /readiness reveals nothing about a forgotten version."""
+    from rememberstack.model import ReadinessRequirements
+    from rememberstack.spine import PipelineReadinessCatalog
+
+    readiness = PipelineReadinessCatalog(engine=seeded_engine, expected_components={})
+    require = ReadinessRequirements(pipeline=True, p1=False, live_graph=False, p3=False)
+
+    def answer(version_id: UUID) -> str:
+        report = readiness.inspect(
+            deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=require
+        )
+        dumped = re.sub(r'"checked_at":"[^"]*"', "", report.model_dump_json())
+        return dumped.replace(str(version_id), "<id>")
+
+    forget = _hide(engine=seeded_engine)
+    assert answer(_TARGET_VERSION_ID) == answer(uuid4())
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+    assert answer(_TARGET_VERSION_ID) == answer(uuid4())

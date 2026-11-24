@@ -331,7 +331,12 @@ def test_a_late_corpus_write_is_removed_by_the_next_sweep(
         from rememberstack.workers.forget import _SweepPayload  # noqa: PLC2701
 
         first = _SweepPayload(
-            forget_id=forget.forget_id, sweep=1, failures=0, first=True, reapply=False
+            forget_id=forget.forget_id,
+            sweep=1,
+            failures=0,
+            first=True,
+            reapply=False,
+            series="",
         )
         assert handler.sweep(forget=record, payload=first, meter=NoopCostMeter())
         forget.state.bucket.store.replace_stream(

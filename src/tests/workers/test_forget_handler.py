@@ -51,6 +51,7 @@ class _Catalog:
     live: frozenset[str] = frozenset()
     compiled: tuple[UUID, ...] = ()
     record_value: Forget = _FORGET
+    series: str = ""
     errors: list[str] = field(default_factory=list)
     finished: list[tuple[str, ...]] = field(default_factory=list)
     scheduled: list[EnqueueWork] = field(default_factory=list)
@@ -82,8 +83,16 @@ class _Catalog:
     def authored_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
         return (_AUTHORED_ID,)
 
+    def current_series(self, *, forget: Forget) -> str:
+        return self.series
+
+    def clear_k_pending(
+        self, *, forget: Forget, artifact_ids: tuple[UUID, ...]
+    ) -> None:
+        self.compiled = tuple(i for i in self.compiled if i not in artifact_ids)
+
     def finish(
-        self, *, forget: Forget, blocking_k_paths: tuple[str, ...]
+        self, *, forget: Forget, blocking_k_paths: tuple[str, ...], series: str
     ) -> ForgetStatus:
         self.finished.append(blocking_k_paths)
         return (
@@ -111,20 +120,25 @@ class _Service:
 class _Objects:
     removed: list[int]
     fail: bool = False
-    calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = field(default_factory=list)
+    calls: list[tuple[tuple[str, ...], ...]] = field(default_factory=list)
 
     def purge_objects(
         self,
         *,
         keys: tuple[ObjectKey, ...],
         prefixes: tuple[ObjectKey, ...],
+        keep: tuple[ObjectKey, ...] = (),
         **_: object,
     ) -> int:
         if self.fail:
             self.fail = False
             raise OSError("object store unavailable")
         self.calls.append(
-            (tuple(key.root for key in keys), tuple(key.root for key in prefixes))
+            (
+                tuple(key.root for key in keys),
+                tuple(key.root for key in prefixes),
+                tuple(key.root for key in keep),
+            )
         )
         return self.removed.pop(0) if self.removed else 0
 
@@ -141,10 +155,14 @@ class _Corpus:
 class _Knowledge:
     rebuilt: list[tuple[UUID, ...]] = field(default_factory=list)
     purged: list[tuple[UUID, ...]] = field(default_factory=list)
+    fail: bool = False
 
     def recompile_without_lineage(
         self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> None:
+        if self.fail:
+            self.fail = False
+            raise RuntimeError("K driver unavailable")
         self.rebuilt.append(artifact_ids)
 
     def purge_artifacts(
@@ -226,21 +244,15 @@ def test_sweeps_repeat_after_the_quiet_period_until_one_finds_nothing() -> None:
     assert rig.service.rehidden == 3
 
 
-def test_object_step_spares_a_shared_original_but_not_its_checkpoints() -> None:
+def test_object_step_spares_only_a_live_shared_original() -> None:
     """§3.3 step 2: everything under the prefix, except a live shared original."""
     shared = f"{_DOC_ID}/{_SHARED_HASH}/original.txt"
     rig = _Rig(catalog=_Catalog(removed=[True], live=frozenset({shared})))
     _run(rig, _FIRST)
-    ((keys, prefixes),) = rig.objects.calls
-    assert keys == (f"{_DOC_ID}/{_OWN_HASH}/original.txt",)
-    assert prefixes == (
-        f"{_DOC_ID}/{_OWN_HASH}/",
-        f"{_DOC_ID}/{_SHARED_HASH}/conversion-checkpoints",
-    )
-    unshared = _Rig(catalog=_Catalog(removed=[True]))
-    _run(unshared, _FIRST)
-    ((_, prefixes),) = unshared.objects.calls
+    ((keys, prefixes, keep),) = rig.objects.calls
+    assert keys == (f"{_DOC_ID}/{_OWN_HASH}/original.txt", shared)
     assert prefixes == (f"{_DOC_ID}/",)
+    assert keep == (shared,)
 
 
 def test_residue_in_any_store_keeps_the_forget_erasing() -> None:
@@ -273,13 +285,33 @@ def test_a_failed_sweep_is_retried_with_backoff_and_no_attempt_cap() -> None:
     assert _run(rig, second) is None
 
 
-def test_a_crashed_sweep_that_used_its_attempts_is_rescheduled() -> None:
-    """The terminal-failure finalizer turns a dead letter into the next sweep."""
-    rig = _Rig(catalog=_Catalog(removed=[]))
-    rig.handler().finalize_terminal_failure(work=_work(_FIRST), error="lease expired")
-    (scheduled,) = rig.catalog.scheduled
-    assert scheduled.payload is not None and scheduled.payload["sweep"] == 2
-    assert rig.catalog.errors == ["SweepAttemptsExhausted"]
+def test_a_sweep_row_has_no_practical_attempt_cap() -> None:
+    """A sweep whose worker keeps dying is retried on lease expiry, not dead-lettered."""
+    rig = _Rig(catalog=_Catalog(removed=[True]))
+    outcome = rig.handler().handle(work=_work(_FIRST), meter=NoopCostMeter())
+    (follow_up,) = outcome.follow_up
+    assert follow_up.max_attempts == 32_767
+
+
+def test_a_sweep_of_an_older_series_does_nothing() -> None:
+    """§3.8: after forget-reapply, an earlier series cannot finish the record."""
+    rig = _Rig(catalog=_Catalog(removed=[], series="newer"))
+    assert _run(rig, _FIRST) is None
+    assert rig.catalog.finished == []
+    assert rig.service.rehidden == 0
+
+
+def test_an_interrupted_k_step_stays_pending_until_it_succeeds() -> None:
+    """Pages marked for a rebuild are rebuilt even if that sweep died after marking."""
+    rig = _Rig(catalog=_Catalog(removed=[True, False, False], compiled=(_COMPILED_ID,)))
+    rig.knowledge.fail = True
+    payload = _run(rig, _FIRST)
+    assert payload is not None and payload["failures"] == 1
+    assert rig.knowledge.purged == []
+    payload = _run(rig, payload)
+    assert rig.knowledge.purged == [(_COMPILED_ID,)]
+    assert payload is not None
+    assert _run(rig, payload) is None
 
 
 def test_compiled_pages_are_rebuilt_and_their_history_erased() -> None:

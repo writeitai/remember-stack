@@ -28,8 +28,9 @@ class ObjectPurgePort(Protocol):
         keys: tuple[ObjectKey, ...],
         prefixes: tuple[ObjectKey, ...],
         before_write: Callable[[], None] | None = None,
+        keep: tuple[ObjectKey, ...] = (),
     ) -> int:
-        """Delete exact keys/prefixes; absence succeeds.
+        """Delete exact keys/prefixes, except the exact ``keep`` keys; absence succeeds.
 
         Returns how many objects, retained versions and unfinished uploads
         were removed, so a repeated purge of an erased set answers zero.

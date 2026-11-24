@@ -121,7 +121,7 @@ def test_authorize_wipe_rejects_an_existing_unmarked_store(
 ) -> None:
     """Unknown pre-existing bytes must never be silently classified as disposable."""
 
-    monkeypatch.setattr(store_backup, "_volume_count", lambda **_kwargs: 4)
+    monkeypatch.setattr(store_backup, "_volume_count", lambda **_kwargs: 3)
 
     with pytest.raises(store_backup.StoreBackupError, match="no live-sample marker"):
         store_backup.authorize_wipe(run_dir=tmp_path, compose_project="rememberstack")
@@ -133,7 +133,7 @@ def test_authorize_wipe_rejects_a_missing_remote_receipt(
     """A marker is identity, not proof of an off-host backup."""
 
     _write_marker(run_dir=tmp_path)
-    monkeypatch.setattr(store_backup, "_volume_count", lambda **_kwargs: 4)
+    monkeypatch.setattr(store_backup, "_volume_count", lambda **_kwargs: 3)
     monkeypatch.setattr(
         store_backup,
         "_volume_names",
@@ -151,9 +151,9 @@ def test_authorize_wipe_rejects_a_partial_volume_set(
 ) -> None:
     """A partially present Compose store is never classified as disposable."""
 
-    monkeypatch.setattr(store_backup, "_volume_count", lambda **_kwargs: 3)
+    monkeypatch.setattr(store_backup, "_volume_count", lambda **_kwargs: 2)
 
-    with pytest.raises(store_backup.StoreBackupError, match="expected zero or 4"):
+    with pytest.raises(store_backup.StoreBackupError, match="expected zero or 3"):
         store_backup.authorize_wipe(run_dir=tmp_path, compose_project="rememberstack")
 
 
@@ -285,7 +285,7 @@ def test_backup_writes_receipt_only_after_remote_readback(
     assert verified_receipt == receipt
     assert verified_manifest.sample_id == "conv-1"
     assert verified_manifest.deployment_id == "57000000-0000-0000-0000-000000000001"
-    assert len(checked_archives) == 6
+    assert len(checked_archives) == 5
 
     def replaced_metadata(
         *, remote_path: str, project_id: str
@@ -745,14 +745,12 @@ def test_volume_empty_check_allows_only_empty_compose_mount_directories(
     """Compose-created nested mountpoints are empty, while any stored byte is not."""
 
     volume_root = tmp_path / "volume"
-    (volume_root / "forget-manifests").mkdir(parents=True)
+    (volume_root / "nested-mount").mkdir(parents=True)
     monkeypatch.setattr(store_backup, "_volume_mountpoint", lambda _name: volume_root)
 
     assert store_backup._volume_is_empty("app-state")
 
-    (volume_root / "forget-manifests" / "manifest.json").write_text(
-        "{}", encoding="utf-8"
-    )
+    (volume_root / "nested-mount" / "manifest.json").write_text("{}", encoding="utf-8")
 
     assert not store_backup._volume_is_empty("app-state")
 

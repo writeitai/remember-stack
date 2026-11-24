@@ -455,6 +455,13 @@ class _BrokenStreamStore:
         """Nothing to verify here."""
         _ = keys, prefixes
 
+    def purge_retained_versions_containing(
+        self, *, keys: tuple[ObjectKey, ...], needle: bytes
+    ) -> int:
+        """This fake keeps no object versions."""
+        _ = keys, needle
+        return 0
+
 
 def test_a_storage_failure_while_streaming_deletes_nothing() -> None:
     """D147: only a refusal deletes a stored object; a read failure may be retried."""

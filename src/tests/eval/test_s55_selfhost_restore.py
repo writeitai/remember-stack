@@ -92,6 +92,12 @@ class _Catalog:
     def authored_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
         return ()
 
+    def current_series(self, **_: object) -> str:
+        return ""
+
+    def clear_k_pending(self, **_: object) -> None:
+        return None
+
     def finish(self, *, blocking_k_paths: tuple[str, ...], **_: object) -> ForgetStatus:
         self.finished.append(blocking_k_paths)
         return ForgetStatus.COMPLETE
