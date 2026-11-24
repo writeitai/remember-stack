@@ -154,7 +154,7 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback unless the same set is also supplied as the hard allowlist. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. Alone it disables fallback. Combine with an order naming exactly the same unique slugs to allow fallback within this set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. Other providers remain a fallback unless the same set is also supplied as the embedding allowlist. |
-| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off, also when an order is set. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. A blank or non-string entry stops startup. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
 | `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls to zero-data-retention endpoints. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
@@ -186,6 +186,16 @@ An embedding order alone (without the allowlist) may fall back to any host
 serving the model. The image-description converter has its own switch,
 `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`; see
 [converters](/docs/self-hosting/converters).
+
+The request flags alone do not guarantee strict zero retention. OpenRouter
+also applies your account's Safety Retention policy: endpoints that keep
+flagged content for safety review still count as zero-data-retention unless
+the account, or the guardrail on the API key, excludes them, and self-serve
+accounts allow them by default. No request field turns this off. If you need
+strict zero retention, set your OpenRouter account, or the guardrail on every
+key the engine uses, to ZDR only with Safety Retention excluded, and confirm
+the setting before you send customer content. See OpenRouter's
+[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
 
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither

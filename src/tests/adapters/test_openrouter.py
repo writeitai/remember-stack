@@ -1111,7 +1111,12 @@ def test_empty_embedding_provider_is_unset(configured: str | None) -> None:
 def test_embedding_zdr_allowlist_reaches_the_embeddings_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The production policy: two approved ZDR hosts, fallback only between them."""
+    """The production policy rides on every serialized attempt, retries included.
+
+    Two approved ZDR hosts with fallback only between them; a transient
+    capacity rejection is retried through the real ``_post`` loop, and both
+    wire bodies carry the whole allowlist and the ZDR filter.
+    """
     provider = OpenRouterModelProvider(
         settings=OpenRouterSettings.model_validate(
             {
@@ -1121,31 +1126,52 @@ def test_embedding_zdr_allowlist_reaches_the_embeddings_request(
             }
         )
     )
-    observed: dict[str, object] = {}
+    seen: list[dict[str, object]] = []
 
-    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
-        assert path == "/embeddings"
-        observed.update(payload)
-        return {
-            "model": "qwen/qwen3-embedding-8b",
-            "usage": {"prompt_tokens": 2, "cost": "0.000001"},
-            "data": [{"index": 0, "embedding": [0.1, 0.2]}],
-        }
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/embeddings")
+        seen.append(json.loads(request.content.decode("utf-8")))
+        if len(seen) == 1:
+            return httpx.Response(
+                503, json={"error": {"code": 503, "message": "overloaded"}}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "qwen/qwen3-embedding-8b",
+                "usage": {"prompt_tokens": 4, "cost": "0.000001"},
+                "data": [
+                    {"index": 0, "embedding": [0.1, 0.2]},
+                    {"index": 1, "embedding": [0.3, 0.4]},
+                ],
+            },
+        )
 
-    monkeypatch.setattr(provider, "_post", post)
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", lambda _s: None)
     try:
-        provider.embed(
-            request=EmbeddingRequest(model="qwen/qwen3-embedding-8b", texts=("memory",))
+        response = provider.embed(
+            request=EmbeddingRequest(
+                model="qwen/qwen3-embedding-8b", texts=("memory", "recall")
+            )
         )
     finally:
         provider._client.close()
 
-    assert observed["provider"] == {
-        "only": ["nebius", "deepinfra"],
-        "allow_fallbacks": True,
-        "data_collection": "deny",
-        "zdr": True,
-    }
+    assert len(seen) == 2
+    for body in seen:
+        assert body["input"] == ["memory", "recall"]
+        assert body["provider"] == {
+            "only": ["nebius", "deepinfra"],
+            "allow_fallbacks": True,
+            "data_collection": "deny",
+            "zdr": True,
+        }
+    assert len(response.vectors) == 2
 
 
 @pytest.mark.parametrize(
@@ -1171,6 +1197,13 @@ def test_embedding_zdr_allowlist_reaches_the_embeddings_request(
                 "only": ["nebius", "deepinfra"],
                 "allow_fallbacks": True,
             },
+        ),
+        (
+            {
+                "embedding_provider_only": ["nebius"],
+                "embedding_provider_order": ["nebius"],
+            },
+            {"order": ["nebius"], "only": ["nebius"], "allow_fallbacks": False},
         ),
         (
             {
@@ -1240,6 +1273,40 @@ def test_embedding_provider_only_parses_env_shapes(
     )
 
     assert settings.embedding_provider_only == expected
+
+
+@pytest.mark.parametrize(
+    "configured",
+    ('[" "]', '[""]', '["nebius", " "]', "[1]", '["nebius", null]', "[]", " , "),
+)
+def test_malformed_embedding_allowlist_is_refused_not_dropped(
+    monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    """A malformed hard allowlist fails startup instead of becoming "unset".
+
+    Collapsing ``[" "]`` to no allowlist would silently re-open marketplace
+    fallback (for example to a non-ZDR host when an order is also set).
+    """
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY", configured)
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER", "nebius,deepinfra"
+    )
+
+    with pytest.raises(ValidationError, match="embedding_provider_only"):
+        OpenRouterSettings()  # pyright: ignore[reportCallIssue]
+
+
+def test_blank_embedding_allowlist_env_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compose passes an unset optional as an empty string; that stays unset."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY", "")
+
+    settings = OpenRouterSettings()  # pyright: ignore[reportCallIssue]
+
+    assert settings.embedding_provider_only is None
 
 
 def test_embedding_provider_only_reads_its_environment_variable(

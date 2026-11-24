@@ -7817,7 +7817,7 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback unless the same set is also supplied as the hard allowlist. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. Alone it disables fallback. Combine with an order naming exactly the same unique slugs to allow fallback within this set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. Other providers remain a fallback unless the same set is also supplied as the embedding allowlist. |
-| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off, also when an order is set. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. A blank or non-string entry stops startup. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
 | `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls to zero-data-retention endpoints. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
@@ -7849,6 +7849,16 @@ An embedding order alone (without the allowlist) may fall back to any host
 serving the model. The image-description converter has its own switch,
 `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`; see
 [converters](https://remember.dev/docs/self-hosting/converters).
+
+The request flags alone do not guarantee strict zero retention. OpenRouter
+also applies your account's Safety Retention policy: endpoints that keep
+flagged content for safety review still count as zero-data-retention unless
+the account, or the guardrail on the API key, excludes them, and self-serve
+accounts allow them by default. No request field turns this off. If you need
+strict zero retention, set your OpenRouter account, or the guardrail on every
+key the engine uses, to ZDR only with Safety Retention excluded, and confirm
+the setting before you send customer content. See OpenRouter's
+[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
 
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither
@@ -8006,8 +8016,11 @@ response with choices or usage, or a generic ID-bearing error, never triggers
 that replay. Set `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to send every
 description call only to zero-data-retention endpoints (`zdr: true` and
 `data_collection: deny`), with or without an allowlist; it is separate from
-`REMEMBERSTACK_OPENROUTER_ZDR` and does not re-convert existing images. OCR
-keeps its independent provider settings.
+`REMEMBERSTACK_OPENROUTER_ZDR` and does not re-convert existing images. As
+with the engine-wide flag, strict zero retention also needs the OpenRouter
+account or key guardrail set to ZDR only with Safety Retention excluded; see
+[models](https://remember.dev/docs/self-hosting/models). OCR keeps its independent provider
+settings.
 
 Existing multi-entry lists now permit ordered fallback within the same set.
 That transport change does not change an unchanged list's checkpoint identity;
@@ -13871,7 +13884,7 @@ None.
 | Field | Meaning |
 |---|---|
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
-| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
+| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`, plus `openrouter_embedding_provider_only` when the embedding host allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) is set. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
 | `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, `search_documents`
 only when document search is, and `section_history` and

@@ -11,6 +11,7 @@ import random
 import re
 import time
 from typing import Any
+from typing import cast
 from typing import Final
 from typing import Protocol
 from typing import TypeVar
@@ -62,8 +63,11 @@ _logger = logging.getLogger(__name__)
 def _parse_provider_name_list(*, value: object, field_name: str) -> object:
     """Parse comma-separated or JSON list of OpenRouter provider slugs.
 
-    Empty strings (Compose unset optionals) become ``None``. Used by embedding
-    (and future chat) ordered shortlists.
+    An absent value or a blank string (Compose unset optionals) becomes
+    ``None``. Anything else must name at least one host: an explicit list
+    with a blank or non-string entry is refused rather than dropped, so a
+    malformed hard allowlist can never collapse into "no allowlist".
+    Used by the embedding and chat shortlists and allowlists.
     """
     if value is None:
         return None
@@ -82,8 +86,12 @@ def _parse_provider_name_list(*, value: object, field_name: str) -> object:
             value = [part.strip() for part in stripped.split(",") if part.strip()]
     if not isinstance(value, list) or not value:
         raise ValueError(f"{field_name} must be a non-empty list of strings")
-    names = [str(item).strip() for item in value if str(item).strip()]
-    return names or None
+    names: list[str] = []
+    for item in cast(list[object], value):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{field_name} must contain only non-blank provider names")
+        names.append(item.strip())
+    return names
 
 
 class StrictSchemaError(ValueError):

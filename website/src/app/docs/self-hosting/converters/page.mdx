@@ -82,8 +82,11 @@ response with choices or usage, or a generic ID-bearing error, never triggers
 that replay. Set `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to send every
 description call only to zero-data-retention endpoints (`zdr: true` and
 `data_collection: deny`), with or without an allowlist; it is separate from
-`REMEMBERSTACK_OPENROUTER_ZDR` and does not re-convert existing images. OCR
-keeps its independent provider settings.
+`REMEMBERSTACK_OPENROUTER_ZDR` and does not re-convert existing images. As
+with the engine-wide flag, strict zero retention also needs the OpenRouter
+account or key guardrail set to ZDR only with Safety Retention excluded; see
+[models](/docs/self-hosting/models). OCR keeps its independent provider
+settings.
 
 Existing multi-entry lists now permit ordered fallback within the same set.
 That transport change does not change an unchanged list's checkpoint identity;

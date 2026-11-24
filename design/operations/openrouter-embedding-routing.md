@@ -62,8 +62,11 @@ OpenRouter picks between the two hosts and fails over only between them, and
 `zdr`/`data_collection` filter every candidate, fallbacks included. SiliconFlow
 is excluded: an order-only shortlist let production traffic fail over to it.
 Confirm that each listed host is ZDR for this model on OpenRouter before
-changing the list, and keep the OpenRouter account itself set to ZDR-only
-(the request flag cannot override account-level Safety Retention). Image
+changing the list, and keep the OpenRouter account (or the guardrail on every
+API key the deployment uses) set to ZDR only with Safety Retention excluded:
+the request flag follows the account's Safety Retention policy, self-serve
+accounts allow Safety Retention by default, and no request field can turn it
+off. Verify that setting before sending customer content. Image
 descriptions need `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` separately.
 
 ## Policy (compose / smoke / local)
@@ -83,7 +86,8 @@ Semantics in the adapter:
 | --- | --- |
 | `EMBEDDING_PROVIDER_ONLY` with 2+ hosts | `{ "only": [...], "allow_fallbacks": true }` (fallback stays inside `only`) |
 | `EMBEDDING_PROVIDER_ONLY` with 1 host | `{ "only": [name], "allow_fallbacks": false }` |
-| `EMBEDDING_PROVIDER_ONLY` + same-host `EMBEDDING_PROVIDER_ORDER` | `{ "order": [...], "only": [...], "allow_fallbacks": true }` |
+| `EMBEDDING_PROVIDER_ONLY` + same-host `EMBEDDING_PROVIDER_ORDER`, 2+ hosts | `{ "order": [...], "only": [...], "allow_fallbacks": true }` |
+| `EMBEDDING_PROVIDER_ONLY` + same-host `EMBEDDING_PROVIDER_ORDER`, 1 host | `{ "order": [name], "only": [name], "allow_fallbacks": false }` |
 | `EMBEDDING_PROVIDER_ORDER` set (no allowlist) | `{ "order": [...], "allow_fallbacks": true }` (may fall back to any host) |
 | only `EMBEDDING_PROVIDER` set | `{ "only": [name], "allow_fallbacks": false }` |
 | none | omit `provider` (full OpenRouter auto routing — avoid for priced smokes) |

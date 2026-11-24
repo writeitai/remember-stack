@@ -181,6 +181,16 @@ call that carries customer content can be held to both.
   enforcement, not the pick. Because both fields filter fallbacks too, the
   retention guarantee does not depend on how OpenRouter treats `only` or
   `order` during failover.
+- The request flags are necessary but not sufficient for strict zero
+  retention. OpenRouter applies the account's (or the API key's guardrail's)
+  Safety Retention policy on top of a request's `zdr: true`: endpoints that
+  keep flagged content for safety review still count as ZDR unless the account
+  or guardrail opts out of Safety Retention, and self-serve accounts allow it by
+  default. A deployment that requires strict zero retention therefore also sets
+  the OpenRouter account, or the guardrail on every API key it uses, to ZDR only
+  with Safety Retention excluded, and verifies that setting before sending
+  customer content. No request field can turn it off, so the engine cannot
+  enforce it; it is an operator obligation, stated here and in the public docs.
 - Embedding host allowlist, `embedding_provider_only: list[str] | None` (env
   `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`, comma-separated or JSON
   slugs, parsed like `chat_provider_only`). It bounds price and hosts the way
@@ -192,7 +202,8 @@ call that carries customer content can be held to both.
   | --- | --- |
   | `only` with two or more hosts | `{"only": [...], "allow_fallbacks": true}`: OpenRouter picks among the listed hosts and fails over only within them |
   | `only` with one host | `{"only": [x], "allow_fallbacks": false}` |
-  | `only` plus an `order` naming the same hosts | `{"order": [...], "only": [...], "allow_fallbacks": true}`: tried in that order, never outside `only` |
+  | `only` plus an `order` naming the same two or more hosts | `{"order": [...], "only": [...], "allow_fallbacks": true}`: tried in that order, never outside `only` |
+  | `only` plus an `order` naming the same single host | `{"order": [x], "only": [x], "allow_fallbacks": false}` |
   | `order` alone | `{"order": [...], "allow_fallbacks": true}`: may leave the list |
   | single `embedding_provider` pin | `{"only": [x], "allow_fallbacks": false}`; an `order` wins over it, as before |
   | nothing, ZDR off | no `provider` object |
@@ -200,7 +211,11 @@ call that carries customer content can be held to both.
   Validation refuses contradictory routing at startup: `embedding_provider_only`
   with the single `embedding_provider` pin (two hard allowlists), an allowlist
   naming a host twice, and an `order` that does not name exactly the allowlist's
-  hosts once. Unlike chat, the allowlist alone allows fallback within it,
+  hosts once. `allow_fallbacks` follows the allowlist's length, with or without
+  an order: true for two or more hosts, false for one. A malformed allowlist (an
+  empty JSON list, or a blank or non-string entry) is refused at startup rather
+  than read as unset, so it can never silently re-open marketplace fallback.
+  Unlike chat, the allowlist alone allows fallback within it,
   because an embedding batch pinned to one failing host would dead-letter the
   stage; chat gets the same in-set failover from its local rotation.
 - The image-description converter posts pixels through its own client and
