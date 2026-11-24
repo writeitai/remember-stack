@@ -123,6 +123,15 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
             ),
             {"cycle": uuid4(), "d": source.doc_id},
         )
+        # D135 refused extraction publication once the source was gone: work
+        # that failed then dead-lettered after the deletion instant
+        connection.execute(
+            text(
+                "UPDATE processing_state SET status = 'dead_letter',"
+                " finished_at = now() WHERE target_id = :v AND stage = 'structure'"
+            ),
+            {"v": caller.version_id},
+        )
         # D135 could delete a lineage whose versions were all removed earlier
         connection.execute(
             text(
@@ -204,6 +213,15 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     ).unarchive_document(deployment_id=_DEPLOYMENT_ID, doc_id=caller.doc_id)
 
     assert (restored.claims_restored, restored.facts_reopened) == (1, 1)
+    assert (
+        _scalar(
+            engine,
+            "SELECT status::text FROM processing_state"
+            " WHERE target_id = :v AND stage = 'structure'",
+            v=caller.version_id,
+        )
+        == "pending"
+    )  # the stranded work is retried
     assert rig.relation()["invalidated_at"] is None
     assert rig.relation()["evidence_count"] == 1
     assert (

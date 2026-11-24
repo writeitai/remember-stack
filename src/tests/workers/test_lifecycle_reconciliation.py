@@ -2165,3 +2165,66 @@ def test_a_moot_review_no_longer_marks_a_shared_fact_withdrawn(
     assert rig.scalar(state, f=fact_id) == "current"
     _unarchive(rig, gone.doc_id)
     assert rig.scalar(state, f=fact_id) == "withdrawn"
+
+
+def test_an_earlier_cycle_leaves_a_pending_source_archive_to_its_own_cascade(
+    rig: _LifecycleRig,
+) -> None:
+    """Fact work lands with zero support while a source archive waits; the
+    version's own ingest cycle finalizes first and closes nothing, and the
+    archive's cascade closes it under the archive's id, which unarchive
+    reopens."""
+    ingest = _cycle(rig)
+    added = rig.observe(
+        source_ref="early.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+        sync_cycle_id=ingest,
+    )
+    _complete(rig, ingest)
+    _drain_only(rig, _STAGES[:4])  # through embedding, before extraction
+    observing = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="early.md",
+        cycle_id=observing,
+    )
+    rig.drain()  # claims publish retired; the fact applies with no support
+    _finalize(rig)  # the ingest cycle only
+    assert _outcomes(rig) == []
+
+    _complete(rig, observing)
+    _finalize(rig)
+
+    assert _open_works_for(rig) == 0
+    assert _outcomes(rig) and all(archive for _outcome, archive in _outcomes(rig))
+    _unarchive(rig, added.doc_id)
+    rig.drain()
+    assert _open_works_for(rig) == 1
+
+
+def test_a_later_finalized_poll_settles_an_archive_an_abandoned_poll_left(
+    rig: _LifecycleRig,
+) -> None:
+    """The poll that observed the deletion died before completing; the next
+    finalized poll of the same source settles the archive under its id."""
+    added = _watched(rig, source_ref="crash.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    _finalize(rig)
+    abandoned = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="crash.md",
+        cycle_id=abandoned,
+    )
+    _finalize(rig)
+    assert _current_claims(rig, added.doc_id) == 1  # still waiting
+
+    _complete(rig, _cycle(rig))
+    _finalize(rig)
+
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    assert all(archive for _outcome, archive in _outcomes(rig))

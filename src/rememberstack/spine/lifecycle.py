@@ -302,7 +302,12 @@ class LifecycleCatalog:
         )
 
     def regained_by_current_version(
-        self, *, deployment_id: UUID, doc_id: UUID, current_version_id: UUID
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        current_version_id: UUID,
+        superseded_only: bool = False,
     ) -> tuple[CurrencyTransition, ...]:
         """Non-current claims the (new) current version carries — regained.
 
@@ -314,7 +319,9 @@ class LifecycleCatalog:
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
-                    _SELECT_REGAINED,
+                    _SELECT_REGAINED_SUPERSEDED
+                    if superseded_only
+                    else _SELECT_REGAINED,
                     {
                         "deployment_id": deployment_id,
                         "doc_id": doc_id,
@@ -961,21 +968,22 @@ class LifecycleCatalog:
                     reopened[kind].append(fact_id)
         return tuple(reopened["relation"]), tuple(reopened["observation"])
 
-    def reopen_reconcile_runs(self, *, doc_id: UUID, archived_at: datetime) -> int:
-        """Run again every reconcile of a live version the archive may have cut short.
+    def reopen_cut_short_work(self, *, doc_id: UUID, archived_at: datetime) -> int:
+        """Run again the work of live versions the archive may have cut short.
 
         Any reconcile that ran (or is running) while the lineage was archived
         may have retired late work and ended the chain; only one that finished
-        before the archive surely ran normally. Those rows go back to pending
-        and run again in normal mode — the same rows, so layer frontiers and
-        readiness see their completion. Timing-independent: a run reopened
-        while it is still running cannot complete, and repeating a normal
-        reconcile changes nothing. Returns how many rows were reopened.
+        before the archive surely ran normally. Work that dead-lettered at or
+        after the archive instant (a D135 deletion refused publication) is
+        retried too. Those rows go back to pending — the same rows, so layer
+        frontiers and readiness see their completion. Timing-independent: a
+        run reopened while it is still running cannot complete, and repeating
+        a normal reconcile changes nothing. Returns how many rows were reopened.
         """
         with self._engine.begin() as connection:
             return len(
                 connection.execute(
-                    _REOPEN_RECONCILE_RUNS,
+                    _REOPEN_CUT_SHORT_WORK,
                     {"doc_id": doc_id, "archived_at": archived_at},
                 ).all()
             )
@@ -1107,15 +1115,18 @@ class LifecycleCatalog:
     def current_version_if_removed_since(
         self, *, doc_id: UUID, since: datetime
     ) -> UUID | None:
-        """The lineage's current version when one of its versions was removed
-        at or after ``since``; ``None`` otherwise."""
+        """The lineage's current version when a newer version (the head) was
+        removed at or after ``since``, repointing it; ``None`` otherwise."""
         with self._engine.connect() as connection:
             return connection.execute(
                 text(
                     "SELECT d.current_version_id FROM documents d"
+                    " JOIN document_versions cur"
+                    "   ON cur.version_id = d.current_version_id"
                     " WHERE d.doc_id = :doc_id AND EXISTS ("
                     "   SELECT 1 FROM document_versions v"
-                    "   WHERE v.doc_id = d.doc_id AND v.deleted_at >= :since)"
+                    "   WHERE v.doc_id = d.doc_id AND v.deleted_at >= :since"
+                    "     AND v.version_no > cur.version_no)"
                 ),
                 {"doc_id": doc_id, "since": since},
             ).scalar_one_or_none()
@@ -1127,9 +1138,9 @@ class LifecycleCatalog:
                 connection.execute(
                     text(
                         "SELECT EXISTS (SELECT 1 FROM documents d"
-                        " JOIN connector_sync_cycles y"
-                        "   ON y.cycle_id = d.archived_cycle_id"
-                        " WHERE d.doc_id = :doc_id AND y.finalized_at IS NULL)"
+                        " WHERE d.doc_id = :doc_id AND "
+                        + archive_cycle_open(doc="d")
+                        + ")"
                     ),
                     {"doc_id": doc_id},
                 ).scalar_one()
@@ -1314,6 +1325,21 @@ def _review_holds(*, kind: str, fact: str, deployment: str) -> str:
       )"""
 
 
+def _live_review_holds(*, kind: str, fact: str, deployment: str) -> str:
+    """SQL predicate: an open support_withdrawn review on a live-carried claim."""
+    return f"""EXISTS (
+          SELECT 1 FROM review_queue q
+          JOIN claims rc
+            ON rc.claim_id = CAST(q.candidate ->> 'claim_id' AS uuid)
+          WHERE q.deployment_id = {deployment}
+            AND q.item_kind = 'support_withdrawn'
+            AND q.status IN ('pending', 'deferred')
+            AND q.candidate ->> 'fact_kind' = '{kind}'
+            AND q.candidate ->> 'fact_id' = {fact}::text
+            AND {_live_carriage(claim="rc")}
+      )"""
+
+
 _SELECT_CONTEXT = text(
     """
     SELECT v.deployment_id, v.doc_id, v.version_id, v.version_no,
@@ -1419,6 +1445,17 @@ _SELECT_REGAINED = text(
                         AND cur.version_id = :current_version_id))
     """
 )
+
+_SELECT_REGAINED_SUPERSEDED = text(
+    _SELECT_REGAINED.text
+    + """
+      AND (SELECT e.reason FROM testimony_currency_events e
+           WHERE e.claim_id = cl.claim_id
+           ORDER BY e.occurred_at DESC, e.event_id DESC
+           LIMIT 1) = 'version_superseded'
+    """
+)
+"""Only claims the head's supersession retired (never a re-extraction's)."""
 
 _SELECT_RUN_EVENTS = text(
     """
@@ -1839,7 +1876,7 @@ def _reopen_sql(
           AND f.{kind}_id = ANY(CAST(:fact_ids AS uuid[]))
           AND f.invalidated_at IS NOT NULL
           AND (f.evidence_count > 0
-               OR {_review_holds(kind=kind, fact=f"f.{kind}_id", deployment="f.deployment_id")})
+               OR {_live_review_holds(kind=kind, fact=f"f.{kind}_id", deployment="f.deployment_id")})
           AND coalesce((
               SELECT a.outcome = 'retracted_source_removal'
                      AND coalesce((a.features ->> 'archive')::boolean, false)
@@ -1852,6 +1889,9 @@ def _reopen_sql(
               LIMIT 1
           ), false)
         ORDER BY f.{kind}_id
+        -- the recount's row locks: a concurrent archive or invalidation
+        -- either commits first (and the row is re-checked) or waits
+        FOR UPDATE OF f
         """
     )
     reopen = text(
@@ -1885,7 +1925,7 @@ _REOPEN_SQL = {
     ),
 }
 
-_REOPEN_RECONCILE_RUNS = text(
+_REOPEN_CUT_SHORT_WORK = text(
     """
     WITH reopened AS (
         UPDATE processing_state p
@@ -1894,16 +1934,22 @@ _REOPEN_RECONCILE_RUNS = text(
             not_before = now(),
             max_attempts = greatest(p.max_attempts, p.attempts + 3),
             finished_at = NULL
-        FROM document_versions v
-        WHERE v.doc_id = :doc_id
-          AND v.deleted_at IS NULL
-          AND p.deployment_id = v.deployment_id
-          AND p.target_kind = 'document_version'
-          AND p.target_id = v.version_id
-          AND p.stage = 'reconcile'
+        WHERE (
+              (p.target_kind = 'document_version' AND p.target_id IN (
+                  SELECT v.version_id FROM document_versions v
+                  WHERE v.doc_id = :doc_id AND v.deleted_at IS NULL))
+              OR (p.target_kind = 'chunk' AND p.target_id IN (
+                  SELECT c.chunk_id FROM chunks c
+                  JOIN document_versions v ON v.version_id = c.version_id
+                  WHERE v.doc_id = :doc_id AND v.deleted_at IS NULL))
+              OR (p.target_kind = 'claim' AND p.target_id IN (
+                  SELECT cl.claim_id FROM claims cl WHERE cl.doc_id = :doc_id))
+          )
           AND (
-              p.status IN ('running', 'dead_letter')
-              OR (p.status = 'succeeded' AND p.finished_at >= :archived_at)
+              (p.stage = 'reconcile' AND (
+                  p.status IN ('running', 'dead_letter')
+                  OR (p.status = 'succeeded' AND p.finished_at >= :archived_at)))
+              OR (p.status = 'dead_letter' AND p.finished_at >= :archived_at)
           )
         RETURNING p.processing_id
     )
@@ -2080,6 +2126,27 @@ _SELECT_CYCLE_LINEAGES = text(
     """
 )
 
+
+def archive_cycle_open(*, doc: str) -> str:
+    """SQL predicate: lineage ``doc``'s source archive waits for its cycle.
+
+    A source archive settles once its observing cycle is finalized (the
+    retract-timing barrier). A poll that died before completing never
+    finalizes; a later finalized poll of the same source settles it then.
+    """
+    return f"""EXISTS (
+          SELECT 1 FROM connector_sync_cycles y
+          WHERE y.cycle_id = {doc}.archived_cycle_id AND y.finalized_at IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM connector_sync_cycles later
+                WHERE later.deployment_id = y.deployment_id
+                  AND later.source_kind = y.source_kind
+                  AND later.started_at > y.started_at
+                  AND later.finalized_at IS NOT NULL
+            )
+      )"""
+
+
 _SELECT_PENDING_ARCHIVES = text(
     f"""
     SELECT d.doc_id, d.archived_at
@@ -2089,10 +2156,7 @@ _SELECT_PENDING_ARCHIVES = text(
       AND d.deleted_at IS NULL
       -- a source archive waits for its observing cycle's finalization (the
       -- retract-timing barrier): a move resolves as a support swap
-      AND NOT EXISTS (
-          SELECT 1 FROM connector_sync_cycles y
-          WHERE y.cycle_id = d.archived_cycle_id AND y.finalized_at IS NULL
-      )
+      AND NOT {archive_cycle_open(doc="d")}
       AND EXISTS (
           SELECT 1 FROM claims cl
           WHERE cl.deployment_id = d.deployment_id

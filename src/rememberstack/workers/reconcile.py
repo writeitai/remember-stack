@@ -676,6 +676,9 @@ class CycleFinalizer:
         """Source-acted closure for every lineage the cycle observed."""
         reopened_at = catalog.cycle_reopened_at(cycle_id=cycle_id)
         for doc_id in catalog.cycle_lineages(cycle_id=cycle_id):
+            if catalog.lineage_archived_at(doc_id=doc_id) is not None:
+                # the archive's own cascade settles it, under its id (D159)
+                continue
             self._close_lineage_zero_support(
                 catalog=catalog,
                 deployment_id=deployment_id,
@@ -760,6 +763,7 @@ class DeletionService:
         doc_id: UUID = info["doc_id"]  # type: ignore[assignment]
         context = self._catalog.reconciliation_context(version_id=version_id)
         reconciliation_id = _derived_run_id(kind="delete-version", id_=version_id)
+        regained: tuple[CurrencyTransition, ...] = ()
         if context["current_version_id"] is not None:
             # "the lineage continues": the repointed predecessor's testimony
             # is the current basis again — its claims regain currency. Decided
@@ -768,30 +772,29 @@ class DeletionService:
             with self._catalog.transaction() as catalog:
                 catalog.lock_lineage(doc_id=doc_id)
                 if catalog.lineage_archived_at(doc_id=doc_id) is None:
+                    regained = catalog.regained_by_current_version(
+                        deployment_id=deployment_id,
+                        doc_id=doc_id,
+                        current_version_id=context["current_version_id"],  # type: ignore[arg-type]
+                    )
                     catalog.apply_transitions(
                         deployment_id=deployment_id,
                         reconciliation_id=reconciliation_id,
-                        transitions=catalog.regained_by_current_version(
-                            deployment_id=deployment_id,
-                            doc_id=doc_id,
-                            current_version_id=context["current_version_id"],  # type: ignore[arg-type]
-                        ),
+                        transitions=regained,
                     )
         delta = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,
             # ONLY the deleted version's exclusive testimony ends — a snapshot
             # lineage's other versions keep their currency (Codex review)
-            transitions=_with_recorded(
-                catalog=self._catalog,
-                transitions=self._catalog.stale_for_version_deletion(
-                    deployment_id=deployment_id, version_id=version_id
-                ),
-                reconciliation_id=reconciliation_id,
+            transitions=self._catalog.stale_for_version_deletion(
+                deployment_id=deployment_id, version_id=version_id
             ),
             reconciliation_id=reconciliation_id,
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
-            scope_claim_ids=(),
+            # the regain is written above, once; here it only scopes the
+            # recount (rewriting it could undo an archive that came between)
+            scope_claim_ids=tuple(item.claim_id for item in regained),
             archive=False,
         )
         self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
@@ -1014,6 +1017,17 @@ def _unarchive_on(
     _hard_forget_fence(connection=connection, deployment_id=deployment_id)
     take_layer_fence_on(connection=connection, deployment_id=deployment_id)
     catalog = LifecycleCatalog.on_connection(connection=connection)
+    seen = catalog.lineage_state(deployment_id=deployment_id, doc_id=doc_id)
+    if (
+        seen is not None
+        and seen["deleted_at"] is None
+        and isinstance(seen["archived_at"], datetime)
+        and not (only_source and seen["archived_by"] != "source")
+    ):
+        # Work rows before the lineage row, the order work completion takes
+        # them in; a reset that a concurrent undo makes unnecessary only
+        # repeats work that changes nothing.
+        catalog.reopen_cut_short_work(doc_id=doc_id, archived_at=seen["archived_at"])
     catalog.lock_lineage(doc_id=doc_id)
     state = catalog.lineage_state(deployment_id=deployment_id, doc_id=doc_id)
     if state is None or state["deleted_at"] is not None:
@@ -1051,6 +1065,7 @@ def _unarchive_on(
                 deployment_id=deployment_id,
                 doc_id=doc_id,
                 current_version_id=current_version_id,
+                superseded_only=True,
             ),
         )
     claim_ids = catalog.lineage_claim_ids(deployment_id=deployment_id, doc_id=doc_id)
@@ -1073,7 +1088,6 @@ def _unarchive_on(
             recounted_observations=observation_ids,
         ),
     )
-    catalog.reopen_reconcile_runs(doc_id=doc_id, archived_at=archived_at)
     return (
         restored,
         relation_ids,

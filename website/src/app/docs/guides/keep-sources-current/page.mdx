@@ -179,6 +179,7 @@ sent lists its `source_ref` as `source_uri`, so one pass over
 came back:
 
 ```python
+import json
 from pathlib import Path
 
 import remember
@@ -186,6 +187,10 @@ import remember
 client = remember.Client.from_env()
 root = Path("specs")
 present = {f"specs/{path.name}" for path in root.glob("*.md")}
+# The documents this pass archived itself; it undoes only those, never an
+# archive someone made on purpose.
+ledger = Path(".remember-archived.json")
+archived_here = set(json.loads(ledger.read_text())) if ledger.exists() else set()
 
 cursor = None
 while True:
@@ -193,14 +198,18 @@ while True:
     for document in page.documents:
         if document.source_kind != "file":
             continue
+        doc_id = str(document.doc_id)
         gone = document.source_uri not in present
         if gone and document.archived_at is None:
             client.archive_document(doc_id=document.doc_id)
-        elif not gone and document.archived_at is not None:
+            archived_here.add(doc_id)
+        elif not gone and doc_id in archived_here:
             client.unarchive_document(doc_id=document.doc_id)
+            archived_here.discard(doc_id)
     if page.next_cursor is None:
         break
     cursor = page.next_cursor
+ledger.write_text(json.dumps(sorted(archived_here)))
 ```
 
 Archiving takes the document's claims out of the evidence and closes the
@@ -208,7 +217,7 @@ facts only it supported; the document and its claims stay as history. Run
 this pass after the sync loop. A file that came back edited has already
 returned as a new version, which brings its document back. A file that came
 back unchanged is a no-op for the sync loop and its document stays archived,
-so the pass unarchives it: its claims count again, and the facts the archive
+so the pass unarchives it if the pass archived it: its claims count again, and the facts the archive
 closed reopen when they have support again. See
 [Archiving a document](/docs/concepts/documents-and-sources#archiving-a-document).
 
