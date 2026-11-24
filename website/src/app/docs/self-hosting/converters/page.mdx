@@ -373,6 +373,7 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | Approved endpoints in preference order; the LoCoMo Luna profile uses `["openai/flex","openai"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | Ask OpenRouter for zero-data-retention endpoints only (`zdr: true`). For strict zero retention, also set your OpenRouter account to ZDR only: otherwise endpoints with safety retention can still be used. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |

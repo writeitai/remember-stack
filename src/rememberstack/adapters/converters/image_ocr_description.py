@@ -139,6 +139,14 @@ class ImageDescriptionSettings(BaseSettings):
     reasoning_effort: ReasoningEffort | None = None
     provider_only: tuple[str, ...] | None = None
     """Approved vision endpoints in preference order; fallback stays in this set."""
+    zdr: bool = False
+    """Restrict the description call to zero-data-retention endpoints when true.
+
+    Env: ``REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR``. Sends ``zdr: true`` with
+    ``data_collection: deny``, as the chat adapter's ``REMEMBERSTACK_OPENROUTER_ZDR``.
+    OpenRouter may still use endpoints with safety retention when the account
+    allows them; strict zero retention also needs the account set to ZDR only.
+    """
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -197,6 +205,8 @@ class ImageDescriptionSettings(BaseSettings):
             base += ":providers-" + json.dumps(
                 self.provider_only, separators=(",", ":")
             )
+        if self.zdr:
+            base += ":zdr"
         return base
 
 
@@ -632,16 +642,21 @@ class ImageOcrDescriptionConverter:
     def _post_description(self, *, payload: dict[str, object]) -> httpx.Response:
         """Try each approved endpoint once, only after proven unbilled rejection."""
         remaining = self._description_settings.provider_only
+        zdr = self._description_settings.zdr
         while True:
+            routing: dict[str, object] = {}
             if remaining is not None:
                 approved = list(remaining)
-                routing: dict[str, object] = {
+                routing = {
                     "only": approved,
                     "allow_fallbacks": len(approved) > 1,
                     "data_collection": "deny",
                 }
                 if len(approved) > 1:
                     routing["order"] = approved
+            if zdr:
+                routing.update(data_collection="deny", zdr=True)
+            if routing:
                 payload["provider"] = routing
             response = self._description_client.post("/chat/completions", json=payload)
             if (
