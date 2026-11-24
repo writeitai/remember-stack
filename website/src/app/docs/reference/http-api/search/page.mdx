@@ -43,8 +43,8 @@ The `POST` forms accept a `documents` filter with the same fields as
 `family`, `authors`, `recipients`, `created_from`/`created_to`,
 `modified_from`/`modified_to`, `language`, `thread_ref`, `doc_ids` and
 `tags` (`{"all": [...], "any": [...], "none": [...]}`, the document's
-[tags](/docs/guides/tag-documents)). The filter decides which results are
-included:
+[tags](/docs/guides/tag-documents)), and `include_archived`. The filter
+decides which results are included:
 
 - **chunks** match when the chunk's document version matches;
 - **claims** match when at least one place the claim occurs is in a matching
@@ -55,7 +55,11 @@ included:
   claim looks exactly as it does without a filter, with the `chunk_id`,
   offsets and `evidence_spans` of the passage it was first extracted from.
 
-Deleted documents and deleted versions never match. The filter is applied
+Removed versions never match. [Archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
+documents are left out of every search, with or without a filter, unless
+`documents.include_archived` is `true`; then each claim and passage from an
+archived document carries `"archived": true`, and its claims never count as
+current support for a fact. The filter is applied
 while ranking, before the `k` best are chosen, so asking for `k: 10` returns
 up to ten matching results even when better-scoring results from other
 documents exist.

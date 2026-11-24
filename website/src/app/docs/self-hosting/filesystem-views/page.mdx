@@ -114,11 +114,12 @@ of served documents reconciled. Matching digests avoid recopying originals and
 media. Ordinary publication touches only the changed document and its navigation
 ancestors.
 
-## Deletion, forget and restore
+## Archive, forget and restore
 
-Normal document deletion removes that document's recorded corpus folders and
-repairs navigation before reporting success. A store failure reports failure and
-leaves durable retry work.
+The filesystem is the current corpus. Archiving a document removes its
+recorded corpus folders and repairs navigation before reporting success. A
+store failure reports failure and leaves durable retry work; the archive
+itself is already recorded.
 
 Before coordinating hard-forget on operator-managed processes, stop ordinary
 writers and wait for their outstanding storage calls. An expired work lease is

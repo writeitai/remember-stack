@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OutputDocumentVersionSummary } from './OutputDocumentVersionSummary';
 export type OutputDocumentSummary = {
+    archived_at: string | null;
     doc_id: string;
     first_seen_at: string;
     latest: OutputDocumentVersionSummary;

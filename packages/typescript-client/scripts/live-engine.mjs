@@ -66,7 +66,7 @@ try {
   }
   const covered=new Set(fixtures.cases.map(item=>item.typescriptMethod));
   for(const name of covered)assert(methods.has(name),`${name} lacks a live deployment disposition`);
-  const deletionRoute={method:'DELETE',path:`/documents/${ingest.doc_id}`};
-  if(served({request:deletionRoute}))await client.deleteDocument({docId:ingest.doc_id});
+  const archiveRoute={method:'POST',path:`/documents/${ingest.doc_id}/archive`};
+  if(served({request:archiveRoute}))await client.archiveDocument({docId:ingest.doc_id});
   console.log(JSON.stringify({engine:version,outcomes},null,2));
 }finally{client.close();agent.destroy();rmSync(directory,{recursive:true,force:true});}

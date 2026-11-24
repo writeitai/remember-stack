@@ -25,10 +25,11 @@ absent from the current release; nothing here has a date.
 
 ## Documents
 
-- **Erasing a document.** Deleting a document removes it from the memory
-  but keeps its claims and stored original as history; the HTTP API, the
-  SDK, the CLI and the MCP tools cannot erase a document's bytes.
-- **Deleting one version.** You can delete a whole document, not a single
+- **Erasing a document.** Archiving a document stops the memory believing
+  it but keeps the document, its claims and its stored original as history;
+  the HTTP API, the SDKs, the CLI and the MCP tools cannot erase a
+  document's bytes. There is no delete.
+- **Archiving one version.** You can archive a whole document, not a single
   version of it.
 - **Document filters on fact lookups and SQL functions.** Claim and chunk
   search and the three context operations (`claims_and_sources_context`,

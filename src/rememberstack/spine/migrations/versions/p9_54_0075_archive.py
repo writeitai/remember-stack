@@ -308,7 +308,7 @@ _RELABEL_EVENTS = text(
     """
 )
 
-_RELABEL_CLOSURES = (
+_RELABEL_CLOSURES = tuple(
     text(
         f"""
         UPDATE {table}
@@ -369,6 +369,9 @@ def upgrade() -> None:
         .mappings()
         .all()
     )
+    # Before any row update: an ALTER TABLE after one would meet the update's
+    # pending foreign-key trigger events.
+    op.execute("ALTER TABLE documents DROP COLUMN deleted_sync_cycle_id")
     for row in rows:
         doc_id: UUID = row["doc_id"]
         deleted_at: datetime = row["deleted_at"]
@@ -387,7 +390,6 @@ def upgrade() -> None:
         connection.execute(
             _ARCHIVE_LINEAGE, {"doc_id": doc_id, "archived_by": row["archived_by"]}
         )
-    op.execute("ALTER TABLE documents DROP COLUMN deleted_sync_cycle_id")
     apply_view_ddl(sql=DOCUMENTS_INVENTORY_DDL)
     _install_belief_intervals()
 
@@ -414,6 +416,9 @@ def downgrade() -> None:
 
     An archive cannot be turned back into a D135 deletion faithfully, and the
     reopen outcome stays (PostgreSQL cannot drop an enum value in place).
+    ``documents_live`` keeps its appended ``archived_at`` column as a typed
+    NULL: a view column cannot be dropped in place, and dropping the view would
+    take every dependent query-space view with it. Upgrading again restores it.
     """
     connection = op.get_bind()
     if connection.execute(
@@ -449,6 +454,10 @@ def downgrade() -> None:
         op.execute(gated)
     _restore_helper_settings()
     op.execute(f"DROP FUNCTION {FACT_BELIEVED_AT_SIGNATURE}")
+    inert = DOCUMENTS_INVENTORY_DDL.split("COMMENT ON VIEW memory_v1.documents_live")[0]
+    if inert.count("  d.archived_at\n") != 1:
+        raise RuntimeError("unexpected documents_live inventory shape")
+    op.execute(inert.replace("  d.archived_at\n", "  NULL::timestamptz\n"))
     op.execute("ALTER TABLE documents ADD COLUMN deleted_sync_cycle_id uuid")
     op.execute(
         "ALTER TYPE currency_reason RENAME VALUE 'version_archived' TO 'version_deleted'"

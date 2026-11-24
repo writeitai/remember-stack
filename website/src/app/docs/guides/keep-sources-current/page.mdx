@@ -173,9 +173,10 @@ versions; the loop waits only for what changed.
 
 Not sending a file does not remove its document: RememberStack has no
 signal that the file is gone, and its claims keep counting. When a file
-leaves the folder, delete its document too. Each document the loop above
+leaves the folder, archive its document. Each document the loop above
 sent lists its `source_ref` as `source_uri`, so one pass over
-`list_documents` finds the ones whose file is gone:
+`list_documents` finds the ones whose file is gone, and the ones whose file
+came back:
 
 ```python
 from pathlib import Path
@@ -188,19 +189,28 @@ present = {f"specs/{path.name}" for path in root.glob("*.md")}
 
 cursor = None
 while True:
-    page = client.list_documents(cursor=cursor)
+    page = client.list_documents(cursor=cursor, include_archived=True)
     for document in page.documents:
-        if document.source_kind == "file" and document.source_uri not in present:
-            client.delete_document(doc_id=document.doc_id)
+        if document.source_kind != "file":
+            continue
+        gone = document.source_uri not in present
+        if gone and document.archived_at is None:
+            client.archive_document(doc_id=document.doc_id)
+        elif not gone and document.archived_at is not None:
+            client.unarchive_document(doc_id=document.doc_id)
     if page.next_cursor is None:
         break
     cursor = page.next_cursor
 ```
 
-Deleting removes the document's claims from the evidence and closes the
-facts only it supported; the claims stay as history. If the file comes back
-later, the sync loop adds it back as a new version. See
-[Deleting a document](/docs/concepts/documents-and-sources#deleting-a-document).
+Archiving takes the document's claims out of the evidence and closes the
+facts only it supported; the document and its claims stay as history. Run
+this pass after the sync loop. A file that came back edited has already
+returned as a new version, which brings its document back. A file that came
+back unchanged is a no-op for the sync loop and its document stays archived,
+so the pass unarchives it: its claims count again, and the facts the archive
+closed reopen when they have support again. See
+[Archiving a document](/docs/concepts/documents-and-sources#archiving-a-document).
 
 To remove only some passages of a living document, send a version without
 them instead.

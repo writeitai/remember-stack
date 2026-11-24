@@ -136,7 +136,7 @@ to read the section.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
 | `422` | validation list | A malformed key, a missing `at`, `from` or `to` for its mode, `to` before `from`, a timestamp without a time zone, or `k` out of range. |
 
 ### Example
@@ -220,7 +220,7 @@ row says so; it never falls back to another version.
 |---|---|
 | `resolved` | The target version is readable, and the named section is in it. `target` has the version, its `representation_id`, the section's title and `first_chunk_ids` (empty when the reference names the whole document). |
 | `target_processing` | The target version is not fully processed yet. `target` has the version and `applies_during`, not the section. |
-| `target_unavailable` | No live document has the named `source_kind` and `source_ref`: it was never ingested, or it is deleted or forgotten. One status for all three, so a deletion is not revealed. `target` is `null`. |
+| `target_unavailable` | No live document has the named `source_kind` and `source_ref`: it was never ingested, it is archived, or it was forgotten. One status for all three, so a forget is not revealed. `target` is `null`. An archived target resolves again once it comes back. |
 | `target_not_in_force` | Floating reference: the target exists, but none of its versions is in force during the window. |
 | `section_not_in_version` | The target version has no section with the named key. |
 | `section_not_indexed` | The target version's sections have not been indexed for keys yet, so whether it has the section is unknown. |
@@ -293,8 +293,8 @@ instant window has `from` equal to `until` and `until_inclusive: true`.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or it is deleted. |
-| `404` | `chunk_not_found` | No such passage, or its document is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `chunk_not_found` | No such passage, or a hard forget removed its document. |
 | `422` | validation list | Both or neither of `chunk_id` and `doc_id`, `section_key` without `doc_id`, an unknown kind, a bad `time`, `k` out of range, or an unknown field. |
 
 ### Example

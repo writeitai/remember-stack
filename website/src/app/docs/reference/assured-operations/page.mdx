@@ -129,8 +129,14 @@ optional `documents` object that limits the read to certain documents. It is
 the same filter claim and chunk search take
 ([Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents)):
 `family`, `authors`, `recipients`, `created_from`, `created_to`,
-`modified_from`, `modified_to`, `language`, `thread_ref`, `doc_ids` and
-`tags`. Every field given must hold.
+`modified_from`, `modified_to`, `language`, `thread_ref`, `doc_ids`,
+`tags` and `include_archived`. Every field given must hold.
+
+[Archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
+documents are left out of every operation, with or without a filter. With
+`"include_archived": true` they are read as history: each claim and passage
+from one carries `"archived": true`, and its claims never count as current
+support for a fact.
 
 ```json
 {"query": "worker restart interval",

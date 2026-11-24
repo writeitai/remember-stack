@@ -330,6 +330,19 @@ export default {
     "ChunkEvidenceResult": {
       "additionalProperties": false,
       "properties": {
+        "archived": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archived",
+          "x-exclude-if-none": true
+        },
         "char_end": {
           "title": "Char End",
           "type": "integer"
@@ -977,19 +990,19 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
-    "DocumentDeletion": {
+    "DocumentArchive": {
       "additionalProperties": false,
-      "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
+      "description": "What archiving one document changed in the live memory (D159 \u00a72.1).\n\nThe document stays readable as history. The counts describe this call: a\nrepeat answers the same ``archived_at`` with zero counts, and a call that\nfinishes an archive another path started reports only what it finished.",
       "properties": {
+        "archived_at": {
+          "format": "date-time",
+          "title": "Archived At",
+          "type": "string"
+        },
         "claims_retired": {
           "minimum": 0,
           "title": "Claims Retired",
           "type": "integer"
-        },
-        "deleted_at": {
-          "format": "date-time",
-          "title": "Deleted At",
-          "type": "string"
         },
         "doc_id": {
           "format": "uuid",
@@ -1009,12 +1022,12 @@ export default {
       },
       "required": [
         "doc_id",
-        "deleted_at",
+        "archived_at",
         "claims_retired",
         "relations_closed",
         "observations_closed"
       ],
-      "title": "DocumentDeletion",
+      "title": "DocumentArchive",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -1694,6 +1707,11 @@ export default {
           "title": "Family",
           "type": "array"
         },
+        "include_archived": {
+          "default": false,
+          "title": "Include Archived",
+          "type": "boolean"
+        },
         "language": {
           "anyOf": [
             {
@@ -1887,6 +1905,7 @@ export default {
             "created_to": null,
             "doc_ids": [],
             "family": [],
+            "include_archived": false,
             "language": null,
             "modified_from": null,
             "modified_to": null,
@@ -1975,6 +1994,19 @@ export default {
       "additionalProperties": false,
       "description": "One matching document, described by the version it was judged by.",
       "properties": {
+        "archived_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archived At"
+        },
         "authors": {
           "default": [],
           "items": {
@@ -2253,6 +2285,19 @@ export default {
     "DocumentSummary": {
       "additionalProperties": false,
       "properties": {
+        "archived_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archived At"
+        },
         "doc_id": {
           "format": "uuid",
           "title": "Doc Id",
@@ -2419,6 +2464,35 @@ export default {
         }
       },
       "title": "DocumentTagsUpdate",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentUnarchive": {
+      "additionalProperties": false,
+      "description": "What unarchiving one document restored (D159 \u00a72.3).\n\nUnarchive is the exact undo of the archive: the testimony it ended is\ncurrent again and the facts it closed that have support again are\nreopened. Unarchiving a live document answers zero counts.",
+      "properties": {
+        "claims_restored": {
+          "minimum": 0,
+          "title": "Claims Restored",
+          "type": "integer"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "facts_reopened": {
+          "minimum": 0,
+          "title": "Facts Reopened",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "doc_id",
+        "claims_restored",
+        "facts_reopened"
+      ],
+      "title": "DocumentUnarchive",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -2898,6 +2972,19 @@ export default {
     "EvidenceResult": {
       "additionalProperties": false,
       "properties": {
+        "archived": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archived",
+          "x-exclude-if-none": true
+        },
         "asserted_at": {
           "anyOf": [
             {

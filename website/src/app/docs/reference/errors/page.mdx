@@ -55,9 +55,9 @@ their code in `code`. `wait_for_readiness` raises
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token.<Cloud> On remember.dev, run `remember login` again or create a token in the console.</Cloud> |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
-| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `POST /documents/{doc_id}/archive`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
-| `404` | `document_not_found` | `DELETE /documents/{doc_id}`, or a period, reference or section route, for a document that does not exist or is deleted. | Do not retry; check the id with `GET /documents`. |
+| `404` | `document_not_found` | `POST /documents/{doc_id}/archive` or `/unarchive` for a document that does not exist, or a period, reference or section route for a document that does not exist or that a hard forget removed. | Do not retry; check the id with `GET /documents`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
 | `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `PATCH` or `DELETE /tags/{tag_id}` for a tag id that is not registered, or was deleted. | Check the id with `GET /tags`. |
@@ -178,7 +178,7 @@ timeouts, store codes).
 
 The MCP server returns a tool failure as a normal tool result with
 `"isError": true` and one JSON text block. Every tool — `ingest`,
-`pipeline_readiness`, `delete_document`, the assured operations and the SQL
+`pipeline_readiness`, `archive_document`, `unarchive_document`, the assured operations and the SQL
 query tools — returns the same object:
 
 ```json
@@ -212,11 +212,11 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_not_regular_file` | `null` | no | Point path at a regular file, or send text/content_base64. |
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
-| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id.) |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: Do not retry. Check the doc_id with the user. (`section_history`, `update_document_tags`: Do not retry. Check the doc_id.) |
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
-| `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
+| `forget_in_progress` | 503 | yes | Retry the same call later with back-off; the deployment accepts no changes until the forget finishes. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
 | `unauthorized` | 401 | no | The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY. |
 | `insufficient_permission` | 403 | no | The key may not do this here: use a key with the needed permission for this deployment. |
@@ -318,7 +318,7 @@ The routes themselves are in [remember.dev API](/docs/reference/cloud-api).
 | `structuring` | Being split into sections. |
 | `ready` | Converted and structured. Extraction may still be running; use readiness. |
 | `failed` | Conversion or structuring failed; `error` says why. |
-| `deleted` | Deleted. Not listed by `GET /documents`. |
+| `deleted` | Removed by a hard forget. Not listed by `GET /documents`. |
 
 ### Pipeline stage status
 

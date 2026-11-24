@@ -261,14 +261,23 @@ def scenarios() -> list[dict[str, Any]]:
         (
             "list_documents",
             {},
-            {"limit": 7, "cursor": "fixture-cursor", "status": "failed"},
+            {
+                "limit": 7,
+                "cursor": "fixture-cursor",
+                "status": "failed",
+                "include_archived": True,
+            },
         ),
         (
             "search_documents",
             {},
             {
                 "query": "fixture",
-                "filters": {"authors": ["alice"], "modified_from": STAMP},
+                "filters": {
+                    "authors": ["alice"],
+                    "modified_from": STAMP,
+                    "include_archived": True,
+                },
                 "versions": "all",
                 "time": {"mode": "at", "at": STAMP},
                 "k": 3,
@@ -389,7 +398,8 @@ def scenarios() -> list[dict[str, Any]]:
             },
         ),
         ("clear_effective_time", {"doc_id": ID}, {"doc_id": OTHER_ID}),
-        ("delete_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
+        ("archive_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
+        ("unarchive_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
         ("list_tags", {}, {"query": "Fixture"}),
         (
             "create_tag",
@@ -798,12 +808,15 @@ def responses() -> dict[str, Any]:
         "search_page": models.DocumentSearchPage(documents=(), as_of=now).model_dump(
             mode="json"
         ),
-        "deletion": models.DocumentDeletion(
+        "archive": models.DocumentArchive(
             doc_id=UUID(ID),
-            deleted_at=now,
+            archived_at=now,
             claims_retired=0,
             relations_closed=0,
             observations_closed=0,
+        ).model_dump(mode="json"),
+        "unarchive": models.DocumentUnarchive(
+            doc_id=UUID(ID), claims_restored=0, facts_reopened=0
         ).model_dump(mode="json"),
         "deployment": models.DeploymentBuildInfo().model_dump(mode="json"),
         "processing_layers": models.ProcessingLayerStates(
@@ -877,8 +890,10 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
     }
     if path in mapping:
         return fixtures[mapping[path]]
-    if path.startswith("/documents/") and request.method == "DELETE":
-        return fixtures["deletion"]
+    if path.startswith("/documents/") and path.endswith("/archive"):
+        return fixtures["archive"]
+    if path.startswith("/documents/") and path.endswith("/unarchive"):
+        return fixtures["unarchive"]
     if path == "/connectors" and request.method == "GET":
         return []
     if path.startswith("/connectors"):
@@ -1092,7 +1107,8 @@ def failure_fixtures() -> list[dict[str, Any]]:
             {},
         ),
         ("clear_effective_time", {"doc_id": ID}, {}),
-        ("delete_document", {"doc_id": ID}, {}),
+        ("archive_document", {"doc_id": ID}, {}),
+        ("unarchive_document", {"doc_id": ID}, {}),
         ("connectors", {}, [{}]),
         ("list_tags", {}, {}),
         ("create_tag", {"name": "project:fixture", "description": ""}, {}),
@@ -1565,8 +1581,13 @@ def tool_fixtures() -> list[dict[str, Any]]:
     valid = {
         "ingest": {"text": "fixture", "filename": "fixture.md"},
         "pipeline_readiness": {"version_ids": [ID], "require": REQUIRE},
-        "delete_document": {"doc_id": ID},
-        "search_documents": {"language": "en", "authors": ["alice"]},
+        "archive_document": {"doc_id": ID},
+        "unarchive_document": {"doc_id": ID},
+        "search_documents": {
+            "language": "en",
+            "authors": ["alice"],
+            "include_archived": True,
+        },
         "adjacent_chunks": {"chunk_id": ID},
         "section_history": {
             "doc_id": ID,
