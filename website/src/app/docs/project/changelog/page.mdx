@@ -24,6 +24,21 @@ release. What it serves is on
 
 </Cloud>
 
+## 0.21.2 (November 2026)
+
+**Images on a metered deployment.** The `image_ocr_description` route (Mistral
+OCR plus a vision-model description of each PNG or JPEG) can now run under a
+managed meter. Each image is measured as one `image` unit before either
+provider call, and processing waits for the hold to be approved, the same way
+a PDF's pages are counted before OCR. Before this release a metered
+deployment refused the route with `rate_class_unavailable`. An image over the
+route's byte ceiling (10 MB by default) now fails before it is measured or
+downloaded. Self-hosted deployments without a meter are unchanged.
+
+**Error logs carry a stable code.** Every ERROR log line now has an
+`error_code`, such as `worker_item_failed` or `mcp_tool_failed`, so a log
+pipeline or error tracker can group failures without parsing messages.
+
 ## 0.21.1 (November 2026)
 
 **Managed storage capture failure codes.** `capture_storage_batch` now returns
