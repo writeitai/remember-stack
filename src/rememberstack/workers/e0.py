@@ -635,6 +635,29 @@ class UploadIngestor:
     ) -> str:
         """The MIME E0 stores: byte classes first, registry hints within families."""
         detected = detect_content_mime(content=content, declared_mime=mime)
+        if detected == "application/octet-stream":
+            sniffed = sniffed_text_mimes(content=content)
+            if sniffed:
+                # Text that is not UTF-8 (UTF-16 delimited, 8-bit email): the
+                # name, then the declaration, may pick one of its families;
+                # otherwise it stays unread, never a binary family.
+                for hint in (
+                    detect_mime(
+                        file_name=filename,
+                        declared_mime="",
+                        content=b"\x00",
+                        routed_mimes=self._routable,
+                    ),
+                    detect_mime(
+                        file_name="",
+                        declared_mime=mime,
+                        content=b"\x00",
+                        routed_mimes=self._routable,
+                    ),
+                ):
+                    if hint in sniffed:
+                        return hint
+                return detected
         if detected in {"text/plain", "text/markdown", "application/octet-stream"}:
             routed = detect_mime(
                 file_name=filename,
@@ -660,10 +683,12 @@ class UploadIngestor:
                 or routed in _TEXT_DOCUMENT_MIMES
             ):
                 detected = routed
-            elif detected == "application/octet-stream" and (
-                family in {"archive", "dataset", "ebook", "binary"}
-                or routed in sniffed_text_mimes(content=content)
-            ):
+            elif detected == "application/octet-stream" and family in {
+                "archive",
+                "dataset",
+                "ebook",
+                "binary",
+            }:
                 detected = routed
         return detected
 

@@ -442,6 +442,7 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ("data.csv", "application/octet-stream", _UTF16_CSV, "text/csv"),
         ("data.csv", "text/plain", _UTF16_CSV, "text/csv"),
         ("data.tsv", "text/csv", _UTF16_TSV, "text/tab-separated-values"),
+        ("export.txt", "text/csv", _UTF16_CSV, "text/csv"),
         ("long.csv", "application/octet-stream", _LONG_UTF16_CSV, "text/csv"),
         (
             "data.tsv",
@@ -537,6 +538,7 @@ def test_registry_family_survives_compatible_byte_class(
         ("ann.eml", b"From: Ann (ask @dev)\r\nSubject:\r\n\r\nCaf\xe9\r\n"),
         ("dots.eml", b"From: a..b@example.org\r\nTo: b@example.org\r\n\r\n\xe9\r\n"),
         ("late.eml", _LATIN1_EMAIL + b"x" * 70000 + b"\x00"),
+        ("export.zip", _UTF16_CSV),
         (
             "nul.csv",
             "a,b\n".encode("utf-16") + b"\x00\x00" + "1,2\n".encode("utf-16-le"),
@@ -641,6 +643,7 @@ def test_a_compound_file_is_read_from_bytes_and_from_a_map(
         (_cfb(streams=["WordDocument"], far=True, terminator=_FREE), ""),
         (_cfb(streams=["Workbook", "WordDocument"]), _PPT),
         (_cfb(streams=["__properties_version1.0"]), "application/msword"),
+        (_cfb(streams=["__properties_version1.0"]), "application/vnd.ms-outlook"),
         (_cfb(streams=["WordDocument"], far=True, difat_loop=True), ""),
         (_cfb(streams=["Current User", "WordDocument"], last_right=2), ""),
         (_cfb(streams=["WordDocument"], last_right=40), ""),
@@ -652,6 +655,7 @@ def test_a_compound_file_is_read_from_bytes_and_from_a_map(
         "broken-far-chain",
         "two-subtypes",
         "outlook-as-word",
+        "outlook-declared",
         "difat-cycle",
         "sibling-cycle",
         "sibling-out-of-range",

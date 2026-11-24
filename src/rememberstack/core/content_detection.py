@@ -758,10 +758,12 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
         ):
             raise ContentDetectionError(code="content_type_mismatch")
         return "text/markdown" if declared in _TEXT_HINTS else "text/plain"
+    if detected == "application/x-ole-office":
+        # Its root streams named no Word, Excel or PowerPoint document (or
+        # more than one); no declaration decides what the bytes do not.
+        raise ContentDetectionError(code="ambiguous_office_format")
     detected_class = (
-        "office"
-        if detected in _OFFICE_MIMES or detected == "application/x-ole-office"
-        else detected.split("/", 1)[0]
+        "office" if detected in _OFFICE_MIMES else detected.split("/", 1)[0]
     )
     declared_class = (
         "office"
@@ -790,8 +792,4 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
         and declared != detected
     ):
         raise ContentDetectionError(code="content_type_mismatch")
-    if detected == "application/x-ole-office":
-        # Its root streams named no Word, Excel or PowerPoint document (or
-        # more than one); a declaration does not decide what the bytes do not.
-        raise ContentDetectionError(code="ambiguous_office_format")
     return detected
