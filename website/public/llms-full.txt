@@ -9621,8 +9621,9 @@ logged at WARNING. Every such record carries a stable code in `error_code`,
 for example `worker_item_failed` or `graph_query_failed`. A code starts with
 a lowercase letter, then lowercase letters, digits and underscores, 3 to 64
 characters in all, and stays the same across releases; a renamed or removed
-code is listed in the changelog. Worker, live graph and metering records
-use a fixed message, with identifiers such as `processing_id`, `stage`,
+code is listed in the changelog. The worker runner's records (item
+failures, retries and leases), live graph records and metering records use a
+fixed message, with identifiers such as `processing_id`, `stage`,
 `attempt` or `sqlstate` as separate fields on the record. Other parts of the
 engine, such as the query sandbox, are being brought under the same rules.
 
@@ -9630,8 +9631,9 @@ A worker item's failure, a model provider failure on a request and a live
 graph query failure can carry your content in their text: a provider's error
 can quote the request, and a database error can quote a query's values.
 Those records hold only the exception's type, in `exception_type`, and no
-traceback; so do a failed worker finalizer and a failed usage write. An MCP
-tool failure keeps the exception and its traceback.
+traceback; so do the worker's `worker_finalizer_failed` and
+`provider_usage_unrecorded` records. An MCP tool failure keeps the exception
+and its traceback.
 
 The main places the engine logs:
 
@@ -9673,9 +9675,10 @@ Events are stripped to metadata before they leave the process: the
 exception type and stack trace stay; the exception message is replaced by
 `[redacted]`; request bodies, breadcrumbs, local variables, user data and
 extras are removed. Because extras are removed, the `error_code` is not on
-the event. A failed worker item is reported once, with the tags `stage`,
-`lane` and `processing_id`, which you can look up with
-`remember ops inspect`. The adapter forwards no log records from the worker
+the event. Each failed worker attempt, including one that will be retried,
+is reported with the tags `stage`, `lane` and `processing_id`;
+`remember ops inspect` lists a sample of dead-lettered items by
+`processing_id`. The adapter forwards no log records from the worker
 loop itself (`rememberstack.workers.base`): an expired lease, a failed
 finalizer, or an item that failed after its worker lost the lease. ERROR
 records from other engine loggers reach it. Collect the worker loop's records
