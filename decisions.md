@@ -605,11 +605,6 @@ claim-verifiability golden set (D25 — junk-control moved to in-call Selection,
 
 ## D23. Registry scale & schema
 
-> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** The evidence-once keys of `relation_evidence` and
-> `observation_evidence` include `testimony_episode`: (`relation_id`, `claim_id`,
-> `testimony_episode`), so a restored claim can link to the same surviving fact again while only
-> its current episode's link counts.
-
 **D153 amendment (2026-11-12).** UUIDs are opaque read coordinates; current
 writers mint UUIDv4 and supply no ID-derived partition timestamp. The UUIDv7
 pruning promise in PostgreSQL schema §12 is replaced by explicit linear
@@ -1856,12 +1851,6 @@ coordinate is persisted on occurrence records and currency transitions.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
 
-> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** Identical bytes are still stored and converted (paid for)
-> once, but every reading belongs to one version: another lineage's version reuses a conversion
-> by copying its lineage-independent output into its own representation and rendering
-> lineage-specific fields (a file card's name) for itself, so forgetting one lineage never
-> removes another's reading or leaves its names behind. Reuse may draw on archived versions, never on tombstoned ones.
-
 > **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Lineages remain stable source
 > identities and P3 serves the completed current version. A P3 folder path may
 > move on type/topic/title or shard changes: store `doc_id` and resolve its applied
@@ -1881,9 +1870,7 @@ coordinate is persisted on occurrence records and currency transitions.
 
 > **Refined by [D135](#d135-a-caller-can-delete-a-document-soft-lineage-grain-finish-or-refuse)
 > (2026-09-23).** Lineage deletion (operator or source-observed) now tombstones every version
-> with the lineage. (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: archive no longer tombstones; identical bytes re-sent to an
-> archived lineage are a no-op that leaves it archived, and a forgotten lineage is refused by
-> the re-ingest guard.) The identical-byte no-op below therefore never matches a deleted version:
+> with the lineage. The identical-byte no-op below therefore never matches a deleted version:
 > bytes that return after a deletion become a new version and are processed afresh, and D56
 > reuse never draws on a deleted version. "Resurrecting" a tombstoned lineage still revives the
 > lineage identity, not its retired testimony. Everything else here remains binding.
@@ -1949,12 +1936,6 @@ denormalized. Refines D37 (identity) and enriches D41 (per-version assertion tim
 identity rules per source kind are a named spike.
 
 ## D56. Content-addressed reuse — the cost of a new version is proportional to the edit
-
-> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** Identical bytes are still stored and converted (paid for)
-> once, but every reading belongs to one version: another lineage's version reuses a conversion
-> by copying its lineage-independent output into its own representation and rendering
-> lineage-specific fields (a file card's name) for itself, so forgetting one lineage never
-> removes another's reading or leaves its names behind. Reuse may draw on archived versions, never on tombstoned ones.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
 > chunk's **text origin time**, recorded once when the chunk is created: the text origin
@@ -2284,11 +2265,6 @@ inside the PostgreSQL transaction, not through a separate adapter. Every
 serving readiness pass re-honors every manifest; local completion is progress,
 never permission to skip a separately restored store or database.
 
-> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** `ForgetManifestPort`, the dedicated manifest root/store
-> in the port table row above, and the readiness re-honor are removed: forget records live in
-> PostgreSQL and `remember ops forget-reapply` runs after a restore. The object, corpus and K
-> purge capabilities stay (the corpus port gains mount-session invalidation).
-
 ---
 
 > **D62 provenance.** D62 formalizes the packaging/distribution brainstorm (July 2026, user +
@@ -2329,8 +2305,8 @@ adapters/llm/workers/surfaces/eval/profiles`; core is pure and infra-free; SQL o
 `spine/`; vendor SDKs only in `adapters/`; **import-linter contracts fail CI on illegal
 imports** (architecture erosion fails loudly); profiles are explicit composition roots — no DI
 framework. **Portability rides rebuild-first (D7, refined by D75)**: portable state = Postgres +
-raw/artifact objects + the K repo (**D159**: there is no manifest root); native operator tools
-move the authoritative stores, the operator runs `remember ops forget-reapply` before serving, and projections rebuild
+raw/artifact objects + the K repo + the separately durable D74 manifest root; native operator tools
+move the authoritative stores, readiness re-honors deletion before serving, and projections rebuild
 after restore — the cloud↔self-host migration path in both directions without a transport subsystem.
 
 **Context.** Fills D60's deliverable and D61's profile mechanics. Redis/arq was considered for
@@ -2978,14 +2954,6 @@ D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
-> **Superseded by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).**
-> Removed: the portable manifest port and its separate store, the deployment-wide admission
-> barrier and drain, the preparing/accepted acceptance cut, the startup readiness replay, the
-> refusal while authored pages cite the document, and the permanent ingest guard. Still
-> binding through the [archive and forget design](plan/designs/archive_and_forget_design.md):
-> the S55 contract, the erasure inventory and purge steps, independent-support survival, and
-> the conservative K history rule. The text below is history.
-
 > **P3 stage amended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Under the same portable intent and
 > fail-closed/drain barrier, erase only the document's deterministic-suffix folders
 > and controlled serving copies, then regenerate indexes from scrubbed DB authority.
@@ -3048,11 +3016,6 @@ library does not transport stores. S55 activates only when WP-7.5's deterministi
 restore canary is green; design resolution alone does not pretend the runtime contract is shipped.
 
 ## D75. Portability is a state-and-ordering contract; operators move bytes (refines D60, D62, D74)
-
-> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** There is no hard-forget manifest root to transfer
-> first and no readiness replay: every clause below about transferring or verifying the
-> manifest root and running the hard-forget readiness pass is history. A restore ends with
-> `remember ops forget-reapply --from` the latest full export of forget records before traffic. The state-and-ordering contract for the other stores stands.
 
 **Decision.** The OSS library defines which deployment state is authoritative and the only safe
 restore order; it does not implement `remember export` / `remember import`, a universal archive
@@ -6203,7 +6166,7 @@ evidence; a second projection duplicates navigation and deletion responsibilitie
 **Consequences.** Retained unsupported files occupy storage and one parked work row;
 conversion creates no usage merely by waiting. Projection adds latest-version and
 work-state reads. Managed admission/classification remain authoritative, and
-unaccepted staged bytes are not advertised as raw objects. D51/D116 read-only mounts and backend audit semantics, D74 purge (its barriers removed by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)), D55 currency and existing snapshot freshness remain
+unaccepted staged bytes are not advertised as raw objects. D51/D116 read-only mounts and backend audit semantics, D74 barriers and purge, D55 currency and existing snapshot freshness remain
 binding. This is engine behavior, not evidence of production SeaweedFS provisioning
 or changed cloud billing policy.
 
@@ -6838,14 +6801,6 @@ are what sources declare, not verified facts.
 
 ## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
 
-> **Superseded by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** The public delete surface (`DELETE /documents/{doc_id}`,
-> `MemoryClient.delete_document`, `remember documents delete`, the `delete_document` MCP tool)
-> is removed with no deprecation period. Its lineage cascade, episode identity,
-> finish-or-refuse rerun and in-flight retirement at reconcile survive as archive's cascade
-> and forget's first step. The no-reuse rule narrows to tombstoned versions: archived
-> versions are reuse candidates, and reused claims start a new testimony episode. Re-sent identical bytes now
-> leave an archived document archived instead of re-adding it. The D74 fence clauses are gone.
-
 **Note (D133, withdrawn by D138).** D133 briefly extended this entry to container members; D138
 removed container expansion, so deletion stays exactly as written here.
 
@@ -6948,8 +6903,7 @@ chose between deployment and control tokens against a hard-coded
 **Decision.**
 1. **One catalogue.** `remember.mcp_tools` is the public, versioned module
    that defines every memory tool (`ingest`, `pipeline_readiness`,
-   `delete_document` (**replaced by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: `archive_document`, `unarchive_document`,
-   `forget_document`), the four assured operations, `source_open`, the seven SQL tools):
+   `delete_document`, the four assured operations, `source_open`, the seven SQL tools):
    names, descriptions, input schemas, validation, error envelopes, required
    permission, and a per-tool version. Every MCP host imports it; the engine
    registry generates `GET /operations`' agent-facing fields from it; each
@@ -7647,7 +7601,6 @@ fact child).
 > **Extended by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Corpus publication is engine-owned work
 > invoked through the same explicit context, `run_task` and delivery collector.
 > D74's per-document corpus erasure/replay uses the separately durable manifest store.
-> (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: no manifest store or replay; forget's corpus step and `remember ops forget-reapply`.)
 > No hosted scheduler or correctness authority is added to this repository.
 
 **Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c). Merged
@@ -7697,8 +7650,7 @@ deployment's values into another's work.
    `app.dependency_overrides[deployment_context] = resolve` and returns each request's
    own `ApiDeployment` (`SelfHostProfile.api_deployment()`). The D74 admission barrier
    uses the same per-request deployment, and so does the perimeter (item 5). Only the
-   startup readiness check stays composed per app. (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: the admission barrier and the
-   startup readiness check are removed; the perimeter clause stands.)
+   startup readiness check stays composed per app.
 
 4. **What a push-delivery host needs on top (2026-11-06, relaunch designs).**
    - *New work is announced through the context's queue.* Every work row is inserted by
@@ -7765,13 +7717,9 @@ deployment's values into another's work.
      memory. Bytes in memory keep the previous behaviour exactly. D74 admission, MIME
      validation, versioning and D55 deduplication are exactly those of `ingest`. The raw
      object stays at `key`, which becomes the version's raw object; the engine neither
-     copies nor moves it. (**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: there is no D74 admission; the re-ingest guard applies
-     instead. A deliberate re-add of a forgotten lineage copies the upload into its
-     generation prefix and deletes the upload rather than keeping the key.) `key` must be `uploads/<id>` with an opaque id of 16–128
+     copies nor moves it. `key` must be `uploads/<id>` with an opaque id of 16–128
      characters from `[A-Za-z0-9_-]`, because hard forget purges a version's raw key in
-     every store and its manifests are immutable (**D159**: the reason is now that object keys
-     must be opaque, carrying no caller text, since a forget record stores content-free
-     locators). Each content keeps one raw object, the
+     every store and its manifests are immutable. Each content keeps one raw object, the
      first one recorded, and only that one is purged by hard forget; so when identical
      bytes are already stored under another key, that version answers and every ingest
      path (`ingest`, `ingest_observed`, `ingest_stored`) deletes the copy it wrote or was
@@ -7789,8 +7737,7 @@ deployment's values into another's work.
      match, and the uploader chooses the storage class (D51 routing is not applied). A
      metered deployment measures the version in the convert stage, as for every ingest
      path (D150); registration itself measures nothing.
-   - *No deployment state on local disk.* (**Withdrawn by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: forget records live in
-     PostgreSQL and this setting is removed.) `SelfHostSettings.forget_manifest_bucket_name`
+   - *No deployment state on local disk.* `SelfHostSettings.forget_manifest_bucket_name`
      keeps D74 hard-forget manifests as immutable objects in that dedicated bucket
      (`ObjectStoreForgetManifestStore`, same contract as the local root) instead of
      `forget_manifest_root`. The bucket must not be one of the ordinary data buckets, so
@@ -7812,7 +7759,7 @@ deployment's values into another's work.
    included routers, returns the deployment that was authenticated. It then authenticates
    against that deployment, admits under its limits, and the spend
    lease middleware uses its lease. Without an override the composed deployment applies,
-   exactly as before. Routes, the D74 barrier (removed by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)), the scope check, ingest attribution and
+   exactly as before. Routes, the D74 barrier, the scope check, ingest attribution and
    open-query principal forwarding all read the same resolved deployment, and every route
    is built held so per-request admission keeps its slot accounting.
    `install_browser_origins(app=…, origins=…)` is public for a host composing its own app.
@@ -8060,8 +8007,6 @@ against the new identities; unchanged profiles are not a prerequisite. Keep
 same-name distinct referents possible. No provider call holds a database lock,
 no global serial worker requirement is introduced, and no retry/DLQ failure is
 hidden. Hard forget's ordinary-work drain and active barrier remain mandatory.
-(**Superseded by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: there is no global drain or barrier; identity commits re-check their
-input versions under the per-document forget fence.)
 
 **Rationale and tradeoff.** Broad snapshot equality made normal enrichment
 invalidate paid decisions and caused observed retries/DLQ under parallel
@@ -8108,7 +8053,6 @@ retained. The provider boundary and closed content-free engine records are
 specified in the design, including native filesystem identity distinctions.
 The provider captures a nonempty exact same-organisation/cell filesystem set;
 the managed adapter independently keeps its four distinct role binding.
-(**[D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)**: three roles, raw, artifacts and corpus; the forget-record role is gone with its store.)
 
 **Alternatives.** Counter sums conflate canonical, staged and replicated data;
 processing sequence prefixes admit uncommitted holes; row-byte estimates change
@@ -8267,12 +8211,6 @@ validation for `max_rows`. Does **not** amend the cost-export feed contract
 
 ## D155. The corpus filesystem is a mutable tree of document folders
 
-> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-23).** Per-document suffix erasure stays and is forget's
-> corpus step. Removed: the D74 admission/drain barrier around it, the restore replay of every
-> manifest, and stopping controlled sessions or remounting operator mounts. Controlled
-> sessions receive a path invalidation and keep running; operator FUSE mounts follow their
-> bounded cache. Archived documents leave the tree as deleted ones did.
-
 **Status:** accepted design (owner direction and reviewer dispositions 2026-11-13);
 implementation is separate. **Date:** 2026-11-13. D154 is reserved for pagination PR #589.
 
@@ -8374,7 +8312,7 @@ There are no users requiring migration, aliases or a transition layout.
   remnants, and clear `corpus_paths`. An empty set never skips the full scan. Never wipe the corpus or recopy surviving originals/media. The existing
   `doc_id` suffices in immutable intent; no historic friendly paths are needed.
   Re-honor even completed manifests on independent restores; object-version purge
-  requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-forget-erase-the-document-regenerate-indexes).
+  requirements are stated in [E0 §6.7](plan/designs/e0_files_design.md#67-hard-forget-and-restore-erase-the-document-regenerate-indexes).
 
 **Rationale and alternatives.** A copied original makes each folder self-contained;
 a single completed reading avoids pairing v2 bytes with v1 text. Recomputing from
@@ -8519,74 +8457,48 @@ and do not become PostgreSQL 18 qualification evidence.
 **Rejected.** Remaining on 19 for a removed feature, supporting two server
 majors, adding compatibility shims, or opening a PG19 data directory on 18.
 
+## D158. Engine failures are raised or logged at ERROR with a stable code; delivery is the operator's
 
-## D159. Archive and forget replace delete; forget erases one document without stopping the deployment
+**Decision (2026-11-23, owner requirements; proposed until review).** The
+engine's only obligation is a contract: an unexpected failure is raised to
+the host, or, when the engine turns it into an outcome, logged once at ERROR
+through standard Python `logging` on a `rememberstack.*` logger, with a
+stable `error_code` in `extra`. It is never
+hidden behind `pass`, a counter or a bare return value. Expected outcomes
+(retries, disclosed boundaries, parks) log at WARNING with a code.
 
-**Decision (2026-11-23, owner).** A caller has exactly two ways to remove a document's
-contribution, both on the API, SDK, CLI and MCP:
+The engine owns **no delivery**: no tracker sinks, queues, exit drains or
+detail switch. Operators attach Sentry (its logging integration; the
+existing `REMEMBERSTACK_SENTRY_DSN` adapter stays unchanged), PostHog (a
+short handler calling its SDK) or OpenTelemetry (its logging handler or
+zero-code agent). The engine docs show each in a few lines.
 
-- **Archive** — "this no longer holds". The existing lineage cascade runs (testimony ends,
-  facts only the document supported close with `retracted_source_removal`), but the
-  document and its stored original stay readable as history, hidden from default reads and
-  returned with `include_archived=true`. Identical bytes re-sent leave it archived; `unarchive`
-  restores its newest surviving version and a changed version brings it back too. Restored claims start
-  a new testimony episode (old fact links stay as history; closed facts stay closed), and D56
-  reuse may draw on archived versions, so neither path re-reads unchanged text. A connector that observes a source deletion
-  archives.
-- **Forget** — "this should not be here". The request hides the document at once (the
-  lineage cascade plus the tombstone every read filters) and records the forget; one
-  background work item then erases it from PostgreSQL, object storage, the corpus filesystem
-  (including open mount sessions, without stopping them) and the knowledge plane, and
-  verifies. Only the forgotten document is fenced; the rest of the deployment keeps serving
-  and processing. Authored pages and curation sidecars that still cite the document are the
-  one thing that waits: everything else is erased and verified, those pages get a redaction
-  flag, and the forget completes when their owner's edit removes the citation.
+One CI rule checks that every `except` catching a failure class raises,
+logs at ERROR with a code, or carries an explicit `# error-contract:`
+comment.
 
-The forget record is one content-free PostgreSQL row (`forgets`). It drives the job, the
-re-ingest guard and verification; there is no second store and nothing runs at start. Ingest
-of forgotten content is refused with `document_forgotten` unless that one request sets
-`allow_forgotten=true`, which ingests it as an ordinary ingest would and, on commit, deletes
-only the record whose lineage identity matches the request; other forgets of the same bytes
-keep guarding. There is no deployment-wide setting. After restoring a backup the operator runs `remember ops
-forget-reapply --from` the latest full export of forget records before the deployment takes
-traffic. Ingest and forget share content-hash and source-identity locks, so
-nothing can register forgotten content mid-check. Forget keeps the existing cascades for
-exclusively owned children, deletes logically referenced rows explicitly, and a
-schema-coverage test classifies every column that references document data.
+**Why.** Python logging is the one interface every error tool reads. Seven
+review rounds of an engine-owned delivery design kept finding drain,
+exporter, scope and exit-ordering defects in code the engine doesn't need
+to own. Nightly storage capture failed silently for days because a
+per-scope result was `None`. The audit found more sites that hide failures,
+and 18 ERROR logs without a code.
 
-**Why.** D135's delete was neither archive (it hid the document from reads) nor erasure (it
-kept every byte). D74's erasure was correct but disproportionate: a deployment-wide outage
-per forget, a refusal while authored pages cite the document, a replay of every forget on
-every start, a separate store whose loss stops the deployment, and a permanent ingest guard.
-All of it served restore non-resurrection without a restore signal; a restore is a rare,
-deliberate operator action, and remember.dev keeps no database backups.
+**Consequences.**
 
-**Supersedes.** D135 (the public delete surface is removed outright, pre-launch, with no
-deprecation; its lineage cascade, episode identity and in-flight retirement survive as
-archive's cascade and forget's first step). D74 (the manifest port and store, the global
-admission barrier and drain, the preparing/accepted acceptance cut, the readiness replay,
-the authored-page refusal and the permanent ingest guard; its erasure inventory, purge
-steps, K history rule and S55 contract survive in the new design). D75's manifest-root
-transfer duty. D147's `forget_manifest_bucket_name` setting. D155's forget barrier,
-restore replay and stop-and-remount clauses (its per-document suffix erasure survives).
+- The audit (analysis §5) is the implementation backlog.
+- The boundaries log with codes: workers, MCP, the sandbox, the live
+  graph, metering and storage capture.
+- Unhandled exceptions propagate to the host.
+- The sandbox logs every failure that becomes a query result, once, on
+  its original cause and without exception text, unless the cause is a
+  budget timeout after the deadline.
+- Codes become part of the public surface; renaming one is a changelog
+  entry.
 
-**Rejected.** Keeping delete beside archive and forget; archive as a tag or a read-time
-filter; back-dated or scheduled archive; reopening facts on un-archive; reprocessing an
-un-archived document in full; keeping the global
-barrier; a separate record store with on-demand replay; a permanent guard, no guard, or a
-deployment-wide re-ingest switch; machine redaction of authored prose; `VACUUM FULL` after
-each forget.
+**Analysis.** [Error reporting contract](plan/analysis/error_reporting_contract_analysis.md).
+**Design.** [Error reporting contract](plan/designs/error_reporting_contract_design.md).
 
-**Consequences.** Rule 4: D135's "reuse never draws on a deleted version" becomes "never on a
-forgotten version"; un-archive and a changed version of an archived document reuse unchanged
-embeddings and Selection/Claimify results, and reused claims become current again through a
-`version_restored` transition and fact application (closed facts are never reopened). No reuse
-key changes. PostgreSQL erasure is logical (no snapshot taken after the commit returns the
-content); physical row versions are not securely overwritten, and the public docs say so.
-Controlled mount sessions drop the paths without restarting (the cloud repository implements
-the adapter); operator FUSE mounts follow their bounded caches. With no forget store, D152's
-managed storage-capture binding has three role filesystems (raw, artifacts, corpus) instead of
-four; the cloud capture adapter changes with it.
-
-**Design.** [Archive and forget](plan/designs/archive_and_forget_design.md).
-**Analysis.** [Archive and forget](plan/analysis/archive_and_forget.md).
+**Rejected.** Engine-owned delivery (report builder, sinks, drains,
+detail switch); vendor SDKs per tracker; extending `TelemetryPort` to
+every failure; a central code registry.

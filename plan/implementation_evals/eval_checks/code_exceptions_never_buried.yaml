@@ -5,31 +5,41 @@ description: Exceptions are never buried or trimmed — failures stay visible (f
 tags: [code, core-values]
 instructions: |
   You are judging whether this repository's IMPLEMENTATION honors a binding rule.
-  Read implementation_core_values.md (repo root), value 6 — the binding source — then
+  Read implementation_core_values.md (repo root), value 6 — the binding source, as refined
+  by D158 (decisions.md; plan/designs/error_reporting_contract_design.md) — then
   inspect the Python source under the package (production code; test files are exempt from
   these rules where they intentionally provoke exceptions, e.g. pytest.raises).
 
   The governing invariant: every exception either propagates, or is handled so the failure
   stays VISIBLE — full traceback logged, the failure recorded where the system tracks
-  failures, and the caller seeing a failure. Continuing past a CONTAINED failure is correct
+  failures, and the caller seeing a failure. D158's two refinements apply to EVERY rule
+  below: (a) a degraded outcome is visible through one ERROR log with a stable
+  `error_code`, and need not also appear in the unit's result; (b) where exception text can
+  carry customer input (the query sandbox), the record omits `exc_info` and carries
+  `exception_type`, `sqlstate` and a fixed message instead of the traceback text. Continuing past a CONTAINED failure is correct
   behavior (a batch worker skipping a poison item and dead-lettering it must score 1, not 0).
   What fails this check is a failure DISAPPEARING.
 
   Verify ALL of the following over the production source:
   1. No silent swallows: no bare `except:` or `except Exception:` whose body discards the
-     error (`pass`, `continue`, bare `return`) without logging the full traceback AND
-     recording the failure.
+     error (`pass`, `continue`, bare `return`) without logging the failure (full traceback,
+     or under refinement (b) the coded record without it) AND recording it (a coded ERROR
+     log counts under refinement (a)).
   2. No trimmed tracebacks: no handler whose only trace of the error is a message string
-     (f-string with `{e}`, `str(e)`, `repr(e)` into a plain log call). Boundary handlers use
-     `logger.exception(...)` (or `traceback.print_exc()` where no logging is configured) so
-     the complete traceback is emitted.
+     (f-string with `{e}`, `str(e)`, `repr(e)` into a plain log call). Exception (D158
+     Rule 4): where exception text can carry customer input (the query sandbox), the
+     record omits `exc_info` and carries `exception_type`, `sqlstate` and a fixed message.
+     Otherwise boundary handlers use `logger.exception(...)` (or `traceback.print_exc()`
+     where no logging is configured) so the complete traceback is emitted.
   3. Chains preserved: re-wrapping uses `raise NewError(...) from err` — no re-raise sites
      that discard the original cause.
   4. No fabricated success values: no handler that converts a failure into a value
      indistinguishable from success for the caller (returning [], {}, None-as-data, or a
-     default object on error without any failure signal). Contained per-item failures must
-     leave a record (failed status / processing state / dead letter) and be visible in the
-     unit's result.
+     default object on error without any failure signal). Under D158 a degraded outcome
+     (a fallback, a skipped item) is acceptable when the failure is logged once at ERROR
+     with a stable `error_code`; that log record is the failure signal. Other contained
+     per-item failures leave a record (failed status / processing state / dead letter) and
+     are visible in the unit's result.
   5. Catch-to-log lives at explicit boundaries only (worker/CLI top level; per-item
      boundaries in batch loops) — not layered catch-log-reraise that would report one
      failure many times.
