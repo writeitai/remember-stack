@@ -9,6 +9,7 @@ export type Permission = 'memory:read' | 'memory:write';
 export const INGEST_TOOL_NAME='ingest';
 export const PIPELINE_READINESS_TOOL_NAME='pipeline_readiness';
 export const DELETE_DOCUMENT_TOOL_NAME='delete_document';
+export const FORGET_DOCUMENT_TOOL_NAME='forget_document';
 export const SEARCH_DOCUMENTS_TOOL_NAME='search_documents';
 export const ADJACENT_CHUNKS_TOOL_NAME='adjacent_chunks';
 export const SECTION_HISTORY_TOOL_NAME='section_history';
@@ -125,6 +126,10 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
       return {version_ids:(args.version_ids as unknown[]).map(value=>uuid({value,field:'version_id'})),require:validateModel({name:'ReadinessRequirements',value:args.require})};
     }
     if(name==='delete_document')return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};
+    if(name===FORGET_DOCUMENT_TOOL_NAME) {
+      if(args.confirm!==true)throw new ToolArgumentError({error:new ToolError({code:'confirmation_required',detail:'forget_document needs confirm=true; nothing was forgotten.',status_code:null,retryable:false,agent_action:'Ask the user to confirm that this document is to be forgotten for good, then call again with confirm=true.'})});
+      return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};
+    }
     if(name==='adjacent_chunks') {
       const window=args.window??1;if(!Number.isInteger(window)||(window as number)<1||(window as number)>2)refuse({detail:'window must be an integer (1 or 2).'});
       return {chunk_id:uuid({value:args.chunk_id,field:'chunk_id'}),window};
@@ -187,6 +192,7 @@ async function parseIngest({args,pathResolver,maxBodyBytes}:{args:Record<string,
     if(args.effective_until!=null)effective_until=utcTimestamp({value:args.effective_until as string,field:'effective_until'});}
   catch(error) {refuse({detail:(error as Error).message});}
   const tags=tagList({args,key:'tags'})??[];
+  const allow_forgotten='allow_forgotten' in args?args.allow_forgotten:false;if(typeof allow_forgotten!=='boolean')refuse({detail:'allow_forgotten must be a boolean.'});
   if((source_kind===null)!==(source_ref===null)||(source_kind===null&&(source_modified_at!==null||source_version_ref!==null||versioning_mode!=='snapshot'||version_key!==null||effective_from!==null||effective_until!==null)))throw new ToolArgumentError({error:new ToolError({code:'source_lineage_pair',detail:'source_kind and source_ref must be supplied together with lineage fields.',status_code:null,retryable:false,agent_action:'Send both source_kind and source_ref, or neither.'})});
   if(effective_until!==null&&effective_from===null)refuse({detail:'effective_until requires effective_from.'});
   if(effective_from!==null) {
@@ -212,5 +218,5 @@ async function parseIngest({args,pathResolver,maxBodyBytes}:{args:Record<string,
     const inferred=inferUploadMime({filename});body={content,filename,mime:mime??(text!==null&&!inferred.startsWith('text/')?'text/plain':inferred)};
   }
   bodySize({content:body.content,maxBodyBytes});
-  return {...body,title:title||null,source_kind,source_ref,source_modified_at,versioning_mode,source_version_ref,version_key,effective_from,effective_until,tags};
+  return {...body,title:title||null,source_kind,source_ref,source_modified_at,versioning_mode,source_version_ref,version_key,effective_from,effective_until,tags,allow_forgotten};
 }

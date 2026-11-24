@@ -5,8 +5,8 @@ import {readFileSync} from 'node:fs';
 import {memoryTools,renderToolsList,validateArguments,ToolArgumentError,ToolError,mapError,errorResult,NumericPrecisionError,RequestTimeoutError,AbortError,InputValidationError,MemoryApiError,modelDump} from '../.test-build/internal.js';
 const source=JSON.parse(readFileSync(new URL('../contracts/catalogue.json',import.meta.url)));
 
-test('all twenty-three definitions preserve metadata, schemas and rendering behavior',()=>{
-  const tools=memoryTools();assert.equal(tools.length,23);
+test('all twenty-four definitions preserve metadata, schemas and rendering behavior',()=>{
+  const tools=memoryTools();assert.equal(tools.length,24);
   assert.deepEqual(tools.map(t=>({name:t.name,description:t.description,permission:t.permission,tool_version:t.toolVersion,http_route:t.httpRoute,input_schema:t.inputSchema,destructive:t.destructive,annotations:t.annotations})),source.tools);
   const listed=renderToolsList({readOnly:true,project:true});
   assert.equal(listed.length,17);

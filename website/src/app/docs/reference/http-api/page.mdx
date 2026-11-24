@@ -17,7 +17,7 @@ The API has 40 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
+| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `POST /documents/{doc_id}/forget`, `GET /forgets`, `GET /forgets/{forget_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
 | Sections and references | [Section history and references](/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
@@ -226,7 +226,7 @@ A failed request returns a non-2xx status and a JSON body with a single
 | Form | Example | Where |
 |---|---|---|
 | Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph<Cloud>, spend</Cloud>. |
-| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` | `409` when an ingest names forgotten content. |
+| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` | `409` when an ingest names forgotten content (`document_forgotten`, `forget_not_complete`). |
 | Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
 
@@ -355,7 +355,8 @@ or references, so repeating one with the same body changes nothing.
 `DELETE /documents/{doc_id}/effective-periods` repeated finds nothing left
 to withdraw. `POST /documents/{doc_id}/tags` repeated with the same body
 leaves the same tags, and `PATCH /tags/{tag_id}` repeated leaves the same
-tag. `POST /tags` repeated is refused with `409` `conflict`, and
+tag. `POST /documents/{doc_id}/forget` repeated answers `200` with the same
+forget record. `POST /tags` repeated is refused with `409` `conflict`, and
 `DELETE /tags/{tag_id}` repeated with `404` `unknown_tag`: in both cases the
 first call already did the work. Every other route except
 `DELETE /documents/{doc_id}` only reads, so repeating it is safe.

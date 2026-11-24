@@ -25,6 +25,7 @@ from remember.retrieval import MAX_CONTEXT_K
 INGEST_TOOL_NAME: Final = "ingest"
 PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
+FORGET_DOCUMENT_TOOL_NAME: Final = "forget_document"
 SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
 ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 SECTION_HISTORY_TOOL_NAME: Final = "section_history"
@@ -170,6 +171,10 @@ _INGEST_DESCRIPTION: Final = (
     " tags adds registered tags (see list_tags) to the document; ingest never"
     " removes a tag, and an unregistered tag refuses the ingest with"
     " unknown_tag before anything is stored."
+    " A document_forgotten error means this content belongs to a document"
+    " that was forgotten on purpose: tell the user and do not retry. Set"
+    " allow_forgotten=true only after the user confirms they want that"
+    " content added back; it is then stored under a new doc_id."
     ' If the result has parked="no_route", the original is stored but its'
     " conversion is parked waiting for a conversion route for its MIME type."
     " Tell the user now instead of polling readiness."
@@ -329,6 +334,23 @@ _DELETE_DOCUMENT_DESCRIPTION: Final = (
     " adds it back as a new version. Returns claims_retired, relations_closed and"
     " observations_closed. A document_not_found error means the id is unknown or"
     " the document is already deleted: do not retry it."
+)
+
+_FORGET_DOCUMENT_DESCRIPTION: Final = (
+    "Forget one document: erase it and everything derived only from it, for"
+    " good. Use only when the user asks to forget or erase a specific document"
+    " (it should never have been stored, or must not be kept). Before calling,"
+    " confirm with the user, naming the document; then pass confirm=true."
+    " Never use it to tidy up or to correct a fact (ingest a correcting"
+    " document instead). Takes the doc_id that ingest returned or that a claim"
+    " or source cites. The effect is immediate: the document leaves every"
+    " search, fact, list and SQL result and its doc_id answers as unknown."
+    " Copies derived from it are then erased in the background; facts other"
+    " documents also support stay, reworded from what survives. There is no"
+    " undo. Returns the forget record: forget_id, doc_id, status (erasing,"
+    " waiting_for_redaction while an authored knowledge page still cites it,"
+    " then complete) and requested_at. A document_not_found error means the"
+    " id is unknown or the document is already gone: do not retry it."
 )
 
 _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
@@ -710,6 +732,26 @@ _DELETE_DOCUMENT_INPUT_SCHEMA: Final[dict[str, object]] = {
     },
 }
 
+_FORGET_DOCUMENT_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["doc_id", "confirm"],
+    "properties": {
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id), as ingest returned it.",
+        },
+        "confirm": {
+            "const": True,
+            "description": (
+                "Must be true: set it only after the user confirmed that this"
+                " document is to be forgotten."
+            ),
+        },
+    },
+}
+
 _PIPELINE_READINESS_INPUT_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
     "additionalProperties": False,
@@ -877,6 +919,15 @@ _INGEST_PROPERTIES: Final[dict[str, object]] = {
             " Call list_tags to see which exist."
         ),
     },
+    "allow_forgotten": {
+        "type": "boolean",
+        "default": False,
+        "description": (
+            "Add back content of a forgotten document. Set it only after the"
+            " user confirms; without it such content is refused with"
+            " document_forgotten."
+        ),
+    },
 }
 _INGEST_BODY_SOURCES: Final = ("path", "text", "content_base64")
 
@@ -1004,7 +1055,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_INGEST_DESCRIPTION,
         input_schema=_INGEST_INPUT_SCHEMA,
         permission="memory:write",
-        tool_version=3,
+        tool_version=4,
         http_route="POST /ingest",
     ),
     ToolDefinition(
@@ -1022,6 +1073,15 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         permission="memory:write",
         tool_version=1,
         http_route="DELETE /documents/{doc_id}",
+        destructive=True,
+    ),
+    ToolDefinition(
+        name=FORGET_DOCUMENT_TOOL_NAME,
+        description=_FORGET_DOCUMENT_DESCRIPTION,
+        input_schema=_FORGET_DOCUMENT_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="POST /documents/{doc_id}/forget",
         destructive=True,
     ),
     ToolDefinition(

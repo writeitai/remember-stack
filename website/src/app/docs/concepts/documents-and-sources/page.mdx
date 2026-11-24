@@ -270,8 +270,7 @@ deletes the draft. From then on:
 
 Deleting is not erasing. The claims, the stored original and the record of
 what changed stay in the deployment as history, which is why a deletion can
-be audited. Erasing a document's bytes and every trace of it is a separate,
-heavier operator operation that is not offered through the API.
+be audited. To erase a document, [forget](#forgetting-a-document) it.
 
 If you send the same file again later, it is added back as a new version and
 processed like a new document. The facts that were closed stay closed; its
@@ -282,6 +281,29 @@ when you deleted it publishes no further claims, and anything it had already
 produced is never visible and is retired when its version reaches the
 `reconcile` stage. Details and errors:
 [`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+## Forgetting a document
+
+Forgetting a document erases it, every version of it, and everything derived
+only from it, for good (`POST /documents/{doc_id}/forget`,
+`MemoryClient.forget_document`, `remember documents forget`, or the
+`forget_document` MCP tool). Use it for a document that should never have
+been stored, not to change what the memory believes.
+
+At once the document, its passages and claims are gone from every read, and
+its `doc_id` answers like one the deployment never held. A background job then
+erases its stored files, corpus folders and the compiled knowledge pages that
+cited it, which are rebuilt without it. A fact that only the document
+supported is deleted; a fact other documents also support stays, reworded
+from what survives. The forget record (IDs and progress, never text) follows
+the job: `erasing`, then `complete`, or `waiting_for_redaction` while a
+knowledge page someone wrote still cites the document.
+
+There is no undo. Sending the same bytes, or the same `source_kind` and
+`source_ref`, again is refused with `409` `document_forgotten`, and connectors
+skip the file. To add the content back on purpose, ingest it with
+`allow_forgotten`; it comes back as a new document with a new `doc_id`. See
+[`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-documentsdoc_idforget).
 
 ## Document statuses
 

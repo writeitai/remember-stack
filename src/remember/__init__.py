@@ -52,6 +52,8 @@ from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsSet
 from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
+from remember.models import Forget
+from remember.models import ForgetList
 from remember.models import IngestedVersion
 from remember.models import MatchingEdition
 from remember.models import NamedReferenceTarget
@@ -140,6 +142,8 @@ __all__ = (
     "EffectivePeriodsSet",
     "EffectiveTimeCleared",
     "Envelope",
+    "Forget",
+    "ForgetList",
     "IngestedVersion",
     "LayerUnavailable",
     "MemoryApiError",

@@ -117,6 +117,7 @@ def build_document(*, deployment_id: UUID | None = None) -> dict[str, Any]:
         references=_Unused(),  # type: ignore[arg-type]
         document_references=_Unused(),  # type: ignore[arg-type]
         deletion=_Unused(),  # type: ignore[arg-type]
+        forget=_Unused(),  # type: ignore[arg-type]
         effective_time=_Unused(),  # type: ignore[arg-type]
         tags=_Unused(),  # type: ignore[arg-type]
         graph=_Unused(),  # type: ignore[arg-type]

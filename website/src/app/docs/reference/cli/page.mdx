@@ -30,7 +30,8 @@ standalone tool; `uvx remember …` runs it without installing.
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
-| | [`documents`](#remember-documents) | List and search documents, delete one from the memory, or change its tags. |
+| | [`documents`](#remember-documents) | List and search documents, delete or forget one, or change its tags. |
+| | [`forget`](#remember-forget) | List forget records, or show one. |
 | | [`tags`](#remember-tags) | List, register, change and delete document tags. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
@@ -156,7 +157,7 @@ remember ingest FILE [--filename NAME] [--mime MIME] [--title TITLE]
                      [--source-version-ref REF]
                      [--version-key KEY]
                      [--effective-from ISO8601 [--effective-until ISO8601]]
-                     [--tag TAG]...
+                     [--tag TAG]... [--allow-forgotten]
                      [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
@@ -183,6 +184,7 @@ document; nothing is processed again.
 | `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
 | `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
 | `--tag` | none | A registered tag, by name or id, to add to the document. Repeat it for several. Ingest only adds tags; see [Tags](/docs/reference/http-api/ingest#tags). |
+| `--allow-forgotten` | off | Add back content of a [forgotten](#remember-forget) document. Without it such a file is refused (`error: API 409: …document_forgotten…`); with it, it is accepted once that forget is no longer erasing and comes back under a new `doc_id`. See [Adding forgotten content back](/docs/reference/http-api/ingest#adding-forgotten-content-back). |
 
 What a key and a period do: [Versions in force](/docs/reference/http-api/ingest#versions-in-force).
 
@@ -228,6 +230,7 @@ remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS
                           [--versions {current,all}] [--limit N] [--cursor CURSOR]
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents forget DOC_ID [--yes] [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID [--add TAG]... [--remove TAG]...
                               [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID --set TAG [--set TAG]...
@@ -282,6 +285,28 @@ does not exist, or is already deleted, prints
 remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
 ```
 
+`forget` erases one document, every version of it, and everything derived
+only from it, for good. It first asks for confirmation on the terminal; any
+answer but `y` or `yes` forgets nothing and exits with status 1, and `--yes`
+skips the question. It prints the forget record, in the shape of
+[`Forget`](/docs/reference/result-types#forget):
+
+```json
+{"forget_id":"…","doc_id":"…","status":"erasing","requested_at":"2026-11-24T10:41:07.318000Z","completed_at":null,"blocking_k_paths":[],"last_error":null}
+```
+
+The document is gone from every read at once; what was derived from it is
+erased in the background, which [`remember forget status`](#remember-forget)
+follows. There is no undo: the content can only be ingested again with
+`remember ingest --allow-forgotten`. A document that does not exist, or is
+already forgotten, prints `error: API 404: document_not_found` and exits
+with status 1. See
+[`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-documentsdoc_idforget).
+
+```bash
+remember documents forget a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --yes
+```
+
 `tag` changes the tags of one document in one step and prints its tags
 afterwards, in the shape of
 [`DocumentTags`](/docs/reference/result-types#documenttags). `--add` and
@@ -298,6 +323,24 @@ remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --add kind:decision 
 ```
 ```json
 {"doc_id":"a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b","tags":["kind:decision","project:billing-migration"]}
+```
+
+### `remember forget`
+
+```text
+remember forget list [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember forget status FORGET_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+`list` prints every forget record of the deployment, oldest first, as a
+[`ForgetList`](/docs/reference/result-types#forgetlist). `status` prints one
+[`Forget`](/docs/reference/result-types#forget) record: `status` is `erasing`,
+`waiting_for_redaction` (the authored knowledge pages in `blocking_k_paths`
+still cite the document) or `complete`. An unknown `FORGET_ID` prints
+`error: API 404: forget_not_found` and exits with status 1.
+
+```bash
+remember forget status 6c1d2e3f-4a5b-4c3d-9e8f-7a6b5c4d3e2f | jq -r .status
 ```
 
 ### `remember tags`
@@ -467,8 +510,8 @@ and output and finds the deployment the same way as every other
 command<Cloud>, so after `remember login` it needs no flags</Cloud>.
 `--transport http` serves the same tools over HTTP at
 `http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
-`--read-only` removes the tools that change memory, `ingest` and
-`delete_document`. `--layers` narrows every read of the session to those
+`--read-only` removes the tools that change memory, `ingest`,
+`delete_document`, `forget_document` and the tag tools that change tags. `--layers` narrows every read of the session to those
 [processing layers](/docs/concepts/retrieval#narrowing-a-read-to-layers) and
 leaves out the tools that read only other layers.
 

@@ -12,7 +12,7 @@ import { fetchIssuerMetadata, sendSameOrigin, sameOrigin } from './issuer';
 
 export interface RequestOptions {signal?:AbortSignal;}
 export interface ClientOptions {apiKey?:string|null;baseUrl?:string|null;project?:string|null;timeoutMs?:number;client?:HttpClient;transport?:HttpTransport;agents?:ClientAgents;}
-export interface IngestOptions extends RequestOptions {source?:Uint8Array|string;content?:Uint8Array;filename?:string;mime?:string;title?:string|null;sourceKind?:string|null;sourceRef?:string|null;sourceModifiedAt?:string|Date|null;versioningMode?:'snapshot'|'living';sourceVersionRef?:string|null;sourcePath?:string|null;versionKey?:string|null;effectiveFrom?:string|Date|null;effectiveUntil?:string|Date|null;tags?:readonly string[]|null;}
+export interface IngestOptions extends RequestOptions {source?:Uint8Array|string;content?:Uint8Array;filename?:string;mime?:string;title?:string|null;sourceKind?:string|null;sourceRef?:string|null;sourceModifiedAt?:string|Date|null;versioningMode?:'snapshot'|'living';sourceVersionRef?:string|null;sourcePath?:string|null;versionKey?:string|null;effectiveFrom?:string|Date|null;effectiveUntil?:string|Date|null;tags?:readonly string[]|null;allowForgotten?:boolean;}
 export type QueryResultDict = Models.OutputQueryResult;
 type Envelope = Models.OutputEnvelope;
 type ContextBundle = Models.OutputContextBundleV2;
@@ -285,7 +285,7 @@ export class MemoryClient {
     return bounded({signal:options.signal,timeoutMs:this.timeoutMs,controllers:this.controllers,work:signal=>this.#ingest({...options,signal})});
   }
   /** Include local file loading in the ingest operation's cancellation and deadline. */
-  async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,versionKey,effectiveFrom,effectiveUntil,tags,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
+  async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,versionKey,effectiveFrom,effectiveUntil,tags,allowForgotten=false,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
     const tagParams=tagList({value:tags,field:'tags'}).map(tag=>['tags',tag] as const);
     if((sourceKind==null)!==(sourceRef==null))throw new InputValidationError({detail:'sourceKind and sourceRef must be supplied together'});
     if(sourceKind==null&&(sourceModifiedAt!=null||sourceVersionRef!=null||versioningMode!=='snapshot'||versionKey!=null||effectiveFrom!=null||effectiveUntil!=null))throw new InputValidationError({detail:'source timestamps, revisions, and living mode require sourceKind/sourceRef'});
@@ -302,7 +302,7 @@ export class MemoryClient {
     else if(bytes===undefined&&source instanceof Uint8Array)bytes=source;
     if(!(bytes instanceof Uint8Array)||!filename)throw new InputValidationError({detail:'content and filename are required when ingesting bytes'});
     const params={filename,mime:mime||inferUploadMime({filename}),versioning_mode:versioningMode,title,source_kind:sourceKind,source_ref:sourceRef,source_modified_at:sourceModifiedAt==null?undefined:utcTimestamp({value:sourceModifiedAt,field:'sourceModifiedAt'}),source_version_ref:sourceVersionRef,source_path:sourcePath,version_key:versionKey,effective_from:start,effective_until:end};
-    const ordered=[...Object.entries(params).filter((entry):entry is [string,string]=>entry[1]!=null),...tagParams];
+    const ordered=[...Object.entries(params).filter((entry):entry is [string,string]=>entry[1]!=null),...tagParams,...(allowForgotten?[['allow_forgotten','true'] as const]:[])];
     return validateModel({name:'IngestedVersion',value:await this.json({method:'POST',path:'/ingest',params:ordered,content:bytes,headers:{'Content-Type':'application/octet-stream'},signal}),response:true});
   }
   /** Read a page of the deployment's documents. */
@@ -356,6 +356,12 @@ export class MemoryClient {
   }
   /** Delete one live document after locally validating its identity. */
   async deleteDocument({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputDocumentDeletion> {return validateModel({name:'DocumentDeletion',value:await this.json({method:'DELETE',path:`/documents/${uuid({value:docId,field:'docId'})}`,signal}),response:true});}
+  /** Forget one document for good: it leaves every read at once and what derives only from it is erased (D159). */
+  async forgetDocument({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputForget> {return validateModel({name:'Forget',value:await this.json({method:'POST',path:`/documents/${uuid({value:docId,field:'docId'})}/forget`,signal}),response:true});}
+  /** List the deployment's forget records, oldest first (D159). */
+  async listForgets({signal}:{signal?:AbortSignal}={}):Promise<Models.OutputForgetList> {return validateModel({name:'ForgetList',value:await this.json({method:'GET',path:'/forgets',signal}),response:true});}
+  /** Read one forget record and its progress (D159). */
+  async getForget({forgetId,signal}:{forgetId:string;signal?:AbortSignal}):Promise<Models.OutputForget> {return validateModel({name:'Forget',value:await this.json({method:'GET',path:`/forgets/${uuid({value:forgetId,field:'forgetId'})}`,signal}),response:true});}
   /** List the deployment's registered tags (D156), optionally narrowed by a name or description substring. */
   async listTags({query=null,signal}:{query?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputTagList> {return validateModel({name:'TagList',value:await this.json({method:'GET',path:'/tags',params:query==null?undefined:{query},signal}),response:true});}
   /** Register a tag before documents carry it; a name taken in any letter case is a 409 conflict. */

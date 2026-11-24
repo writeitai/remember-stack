@@ -1288,6 +1288,7 @@ class SelfHostProfile:
         ``dataclasses.replace(profile.api_deployment(), auth=...)``.
         """
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
+        from rememberstack.profiles.selfhost_forget import SelfHostForgetRequests
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import DocumentInventory
         from rememberstack.spine import DocumentReferences
@@ -1422,6 +1423,7 @@ class SelfHostProfile:
                 embedding_model=embedding_model,
                 publisher=self.corpus_publisher(),
             ),
+            forget=SelfHostForgetRequests(engine=self._engine),
             effective_time=EffectiveTimeCatalog(engine=self._engine),
             tags=TagCatalog(engine=self._engine),
             graph=graph_queries,

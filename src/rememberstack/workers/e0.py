@@ -93,6 +93,7 @@ from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import FileHints
+from rememberstack.model import ForgetNotCompleteError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import ModelRequest
@@ -201,7 +202,7 @@ metadata, a forgotten identity); anything else may succeed on retry."""
 
 
 class IngestAdmission(Protocol):
-    """The D159 re-ingest guard, checked before an ingest writes any bytes."""
+    """The D159 forget records as ingest sees them: the guard and lineage IDs."""
 
     def guard_ingest(
         self,
@@ -210,8 +211,19 @@ class IngestAdmission(Protocol):
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        allow_forgotten: bool = False,
     ) -> None:
-        """Raise ``DocumentForgottenError`` when a forget record guards this content."""
+        """Raise ``DocumentForgottenError`` when a forget record guards this content.
+
+        With ``allow_forgotten``, raise ``ForgetNotCompleteError`` only while
+        a matching record is still ``erasing``.
+        """
+        ...
+
+    def lineage_doc_id(
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+    ) -> UUID:
+        """The lineage ID for an identity, fresh once lineages of it were forgotten."""
         ...
 
 
@@ -275,10 +287,13 @@ class UploadIngestor:
             source_kind=UPLOAD_SOURCE_KIND,
             source_ref=content_hash,
             content_hash=content_hash,
+            allow_forgotten=upload.allow_forgotten,
         )
         upload = self._detect_upload(upload=upload)
-        doc_id = uuid5(
-            NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
+        doc_id = self._admission.lineage_doc_id(
+            deployment_id=deployment_id,
+            source_kind=UPLOAD_SOURCE_KIND,
+            source_ref=content_hash,
         )
         self._check_tags(deployment_id=deployment_id, doc_id=doc_id, upload=upload)
         suffix = PurePosixPath(upload.filename).suffix
@@ -310,6 +325,7 @@ class UploadIngestor:
                 declared_title=upload.title,
                 source_path=upload.source_path,
                 tags=upload.tags,
+                allow_forgotten=upload.allow_forgotten,
             ),
             lane=lane,
             upload=upload,
@@ -333,6 +349,7 @@ class UploadIngestor:
         source_path: str | None = None,
         ingested_by: IngestPrincipal | None = None,
         lane: ProcessingLane = ProcessingLane.STEADY,
+        allow_forgotten: bool = False,
     ) -> IngestedVersion:
         """Ingest one file a client already wrote to the raw store (D147).
 
@@ -403,6 +420,7 @@ class UploadIngestor:
                     source_kind=UPLOAD_SOURCE_KIND,
                     source_ref=content_hash,
                     content_hash=content_hash,
+                    allow_forgotten=allow_forgotten,
                 )
                 spool.flush()
                 if received == 0:
@@ -420,8 +438,10 @@ class UploadIngestor:
                 raise self._refused(
                     deployment_id=deployment_id, key=key, refusal=refusal
                 ) from refusal
-        doc_id = uuid5(
-            NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
+        doc_id = self._admission.lineage_doc_id(
+            deployment_id=deployment_id,
+            source_kind=UPLOAD_SOURCE_KIND,
+            source_ref=content_hash,
         )
         routable = self._routable
         if exceeds_reading_limit(mime=detected, byte_size=received):
@@ -443,6 +463,7 @@ class UploadIngestor:
                     file_name=filename,
                     declared_title=title,
                     source_path=source_path,
+                    allow_forgotten=allow_forgotten,
                 ),
                 convert_component_version=E0_CONVERT_VERSION,
                 lane=lane,
@@ -522,10 +543,11 @@ class UploadIngestor:
             source_kind=source_kind,
             source_ref=source_ref,
             content_hash=content_hash,
+            allow_forgotten=upload.allow_forgotten,
         )
         upload = self._detect_upload(upload=upload)
-        doc_id = uuid5(
-            NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
+        doc_id = self._admission.lineage_doc_id(
+            deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
         )
         self._check_tags(deployment_id=deployment_id, doc_id=doc_id, upload=upload)
         suffix = PurePosixPath(upload.filename).suffix
@@ -553,6 +575,7 @@ class UploadIngestor:
             effective_from=upload.effective_from,
             effective_until=upload.effective_until,
             tags=upload.tags,
+            allow_forgotten=upload.allow_forgotten,
         )
         try:
             self._raw_store.write_bytes(
@@ -589,7 +612,7 @@ class UploadIngestor:
                 metered=self._meter_scope is not None,
                 routable_mimes=self._routable_for(upload=upload),
             )
-        except DocumentForgottenError:
+        except (DocumentForgottenError, ForgetNotCompleteError):
             if isinstance(
                 self._raw_store, ObjectPurgePort
             ) and not self._catalog.raw_object_registered(
@@ -700,16 +723,19 @@ class UploadIngestor:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        allow_forgotten: bool,
     ) -> None:
         """Refuse forgotten content before writing its bytes (D159 §3.6).
 
-        Checked again at registration under the lineage row lock.
+        Checked again at registration under the lineage row lock, where an
+        ``allow_forgotten`` re-add releases what it matched.
         """
         self._admission.guard_ingest(
             deployment_id=deployment_id,
             source_kind=source_kind,
             source_ref=source_ref,
             content_hash=content_hash,
+            allow_forgotten=allow_forgotten,
         )
 
 

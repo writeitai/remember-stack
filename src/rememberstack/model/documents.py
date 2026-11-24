@@ -85,6 +85,9 @@ class DocumentUpload(BaseModel):
     """D156: registered tags (names or ids) added to the lineage's tags; an
     ingest never removes a tag and tags never decide whether a version is
     created."""
+    allow_forgotten: bool = False
+    """D159 §3.6: add back content a forget record guards, for this request
+    only, once that record is no longer ``erasing``."""
 
     @model_validator(mode="after")
     def _period_is_well_formed(self) -> Self:
@@ -130,6 +133,9 @@ class UploadRecord(BaseModel):
     """D140: declared end of that period (exclusive); requires a start."""
     tags: tuple[str, ...] = Field(default=(), max_length=TAGS_PER_DOCUMENT_MAX)
     """D156: registered tags added to the lineage in the upload's transaction."""
+    allow_forgotten: bool = False
+    """D159 §3.6: release the forget records this request matches, in the
+    registration transaction, instead of being refused by them."""
 
     @model_validator(mode="after")
     def _period_is_well_formed(self) -> Self:

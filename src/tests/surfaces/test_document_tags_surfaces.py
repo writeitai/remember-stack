@@ -467,7 +467,7 @@ def test_tag_tool_arguments_are_validated_before_any_call() -> None:
     )
     assert parsed == {"doc_id": _DOC, "request": DocumentTagsUpdate(set=())}
     assert tool("delete_tag").destructive
-    assert tool(INGEST_TOOL_NAME).tool_version == 3
+    assert tool(INGEST_TOOL_NAME).tool_version == 4
 
 
 @pytest.mark.parametrize("host", ["engine", "in_process"])

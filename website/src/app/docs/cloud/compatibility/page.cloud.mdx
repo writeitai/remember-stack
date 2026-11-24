@@ -26,7 +26,7 @@ your deployment at `https://<deployment-id>.dp.remember.dev` serves:
 | Area | Routes | Notes |
 |---|---|---|
 | Ingest | `POST /ingest` | The stock formats, PDFs included; see [Ingest limits](/docs/cloud/limits#ingest) |
-| Documents | `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}` | |
+| Documents | `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `POST /documents/{doc_id}/forget`, `GET /forgets`, `GET /forgets/{forget_id}` | |
 | Tags | `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` | See [Tag documents](/docs/guides/tag-documents) |
 | Versions in force | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `GET` and `PUT /documents/{doc_id}/versions/{version_id}/references`, `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` | See [Read a document as of a date](/docs/guides/versions-in-force) |
 | Readiness | `POST /readiness` | |

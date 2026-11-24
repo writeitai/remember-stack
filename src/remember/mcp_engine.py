@@ -28,8 +28,10 @@ from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
+from remember.mcp_tools import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import handle_delete_document_tool
 from remember.mcp_tools import handle_document_references_tool
+from remember.mcp_tools import handle_forget_document_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
@@ -53,6 +55,7 @@ from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentTags
 from remember.models import DocumentTagsUpdate
+from remember.models import Forget
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -69,7 +72,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class _ClientBackend:
-    """The write, readiness, delete, document-search, section, references and tag backend.
+    """The write, readiness, delete, forget, document-search, section, references and tag backend.
 
     The deployment enforces its body-size limit; the tool maps the refusal.
     """
@@ -93,6 +96,7 @@ class _ClientBackend:
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
         tags: tuple[str, ...] = (),
+        allow_forgotten: bool = False,
     ) -> IngestedVersion:
         """Send one ingest through the HTTP SDK."""
         return self._client.ingest(
@@ -109,6 +113,7 @@ class _ClientBackend:
             effective_from=effective_from,
             effective_until=effective_until,
             tags=tags,
+            allow_forgotten=allow_forgotten,
         )
 
     def pipeline_readiness(
@@ -124,6 +129,10 @@ class _ClientBackend:
     def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
         """Delete one document through the HTTP SDK."""
         return self._client.delete_document(doc_id=doc_id)
+
+    def forget_document(self, *, doc_id: UUID) -> Forget:
+        """Forget one document through the HTTP SDK (D159)."""
+        return self._client.forget_document(doc_id=doc_id)
 
     def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
         """Run one document search through the HTTP SDK (D134)."""
@@ -243,6 +252,10 @@ class EngineMcpServer:
             )
         if name == DELETE_DOCUMENT_TOOL_NAME:
             return handle_delete_document_tool(
+                arguments=arguments, backend=self._backend
+            )
+        if name == FORGET_DOCUMENT_TOOL_NAME:
+            return handle_forget_document_tool(
                 arguments=arguments, backend=self._backend
             )
         if name == SEARCH_DOCUMENTS_TOOL_NAME:

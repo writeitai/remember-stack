@@ -834,6 +834,31 @@ changed. The counts describe this call only.
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |
 
+### Forget
+
+One forget record, as
+[`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-documentsdoc_idforget)
+and [`GET /forgets/{forget_id}`](/docs/reference/http-api/ingest#get-forgetsforget_id)
+return it. It holds IDs and progress only, never content.
+
+| Field | Type | Contents |
+|---|---|---|
+| `forget_id` | UUID | The record's identity. |
+| `doc_id` | UUID | The forgotten document. |
+| `status` | string | `erasing`, `waiting_for_redaction` or `complete`; see [`GET /forgets/{forget_id}`](/docs/reference/http-api/ingest#get-forgetsforget_id). |
+| `requested_at` | date-time | When the document was forgotten. |
+| `completed_at` | date-time \| null | When nothing derived only from the document was left; `null` until then. |
+| `blocking_k_paths` | array of string | Authored knowledge pages that still cite the document; their owner removes the citation. Empty once none do. |
+| `last_error` | string \| null | The code of the last failed erasure pass, which is retried; `null` after a pass succeeds. |
+
+### ForgetList
+
+What [`GET /forgets`](/docs/reference/http-api/ingest#get-forgets) returns.
+
+| Field | Type | Contents |
+|---|---|---|
+| `forgets` | array of [`Forget`](#forget) | Every forget record of the deployment, oldest first. |
+
 ## Tags
 
 ### Tag

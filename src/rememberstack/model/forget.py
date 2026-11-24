@@ -56,3 +56,17 @@ class DocumentForgottenError(ForgetError):
         super().__init__(f"ingest matches forget_id {forget_id}")
         self.forget_id = forget_id
         self.forgotten_at = forgotten_at
+
+
+class ForgetNotCompleteError(ForgetError):
+    """``allow_forgotten`` matched a forget record that is still ``erasing``.
+
+    The HTTP surface answers 409 ``forget_not_complete`` with the record's
+    ``forget_id`` (D159 §3.6): the content may be added back once the record
+    has left ``erasing``.
+    """
+
+    def __init__(self, *, forget_id: UUID) -> None:
+        """Keep the matching record's identity for the caller."""
+        super().__init__(f"forget_id {forget_id} is still erasing")
+        self.forget_id = forget_id

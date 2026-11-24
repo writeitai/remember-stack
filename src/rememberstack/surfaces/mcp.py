@@ -4,7 +4,8 @@ Every tool renders from the shared catalogue in `remember.mcp_tools`, the same
 definitions `remember mcp` renders. The four assured operations are always
 listed; the seven open-query tools when an `OpenQueryFacade` is composed; the
 Layer 1 write tools (`ingest`, `pipeline_readiness`) when both their ports are
-composed; and `delete_document` when a deletion port is composed (D135). The
+composed; `delete_document` when a deletion port is composed (D135); and
+`forget_document` when a forget port is composed (D159). The
 engine does not run on the caller's machine, so `ingest` never offers the local
 `path` body source here. The nineteen `examples.*` identities are never
 top-level tools — they run only through `run_saved_query`.
@@ -27,8 +28,10 @@ from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
+from remember.mcp_tools import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import handle_delete_document_tool
 from remember.mcp_tools import handle_document_references_tool
+from remember.mcp_tools import handle_forget_document_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
@@ -51,10 +54,13 @@ from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from remember.models import DocumentTags
 from remember.models import DocumentTagsUpdate
+from remember.models import Forget
 from remember.models import Tag
 from remember.models import TagCreate
 from remember.models import TagList
 from remember.models import TagUpdate
+from rememberstack.model import DocumentForgottenError
+from rememberstack.model import ForgetNotCompleteError
 from rememberstack.model import UnknownTagError
 from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import DocumentReferencesPage
@@ -72,6 +78,7 @@ from rememberstack.model.documents import IngestedVersion
 from rememberstack.model.processing_layers import LayerSelectionError
 from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.surfaces.http_api import DocumentDeletionPort
+from rememberstack.surfaces.http_api import DocumentForgetPort
 from rememberstack.surfaces.http_api import DocumentReferencesPort
 from rememberstack.surfaces.http_api import DocumentSearchPort
 from rememberstack.surfaces.http_api import IngestPort
@@ -123,6 +130,7 @@ class _LocalMemoryWriteBackend:
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
         tags: tuple[str, ...] = (),
+        allow_forgotten: bool = False,
     ) -> IngestedVersion:
         """Accept one body through the composed E0 ingest port."""
         upload = DocumentUpload(
@@ -134,19 +142,34 @@ class _LocalMemoryWriteBackend:
             effective_from=effective_from,
             effective_until=effective_until,
             tags=tags,
+            allow_forgotten=allow_forgotten,
         )
-        if source_kind is None or source_ref is None:
-            return self._ingest.ingest(deployment_id=self._deployment_id, upload=upload)
-        return self._ingest.ingest_observed(
-            deployment_id=self._deployment_id,
-            source_kind=source_kind,
-            source_ref=source_ref,
-            upload=upload,
-            versioning_mode=versioning_mode,
-            source_modified_at=source_modified_at,
-            source_version_ref=source_version_ref,
-            sync_cycle_id=None,
-        )
+        try:
+            if source_kind is None or source_ref is None:
+                return self._ingest.ingest(
+                    deployment_id=self._deployment_id, upload=upload
+                )
+            return self._ingest.ingest_observed(
+                deployment_id=self._deployment_id,
+                source_kind=source_kind,
+                source_ref=source_ref,
+                upload=upload,
+                versioning_mode=versioning_mode,
+                source_modified_at=source_modified_at,
+                source_version_ref=source_version_ref,
+                sync_cycle_id=None,
+            )
+        except DocumentForgottenError as error:
+            # the same 409 the HTTP route answers (D159 §3.6)
+            raise _Forgotten(
+                code="document_forgotten",
+                detail=f"document_forgotten: forget_id {error.forget_id}",
+            ) from error
+        except ForgetNotCompleteError as error:
+            raise _Forgotten(
+                code="forget_not_complete",
+                detail=f"forget_not_complete: forget_id {error.forget_id}",
+            ) from error
 
     def pipeline_readiness(
         self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
@@ -176,6 +199,24 @@ class _LocalDocumentDeleteBackend:
             )
         except DocumentNotFoundError as error:
             raise _DocumentNotFound() from error
+
+
+class _LocalDocumentForgetBackend:
+    """Adapt the in-process forget port to the shared forget tool (D159)."""
+
+    def __init__(self, *, forget: DocumentForgetPort, deployment_id: UUID) -> None:
+        self._forget = forget
+        self._deployment_id = deployment_id
+
+    def forget_document(self, *, doc_id: UUID) -> Forget:
+        """Forget through the composed port; absence surfaces as a 404 shape."""
+        try:
+            forget, _created = self._forget.forget_document(
+                deployment_id=self._deployment_id, doc_id=doc_id
+            )
+        except DocumentNotFoundError as error:
+            raise _DocumentNotFound() from error
+        return forget
 
 
 class _LocalDocumentSearchBackend:
@@ -300,6 +341,17 @@ class _DocumentNotFound(Exception):
     detail = "document_not_found"
 
 
+class _Forgotten(Exception):
+    """The HTTP-shaped 409 a forget record answers an ingest with (D159 §3.6)."""
+
+    status_code = 409
+
+    def __init__(self, *, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
 class OperationMcpServer:
     """Render assured operations, optional write tools, and open-query tools."""
 
@@ -311,6 +363,7 @@ class OperationMcpServer:
         ingest: IngestPort | None = None,
         pipeline_readiness: PipelineReadinessPort | None = None,
         deletion: DocumentDeletionPort | None = None,
+        forget: DocumentForgetPort | None = None,
         document_search: DocumentSearchPort | None = None,
         section_history: SectionHistoryPort | None = None,
         document_references: DocumentReferencesPort | None = None,
@@ -324,7 +377,8 @@ class OperationMcpServer:
         tools require both ingest and pipeline_readiness; half-wiring either
         port alone is refused so tools/list never advertises a half-broken pair.
         Operation-only compositions omit the write tools (O2).
-        `delete_document` is advertised only when `deletion` is composed, and
+        `delete_document` is advertised only when `deletion` is composed,
+        `forget_document` only when `forget` is, and
         `search_documents` only when `document_search` is, and
         `section_history` only when `section_history` is, and
         `document_references` only when `document_references` is, and the
@@ -355,6 +409,13 @@ class OperationMcpServer:
             if deletion is None
             else _LocalDocumentDeleteBackend(
                 deletion=deletion, deployment_id=surface.deployment_id
+            )
+        )
+        self._forget_backend: _LocalDocumentForgetBackend | None = (
+            None
+            if forget is None
+            else _LocalDocumentForgetBackend(
+                forget=forget, deployment_id=surface.deployment_id
             )
         )
         self._search_backend: _LocalDocumentSearchBackend | None = (
@@ -401,6 +462,8 @@ class OperationMcpServer:
             names.extend((INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME))
         if self._delete_backend is not None:
             names.append(DELETE_DOCUMENT_TOOL_NAME)
+        if self._forget_backend is not None:
+            names.append(FORGET_DOCUMENT_TOOL_NAME)
         if self._search_backend is not None:
             names.append(SEARCH_DOCUMENTS_TOOL_NAME)
         if self._history_backend is not None:
@@ -439,6 +502,10 @@ class OperationMcpServer:
         if name == DELETE_DOCUMENT_TOOL_NAME:
             return handle_delete_document_tool(
                 arguments=arguments, backend=self._delete_backend
+            )
+        if name == FORGET_DOCUMENT_TOOL_NAME:
+            return handle_forget_document_tool(
+                arguments=arguments, backend=self._forget_backend
             )
         if name == SEARCH_DOCUMENTS_TOOL_NAME:
             return handle_search_documents_tool(

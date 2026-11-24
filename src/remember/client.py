@@ -70,6 +70,8 @@ from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
 from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
+from remember.models import Forget
+from remember.models import ForgetList
 from remember.models import HistoryReadTime
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
@@ -96,6 +98,7 @@ _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 #: D156 refusals that keep their code: a duplicate name and a tag limit.
 _TAG_ERROR_CODES: Final = frozenset({"conflict", "tag_limit_exceeded"})
+_FORGET_ERROR_CODES: Final = frozenset({"document_forgotten", "forget_not_complete"})
 
 _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "saved_query_not_found": 404,
@@ -954,6 +957,7 @@ class MemoryClient:
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
         tags: Sequence[str] | None = None,
+        allow_forgotten: bool = False,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
@@ -976,6 +980,12 @@ class MemoryClient:
         (D156); an ingest never removes a tag and tags never decide whether a
         version is created. Any unregistered tag raises :class:`UnknownTag`
         and nothing is stored.
+
+        Content of a forgotten document is refused with ``MemoryApiError``
+        409 ``document_forgotten``. ``allow_forgotten=True`` adds it back, for
+        this call only, once that forget is no longer erasing (409
+        ``forget_not_complete`` until then); it returns under a new
+        ``doc_id``.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -1059,6 +1069,8 @@ class MemoryClient:
         if isinstance(tags, str):
             raise ValueError("tags is a sequence of tag names or ids, not one string")
         params.extend(("tags", str(tag)) for tag in tags or ())
+        if allow_forgotten:
+            params.append(("allow_forgotten", "true"))
         return _validated(
             IngestedVersion,
             self._json(
@@ -1305,6 +1317,39 @@ class MemoryClient:
             DocumentDeletion,
             self._json("DELETE", f"/documents/{document}"),
             endpoint="DELETE /documents/{doc_id}",
+        )
+
+    def forget_document(self, *, doc_id: UUID | str) -> Forget:
+        """Forget one document: erase it and everything derived only from it.
+
+        From the answer on, the document is gone from every read and its
+        ``doc_id`` answers as unknown; the copies derived from it are erased
+        in the background (follow ``status`` with :meth:`get_forget`). Facts
+        other documents also support stay. There is no undo: the content can
+        only be ingested again with ``allow_forgotten=True``. A repeat returns
+        the same record. An unknown ``doc_id`` raises ``MemoryApiError`` with
+        ``status_code`` 404.
+        """
+        document = UUID(str(doc_id))
+        return _validated(
+            Forget,
+            self._json("POST", f"/documents/{document}/forget"),
+            endpoint="POST /documents/{doc_id}/forget",
+        )
+
+    def list_forgets(self) -> ForgetList:
+        """Every forget record of the deployment, oldest first."""
+        return _validated(
+            ForgetList, self._json("GET", "/forgets"), endpoint="GET /forgets"
+        )
+
+    def get_forget(self, *, forget_id: UUID | str) -> Forget:
+        """One forget record; an unknown ``forget_id`` raises ``MemoryApiError`` 404."""
+        record = UUID(str(forget_id))
+        return _validated(
+            Forget,
+            self._json("GET", f"/forgets/{record}"),
+            endpoint="GET /forgets/{forget_id}",
         )
 
     def set_effective_periods(
@@ -1625,6 +1670,11 @@ class MemoryClient:
                     ):
                         code = str(public_detail["code"])
                         detail = str(public_detail["message"])
+                    elif public_detail.get("code") in _FORGET_ERROR_CODES:
+                        # D159: an ingest a forget record refuses keeps its
+                        # code; the detail keeps the record's forget_id.
+                        code = str(public_detail["code"])
+                        detail = str(public_detail)
                     elif public_detail.get("code") == "invalid_parameter" and (
                         isinstance(public_detail.get("message"), str)
                     ):
@@ -1817,6 +1867,7 @@ class Client(MemoryClient):
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
         tags: Sequence[str] | None = None,
+        allow_forgotten: bool = False,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1834,6 +1885,7 @@ class Client(MemoryClient):
             effective_from=effective_from,
             effective_until=effective_until,
             tags=tags,
+            allow_forgotten=allow_forgotten,
         )
 
     def __enter__(self) -> Self:

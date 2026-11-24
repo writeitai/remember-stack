@@ -47,6 +47,7 @@ from fastapi import Header
 from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Request
+from fastapi import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -71,6 +72,7 @@ from starlette.types import Send
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
+from remember.mcp_tools import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
@@ -88,6 +90,8 @@ from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
 from remember.models import EffectiveTimeCleared
+from remember.models import Forget
+from remember.models import ForgetList
 from remember.models import ReferenceGenerations
 from remember.models import REFERENCES_BODY_MAX_BYTES
 from remember.models import ReferencesSet
@@ -121,6 +125,8 @@ from rememberstack.model import DocumentVersionNotFoundError
 from rememberstack.model import EffectivePeriodConflictError
 from rememberstack.model import EffectiveTimeNotSupportedError
 from rememberstack.model import Envelope
+from rememberstack.model import ForgetNotCompleteError
+from rememberstack.model import ForgetNotFoundError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
@@ -351,6 +357,28 @@ class DocumentDeletionPort(Protocol):
         ...
 
 
+class DocumentForgetPort(Protocol):
+    """Forget documents and read the forget records (D159 §3)."""
+
+    def forget_document(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[Forget, bool]:
+        """Hide the lineage and start its sweeps; ``True`` when this call did.
+
+        A repeat returns the same record and ``False``; an unknown document
+        raises ``DocumentNotFoundError``.
+        """
+        ...
+
+    def list_forgets(self, *, deployment_id: UUID) -> ForgetList:
+        """Every forget record of the deployment, oldest first."""
+        ...
+
+    def get_forget(self, *, deployment_id: UUID, forget_id: UUID) -> Forget:
+        """One record, or raise ``ForgetNotFoundError``."""
+        ...
+
+
 class EffectiveTimePort(Protocol):
     """Declare when document versions are in force, after ingest (D140)."""
 
@@ -557,6 +585,7 @@ class ApiDeployment:
     references: ReferencesPort | None = None
     document_references: DocumentReferencesPort | None = None
     deletion: DocumentDeletionPort | None = None
+    forget: DocumentForgetPort | None = None
     effective_time: EffectiveTimePort | None = None
     tags: TagPort | None = None
     graph: GraphQueryPort | None = None
@@ -660,6 +689,7 @@ def build_api(
     references: ReferencesPort | None = None,
     document_references: DocumentReferencesPort | None = None,
     deletion: DocumentDeletionPort | None = None,
+    forget: DocumentForgetPort | None = None,
     effective_time: EffectiveTimePort | None = None,
     tags: TagPort | None = None,
     graph: GraphQueryPort | None = None,
@@ -676,7 +706,9 @@ def build_api(
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
     deployment-side connector configuration; `deletion` adds
-    `DELETE /documents/{doc_id}` (D135); `effective_time` adds
+    `DELETE /documents/{doc_id}` (D135); `forget` adds
+    `POST /documents/{doc_id}/forget`, `GET /forgets` and
+    `GET /forgets/{forget_id}` (D159); `effective_time` adds
     `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` and
     `DELETE /documents/{doc_id}/effective-periods` (D140); `tags` adds
     `GET|POST /tags`, `PATCH|DELETE /tags/{tag_id}` and
@@ -728,6 +760,7 @@ def build_api(
         references=references,
         document_references=document_references,
         deletion=deletion,
+        forget=forget,
         effective_time=effective_time,
         tags=tags,
         graph=graph,
@@ -1004,6 +1037,8 @@ def build_api(
         _mount_document_references(app=app)
     if deletion is not None:
         _mount_document_deletion(app=app)
+    if forget is not None:
+        _mount_forget(app=app)
     if effective_time is not None:
         _mount_effective_time(app=app)
     if tags is not None:
@@ -1170,6 +1205,7 @@ def _served_tools(
     section_history: bool,
     document_references: bool = False,
     tags: bool = False,
+    forget: bool = False,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
@@ -1184,6 +1220,8 @@ def _served_tools(
         names.append(PIPELINE_READINESS_TOOL_NAME)
     if deletion:
         names.append(DELETE_DOCUMENT_TOOL_NAME)
+    if forget:
+        names.append(FORGET_DOCUMENT_TOOL_NAME)
     if document_search:
         names.append(SEARCH_DOCUMENTS_TOOL_NAME)
     if section_history:
@@ -1212,6 +1250,7 @@ def _deployment_tools(deployment: ApiDeployment) -> dict[str, int]:
         section_history=deployment.section_history is not None,
         document_references=deployment.document_references is not None,
         tags=deployment.tags is not None,
+        forget=deployment.forget is not None,
     )
 
 
@@ -1941,6 +1980,69 @@ def _mount_document_deletion(*, app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="document_not_found") from error
 
 
+def _mount_forget(*, app: FastAPI) -> None:
+    """Expose forget and its records (D159 §3.2, §3.5). Requires write scope."""
+
+    @app.post(
+        "/documents/{doc_id}/forget",
+        response_model=Forget,
+        status_code=202,
+        responses={
+            200: {"model": Forget, "description": "A repeat: the existing record."},
+            404: {"description": "document_not_found"},
+        },
+    )
+    def forget_document(
+        deployment: _Deployment, doc_id: UUID, response: Response
+    ) -> Forget:
+        """Forget one document: erase it and everything derived only from it.
+
+        From the answer on, the document, its versions, passages and claims are
+        gone from every read, and its ID answers as one that never existed.
+        A background job then erases every copy derived from it and repeats
+        until nothing is left; follow it with `GET /forgets/{forget_id}`.
+        Facts and entities another document supports stay, reworded from what
+        survives. There is no undo: the content can only be added again,
+        deliberately, with `allow_forgotten` on an ingest.
+
+        The first call answers 202 with the new record; a repeat answers 200
+        with the same record. An unknown `doc_id` is 404.
+        """
+        try:
+            forget, created = _served(deployment.forget).forget_document(
+                deployment_id=deployment.deployment_id, doc_id=doc_id
+            )
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
+        if not created:
+            response.status_code = 200
+        return forget
+
+    @app.get("/forgets", response_model=ForgetList)
+    def list_forgets(deployment: _Deployment) -> ForgetList:
+        """Every forget record of the deployment, oldest first.
+
+        A record holds IDs and progress only, never content.
+        """
+        return _served(deployment.forget).list_forgets(
+            deployment_id=deployment.deployment_id
+        )
+
+    @app.get(
+        "/forgets/{forget_id}",
+        response_model=Forget,
+        responses={404: {"description": "forget_not_found"}},
+    )
+    def get_forget(deployment: _Deployment, forget_id: UUID) -> Forget:
+        """One forget record: its status, and what it still waits for."""
+        try:
+            return _served(deployment.forget).get_forget(
+                deployment_id=deployment.deployment_id, forget_id=forget_id
+            )
+        except ForgetNotFoundError as error:
+            raise HTTPException(status_code=404, detail="forget_not_found") from error
+
+
 def _effective_time_errors(error: Exception) -> HTTPException:
     """Map one D140 write refusal to its status and structured detail."""
     if isinstance(error, DocumentNotFoundError):
@@ -2360,8 +2462,15 @@ def _parse_ingest_principal(
         ) from error
 
 
-def _forgotten_http_error(error: DocumentForgottenError) -> HTTPException:
+def _forgotten_http_error(
+    error: DocumentForgottenError | ForgetNotCompleteError,
+) -> HTTPException:
     """A forget record guards these bytes or this source identity (D159 §3.6)."""
+    if isinstance(error, ForgetNotCompleteError):
+        return HTTPException(
+            status_code=409,
+            detail={"code": "forget_not_complete", "forget_id": str(error.forget_id)},
+        )
     return HTTPException(
         status_code=409,
         detail={
@@ -2447,6 +2556,18 @@ def _mount_ingest(
                 ),
             ),
         ] = None,
+        allow_forgotten: Annotated[
+            bool,
+            Query(
+                description=(
+                    "Add back content of a forgotten document, for this request"
+                    " only. Without it such content is refused with 409"
+                    " document_forgotten. Accepted once that forget is no longer"
+                    " erasing (409 forget_not_complete until then); the"
+                    " document comes back under a new doc_id."
+                )
+            ),
+        ] = False,
         principal_kind: Annotated[
             str | None,
             Header(
@@ -2556,6 +2677,7 @@ def _mount_ingest(
             effective_from=effective_from,
             effective_until=effective_until,
             tags=tuple(tags or ()),
+            allow_forgotten=allow_forgotten,
         )
         if source_kind is None or source_ref is None:
             if (
@@ -2578,7 +2700,7 @@ def _mount_ingest(
                 )
             except ContentDetectionError as error:
                 raise HTTPException(status_code=422, detail=error.code) from error
-            except DocumentForgottenError as error:
+            except (DocumentForgottenError, ForgetNotCompleteError) as error:
                 raise _forgotten_http_error(error) from error
             except (UnknownTagError, TagLimitError) as error:
                 raise _tag_errors(error) from error
@@ -2596,7 +2718,7 @@ def _mount_ingest(
             )
         except ContentDetectionError as error:
             raise HTTPException(status_code=422, detail=error.code) from error
-        except DocumentForgottenError as error:
+        except (DocumentForgottenError, ForgetNotCompleteError) as error:
             raise _forgotten_http_error(error) from error
         except (
             EffectivePeriodConflictError,

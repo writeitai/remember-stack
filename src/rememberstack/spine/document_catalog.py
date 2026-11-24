@@ -51,6 +51,7 @@ from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.effective_time import declare_at_ingest_on
 from rememberstack.spine.effective_time import resolve_version_key_on
 from rememberstack.spine.forget import guard_forgotten_on
+from rememberstack.spine.forget import release_forgotten_on
 from rememberstack.spine.managed_metering import measurement_state_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
 from rememberstack.spine.period_adjudication import request_window_review_on
@@ -145,10 +146,20 @@ class DocumentCatalog:
         with self._engine.begin() as connection:
             lineage = _lineage_locked(connection=connection, record=record)
             # D159 §3.6: the re-ingest guard again, under the lineage row lock,
-            # so a forget that committed while the bytes were written wins.
-            guard_forgotten_on(
+            # so a forget that committed while the bytes were written wins. A
+            # deliberate re-add releases what it matched in this transaction.
+            released = guard_forgotten_on(
                 connection=connection,
                 deployment_id=record.deployment_id,
+                source_kind=record.source_kind,
+                source_ref=record.source_ref,
+                content_hash=record.content_hash,
+                allow_forgotten=record.allow_forgotten,
+            )
+            release_forgotten_on(
+                connection=connection,
+                deployment_id=record.deployment_id,
+                forget_ids=released,
                 source_kind=record.source_kind,
                 source_ref=record.source_ref,
                 content_hash=record.content_hash,

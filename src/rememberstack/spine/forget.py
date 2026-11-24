@@ -14,8 +14,10 @@ from datetime import timezone
 import json
 from typing import Any
 from typing import Final
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -27,6 +29,7 @@ from rememberstack.core.fact_label import deterministic_fact_label
 from rememberstack.model import DocumentForgottenError
 from rememberstack.model import EnqueueWork
 from rememberstack.model import Forget
+from rememberstack.model import ForgetNotCompleteError
 from rememberstack.model import ForgetNotFoundError
 from rememberstack.model import ForgetStatus
 from rememberstack.model import ObjectKey
@@ -241,6 +244,7 @@ class ForgetCatalog:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        allow_forgotten: bool = False,
     ) -> None:
         """Refuse forgotten content before any bytes are written (D159 §3.6)."""
         with self._engine.connect() as connection:
@@ -250,6 +254,19 @@ class ForgetCatalog:
                 source_kind=source_kind,
                 source_ref=source_ref,
                 content_hash=content_hash,
+                allow_forgotten=allow_forgotten,
+            )
+
+    def lineage_doc_id(
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+    ) -> UUID:
+        """The ``doc_id`` E0 gives this identity's lineage (D159 §3.6)."""
+        with self._engine.connect() as connection:
+            return lineage_doc_id_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                source_kind=source_kind,
+                source_ref=source_ref,
             )
 
     def sweep_postgres(self, *, forget: Forget) -> SweepFindings:
@@ -387,32 +404,118 @@ def guard_forgotten_on(
     source_kind: str,
     source_ref: str,
     content_hash: str,
-) -> None:
-    """Raise ``DocumentForgottenError`` when a record guards this identity or hash.
+    allow_forgotten: bool = False,
+) -> tuple[UUID, ...]:
+    """Check the forget records that guard this identity or hash (D159 §3.6).
 
     Called before bytes are written and again at registration under the
     lineage row lock. A record's released hash or identity no longer guards
     (a deliberate re-add); the sweep keys never change.
+
+    Without ``allow_forgotten`` a match raises ``DocumentForgottenError``.
+    With it, a match still ``erasing`` raises ``ForgetNotCompleteError``;
+    otherwise the matching records' IDs are returned for
+    :func:`release_forgotten_on`.
     """
-    identity = (
-        None
-        if source_kind == UPLOAD_SOURCE_KIND
-        else source_identity_hash(
-            deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
-        )
-    )
-    row = (
+    rows = (
         connection.execute(
             _FORGOTTEN_INGEST,
-            {"d": deployment_id, "identity": identity, "content_hash": content_hash},
+            {
+                "d": deployment_id,
+                "identity": _identity(
+                    deployment_id=deployment_id,
+                    source_kind=source_kind,
+                    source_ref=source_ref,
+                ),
+                "content_hash": content_hash,
+            },
         )
         .mappings()
-        .first()
+        .all()
     )
-    if row is not None:
+    if not rows:
+        return ()
+    if not allow_forgotten:
         raise DocumentForgottenError(
-            forget_id=row["forget_id"], forgotten_at=row["requested_at"]
+            forget_id=rows[0]["forget_id"], forgotten_at=rows[0]["requested_at"]
         )
+    for row in rows:
+        if row["status"] == ForgetStatus.ERASING.value:
+            raise ForgetNotCompleteError(forget_id=row["forget_id"])
+    return tuple(row["forget_id"] for row in rows)
+
+
+def release_forgotten_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    forget_ids: tuple[UUID, ...],
+    source_kind: str,
+    source_ref: str,
+    content_hash: str,
+) -> None:
+    """Note on each matched record only what this re-add matched (D159 §3.6).
+
+    The content hash goes into ``released_hashes`` where the record holds
+    it, and ``identity_released`` is set where the identity matched. The
+    record's sweep keys (``version_ids``, ``content_hashes``, the identity)
+    never change, so a later sweep or ``forget-reapply`` works as before.
+    """
+    if forget_ids:
+        connection.execute(
+            _RELEASE_FORGOTTEN,
+            {
+                "d": deployment_id,
+                "ids": list(forget_ids),
+                "identity": _identity(
+                    deployment_id=deployment_id,
+                    source_kind=source_kind,
+                    source_ref=source_ref,
+                ),
+                "content_hash": content_hash,
+            },
+        )
+
+
+def lineage_doc_id_on(
+    *, connection: Connection, deployment_id: UUID, source_kind: str, source_ref: str
+) -> UUID:
+    """The ``doc_id`` E0 derives for an identity's lineage (D159 §3.6).
+
+    The ID is derived from the identity and, once lineages of that identity
+    have been forgotten, from the number of their forget records, so a
+    re-added lineage never shares an ID (rows, object prefix, corpus suffix,
+    K citations) with a forgotten one. Each such lineage was itself derived
+    this way, so the records are found by walking the derivation: the count
+    is the number of derived IDs that already have a record. Records are
+    never deleted, so the count, and the ID, are stable.
+    """
+    base = f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
+    forgotten = 0
+    while True:
+        doc_id = uuid5(
+            NAMESPACE_URL, base if forgotten == 0 else f"{base}:forgotten:{forgotten}"
+        )
+        if (
+            connection.execute(
+                text(
+                    "SELECT 1 FROM forgets WHERE deployment_id = :d AND doc_id = :doc"
+                ),
+                {"d": deployment_id, "doc": doc_id},
+            ).first()
+            is None
+        ):
+            return doc_id
+        forgotten += 1
+
+
+def _identity(*, deployment_id: UUID, source_kind: str, source_ref: str) -> str | None:
+    """The record's source-identity hash; an upload is guarded by its bytes."""
+    if source_kind == UPLOAD_SOURCE_KIND:
+        return None
+    return source_identity_hash(
+        deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
+    )
 
 
 def retry_delay(*, quiet_period_s: float, failures: int) -> timedelta:
@@ -899,7 +1002,7 @@ _INSERT_RECORD = text(
 
 _FORGOTTEN_INGEST = text(
     """
-    SELECT forget_id, requested_at
+    SELECT forget_id, requested_at, status::text AS status
     FROM forgets
     WHERE deployment_id = :d
       AND (
@@ -909,7 +1012,21 @@ _FORGOTTEN_INGEST = text(
             AND NOT :content_hash = ANY(released_hashes))
       )
     ORDER BY requested_at, forget_id
-    LIMIT 1
+    """
+)
+
+_RELEASE_FORGOTTEN = text(
+    """
+    UPDATE forgets
+    SET released_hashes = CASE
+            WHEN :content_hash = ANY(content_hashes)
+                 AND NOT :content_hash = ANY(released_hashes)
+            THEN array_append(released_hashes, CAST(:content_hash AS text))
+            ELSE released_hashes END,
+        identity_released = identity_released
+            OR (CAST(:identity AS text) IS NOT NULL
+                AND source_identity_hash IS NOT DISTINCT FROM :identity)
+    WHERE deployment_id = :d AND forget_id = ANY(CAST(:ids AS uuid[]))
     """
 )
 

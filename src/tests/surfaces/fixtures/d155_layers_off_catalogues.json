@@ -17,7 +17,8 @@
         "describe_saved_query": 1,
         "document_references": 1,
         "explain_sql": 1,
-        "ingest": 3,
+        "forget_document": 1,
+        "ingest": 4,
         "list_saved_queries": 1,
         "list_tags": 1,
         "pipeline_readiness": 1,
@@ -40,6 +41,9 @@
         },
         {
           "name": "delete_document"
+        },
+        {
+          "name": "forget_document"
         },
         {
           "annotations": {
@@ -580,6 +584,9 @@
           "name": "delete_document"
         },
         {
+          "name": "forget_document"
+        },
+        {
           "annotations": {
             "destructiveHint": false,
             "readOnlyHint": true
@@ -857,6 +864,9 @@
       },
       {
         "name": "delete_document"
+      },
+      {
+        "name": "forget_document"
       },
       {
         "annotations": {
@@ -1149,7 +1159,8 @@
         "describe_saved_query": 1,
         "document_references": 1,
         "explain_sql": 1,
-        "ingest": 3,
+        "forget_document": 1,
+        "ingest": 4,
         "list_saved_queries": 1,
         "list_tags": 1,
         "pipeline_readiness": 1,
@@ -1172,6 +1183,9 @@
         },
         {
           "name": "delete_document"
+        },
+        {
+          "name": "forget_document"
         },
         {
           "annotations": {
@@ -1712,6 +1726,9 @@
           "name": "delete_document"
         },
         {
+          "name": "forget_document"
+        },
+        {
           "annotations": {
             "destructiveHint": false,
             "readOnlyHint": true
@@ -1989,6 +2006,9 @@
       },
       {
         "name": "delete_document"
+      },
+      {
+        "name": "forget_document"
       },
       {
         "annotations": {

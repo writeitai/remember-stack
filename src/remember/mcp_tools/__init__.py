@@ -16,6 +16,7 @@ from __future__ import annotations
 from remember.mcp_tools._definitions import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import DOCUMENT_REFERENCES_TOOL_NAME
+from remember.mcp_tools._definitions import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import memory_tools
 from remember.mcp_tools._definitions import MEMORY_WRITE_TOOL_NAMES
@@ -41,7 +42,9 @@ from remember.mcp_tools._errors import map_error
 from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
 from remember.mcp_tools._memory import DocumentDeleteBackend
+from remember.mcp_tools._memory import DocumentForgetBackend
 from remember.mcp_tools._memory import handle_delete_document_tool
+from remember.mcp_tools._memory import handle_forget_document_tool
 from remember.mcp_tools._memory import handle_memory_write_tool
 from remember.mcp_tools._memory import McpMemorySettings
 from remember.mcp_tools._memory import MemoryWriteBackend
@@ -58,6 +61,7 @@ __all__ = (
     "ADJACENT_CHUNKS_TOOL_NAME",
     "DELETE_DOCUMENT_TOOL_NAME",
     "DOCUMENT_REFERENCES_TOOL_NAME",
+    "FORGET_DOCUMENT_TOOL_NAME",
     "DocumentReferencesBackend",
     "INGEST_TOOL_NAME",
     "MEMORY_WRITE_TOOL_NAMES",
@@ -73,6 +77,7 @@ __all__ = (
     "TAG_WRITE_TOOL_NAMES",
     "TagBackend",
     "DocumentDeleteBackend",
+    "DocumentForgetBackend",
     "DocumentSearchBackend",
     "McpMemorySettings",
     "MemoryWriteBackend",
@@ -82,6 +87,7 @@ __all__ = (
     "ToolError",
     "error_result",
     "handle_delete_document_tool",
+    "handle_forget_document_tool",
     "handle_document_references_tool",
     "invalid_arguments",
     "layer_unavailable",
