@@ -107,7 +107,7 @@ CREATE INDEX ix_layer_gaps_open
 need no data migration. A gap row is inserted once per version and layer and keeps its lane
 through discharge and reopening until it is deleted. A gap is *open* while `discharged_at` is null; a layer is backfilling
 while it is enabled and has an open gap of a live version. Like `obs_flush_version_state`, gap
-rows carry no foreign key; deletion and hard forget delete them explicitly (§6.3).
+rows carry no foreign key; archive and forget delete them explicitly (§6.3).
 
 ### 3.3 One fence
 
@@ -117,8 +117,8 @@ Every decision that reads the layer configuration and writes chain work or gaps 
 to change the configuration. The fence exists whether or not a configuration row exists, so a
 boundary can never decide under the old configuration and commit under the new one.
 
-Lock order, everywhere: hard-forget fence (where already taken) → layer fence → the existing
-barrier locks of the completing stage → the D135 lineage lock (`documents` row `FOR UPDATE`).
+Lock order, everywhere: layer fence → the existing barrier locks of the completing stage → the
+lineage lock (`documents` row `FOR UPDATE`).
 
 ### 3.4 `setup` reconciles the setting
 
@@ -144,7 +144,7 @@ No engine API changes layers: it is deployment configuration with a cost, not a 
 ### 4.1 Boundaries
 
 Each layer is entered at exactly one boundary, decided inside the transaction that completes
-the previous stage, under the layer fence and the D135 lineage lock (§3.3):
+the previous stage, under the layer fence and the lineage lock (§3.3):
 
 - **claims boundary** — `embed_chunk` completion (today: one `extract_claims` job per chunk, or
   the D90 empty path for a version without chunks);
@@ -159,10 +159,10 @@ and its component versions are unchanged.
 **A configured deployment** decides by one procedure:
 
 1. If the layer is **disabled**: do not enter. Record a gap (at the claims boundary a claims gap
-   and a facts gap) unless the version or its lineage is deleted. The facts boundary opens the
+   and a facts gap) unless the version or its lineage is archived or forgotten. The facts boundary opens the
    **claims tail** (§4.2).
-2. If the version or its lineage is **deleted**: enter as today, so the chain's reconcile retires
-   the late work (D135); record no gap.
+2. If the version or its lineage is **archived or forgotten**: enter as today, so the chain's
+   reconcile retires the late work (evidence lifecycle §8); record no gap.
 3. Otherwise record a gap for the version (lane `steady`, or the lane of the completing work)
    and run **advance** for the lineage (§5.2) in the same transaction. Advance either enters this
    version — stamping its gap entered — or leaves it waiting behind a predecessor that has not
@@ -189,8 +189,8 @@ paid follow-ups. When the facts boundary does not enter facts, it opens the **cl
 
 The claims-mode reconcile runs **the same handler logic as the full reconcile** — currency
 transitions, recount, the zero-support policy (including the connector-cycle deferral to
-`CycleFinalizer`), review flags, `evidence_changed`, entity-profile refresh, and the D135
-deleted-testimony path with its document-binding rebuild — and differs in one thing: it opens
+`CycleFinalizer`), review flags, `evidence_changed`, entity-profile refresh, and the
+archived-testimony path (evidence lifecycle §8) with its document-binding rebuild — and differs in one thing: it opens
 **no `label_relation` and no fact-window review**. Facts that already exist (from a period when
 facts were on) therefore keep their support counts and closures exact while facts are off. This
 is a deliberate cost exception: when such facts exist, the profile refresh can make embedding
@@ -301,7 +301,7 @@ the work ledger, never from the mere absence of rows:
 
 Reaching the frontier deletes the version's gap of that layer. The frontier is only the ordering
 point: readiness and receipts additionally wait for `label_relation` and the other tail stages
-(§4.5). Deleting or forgetting a version deletes its gaps (§6.3). In a facts-enabled lineage the
+(§4.5). Archiving or forgetting a version deletes its gaps (§6.3). In a facts-enabled lineage the
 claims frontier comes after the version's fact adjudication (that is when `embed_claim` runs), so a
 successor's extraction waits for it; this is the price of never admitting a successor whose reused
 claims are not yet embedded.
@@ -440,14 +440,15 @@ current version once. Claim embeddings skip claims that are already embedded.
 Window reviews are held while facts are off (§4.4). Review-queue verdicts that an operator applies
 still run their own fact updates; they are explicit operator actions.
 
-### 6.3 Deletion and forgetting are never gated
+### 6.3 Archive and forget are never gated
 
-Document deletion (D135) and hard forget remove a document's contribution from every layer,
-whatever the configuration, through their existing cascades. Late pipeline work after a deletion
-reaches a reconcile in either mode, both of which run the D135 deleted-testimony path in full
-(§4.2). Deletion also deletes the version's gaps and advances the surviving lineage (§5.2) in the
-same transaction, so a deleted head never blocks its successors; a boundary never records a gap
-for a deleted version (§4.1).
+Archive and forget (D159, [archive and forget design](archive_and_forget_design.md)) remove a
+document's contribution from every layer, whatever the configuration. Late pipeline work after an
+archive reaches a reconcile in either mode, both of which run the archived-testimony path in full
+(§4.2); late work after a forget is invisible and removed by forget's next sweep. Archive also
+deletes the version's gaps and advances the surviving lineage (§5.2) in the same transaction, so
+an archived head never blocks its successors; a boundary never records a gap for an archived or
+forgotten version (§4.1). Forget's sweep deletes any gap rows that remain.
 
 ## 7. Retrieval
 
@@ -576,7 +577,7 @@ filter or mount swap. The transaction serving a completed version/representation
 under this document's enabled-layer rules clears its nullable publication marker
 and enqueues ordinary `publish_corpus(doc_id)` work. P3 readiness compares that
 marker with the current computed export digest; processing completion does not
-wait for P3. Deletion and hard forget remain unconditional, and their per-document
+wait for P3. Archive and forget remain unconditional, and their per-document
 corpus erasure/index regeneration cannot be disabled with a layer.
 
 ## 8. Compatibility
@@ -684,7 +685,7 @@ database-level, with recorded or fake model providers:
     succeeded but `embed_claim` or `label_relation` pending the receipt waits, and a dead letter there
     fails it as today; a version measured under `doc-text-sources-v1` succeeds when its four stages
     complete even if claims are switched on meanwhile; default receipts are unchanged.
-12. **Deletion.** Deleting a document while facts are off closes its facts, rebuilds its document
+12. **Archive.** Archiving a document while facts are off closes its facts, rebuilds its document
     bindings and deletes its gaps, without switching facts on.
 13. **Mounts.** Switching facts off leaves P3's source folders/indexes unchanged
     (no entities or K links under either setting) and removes the knowledge mount.
@@ -697,8 +698,8 @@ database-level, with recorded or fake model providers:
 
 - **Per-document, per-source-kind or per-ingest-call layer selection.** Coverage would become
   per-document and retrieval could not disclose it per result; use separate deployments.
-- **Deleting a disabled layer's data.** Switching off never deletes; deletion is D135's and hard
-  forget's job.
+- **Deleting a disabled layer's data.** Switching off never deletes; removing a document is
+  archive's and forget's job (D159).
 - **Holding a layer's in-flight work.** Switching off drains; budgets stop spend at once.
 - **A deployment-level retrieval default different from the enabled layers.** Narrow per request or
   per MCP connection.

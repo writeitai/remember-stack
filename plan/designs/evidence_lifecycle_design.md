@@ -4,7 +4,7 @@
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 
-> **Binding D98 amendment (2026-08-27).** Normal deletion updates PostgreSQL
+> **Binding D98 amendment (2026-08-27).** Archive updates PostgreSQL
 > authority and its live graph views in the same committed lifecycle; there is
 > no active P2 surface or snapshot purge. P1, P3, K, object/artifact, and backup
 > behavior remains governed by their own contracts. Pre-D98 P2 wording below is
@@ -249,8 +249,8 @@ they always assumed.
 *did the triggering event say anything about the world, or only about our own processing?*
 
 - **The source or a curator acted** — a living document's edit removed the content (§2), the
-  document was deleted at its source, or an operator deleted a version/lineage from the corpus
-  (§8). These events carry a decision ("this is withdrawn" / "this no longer belongs in the
+  document was deleted at its source, or a caller or operator archived or forgot it (§8).
+  These events carry a decision ("this is withdrawn" / "this no longer belongs in the
   memory"), so the system acts on it: solely-supported facts are **closed, per shape**
   (states: `valid_until` capped; fixed-period measurements: `invalidated_at` — the D43 no-cap
   rule), recorded as a `retracted_source_removal` adjudication. Loud, attributed, reversible —
@@ -313,7 +313,7 @@ self-healing gap (a named spike, not papered over):
 
 **Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
 not reached a version yet, the version's reconcile runs at component version
-`reconcile-2026.07:claims`. It performs steps 1–5 above (and the deleted-testimony path of §8)
+`reconcile-2026.07:claims`. It performs steps 1–5 above (and the archived-testimony path of §8)
 exactly as the full reconcile does — so facts that already exist keep exact counts and closures,
 and connector-cycle closure still defers to finalization — but opens no fact label and no window
 review. When the facts layer later reaches the version, the full reconcile runs under its own
@@ -420,110 +420,108 @@ map (schema §7).
   that claim; it never moves a count.
 - Fact-grain answers gain a `support: current | withdrawn` marker where relevant (§4).
 
-## 8. Deletion — deletion removes the document's contribution, uniformly
+<a id="8-deletion--deletion-removes-the-documents-contribution-uniformly"></a>
 
-One rule for every deletion grain and every document type (user decision — no per-mode
-split): **deleting a document removes its contribution to the memory.** Claims are retained
-as history (normal deletion keeps the audit trail; only hard-forget scrubs content — Codex
-review F12), their currency ends, counts recompute, and **facts solely supported by the
-deleted material are closed** per the §4 source-acted rule — recorded, reversible, no flag.
-Facts also supported by other documents simply lose one supporter. (The split-a-document
-scenario works exactly as expected through this rule: the four successor documents re-assert
-the same facts — same fact rows, new evidence links — so when the original's deletion lands,
-the facts stand on the successors' support; claims/facts being separate layers is what makes
-the information survive its source's reorganization.)
+## 8. Archive and forget — removing a document's contribution, uniformly
 
-- **Delete a version**: that version's testimony ends (`version_deleted`); the lineage
-  continues; bytes purge if no other version references the content object.
-- **Delete a lineage** (operator): the §13 document cascade at lineage grain. The lineage
-  and **every one of its versions** are tombstoned together, so the deletion outlives a
-  later re-observation of the same identity (below).
+A caller removes a document's contribution in one of two ways (D159; binding contract in the
+[archive and forget design](archive_and_forget_design.md)): **archive** ("this no longer
+holds"; the document stays readable as history) and **forget** ("this should not be here";
+the document and everything derived only from it are erased). Both start with the same
+cascade, one rule for every grain and every document type (user decision — no per-mode
+split): **removing a document removes its contribution to the memory.** Claims are retained
+as history (archive keeps the audit trail; only forget erases content — Codex review F12),
+their currency ends, counts recompute, and **facts solely supported by the removed material
+are closed** per the §4 source-acted rule — recorded, reversible, no flag. Facts also
+supported by other documents simply lose one supporter. (The split-a-document scenario works
+exactly as expected through this rule: the four successor documents re-assert the same facts
+— same fact rows, new evidence links — so when the original's archive lands, the facts stand
+on the successors' support; claims/facts being separate layers is what makes the information
+survive its source's reorganization.)
+
+- **Remove a version** (operator, internal): that version's testimony ends
+  (`version_archived`); the lineage continues; bytes purge if no other version references the
+  content object.
+- **Archive a lineage**: the §13 document cascade at lineage grain over **every one of its
+  versions**, recorded on the lineage as `documents.archived_at` and `archived_by` (`caller`
+  or `source`).
 - **Source-observed deletion**: the connector finds the file deleted at its source (a trashed
-  Drive file) — treated as a lineage deletion through the same cascade (lineage and versions
-  tombstoned, T4 anchors cleared in the same transaction), stamped with the observing sync
-  cycle. Finalization settles each deletion **episode** against its deleted versions, not
-  against the lineage tombstone. An episode is pending while any claim no live version
-  carries still has work left — it is current, has an open `support_withdrawn` review, or
-  evidences an open zero-support fact — and settling it retires those claims, resolves the
-  reviews, closes the facts and clears (or, for a recreated lineage, rebuilds) anchors, one transaction per episode that first
-  locks the lineage row (the row E0 locks to re-ingest), under a run id derived from the
-  lineage and the episode's deletion instant. A file recreated before finalization revives
-  the lineage but never strands the deleted version's testimony, and the recreated
-  version's claims are never retired (the cycle barrier still applies, so a delete-and-recreate or a
-  split-then-delete within one sync pass resolves as support swaps, not close-then-reopen; a
-  cross-cycle split leaves a brief, visible, self-healing gap).
-- **Hard-forget**: D74's separate fail-closed workflow spans all versions of the selected lineage.
-  It first reuses this normal currency/counting transition, then scrubs source-bearing history,
-  purges active P1/live-graph/P3/K surfaces, and records the portable restore barrier defined in
-  `hard_forget_design.md`; a soft tombstone alone is explicitly insufficient for S55.
+  Drive file) — treated as an archive with `archived_by = source` through the same cascade (T4
+  anchors cleared in the same transaction), stamped with the observing sync cycle.
+  Finalization settles each archive **episode** against its archived versions. An episode is
+  pending while any claim no live version carries still has work left — it is current, has an
+  open `support_withdrawn` review, or evidences an open zero-support fact — and settling it
+  retires those claims, resolves the reviews, closes the facts and clears (or, for a recreated
+  lineage, rebuilds) anchors, one transaction per episode that first locks the lineage row
+  (the row E0 locks to re-ingest), under a run id derived from the lineage and the episode's
+  archive instant. A file recreated before finalization brings the lineage back but never
+  strands the archived version's testimony, and the recreated version's claims are never
+  retired (the cycle barrier still applies, so a delete-and-recreate or a split-then-delete
+  within one sync pass resolves as support swaps, not close-then-reopen; a cross-cycle split
+  leaves a brief, visible, self-healing gap).
+- **Forget**: one transaction under the lineage row lock runs this cascade, hides the lineage
+  and its versions with `deleted_at` (the tombstone every read filters) and records the forget;
+  a background job then sweeps everything derived from the document and repeats until a sweep
+  finds nothing ([archive and forget design §3](archive_and_forget_design.md#3-forget)).
 
-**The caller-facing delete (D135).** Lineage deletion is a public write: `DELETE
-/documents/{doc_id}` on the HTTP API, with the SDK, CLI (`remember documents delete`) and a
-`delete_document` MCP tool over it. Its contract, in the order a caller meets it
-(analysis: `plan/analysis/public_document_deletion.md`):
+**The caller-facing archive (D159).** Archive is a public write: `POST
+/documents/{doc_id}/archive` on the HTTP API, with the SDK, CLI (`remember documents archive`)
+and an `archive_document` MCP tool over it, and `unarchive` beside each
+([design §2.4](archive_and_forget_design.md#24-surfaces)). Its contract, in the order a caller
+meets it:
 
-- **Authority and admission.** It requires full write scope (a read or ingest credential is
-  refused) and sits behind the D74 admission barrier like every route. It is not
-  spend-gated: it starts no pipeline work. The only provider call it can make is
+- **Authority.** It requires full write scope (a read or ingest credential is refused). It is
+  not spend-gated: it starts no pipeline work. The only provider call it can make is
   re-embedding the entity profiles whose facts changed; that call is metered on the surface
-  cost ledger (call site `profile_delete`) and is best effort — profiles are disposable
-  orientation text, so a provider failure is logged and never fails a deletion that has
+  cost ledger (call site `profile_archive`) and is best effort — profiles are disposable
+  orientation text, so a provider failure is logged and never fails an archive that has
   committed.
-- **One fenced, atomic episode.** The tombstone and the whole cascade run in one database
-  transaction that takes the D74 hard-forget fence (the shared advisory lock ordinary fact
-  work takes) first and holds it to the commit, then locks the lineage row before reading
-  its deletion state (so of two racing deletes, the second reads the committed tombstone and
-  is refused). So a deletion happens completely or not at
-  all; a forget already `preparing` refuses it before any change (`forget_in_progress`); a
-  forget requested mid-delete waits for the commit; and a re-ingest of the same lineage
-  waits on the lineage row and then arrives as a new version (below). The cascade retires
-  only testimony that no live version carries, so a version that is live again is never
-  touched by a deletion that began before it.
-- **Episode identity.** Each deletion episode has its own reconciliation id, derived from
-  the lineage and its tombstone instant. A repeat of the same deletion reuses it (the
-  instant does not move); a deletion after the document was re-added gets a new one, so
-  its currency events and its `evidence_changed` trigger are not mistaken for the first
-  episode's.
-- **Finish or refuse.** An unknown `doc_id` is `document_not_found` (404). A lineage some
-  other path tombstoned (a source-observed deletion awaiting finalization, an operator
-  run that crashed) is not refused outright: the cascade reruns. If the rerun changes
-  nothing — no new currency event, no count moved, no review resolved, no fact newly
-  closed — the document was already gone and the answer is `document_not_found`;
-  otherwise the call finishes it and answers with what it did.
+- **One atomic episode.** `archived_at` and the whole cascade run in one database transaction
+  that locks the lineage row before reading its archive state, so an archive happens
+  completely or not at all, and a re-ingest of the same lineage waits on the lineage row. A
+  repeat answers the same `DocumentArchive` with zero counts. The cascade retires only
+  testimony that no live version carries, so a version that is live again is never touched by
+  an archive that began before it.
+- **Episode identity.** Each archive episode has its own **archive reconciliation id**, derived
+  from `doc_id` and `archived_at`; every transition and closure the archive causes, including
+  late work retired afterwards, is recorded under it. A repeat of the same archive reuses it (the instant does not
+  move); an archive after the document came back gets a new one, so its currency events and
+  its `evidence_changed` trigger are not mistaken for the first episode's. Unarchive finds what
+  to restore through this id.
+- **Finish or refuse.** An unknown or forgotten `doc_id` is `document_not_found` (404). An
+  archive some other path started (a source-observed archive awaiting finalization, a run that
+  crashed) is finished: the cascade reruns and the answer reports what it did.
 - **Reviews.** A `support_withdrawn` review asks whether an extractor was right to stop
   deriving a claim from an unchanged file. Once no live version carries that claim, the
   source has acted and the question is moot: the cascade closes the review as
   `auto_resolved`, so the zero-support guard no longer holds the fact open, and a later
-  `restore_support` verdict is refused for a claim of a deleted document or one only
-  deleted versions carry. Verdicts and deletions are serialized: a verdict takes the
-  claim's lineage row, then its version rows (shared), before its deletion check and its
-  currency write — the order a deletion takes them exclusively — so either the verdict
-  sees the deletion and is refused, or the deletion sees the restored claim and retires
-  it.
-- **Work still in flight.** Deleting a document never waits for or cancels its pipeline.
-  Claim publication refuses a tombstoned lineage and a tombstoned version alike; work past
-  that point (fact application over claims extracted just before the tombstone) is
-  invisible to reads, which filter tombstones, and is retired where every version's chain
-  converges: when the reconcile stage finds its version's lineage or the version itself
-  tombstoned — scoping that version's own claims for recount and closure even when the
-  lineage is live again, since fact work may have attached a claim a finalization had
-  already retired — it repairs T4 anchors (D102) — cleared for a deleted lineage, rebuilt from
-  live testimony for a lineage that is live again, so a re-added document keeps the
-  anchors its live version earned — runs this section's cascade over whatever the deleted
-  input still holds current, recounting and closing every fact any of the lineage's claims
-  touches, and ends the chain.
-- **Coming back.** Re-observing a deleted lineage's identity (the same upload bytes, or the
-  same connector `source_ref`) is a new observation, not an undo. Because the old versions
-  are tombstoned, D55's content-hash no-op never matches them: the bytes become a new
-  version and run the whole pipeline. D56 reuse (claims and Selection results) never draws
-  on a deleted version, so the new version extracts fresh claims rather than re-attaching
-  retired ones. The closed facts stay
-  closed; the new claims support live facts through ordinary E3 application.
-- **Grain.** The public surface deletes lineages only. The version grain above and D74
-  hard-forget remain operator operations: a caller-facing version delete would need its own
-  contract for removing the last live version, and hard-forget closes the whole deployment's
-  admission while it erases bytes, which must never sit one flag away from an ordinary
-  delete.
+  `restore_support` verdict is refused for a claim of an archived document or one only
+  archived versions carry. Verdicts and archives are serialized: a verdict takes the claim's
+  lineage row, then its version rows (shared), before its archive check and its currency
+  write — the order an archive takes them exclusively — so either the verdict sees the
+  archive and is refused, or the archive sees the restored claim and retires it.
+- **Work still in flight.** Archiving a document never waits for or cancels its pipeline.
+  Claim publication treats an archived lineage as it treats a deleted one: new claims for it are
+  not published as current testimony. Work past that point is retired where every version's
+  chain converges: when
+  the reconcile stage finds its version's lineage archived or the version itself removed —
+  scoping that version's own claims for recount and closure even when the lineage is live
+  again, since fact work may have attached a claim a finalization had already retired — it
+  repairs T4 anchors (D102) — cleared for an archived lineage, rebuilt from live testimony for
+  a lineage that is live again, so a document that came back keeps the anchors its live
+  version earned — runs this section's cascade over whatever the archived input still holds
+  current, recounting and closing every fact any of the lineage's claims touches, and ends the
+  chain.
+- **Coming back.** `unarchive` is the exact undo: it makes current again the testimony that
+  archive ended and reopens the facts it closed whose closure is still in force, when they have
+  support again, as a new recorded event (`reopened_unarchive`); belief-as-of reads take a fact's
+  belief intervals from these close and reopen events. Identical bytes re-sent leave the
+  document archived (a connector's never undo a caller's archive); a changed version is ordinary
+  ingest with D56 reuse, which may draw on the archived versions. A source archive is undone by
+  the source ([design §2.3](archive_and_forget_design.md#23-undo-and-coming-back)).
+- **Grain.** The public surface archives and forgets lineages only. The version grain above
+  remains an internal operation: a caller-facing version archive would need its own contract
+  for removing the last live version.
 
 ## 9. The rejected alternative — reified evidence bases (a documented alternative)
 
@@ -554,7 +552,7 @@ insufficiency of coordinate keys** (never assumed): the basis layer in **exact-k
 | D43 | **works as designed**: version-to-version value changes are ordinary supersession; observation counts follow the new rule |
 | D45–D47/D73 | **reused**: reconciliation emits `evidence_changed`; K `inputs_hash` is keyed on fact state (stale-storm guard); authored K2 principles citing or watching the fact receive review notifications rather than machine edits |
 | D48–D51 | **small additions**: current-testimony defaults, regime disclosure, P1 channels |
-| Deletion §13 / S55 | **composes**: version grain added; normal lineage delete remains here, irreversible forget is D74 |
+| Deletion §13 / S55 | **composes**: version grain added; archive's cascade lives here, forget is the [archive and forget design](archive_and_forget_design.md) (D159) |
 
 ## 11. Spikes (measure before locking)
 
@@ -575,7 +573,7 @@ insufficiency of coordinate keys** (never assumed): the basis layer in **exact-k
    self-healing). Measure frequency on a real corpus; decide whether a grace window is
    warranted. The **false-retract rate per source class** is also the number that would ever
    justify re-adding the removed `review` softener (§2).
-7. **Version retention × hard-forget** — retention policy for old versions and their
+7. **Version retention × forget** — retention policy for old versions and their
    artifacts vs S55 obligations.
 8. **P1 representative policy** — search diversity vs lost phrasings, measured.
 

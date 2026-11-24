@@ -1,5 +1,7 @@
 # Temporal Clocks — world-time flows from the claim's window (Design)
 
+> **D159 (2026-11-24).** Hard-forget (D74) references below are historical; forget is now the [archive and forget design](archive_and_forget_design.md).
+
 > **D118 supersession (2026-09-07; effective when merged).** D107 fact kinds, dual windows, seed/matching/correction and consumer rules are superseded. Canonical arithmetic (§5), extraction vocabulary (§6) and the already published query-space contract remain in force.
 > The [mutable fact window design](mutable_fact_windows_design.md) is the current
 > authority. Except for the explicitly retained D107 portions above, the text

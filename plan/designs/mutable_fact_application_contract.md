@@ -96,15 +96,12 @@ retire by verifying its receipt, without relinking evidence.
 
 Use READ COMMITTED transactions with this acquisition order:
 
-1. Shared transaction advisory lock on `hard-forget:<deployment UUID>`; verify the
-   existing forget/availability fence while holding it. Forget preparation takes
-   this lock exclusively. No payload publication bypasses this check.
-2. Shared identity lock `<deployment UUID>:identity-epoch`. Merge/unmerge retain
+1. Shared identity lock `<deployment UUID>:identity-epoch`. Merge/unmerge retain
    their existing exclusive form. Resolve subject and object redirects before choosing
    canonical blocks; release/retry if the required subject set changes.
-3. Existing entity block locks `<deployment UUID>:obs:<canonical entity UUID>`,
+2. Existing entity block locks `<deployment UUID>:obs:<canonical entity UUID>`,
    sorted by UUID if an operation has several subjects.
-4. Consumed claims sorted by UUID, then relation rows sorted by UUID, then
+3. Consumed claims sorted by UUID, then relation rows sorted by UUID, then
    observation rows sorted by UUID, using `FOR UPDATE`; finally application rows
    sorted by UUID. An evidence update must hold its fact lock first.
 
@@ -122,8 +119,9 @@ Candidate membership may be streamed for hashing without copying all source text
 A fresh attempt UUID identifies this exact snapshot. Store its fingerprint and
 bounded inputs before releasing locks for remote inference. First complete answer
 wins via `UPDATE ... WHERE attempt_id = :attempt AND decision IS NULL`. Publication
-checks the forget fence and surviving input claims. A late reply cannot overwrite
-a replacement attempt or recreate an erased row.
+checks that its input claims survive. A late reply cannot overwrite a replacement
+attempt; a row a late reply writes for a forgotten document is invisible to reads
+and removed by forget's next sweep (D159).
 
 Application reacquires the same locks, then re-reads and recomputes the snapshot.
 It never applies a snapshot read before a lock wait. Any changed consumed input or
@@ -132,8 +130,9 @@ and infer from the new input. Equal complete domain inputs permit reuse; there i
 no new per-endpoint ownership or operation-sequence authority. All fact-creation,
 identity/support movement and legacy direct-write entry points use this block
 protocol. Lifecycle currency updates lock claims; its fact changes and evidence
-recounts lock fact rows and cannot bypass the guarded re-read. Forget drains
-ordinary work and holds its existing fence through scrubbing/recovery.
+recounts lock fact rows and cannot bypass the guarded re-read. Forget takes no
+lock here: it hides the document and sweeps until a sweep finds nothing
+([archive and forget design §3](archive_and_forget_design.md#3-forget)).
 
 Source withdrawal changes testimony currency and system belief only. Remove
 `lifecycle._CAP_RELATION`: zero-support relations use `invalidated_at`, like
@@ -244,8 +243,8 @@ survive a correct database update. Publish with existing input revalidation.
 
 Normalization outputs and source-owned applications cascade when their claim is
 forgotten. For surviving applications whose `input_claim_ids` overlap the purge,
-clear prepared inputs, fingerprint, attempt and answer before removal, under the
-fence. Applied structural receipts remain applied and cannot restore anything.
+clear prepared inputs, fingerprint, attempt and answer before removal, in the
+forget sweep. Applied structural receipts remain applied and cannot restore anything.
 Scrub ordinary transcript features whose complete consumed-claim inventory
 intersects the purge, including before-images and rationale; existing triggering-
 claim-only scrubbing is insufficient for these new multi-source decisions.
@@ -254,17 +253,16 @@ A current whole-window witness intersecting erased claims loses its chosen dates
 set endpoints NULL, precision unknown and witness array empty, and invalidate all
 labels/vectors/profile/K inputs derived from it. This conservative action does not
 claim the surviving evidence is false. Retain shared fact identity and independent
-support according to D74; erase source-derived statement text through its existing
+support according to the [archive and forget design](archive_and_forget_design.md#33-the-sweep); erase source-derived statement text through its existing
 purge/reconstruction contract as well. Positive current support from a surviving
 lineage is required to retain a shared source-derived assertion; a contradiction
 alone cannot preserve the forgotten wording. Reconstruct a shared observation
 from a surviving supporting original normalization output. Never adopt counterevidence as the
-fact's replacement statement. Recompute exclusivity for older portable manifests
-without changing their bytes. Existing NULL profile input hashes permit bounded
+fact's replacement statement. Existing NULL profile input hashes permit bounded
 repair discovery on retry. Evidence aggregates must agree with remaining
 application pointers. No prepared fingerprint, cited UUID array,
 cache or restored backup may reintroduce erased content. Verification includes
-pending replies, retries, partial purge failure and restored older manifests.
+pending replies, retries, interrupted sweeps and `remember ops forget-reapply` after a restore.
 
 ## 7. Existing stores and the schema migration
 

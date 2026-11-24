@@ -629,7 +629,7 @@ and players understand it; a filesystem does not. So:
 9. **Seek & parity** — codec-aware serving, gcsfuse reads, storage-class cost on large files;
    S59 must pass without downloading gigabytes to inspect ten seconds.
 10. **Cost & retention** — per-hour ASR/VLM/embedding spend; representation-generation
-    growth; hard-forget latency at target scale.
+    growth; forget latency at target scale.
 11. **Provider/privacy routes** — which adapters run locally vs send media to a provider;
     the manifest records the execution context (D61 ports).
 12. **Image dual-call quality and cost**: measure OCR transcription accuracy, visual
