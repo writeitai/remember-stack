@@ -623,7 +623,7 @@ def test_query_engine_database_budget_does_not_leak_between_instances() -> None:
 def test_compose_reads_the_retention_policy_only_from_dotenv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ZDR flags and the embedding allowlist come only from ``.env``.
+    """The engine ZDR flag and the embedding allowlist come only from ``.env``.
 
     An ``environment:`` entry outranks ``env_file``, so ``${VAR:-false}`` or
     ``${VAR-false}`` would let a shell export, or an alternate ``--env-file``
@@ -644,7 +644,6 @@ def test_compose_reads_the_retention_policy_only_from_dotenv(
     policy = (
         "REMEMBERSTACK_OPENROUTER_ZDR",
         "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY",
-        "REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR",
     )
     for name in ("setup", "api", "worker-convert", "worker-llm", "projections"):
         service = services[name]

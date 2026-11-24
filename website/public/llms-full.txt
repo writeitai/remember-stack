@@ -7870,12 +7870,19 @@ Google and All other models. Check that the endpoints you pin stay eligible,
 and confirm all of it before you send customer content. See OpenRouter's
 [ZDR guide](https://openrouter.ai/docs/guides/features/zdr#per-model-group-zdr-enforcement).
 
-With Docker Compose, set `REMEMBERSTACK_OPENROUTER_ZDR`,
-`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` and
-`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` in the project `.env`. The services read
-them only from there (`env_file`): a value exported in your shell, or one in
-an alternate `--env-file`, does not reach the engine, so neither can override
-or clear what `.env` says. A blank value stops startup.
+With Docker Compose, set `REMEMBERSTACK_OPENROUTER_ZDR` and
+`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` in the project `.env` as
+literal values (no `${...}` references). The services read them only from
+there (`env_file`): a value exported in your shell, or one in an alternate
+`--env-file`, does not reach the engine, so neither can override or clear
+what `.env` says. A blank `REMEMBERSTACK_OPENROUTER_ZDR` stops startup; a
+blank allowlist means no allowlist.
+
+These settings need an engine image that includes them; an older image
+ignores them without an error. Before you send customer content, check
+`GET /deployment` (see [deployment](https://remember.dev/docs/reference/http-api/deployment)):
+`model_bindings.openrouter_embedding_provider_only` must list your hosts. An
+image without this feature does not report that key.
 
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither
