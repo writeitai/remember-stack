@@ -8,6 +8,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
 from rememberstack.model import Forget
+from rememberstack.model import KnowledgeErasure
 from rememberstack.model import PipelineStage
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.purge import CorpusCachePurgePort
@@ -15,12 +16,14 @@ from rememberstack.ports.purge import KGitPurgePort
 from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine import KnowledgeControlPlane
 from rememberstack.workers import ForgetHandler
 from rememberstack.workers import ForgetService
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers.corpus_publication import CorpusPublisher
 from rememberstack.workers.forget import DEFAULT_QUIET_PERIOD_S
-from rememberstack.workers.forget import ForgetKnowledgeRebuilder
+from rememberstack.workers.forget import ForgetKnowledge
+from rememberstack.workers.forget import ForgetKnowledgeEraser
 
 
 class SelfHostForget:
@@ -42,18 +45,25 @@ class SelfHostForget:
         corpus_store: ObjectPurgePort,
         publisher: CorpusPublisher,
         k_git: KGitPurgePort | None = None,
-        knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
         caches: CorpusCachePurgePort | None = None,
         quiet_period_s: float = DEFAULT_QUIET_PERIOD_S,
     ) -> Self:
         """D147: compose the hide and the sweep over the deployment's actual stores.
 
         The stock API profile has no K store. If K pages exist, the host must
-        supply both K capabilities; their absence never silently skips them.
+        supply the K repository; its absence never silently skips them.
         """
         catalog = ForgetCatalog(engine=engine)
         service = ForgetService(engine=engine, catalog=catalog)
-        absent_k = _NoKnowledgeStore(engine=engine)
+        knowledge: ForgetKnowledge = (
+            _NoKnowledgeStore(engine=engine)
+            if k_git is None
+            else ForgetKnowledgeEraser(
+                catalog=catalog,
+                control_plane=KnowledgeControlPlane(engine=engine),
+                repository=k_git,
+            )
+        )
         handler = ForgetHandler(
             service=service,
             catalog=catalog,
@@ -66,8 +76,7 @@ class SelfHostForget:
             projection_purger=SelfHostProjectionPurger(
                 publisher=publisher, object_purger=corpus_store, caches=caches
             ),
-            knowledge_rebuilder=knowledge_rebuilder or absent_k,
-            k_git=k_git or absent_k,
+            knowledge=knowledge,
             quiet_period_s=quiet_period_s,
         )
         return cls(
@@ -93,38 +102,27 @@ class SelfHostForget:
 
 
 class _NoKnowledgeStore:
-    """The source/claims/facts profile has no Plane-K serving store to purge."""
+    """The source/claims/facts profile has no Plane-K repository to erase."""
 
     def __init__(self, *, engine: Engine) -> None:
         self._engine = engine
 
-    def recompile_without_lineage(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        self._refuse(deployment_id=deployment_id, artifact_ids=artifact_ids)
+    def erase(
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+    ) -> KnowledgeErasure:
+        if drop_artifact_ids:
+            with self._engine.connect() as connection:
+                present = connection.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM knowledge_artifacts"
+                        " WHERE deployment_id = :d"
+                        " AND artifact_id = ANY(CAST(:ids AS uuid[])))"
+                    ),
+                    {"d": forget.deployment_id, "ids": list(drop_artifact_ids)},
+                ).scalar_one()
+            if present:
+                raise RuntimeError("K pages require a composed K repository")
+        return KnowledgeErasure(removed=False)
 
-    def purge_artifacts(
-        self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        self._refuse(deployment_id=deployment_id, artifact_ids=artifact_ids)
-
-    def verify_artifacts_purged(
-        self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        self._refuse(deployment_id=deployment_id, artifact_ids=artifact_ids)
-
-    def _refuse(self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]) -> None:
-        if not artifact_ids:
-            return
-        with self._engine.connect() as connection:
-            present = connection.execute(
-                text(
-                    "SELECT EXISTS (SELECT 1 FROM knowledge_artifacts"
-                    " WHERE deployment_id = :d AND artifact_id = ANY(CAST(:ids AS uuid[])))"
-                ),
-                {"d": deployment_id, "ids": list(artifact_ids)},
-            ).scalar_one()
-        if present:
-            raise RuntimeError(
-                "K pages require a composed K purge and rebuild capability"
-            )
+    def flag(self, *, forget: Forget, paths: tuple[str, ...]) -> None:
+        del forget, paths

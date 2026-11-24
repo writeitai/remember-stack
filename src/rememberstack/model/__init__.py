@@ -191,6 +191,7 @@ from rememberstack.model.forget import Forget
 from rememberstack.model.forget import ForgetError
 from rememberstack.model.forget import ForgetNotFoundError
 from rememberstack.model.forget import ForgetStatus
+from rememberstack.model.forget import KnowledgeErasure
 from rememberstack.model.git import KRevision
 from rememberstack.model.knowledge import DocSetRuleParams
 from rememberstack.model.knowledge import EntityRuleParams
@@ -541,6 +542,7 @@ __all__ = (
     "MeterReceiptUnauthorized",
     "MeterReceiptUnavailable",
     "KRevision",
+    "KnowledgeErasure",
     "LaneRouteError",
     "MergeApplicationError",
     "MergeProposal",

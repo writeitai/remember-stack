@@ -1,5 +1,6 @@
 """Inventory tests for D61 substrate seams plus D74 store capabilities."""
 
+from collections.abc import Collection
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
@@ -132,8 +133,9 @@ class FakeKGitRemote:
         """Return a revision for the requested driver worktree."""
         return KRevision(root=f"checkout:{destination.name}")
 
-    def publish(self, *, worktree: Path) -> KRevision:
+    def publish(self, *, worktree: Path, compiled_paths: Collection[str]) -> KRevision:
         """Return the revision published from the driver worktree."""
+        del compiled_paths
         return KRevision(root=f"published:{worktree.name}")
 
 

@@ -1,5 +1,6 @@
 """WP-6.2 acceptance: one locked K publish and crash-safe PG finalization."""
 
+from collections.abc import Collection
 from collections.abc import Iterator
 from collections.abc import Sequence
 from decimal import Decimal
@@ -18,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.selfhost import LocalGitRepository
+from rememberstack.adapters.selfhost.git import KRepositoryMovedError
 from rememberstack.core import knowledge_content_hash
 from rememberstack.core import KnowledgeAuthoredDeclarationError
 from rememberstack.core import KnowledgePageValidationError
@@ -35,15 +37,18 @@ from rememberstack.model import KnowledgePlanRunStatus
 from rememberstack.model import KnowledgePlanRunWrite
 from rememberstack.model import KnowledgePlanTrigger
 from rememberstack.model import KRevision
+from rememberstack.ports import KGitRemotePort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import KnowledgeCommitBusyError
 from rememberstack.spine import KnowledgeCompilationError
 from rememberstack.spine import KnowledgeControlPlane
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import ForgetKnowledgeEraser
 from rememberstack.workers import KnowledgeAuthoredSynchronizer
 from rememberstack.workers import KnowledgeCommitDriver
 from rememberstack.workers import KnowledgeCommitSettings
+from rememberstack.workers.knowledge_driver import KnowledgeRedactionSync
 from tests.adapters.test_selfhost_git import _commit
 from tests.adapters.test_selfhost_git import _git
 from tests.adapters.test_selfhost_git import _output
@@ -181,8 +186,9 @@ class _GitRemote:
             target.write_text(body, encoding="utf-8")
         return KRevision(self.head)
 
-    def publish(self, *, worktree: Path) -> KRevision:
+    def publish(self, *, worktree: Path, compiled_paths: Collection[str]) -> KRevision:
         """Capture all Markdown files as one new revision or fail before mutation."""
+        del compiled_paths
         self.publish_calls += 1
         if self.fail_publish:
             raise RuntimeError("simulated git push failure")
@@ -286,12 +292,20 @@ class _FailFirstFinalizeControlPlane(KnowledgeControlPlane):
         super().commit_compilations(compilations=compilations, git_commit=git_commit)
 
 
+class _NoRedactions:
+    """No forget waits in these proofs; the real check has its own tests."""
+
+    def sync_redactions(self, *, deployment_id: UUID, worktree: Path) -> None:
+        del deployment_id, worktree
+
+
 def _run(
     *,
     graph: _CompileGraph,
-    remote: _GitRemote,
+    remote: KGitRemotePort,
     compiler: _Compiler,
     control: KnowledgeControlPlane | None = None,
+    redactions: KnowledgeRedactionSync | None = None,
 ) -> KnowledgeCommitCycleResult:
     """Run one cycle with no future curation exclusions."""
     return KnowledgeCommitDriver(
@@ -299,6 +313,7 @@ def _run(
         git_remote=remote,
         compiler=compiler,
         settings=KnowledgeCommitSettings(max_parallel_pages=4),
+        redactions=redactions or _NoRedactions(),
     ).run_cycle(deployment_id=_DEPLOYMENT_ID, exclusions_by_artifact={})
 
 
@@ -882,69 +897,246 @@ def test_driver_reconciles_move_and_stamps_its_single_git_revision(
     assert row == ("work/moved-child.md", "work/moved-child.md.curation.md", "head-1")
 
 
-@pytest.mark.parametrize("retired", [False, True])
-def test_forget_purge_erases_history_without_restoring_absent_bodies(
-    graph: _CompileGraph, tmp_path: Path, retired: bool
-) -> None:
-    """History erasure re-adds only surviving bytes; a page an ordinary K cycle
-    already removed or rewrote must not come back through the purge commit."""
-    repository = tmp_path / "truth"
+def _truth(*, root: Path, files: dict[str, str]) -> Path:
+    """A real truth repository whose branch holds ``files``, as before D159."""
+    repository = root / "truth"
     _git("init", "--quiet", "-b", "main", str(repository))
     _git("-C", str(repository), "config", "user.name", "Fixture")
     _git("-C", str(repository), "config", "user.email", "fixture@example.test")
-    for path, content in graph.old_files.items():
+    for path, content in files.items():
         target = repository / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-    affected = repository / graph.paths_by_id[graph.child]
-    affected.write_text("UNIQUE_FORGET_TOKEN\n", encoding="utf-8")
-    _commit(repository=repository, message="generated page with retained source")
-    # The ordinary K cycle runs before the purge: it either recompiles the page
-    # without the forgotten source or retires it entirely.
-    if retired:
-        affected.unlink()
-        with graph.engine.begin() as connection:
-            connection.execute(
-                text(
-                    "UPDATE knowledge_artifacts SET status='tombstoned' WHERE artifact_id=:id"
-                ),
-                {"id": graph.child},
-            )
-        _commit(repository=repository, message="cycle retired the page")
-    else:
-        affected.write_text("sanitized body\n", encoding="utf-8")
-        _commit(repository=repository, message="cycle recompiled the page")
-    remote = LocalGitRepository(
+    _commit(repository=repository, message="pre-D159 knowledge")
+    return repository
+
+
+def _local(repository: Path) -> LocalGitRepository:
+    return LocalGitRepository(
         repository=repository,
-        path_catalog=ForgetCatalog(engine=graph.engine),
         author_name="Fixture",
         author_email="fixture@example.test",
     )
-    forget_id = uuid4()
+
+
+def _redactions(graph: _CompileGraph, repository: Path) -> ForgetKnowledgeEraser:
+    return ForgetKnowledgeEraser(
+        catalog=ForgetCatalog(engine=graph.engine),
+        control_plane=graph.control,
+        repository=_local(repository),
+    )
+
+
+def test_compiled_pages_publish_as_a_snapshot_without_history(
+    graph: _CompileGraph, tmp_path: Path
+) -> None:
+    """D159: compiled pages leave the branch and its history; authored pages keep it."""
+    authored = "notes/decision.md"
+    repository = _truth(
+        root=tmp_path,
+        files={**graph.old_files, authored: "# Decision\n\nHuman words.\n"},
+    )
+    compiled_paths = tuple(graph.paths_by_id.values())
+
     for _ in range(2):
-        remote.purge_artifacts(
-            deployment_id=_DEPLOYMENT_ID,
-            forget_id=forget_id,
-            artifact_ids=(graph.child,),
+        _run(
+            graph=graph,
+            remote=_local(repository),
+            compiler=_Compiler(),
+            redactions=_redactions(graph, repository),
         )
-        remote.verify_artifacts_purged(
-            deployment_id=_DEPLOYMENT_ID,
-            forget_id=forget_id,
-            artifact_ids=(graph.child,),
+        with graph.engine.begin() as connection:
+            connection.execute(text("UPDATE knowledge_artifacts SET status = 'stale'"))
+
+    # The legacy history of compiled pages is gone from every branch commit.
+    assert (
+        _output(
+            "-C",
+            str(repository),
+            "log",
+            "--branches",
+            "--tags",
+            "--format=%H",
+            "--",
+            *compiled_paths,
         )
-        assert affected.exists() is (not retired)
-        assert (
+        == ""
+    )
+    tracked = _output("-C", str(repository), "ls-tree", "-r", "--name-only", "HEAD")
+    assert tracked.splitlines() == [authored]
+    assert (
+        len(
             _output(
-                "-C",
-                str(repository),
-                "log",
-                "--all",
-                "-S",
-                "UNIQUE_FORGET_TOKEN",
-                "--format=%H",
+                "-C", str(repository), "log", "--format=%H", "--", authored
+            ).splitlines()
+        )
+        == 1
+    )
+    # The snapshot is one parentless commit holding the current compiled pages.
+    snapshot = "refs/rememberstack/compiled"
+    assert _output("-C", str(repository), "rev-list", "--count", snapshot) == "1"
+    assert sorted(
+        _output(
+            "-C", str(repository), "ls-tree", "-r", "--name-only", snapshot
+        ).splitlines()
+    ) == sorted(compiled_paths)
+    assert _output("-C", str(repository), "show", f"{snapshot}:work/child.md") == (
+        "# New work/child.md"
+    )
+    # A checkout sees both again, as one tree.
+    checkout = tmp_path / "reader"
+    _local(repository).checkout(destination=checkout)
+    assert (checkout / "work/child.md").read_text(
+        encoding="utf-8"
+    ) == "# New work/child.md\n"
+    assert (checkout / authored).is_file()
+
+
+class _LeaseProbe(_Compiler):
+    """While a writer runs, another K writer can take the lease and publish."""
+
+    def __init__(self, *, control: KnowledgeControlPlane, repository: Path) -> None:
+        super().__init__()
+        self.control = control
+        self.repository = repository
+        self.acquired = False
+
+    def compile_page(
+        self, *, request: KnowledgePageCompileRequest
+    ) -> KnowledgePageCompileOutput:
+        if not self.acquired:
+            with self.control.commit_lease(deployment_id=_DEPLOYMENT_ID):
+                self.acquired = True
+            (self.repository / "notes").mkdir(exist_ok=True)
+            (self.repository / "notes/late.md").write_text("# Late\n", encoding="utf-8")
+            _commit(repository=self.repository, message="a human commit meanwhile")
+        return super().compile_page(request=request)
+
+
+def test_writers_run_outside_the_lease_and_a_moved_repository_refuses_publish(
+    graph: _CompileGraph, tmp_path: Path
+) -> None:
+    """D159: the K lease is held only to publish; publication is compare-and-swap."""
+    repository = _truth(root=tmp_path, files=graph.old_files)
+    compiler = _LeaseProbe(
+        control=KnowledgeControlPlane(engine=graph.engine), repository=repository
+    )
+
+    with pytest.raises(KRepositoryMovedError):
+        _run(
+            graph=graph,
+            remote=_local(repository),
+            compiler=compiler,
+            redactions=_redactions(graph, repository),
+        )
+
+    assert compiler.acquired
+    assert _output("-C", str(repository), "log", "-1", "--format=%s") == (
+        "a human commit meanwhile"
+    )
+    assert _output("-C", str(repository), "status", "--porcelain") == ""
+
+    # The next cycle starts from the moved repository and publishes.
+    result = _run(
+        graph=graph,
+        remote=_local(repository),
+        compiler=_Compiler(),
+        redactions=_redactions(graph, repository),
+    )
+    assert result.compiled_artifact_ids == graph.artifact_ids
+    assert (repository / "notes/late.md").is_file()
+
+
+def _waiting_forget(
+    *, graph: _CompileGraph, doc_id: UUID, fact_id: UUID, path: str
+) -> UUID:
+    """A forget the sweep finished as waiting for one authored page."""
+    forget_id = uuid4()
+    with graph.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO forgets (forget_id, deployment_id, doc_id, version_ids,"
+                " content_hashes, collected, blocking_k_paths, status)"
+                " VALUES (:f, :d, :doc, '{}', '{}', CAST(:collected AS jsonb),"
+                " ARRAY[CAST(:path AS text)], 'waiting_for_redaction')"
+            ),
+            {
+                "f": forget_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "collected": f'{{"fact_ids": ["{fact_id}"]}}',
+                "path": path,
+            },
+        )
+    return forget_id
+
+
+def _forget_state(*, graph: _CompileGraph, forget_id: UUID) -> tuple[str, list[str]]:
+    with graph.engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT status::text, blocking_k_paths FROM forgets"
+                " WHERE forget_id = :f"
+            ),
+            {"f": forget_id},
+        ).one()
+    return row[0], list(row[1])
+
+
+@pytest.mark.parametrize("facts_enabled", [True, False])
+def test_k_sync_finishes_the_authored_wait_after_the_owner_edits(
+    graph: _CompileGraph, tmp_path: Path, facts_enabled: bool
+) -> None:
+    """D159 §5 test 8: the owner's edit completes the forget, facts on or off."""
+    doc_id, fact_id = uuid4(), uuid4()
+    page = "notes/decision.md"
+    repository = _truth(
+        root=tmp_path,
+        files={
+            **graph.old_files,
+            page: f"# Decision\n\nSee relation {str(fact_id).upper()}.\n",
+            "notes/other.md": f"cites doc {doc_id} only in this old revision\n",
+        },
+    )
+    (repository / "notes/other.md").write_text("clean now\n", encoding="utf-8")
+    _commit(repository=repository, message="other page redacted earlier")
+    if not facts_enabled:
+        with graph.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployment_processing_layers (deployment_id,"
+                    " claims_enabled, facts_enabled, changed_at)"
+                    " VALUES (:d, true, false, now())"
+                ),
+                {"d": _DEPLOYMENT_ID},
             )
+    forget_id = _waiting_forget(graph=graph, doc_id=doc_id, fact_id=fact_id, path=page)
+
+    def cycle() -> KnowledgeCommitCycleResult:
+        return _run(
+            graph=graph,
+            remote=_local(repository),
+            compiler=_Compiler(),
+            redactions=_redactions(graph, repository),
+        )
+
+    cycle()
+    assert _forget_state(graph=graph, forget_id=forget_id) == (
+        "waiting_for_redaction",
+        [page],
+    )
+
+    (repository / page).write_text("# Decision\n\nRedacted.\n", encoding="utf-8")
+    _commit(repository=repository, message="owner redacts")
+    cycle()
+
+    assert _forget_state(graph=graph, forget_id=forget_id) == ("complete", [])
+    for needle in (str(doc_id), str(fact_id).upper()):
+        assert (
+            _output("-C", str(repository), "log", "--all", "-S", needle, "--format=%H")
             == ""
         )
-        assert (repository / graph.paths_by_id[graph.parent]).read_text(
-            encoding="utf-8"
-        ) == graph.old_files[graph.paths_by_id[graph.parent]]
+    assert (repository / page).read_text(
+        encoding="utf-8"
+    ) == "# Decision\n\nRedacted.\n"
+    assert _output("-C", str(repository), "status", "--porcelain") == ""

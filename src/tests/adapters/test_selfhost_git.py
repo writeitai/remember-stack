@@ -1,35 +1,36 @@
-"""Real-Git proofs for the self-host D74 affected-path history purge."""
+"""Real-Git proofs for the self-host K repository: snapshot, history erasure (D159)."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 import subprocess
-from uuid import UUID
 
 import pytest
 
 from rememberstack.adapters.selfhost import LocalGitRepository
+from rememberstack.adapters.selfhost.git import KRepositoryMovedError
+from rememberstack.adapters.selfhost.git import SNAPSHOT_REF
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import KGitRemotePort
 
-_DEPLOYMENT_ID = UUID("74000000-0000-0000-0000-000000000001")
-_DOC_ID = UUID("74000000-0000-0000-0000-000000000002")
-_FORGET_ID = UUID("74000000-0000-0000-0000-000000000003")
-_ARTIFACT_ID = UUID("74000000-0000-0000-0000-000000000004")
+_TOKEN = "59100000-0000-0000-0000-00000000aaaa"
+_COMPILED = frozenset({"K1/compiled.md"})
 
 
-class PathCatalog:
-    """Return fixed affected artifact paths."""
+class _Lease:
+    """Count how often the K lease is held, and refuse to be nested."""
 
-    def __init__(self, *, paths: tuple[str, ...]) -> None:
-        self.paths = paths
+    def __init__(self) -> None:
+        self.entered = 0
 
-    def k_paths_for_artifacts(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> tuple[str, ...]:
-        return self.paths
+    @contextmanager
+    def hold(self) -> Iterator[None]:
+        self.entered += 1
+        yield
 
 
 def _repository(*, root: Path) -> Path:
-    """Create renamed private history plus a sanitized current K path."""
+    """Renamed history citing the token, a clean current page and a control."""
     repository = root / "knowledge"
     _git("init", "--quiet", "-b", "main", str(repository))
     _git("-C", str(repository), "config", "user.name", "Fixture")
@@ -38,146 +39,182 @@ def _repository(*, root: Path) -> Path:
     affected = repository / "K1/affected.md"
     unrelated = repository / "K1/unrelated.md"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text("private UNIQUE_FORGET_TOKEN v1\n", encoding="utf-8")
+    legacy.write_text(f"cites {_TOKEN} v1\n", encoding="utf-8")
     unrelated.write_text("unrelated v1\n", encoding="utf-8")
     _commit(repository=repository, message="initial")
-    legacy.write_text("private UNIQUE_FORGET_TOKEN v2\n", encoding="utf-8")
+    legacy.write_text(f"cites {_TOKEN.upper()} v2\n", encoding="utf-8")
     unrelated.write_text("unrelated v2\n", encoding="utf-8")
     _commit(repository=repository, message="update")
     _git("-C", str(repository), "mv", "K1/legacy.md", "K1/affected.md")
     _commit(repository=repository, message="rename affected page")
-    affected.write_text("sanitized current page\n", encoding="utf-8")
-    _commit(repository=repository, message="redact and recompile")
+    affected.write_text("redacted current page\n", encoding="utf-8")
+    _commit(repository=repository, message="owner redacts")
+    _git("-C", str(repository), "tag", "-a", "v1", "-m", "release", "HEAD~1")
     return repository
 
 
-def test_local_git_purge_erases_affected_history_and_keeps_clean_current(
-    tmp_path: Path,
-) -> None:
-    """Remove private blobs from every ref without discarding unrelated path history."""
-    repository = _repository(root=tmp_path)
-    adapter = LocalGitRepository(
+def _adapter(repository: Path) -> LocalGitRepository:
+    return LocalGitRepository(
         repository=repository,
-        path_catalog=PathCatalog(paths=("K1/affected.md",)),
         author_name="RememberStack",
         author_email="rememberstack@example.test",
     )
-    purge: KGitPurgePort = adapter
 
-    purge.purge_artifacts(
-        deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID, artifact_ids=(_ARTIFACT_ID,)
+
+def test_erase_rewrites_only_history_that_names_the_document(tmp_path: Path) -> None:
+    """Every ref loses the token; current files and unrelated history stay."""
+    repository = _repository(root=tmp_path)
+    purge: KGitPurgePort = _adapter(repository)
+    lease = _Lease()
+    (repository / "K1/unrelated.md").write_text("uncommitted edit\n", encoding="utf-8")
+
+    first = purge.erase(
+        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
     )
-    purge.verify_artifacts_purged(
-        deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID, artifact_ids=(_ARTIFACT_ID,)
-    )
-    first_head = _output("-C", str(repository), "rev-parse", "HEAD")
-    purge.purge_artifacts(
-        deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID, artifact_ids=(_ARTIFACT_ID,)
+    second = purge.erase(
+        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
     )
 
+    assert (first.removed, first.blocking_paths) == (True, ())
+    assert (second.removed, second.blocking_paths) == (False, ())
+    assert lease.entered == 1
+    assert _everything(repository).count(_TOKEN.encode()) == 0
+    assert _everything(repository).lower().count(_TOKEN.encode()) == 0
     assert (repository / "K1/affected.md").read_text(encoding="utf-8") == (
-        "sanitized current page\n"
+        "redacted current page\n"
     )
     assert not (repository / "K1/legacy.md").exists()
-    assert (
-        _output(
-            "-C",
-            str(repository),
-            "log",
-            "--all",
-            "-S",
-            "UNIQUE_FORGET_TOKEN",
-            "--format=%H",
-        )
-        == ""
+    # An owner's uncommitted edit elsewhere survives; the tree is otherwise clean.
+    assert (repository / "K1/unrelated.md").read_text(encoding="utf-8") == (
+        "uncommitted edit\n"
     )
-    assert (
-        len(
-            _output(
-                "-C",
-                str(repository),
-                "log",
-                "--all",
-                "--format=%H",
-                "--",
-                "K1/affected.md",
-            ).splitlines()
-        )
-        == 1
+    assert _output("-C", str(repository), "status", "--porcelain") == (
+        "M K1/unrelated.md"
     )
-    assert (
-        len(
-            _output(
-                "-C",
-                str(repository),
-                "log",
-                "--all",
-                "--format=%H",
-                "--",
-                "K1/unrelated.md",
-            ).splitlines()
-        )
-        == 2
+    assert _log(repository, "K1/unrelated.md") == 2
+    assert _output("-C", str(repository), "rev-list", "--count", "HEAD") == "4"
+    assert _output("-C", str(repository), "show", "v1:K1/affected.md") == (
+        "redacted current page"
     )
-    assert (
-        _output(
-            "-C",
-            str(repository),
-            "rev-parse",
-            f"refs/rememberstack/forget/{_FORGET_ID}",
-        )
-        == first_head
-    )
-    assert _output("-C", str(repository), "rev-parse", "HEAD") == first_head
-    assert (
-        _output(
-            "-C",
-            str(repository),
-            "for-each-ref",
-            "--format=%(refname)",
-            "refs/original/",
-        )
-        == ""
-    )
+    assert _output("-C", str(repository), "for-each-ref", "refs/original/") == ""
 
 
-def test_local_git_remote_checkout_and_publish_update_truth(tmp_path: Path) -> None:
-    """Keep ordinary K publication usable through the same local adapter."""
+def test_a_current_citation_blocks_and_keeps_its_history(tmp_path: Path) -> None:
+    """The engine never rewrites an authored file that still names the document.
+
+    Its old name is not a current file, so that history is still rewritten.
+    """
     repository = _repository(root=tmp_path)
-    adapter: KGitRemotePort = LocalGitRepository(
-        repository=repository,
-        path_catalog=PathCatalog(paths=()),
-        author_name="RememberStack",
-        author_email="rememberstack@example.test",
+    (repository / "K1/affected.md").write_text(f"still {_TOKEN}\n", encoding="utf-8")
+    _commit(repository=repository, message="cites again")
+    lease = _Lease()
+
+    first = _adapter(repository).erase(
+        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
     )
+    second = _adapter(repository).erase(
+        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
+    )
+
+    assert (first.removed, first.blocking_paths) == (True, ("K1/affected.md",))
+    assert (second.removed, second.blocking_paths) == (False, ("K1/affected.md",))
+    assert lease.entered == 1
+    assert _log(repository, "K1/legacy.md") == 0
+    assert _log(repository, "K1/affected.md") == 3
+    assert _output(
+        "-C", str(repository), "log", "--all", "-S", _TOKEN, "--format=%s"
+    ).splitlines() == ["cites again"]
+
+
+def test_compiled_pages_form_a_parentless_snapshot_and_drop_without_trace(
+    tmp_path: Path,
+) -> None:
+    """Publish keeps compiled pages off the branch; erase drops them for good."""
+    repository = _repository(root=tmp_path)
+    adapter: KGitRemotePort = _adapter(repository)
     checkout = tmp_path / "checkout"
     before = adapter.checkout(destination=checkout)
-    (checkout / "K1/new.md").write_text("new compiled page\n", encoding="utf-8")
+    (checkout / "K1/compiled.md").write_text(f"compiled {_TOKEN}\n", encoding="utf-8")
+    (checkout / "K1/new.md").write_text("new authored page\n", encoding="utf-8")
 
-    after = adapter.publish(worktree=checkout)
+    after = adapter.publish(worktree=checkout, compiled_paths=_COMPILED)
 
     assert before != after
     assert (repository / "K1/new.md").read_text(encoding="utf-8") == (
-        "new compiled page\n"
+        "new authored page\n"
+    )
+    assert not (repository / "K1/compiled.md").exists()
+    assert _output("-C", str(repository), "rev-list", "--count", SNAPSHOT_REF) == "1"
+    assert _log(repository, "K1/compiled.md", refs=("--branches",)) == 0
+    reader = tmp_path / "reader"
+    adapter.checkout(destination=reader)
+    assert (reader / "K1/compiled.md").read_text(encoding="utf-8") == (
+        f"compiled {_TOKEN}\n"
     )
 
+    erasure = _adapter(repository).erase(
+        needles=(_TOKEN,),
+        compiled_paths=_COMPILED,
+        drop_paths=("K1/compiled.md",),
+        lease=_Lease().hold(),
+    )
 
-def test_local_git_purge_rejects_traversing_catalog_paths(tmp_path: Path) -> None:
-    """Never hand an untrusted escaping path to Git's index-filter shell."""
+    assert erasure.removed
+    assert (
+        _output("-C", str(repository), "for-each-ref", "--format=%(refname)")
+        == "refs/heads/main\nrefs/tags/v1"
+    )
+    assert _everything(repository).lower().count(_TOKEN.encode()) == 0
+
+
+def test_publish_refuses_a_moved_branch_and_keeps_the_human_commit(
+    tmp_path: Path,
+) -> None:
+    """Publication is a compare-and-swap; it never discards a commit."""
     repository = _repository(root=tmp_path)
-    adapter = LocalGitRepository(
-        repository=repository,
-        path_catalog=PathCatalog(paths=("../outside.md",)),
-        author_name="RememberStack",
-        author_email="rememberstack@example.test",
-    )
+    adapter = _adapter(repository)
+    checkout = tmp_path / "checkout"
+    adapter.checkout(destination=checkout)
+    (checkout / "K1/new.md").write_text("driver page\n", encoding="utf-8")
+    (repository / "K1/human.md").write_text("human page\n", encoding="utf-8")
+    _commit(repository=repository, message="human")
+
+    with pytest.raises(KRepositoryMovedError):
+        adapter.publish(worktree=checkout, compiled_paths=_COMPILED)
+
+    assert _output("-C", str(repository), "log", "-1", "--format=%s") == "human"
+    assert _output("-C", str(repository), "for-each-ref", "refs/rememberstack/") == ""
+
+
+def test_erase_rejects_traversing_paths(tmp_path: Path) -> None:
+    """Never hand an escaping path to Git or the filesystem."""
+    repository = _repository(root=tmp_path)
 
     with pytest.raises(ValueError):
-        adapter.purge_artifacts(
-            deployment_id=_DEPLOYMENT_ID,
-            forget_id=_FORGET_ID,
-            artifact_ids=(_ARTIFACT_ID,),
+        _adapter(repository).erase(
+            needles=(_TOKEN,),
+            compiled_paths=frozenset({"../outside.md"}),
+            drop_paths=(),
+            lease=_Lease().hold(),
         )
+
+
+def _everything(repository: Path) -> bytes:
+    """Every object the repository still stores, reachable or not."""
+    return subprocess.run(
+        ("git", "-C", str(repository), "cat-file", "--batch-all-objects", "--batch"),
+        check=True,
+        capture_output=True,
+    ).stdout
+
+
+def _log(repository: Path, path: str, refs: tuple[str, ...] = ("--all",)) -> int:
+    """How many commits on ``refs`` touch ``path``."""
+    return len(
+        _output(
+            "-C", str(repository), "log", *refs, "--format=%H", "--", path
+        ).splitlines()
+    )
 
 
 def _commit(*, repository: Path, message: str) -> None:

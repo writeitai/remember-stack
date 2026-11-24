@@ -6,21 +6,28 @@ sweep's work row. ``ForgetHandler`` runs one sweep per work row (PostgreSQL,
 objects, corpus, K) and schedules the next one after a quiet period, until a
 sweep after the quiet period finds nothing left. ``ForgetService.reapply`` re-runs the
 sweeps of every record after an operator restores a store from a backup.
+``ForgetKnowledgeEraser`` is the K step, and the K sync's check that finishes a
+record waiting for an owner to redact authored pages.
 """
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Protocol
 from uuid import UUID
 from uuid import uuid4
 
 from sqlalchemy.engine import Engine
 
+from rememberstack.core import cites_forgotten
 from rememberstack.model import ClaimedWork
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import EnqueueWork
 from rememberstack.model import Forget
 from rememberstack.model import ForgetStatus
+from rememberstack.model import KnowledgeErasure
+from rememberstack.model import KnowledgePageKind
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
 from rememberstack.ports import KGitPurgePort
@@ -32,9 +39,9 @@ from rememberstack.spine.forget import ForgetCatalog
 from rememberstack.spine.forget import retry_delay
 from rememberstack.spine.forget import sweep_work
 from rememberstack.spine.forget import utc_now
+from rememberstack.spine.knowledge import KnowledgeControlPlane
 from rememberstack.spine.work_ledger import enqueue_on
 from rememberstack.workers.base import HandlerOutcome
-from rememberstack.workers.knowledge_driver import KnowledgeCommitDriver
 from rememberstack.workers.reconcile import remove_lineage_on
 
 _logger = logging.getLogger(__name__)
@@ -45,31 +52,98 @@ plus the bounded object request time, so a worker that lost its lease at the
 hide has stopped writing before the sweep that may complete the forget."""
 
 
-class ForgetKnowledgeRebuilder(Protocol):
-    """Recompile compiled K pages after their citations to a document went."""
+class ForgetKnowledge(Protocol):
+    """The K step of a sweep (D159 §3.3 step 4) over the composed K store."""
 
-    def recompile_without_lineage(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        """Publish sanitized current compiled files before history erasure."""
+    def erase(
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+    ) -> KnowledgeErasure:
+        """Delete these compiled pages, rewrite history, report what still cites."""
+        ...
+
+    def flag(self, *, forget: Forget, paths: tuple[str, ...]) -> None:
+        """Ask the owners of these authored pages to redact them."""
         ...
 
 
-class KnowledgeCycleForgetRebuilder:
-    """Compile the affected stale pages through the existing single K driver."""
+class ForgetKnowledgeEraser:
+    """The K step and the authored-page wait over one K repository.
 
-    def __init__(self, *, driver: KnowledgeCommitDriver) -> None:
-        """Bind the production commit cycle after PostgreSQL marks pages stale."""
-        self._driver = driver
+    Compiled pages are a snapshot without history, so the step deletes the
+    pending ones and ordinary K work rebuilds them. History is rewritten only
+    for authored pages and sidecars whose current file no longer names the
+    document; those that still do block the record until their owner edits
+    them. Work is prepared outside the K lease, which is held only to publish.
+    """
 
-    def recompile_without_lineage(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
+    def __init__(
+        self,
+        *,
+        catalog: ForgetCatalog,
+        control_plane: KnowledgeControlPlane,
+        repository: KGitPurgePort,
     ) -> None:
-        """Run one K commit only when the sweep names affected artifacts."""
-        if artifact_ids:
-            self._driver.run_cycle(
-                deployment_id=deployment_id, exclusions_by_artifact={}
+        """Bind the records, the K control plane (lease, flags) and the repository."""
+        self._catalog = catalog
+        self._control_plane = control_plane
+        self._repository = repository
+
+    def erase(
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+    ) -> KnowledgeErasure:
+        """Drop the pending compiled pages and rewrite history that names the document."""
+        deployment_id = forget.deployment_id
+        compiled = frozenset(
+            state.git_path
+            for state in self._control_plane.artifact_path_states(
+                deployment_id=deployment_id
             )
+            if state.page_kind is KnowledgePageKind.COMPILED
+        )
+        return self._repository.erase(
+            needles=self._catalog.needles(forget=forget),
+            compiled_paths=compiled,
+            drop_paths=self._catalog.k_paths_for_artifacts(
+                deployment_id=deployment_id, artifact_ids=drop_artifact_ids
+            ),
+            lease=self._control_plane.commit_lease(deployment_id=deployment_id),
+        )
+
+    def flag(self, *, forget: Forget, paths: tuple[str, ...]) -> None:
+        """Raise a redaction-required review flag on each listed authored page."""
+        self._control_plane.require_redaction(
+            deployment_id=forget.deployment_id, git_paths=paths
+        )
+
+    def sync_redactions(self, *, deployment_id: UUID, worktree: Path) -> None:
+        """The K sync's check (D159 §3.4): finish records whose owners redacted.
+
+        ``worktree`` is the K sync's checkout. A waiting record is looked at
+        again only when one of its listed files no longer names the document;
+        then that path's history is rewritten and the record completes once
+        nothing cites the document.
+        """
+        for forget in self._catalog.waiting(deployment_id=deployment_id):
+            needles = self._catalog.needles(forget=forget)
+            if all(
+                _cites(worktree=worktree, git_path=path, needles=needles)
+                for path in forget.blocking_k_paths
+            ):
+                continue
+            erasure = self.erase(forget=forget, drop_artifact_ids=())
+            status = self._catalog.redaction_progress(
+                forget=forget, blocking_k_paths=erasure.blocking_paths
+            )
+            if status is ForgetStatus.WAITING_FOR_REDACTION:
+                self.flag(forget=forget, paths=erasure.blocking_paths)
+
+
+def _cites(*, worktree: Path, git_path: str, needles: tuple[str, ...]) -> bool:
+    """Whether the checkout's file at ``git_path`` still names the document."""
+    target = worktree.joinpath(*PurePosixPath(git_path).parts)
+    if target.is_symlink() or not target.is_file():
+        return False
+    return cites_forgotten(content=target.read_bytes(), needles=needles)
 
 
 class ForgetService:
@@ -190,8 +264,7 @@ class ForgetHandler:
         profile_refresher: ProfileRefresherPort,
         object_purgers: tuple[ObjectPurgePort, ...],
         projection_purger: ProjectionPurgePort,
-        knowledge_rebuilder: ForgetKnowledgeRebuilder,
-        k_git: KGitPurgePort,
+        knowledge: ForgetKnowledge,
         quiet_period_s: float = DEFAULT_QUIET_PERIOD_S,
     ) -> None:
         """Bind the record catalog and the selected stores' erasure capabilities."""
@@ -204,8 +277,7 @@ class ForgetHandler:
         self._profile_refresher = profile_refresher
         self._object_purgers = object_purgers
         self._projection_purger = projection_purger
-        self._knowledge_rebuilder = knowledge_rebuilder
-        self._k_git = k_git
+        self._knowledge = knowledge
         self._quiet_period_s = quiet_period_s
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
@@ -218,7 +290,15 @@ class ForgetHandler:
             # A forget-reapply started a newer series; this one stops here.
             return HandlerOutcome()
         try:
-            found = self.sweep(forget=forget, payload=payload, meter=meter)
+            found, blocking = self.sweep(forget=forget, payload=payload, meter=meter)
+            if not found and not payload.first:
+                status = self._catalog.finish(
+                    forget=forget, blocking_k_paths=blocking, series=payload.series
+                )
+                if status is ForgetStatus.WAITING_FOR_REDACTION:
+                    # The one wait: authored pages. The K sync finishes it.
+                    self._knowledge.flag(forget=forget, paths=blocking)
+                return HandlerOutcome()
         except Exception as error:  # noqa: BLE001 — retried with backoff, never capped
             _logger.exception(
                 "forget.sweep_failed forget_id=%s sweep=%s",
@@ -232,42 +312,24 @@ class ForgetHandler:
                     self._retry(deployment_id=work.deployment_id, payload=payload),
                 )
             )
-        if found or payload.first:
-            return HandlerOutcome(
-                follow_up=(
-                    self._next(deployment_id=work.deployment_id, payload=payload),
-                )
-            )
-        blocking = self._catalog.still_blocking(forget=forget)
-        if not blocking:
-            authored = self._catalog.authored_artifact_ids(forget=forget)
-            if authored:
-                # The owner's edit removed the citation: erase the path's history.
-                self._k_git.purge_artifacts(
-                    deployment_id=forget.deployment_id,
-                    forget_id=forget.forget_id,
-                    artifact_ids=authored,
-                )
-        status = self._catalog.finish(
-            forget=forget, blocking_k_paths=blocking, series=payload.series
+        return HandlerOutcome(
+            follow_up=(self._next(deployment_id=work.deployment_id, payload=payload),)
         )
-        if status is ForgetStatus.WAITING_FOR_REDACTION:
-            # The one wait: authored pages. Look again after a quiet period.
-            return HandlerOutcome(
-                follow_up=(
-                    self._next(deployment_id=work.deployment_id, payload=payload),
-                )
-            )
-        return HandlerOutcome()
 
     def sweep(
         self, *, forget: Forget, payload: _SweepPayload, meter: CostMeterPort | None
-    ) -> bool:
-        """One sweep (D159 §3.3); whether it removed any forgotten residue."""
+    ) -> tuple[bool, tuple[str, ...]]:
+        """One sweep (D159 §3.3): whether it removed residue, and what still cites.
+
+        The second value lists the authored pages and sidecars whose current
+        file still names the document.
+        """
         # A restored database, or an upgraded D74 forget, still holds the
         # lineage: hide it again (finish its cascade) before sweeping.
         self._service.rehide(forget=forget)
-        findings = self._catalog.sweep_postgres(forget=forget)
+        findings = self._catalog.sweep_postgres(
+            forget=forget, reapply=payload.reapply and payload.first
+        )
         found = findings.removed
         if findings.profile_entity_ids:
             try:
@@ -301,21 +363,10 @@ class ForgetHandler:
             deployment_id=forget.deployment_id, doc_id=forget.doc_id
         )
         compiled = findings.compiled_artifact_ids
-        if payload.reapply and payload.first:
-            # A restored K repository may hold history the record names.
-            compiled = self._catalog.collected_artifact_ids(forget=forget)
+        erasure = self._knowledge.erase(forget=forget, drop_artifact_ids=compiled)
         if compiled:
-            self._knowledge_rebuilder.recompile_without_lineage(
-                deployment_id=forget.deployment_id, artifact_ids=compiled
-            )
-            self._k_git.purge_artifacts(
-                deployment_id=forget.deployment_id,
-                forget_id=forget.forget_id,
-                artifact_ids=compiled,
-            )
             self._catalog.clear_k_pending(forget=forget, artifact_ids=compiled)
-            found = True
-        return found
+        return found or erasure.removed, erasure.blocking_paths
 
     def _next(self, *, deployment_id: UUID, payload: _SweepPayload) -> EnqueueWork:
         return sweep_work(

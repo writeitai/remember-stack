@@ -1052,6 +1052,37 @@ class KnowledgeControlPlane:
             lint_flagged=lint_flagged,
         )
 
+    def require_redaction(
+        self, *, deployment_id: UUID, git_paths: Collection[str]
+    ) -> tuple[UUID, ...]:
+        """Flag authored pages a forget waits on: their owner must redact (D159).
+
+        The flag carries no identifier of the forgotten document, only the
+        reason and ``redaction_required``. Paths that are not live authored
+        pages (curation sidecars, other files) are listed on the forget record
+        only. Returns the flagged artifacts.
+        """
+        if not git_paths:
+            return ()
+        payload = KnowledgeAuthoredReviewPayload(
+            reasons=(KnowledgeAuthoredReviewReason.TOMBSTONE,), redaction_required=True
+        )
+        with self._engine.begin() as connection:
+            artifact_ids = tuple(
+                connection.execute(
+                    _SELECT_LIVE_AUTHORED_BY_PATHS,
+                    {"deployment_id": deployment_id, "git_paths": sorted(git_paths)},
+                ).scalars()
+            )
+            for artifact_id in artifact_ids:
+                self._upsert_authored_flag(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    artifact_id=artifact_id,
+                    payload=payload,
+                )
+        return artifact_ids
+
     def register_subscription(
         self, *, subscription: KnowledgeSubscriptionCreate
     ) -> None:
@@ -4041,6 +4072,18 @@ _SELECT_ARTIFACT_PATH_STATES = text(
     FROM knowledge_artifacts
     WHERE deployment_id = :deployment_id AND status <> 'tombstoned'
     ORDER BY git_path
+    """
+)
+
+_SELECT_LIVE_AUTHORED_BY_PATHS = text(
+    """
+    SELECT artifact_id
+    FROM knowledge_artifacts
+    WHERE deployment_id = :deployment_id
+      AND git_path = ANY(CAST(:git_paths AS text[]))
+      AND page_kind = 'authored'
+      AND status <> 'tombstoned'
+    ORDER BY artifact_id
     """
 )
 

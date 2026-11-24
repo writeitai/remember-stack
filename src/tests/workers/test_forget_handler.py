@@ -7,14 +7,13 @@ from datetime import timezone
 from typing import cast
 from uuid import UUID
 
-import pytest
-
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EnqueueWork
 from rememberstack.model import Forget
 from rememberstack.model import ForgetStatus
+from rememberstack.model import KnowledgeErasure
 from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
@@ -27,7 +26,6 @@ _DEPLOYMENT_ID = UUID("59100000-0000-0000-0000-000000000001")
 _DOC_ID = UUID("59100000-0000-0000-0000-000000000002")
 _FORGET_ID = UUID("59100000-0000-0000-0000-000000000003")
 _COMPILED_ID = UUID("59100000-0000-0000-0000-000000000004")
-_AUTHORED_ID = UUID("59100000-0000-0000-0000-000000000005")
 _SHARED_HASH = "c" * 64
 _OWN_HASH = "d" * 64
 _FORGET = Forget(
@@ -47,7 +45,6 @@ class _Catalog:
     """The record and the PostgreSQL step, scripted per sweep."""
 
     removed: list[bool]
-    blocking: list[tuple[str, ...]] = field(default_factory=list)
     live: frozenset[str] = frozenset()
     compiled: tuple[UUID, ...] = ()
     record_value: Forget = _FORGET
@@ -59,7 +56,10 @@ class _Catalog:
     def record(self, *, deployment_id: UUID, forget_id: UUID) -> Forget:
         return self.record_value
 
-    def sweep_postgres(self, *, forget: Forget) -> SweepFindings:
+    reapplied: list[bool] = field(default_factory=list)
+
+    def sweep_postgres(self, *, forget: Forget, reapply: bool = False) -> SweepFindings:
+        self.reapplied.append(reapply)
         return SweepFindings(
             removed=self.removed.pop(0),
             object_keys=(
@@ -67,21 +67,11 @@ class _Catalog:
                 ObjectKey(f"{_DOC_ID}/{_SHARED_HASH}/original.txt"),
             ),
             compiled_artifact_ids=self.compiled,
-            blocking_k_paths=(),
             profile_entity_ids=(),
         )
 
     def live_originals(self, *, forget: Forget) -> frozenset[str]:
         return self.live
-
-    def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
-        return (_COMPILED_ID,)
-
-    def still_blocking(self, *, forget: Forget) -> tuple[str, ...]:
-        return self.blocking.pop(0) if self.blocking else ()
-
-    def authored_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
-        return (_AUTHORED_ID,)
 
     def current_series(self, *, forget: Forget) -> str:
         return self.series
@@ -153,25 +143,28 @@ class _Corpus:
 
 @dataclass
 class _Knowledge:
-    rebuilt: list[tuple[UUID, ...]] = field(default_factory=list)
-    purged: list[tuple[UUID, ...]] = field(default_factory=list)
+    """The K step: scripted removals and blocking paths per sweep."""
+
+    removed: list[bool] = field(default_factory=list)
+    blocking: list[tuple[str, ...]] = field(default_factory=list)
+    dropped: list[tuple[UUID, ...]] = field(default_factory=list)
+    flagged: list[tuple[str, ...]] = field(default_factory=list)
     fail: bool = False
 
-    def recompile_without_lineage(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
+    def erase(
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+    ) -> KnowledgeErasure:
         if self.fail:
             self.fail = False
-            raise RuntimeError("K driver unavailable")
-        self.rebuilt.append(artifact_ids)
+            raise RuntimeError("K repository unavailable")
+        self.dropped.append(drop_artifact_ids)
+        return KnowledgeErasure(
+            removed=self.removed.pop(0) if self.removed else False,
+            blocking_paths=self.blocking.pop(0) if self.blocking else (),
+        )
 
-    def purge_artifacts(
-        self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        self.purged.append(artifact_ids)
-
-    def verify_artifacts_purged(self, **_: object) -> None:
-        return None
+    def flag(self, *, forget: Forget, paths: tuple[str, ...]) -> None:
+        self.flagged.append(paths)
 
 
 @dataclass
@@ -189,8 +182,7 @@ class _Rig:
             profile_refresher=RecordingProfileRefresher(),
             object_purgers=(self.objects,),  # type: ignore[arg-type]
             projection_purger=self.corpus,
-            knowledge_rebuilder=self.knowledge,
-            k_git=self.knowledge,
+            knowledge=self.knowledge,
             quiet_period_s=900,
         )
 
@@ -302,52 +294,54 @@ def test_a_sweep_of_an_older_series_does_nothing() -> None:
 
 
 def test_an_interrupted_k_step_stays_pending_until_it_succeeds() -> None:
-    """Pages marked for a rebuild are rebuilt even if that sweep died after marking."""
+    """§5 test 7: pages marked in PostgreSQL are dropped even if that sweep died."""
     rig = _Rig(catalog=_Catalog(removed=[True, False, False], compiled=(_COMPILED_ID,)))
     rig.knowledge.fail = True
     payload = _run(rig, _FIRST)
     assert payload is not None and payload["failures"] == 1
-    assert rig.knowledge.purged == []
+    assert rig.knowledge.dropped == []
+    assert rig.catalog.compiled == (_COMPILED_ID,)
     payload = _run(rig, payload)
-    assert rig.knowledge.purged == [(_COMPILED_ID,)]
+    assert rig.knowledge.dropped == [(_COMPILED_ID,)]
+    assert rig.catalog.compiled == ()
     assert payload is not None
     assert _run(rig, payload) is None
+    assert rig.catalog.finished == [()]
 
 
-def test_compiled_pages_are_rebuilt_and_their_history_erased() -> None:
-    """Interim K step (slice B replaces it): rebuild, then erase history."""
-    rig = _Rig(catalog=_Catalog(removed=[True], compiled=(_COMPILED_ID,)))
-    _run(rig, _FIRST)
-    assert rig.knowledge.rebuilt == [(_COMPILED_ID,)]
-    assert rig.knowledge.purged == [(_COMPILED_ID,)]
-
-
-def test_a_reapply_purges_the_recorded_k_history_once() -> None:
-    """§3.8: a restored K repository is cleaned on the reapply's first sweep."""
-    rig = _Rig(catalog=_Catalog(removed=[False, False]))
-    second = _run(rig, {**_FIRST, "reapply": True})
-    assert rig.knowledge.purged == [(_COMPILED_ID,)]
-    assert second is not None and second["reapply"] is True
-    assert _run(rig, second) is None
-    # Completion erases the collected authored pages' history as well.
-    assert rig.knowledge.purged == [(_COMPILED_ID,), (_AUTHORED_ID,)]
-
-
-@pytest.mark.parametrize("edits", (1, 3))
-def test_authored_pages_make_the_forget_wait_until_the_owner_edits(edits: int) -> None:
-    """§5 test 8: everything else is clean; only the citing page waits."""
-    still = tuple(("k/authored.md",) for _ in range(edits))
+def test_k_residue_keeps_the_forget_erasing() -> None:
+    """A late compiled page or history is found by the next sweep, never ignored."""
     rig = _Rig(
-        catalog=_Catalog(removed=[True] + [False] * (edits + 1), blocking=[*still])
+        catalog=_Catalog(removed=[True, False, False]),
+        knowledge=_Knowledge(removed=[False, True, False]),
     )
     payload = _run(rig, _FIRST)
-    for _ in range(edits):
-        assert payload is not None
-        payload = _run(rig, payload)
-        assert rig.catalog.finished[-1] == ("k/authored.md",)
-        assert rig.knowledge.purged == []
+    assert payload is not None
+    payload = _run(rig, payload)
     assert payload is not None
     assert _run(rig, payload) is None
-    assert rig.catalog.finished[-1] == ()
-    # The owner's edit removed the citation: that path's history is erased.
-    assert rig.knowledge.purged == [(_AUTHORED_ID,)]
+
+
+def test_a_reapply_marks_the_recorded_pages_on_its_first_sweep_only() -> None:
+    """§3.8: a restored K repository's recorded pages are dropped again."""
+    rig = _Rig(catalog=_Catalog(removed=[False, False]))
+    second = _run(rig, {**_FIRST, "reapply": True})
+    assert second is not None and second["reapply"] is True
+    assert _run(rig, second) is None
+    assert rig.catalog.reapplied == [True, False]
+
+
+def test_authored_pages_make_the_forget_wait_for_the_k_sync() -> None:
+    """§5 test 8: everything else is clean; the citing page is flagged and listed.
+
+    The job then stops: the K sync finishes the record after the owner's edit.
+    """
+    rig = _Rig(
+        catalog=_Catalog(removed=[True, False]),
+        knowledge=_Knowledge(blocking=[("k/authored.md",), ("k/authored.md",)]),
+    )
+    payload = _run(rig, _FIRST)
+    assert payload is not None
+    assert _run(rig, payload) is None
+    assert rig.catalog.finished == [("k/authored.md",)]
+    assert rig.knowledge.flagged == [("k/authored.md",)]

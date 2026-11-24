@@ -2,10 +2,12 @@
 
 from collections.abc import Callable
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from typing import Protocol
 from typing import runtime_checkable
 from uuid import UUID
 
+from rememberstack.model import KnowledgeErasure
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectPurgeEvidence
 
@@ -79,16 +81,24 @@ class CorpusCachePurgePort(Protocol):
 
 @runtime_checkable
 class KGitPurgePort(Protocol):
-    """Erase affected Plane-K paths from all reachable Git history."""
+    """Erase forgotten text from the Plane-K repository (D159 §3.3 step 4)."""
 
-    def purge_artifacts(
-        self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        """Erase affected history and retain only already-sanitized current files."""
-        ...
+    def erase(
+        self,
+        *,
+        needles: tuple[str, ...],
+        compiled_paths: frozenset[str],
+        drop_paths: tuple[str, ...],
+        lease: AbstractContextManager[None],
+    ) -> KnowledgeErasure:
+        """Drop compiled pages and rewrite history that names a forgotten ID.
 
-    def verify_artifacts_purged(
-        self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        """Raise unless the store-local receipt and affected-path history are clean."""
+        ``drop_paths`` leave the compiled snapshot. A current authored page or
+        sidecar that names a needle blocks: it is reported and its history is
+        kept until the owner edits it. Every other path whose history names a
+        needle has that history rewritten to its current file (or removed when
+        it no longer exists), and compiled paths are removed from the branch
+        history (the one-time legacy cleanup). The work is prepared outside
+        ``lease``, which is held only to publish. Absence succeeds.
+        """
         ...

@@ -36,6 +36,17 @@ class Forget(BaseModel):
     completed_at: UTCDateTime | None = None
 
 
+class KnowledgeErasure(BaseModel):
+    """What one Plane-K erasure pass did (D159 §3.3 step 4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    removed: bool
+    """It removed forgotten residue: compiled pages or rewritten history."""
+    blocking_paths: tuple[str, ...] = ()
+    """Current authored pages and sidecars that still name the document."""
+
+
 class ForgetError(RuntimeError):
     """Base class for a known forget boundary failure."""
 

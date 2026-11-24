@@ -6,6 +6,8 @@ from datetime import UTC
 import json
 from pathlib import Path
 import re
+import subprocess
+from typing import cast
 from uuid import UUID
 from uuid import uuid4
 
@@ -18,7 +20,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import ClaimedWork
 from rememberstack.model import DecisionRecord
@@ -33,14 +38,20 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import SelectionResponse
+from rememberstack.ports import ObjectPurgePort
+from rememberstack.ports import ProjectionPurgePort
 from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine import KnowledgeControlPlane
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.forget import sweep_work
 from rememberstack.spine.selection_catalog import SelectionCatalog
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import ForgetHandler
+from rememberstack.workers import ForgetKnowledgeEraser
 from rememberstack.workers import ForgetService
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -215,7 +226,7 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
         "mem://artifacts/writer-transcript.json",
         "mem://artifacts/planner-transcript.json",
     }
-    assert findings.blocking_k_paths == ()
+    assert str(_TARGET_DOC_ID) in catalog.needles(forget=forget)
     _assert_scrubbed_and_control_survives(engine=seeded_engine)
     assert _control_counts(engine=seeded_engine) == before
     again = catalog.sweep_postgres(forget=forget)
@@ -224,6 +235,9 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
     assert again.compiled_artifact_ids == (_ARTIFACT_ID,)
     catalog.clear_k_pending(forget=forget, artifact_ids=(_ARTIFACT_ID,))
     assert catalog.sweep_postgres(forget=forget).compiled_artifact_ids == ()
+    # forget-reapply: a restored K repository may hold the recorded page again.
+    reapplied = catalog.sweep_postgres(forget=forget, reapply=True)
+    assert reapplied.compiled_artifact_ids == (_ARTIFACT_ID,)
 
 
 _ID_COLUMNS = (
@@ -2014,3 +2028,163 @@ def test_readiness_answers_for_a_forgotten_version_as_for_an_unknown_one(
     assert answer(_TARGET_VERSION_ID) == answer(uuid4())
     ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
     assert answer(_TARGET_VERSION_ID) == answer(uuid4())
+
+
+class _NoObjects:
+    """Object and corpus stores hold nothing for this proof."""
+
+    def purge_objects(self, **_: object) -> int:
+        return 0
+
+    def erase_document(self, **_: object) -> bool:
+        return False
+
+
+def _k_repository(*, root: Path) -> Path:
+    """The K repository: a compiled page in the snapshot citing the document,
+    an authored page whose old revision cited only its exclusive relation, and
+    an authored page that cites the document now."""
+    repository = root / "knowledge"
+    for arguments in (
+        ("init", "--quiet", "-b", "main", str(repository)),
+        ("-C", str(repository), "config", "user.name", "Fixture"),
+        ("-C", str(repository), "config", "user.email", "fixture@example.test"),
+    ):
+        subprocess.run(("git", *arguments), check=True, capture_output=True)
+    notes = repository / "k/notes"
+    notes.mkdir(parents=True)
+    (notes / "decision.md").write_text(
+        f"{_TOKEN} per relation {_EXCLUSIVE_RELATION_ID}\n", encoding="utf-8"
+    )
+    (notes / "open.md").write_text(f"Cites doc:{_TARGET_DOC_ID}\n", encoding="utf-8")
+    _k_commit(repository=repository, message="authored")
+    (notes / "decision.md").write_text("Redacted long ago.\n", encoding="utf-8")
+    _k_commit(repository=repository, message="redacted")
+    adapter = LocalGitRepository(
+        repository=repository, author_name="Fixture", author_email="f@example.test"
+    )
+    checkout = root / "seed"
+    adapter.checkout(destination=checkout)
+    (checkout / "k/proof").mkdir(parents=True)
+    (checkout / "k/proof/page.md").write_text(f"# {_TOKEN}\n", encoding="utf-8")
+    adapter.publish(worktree=checkout, compiled_paths={"k/proof/page.md"})
+    return repository
+
+
+def _k_commit(*, repository: Path, message: str) -> None:
+    for arguments in (("add", "-A"), ("commit", "--quiet", "-m", message)):
+        subprocess.run(
+            ("git", "-C", str(repository), *arguments), check=True, capture_output=True
+        )
+
+
+def _k_objects(repository: Path) -> bytes:
+    """Every object the K repository stores, reachable or not."""
+    return subprocess.run(
+        ("git", "-C", str(repository), "cat-file", "--batch-all-objects", "--batch"),
+        check=True,
+        capture_output=True,
+    ).stdout
+
+
+def _settle(*, handler: ForgetHandler) -> None:
+    """Run the forget's sweeps the way workers would, until none follows."""
+    work = sweep_work(
+        deployment_id=_DEPLOYMENT_ID,
+        forget_id=_FORGET_ID,
+        sweep=1,
+        failures=0,
+        not_before=None,
+        first=True,
+    )
+    for _ in range(10):
+        outcome = handler.handle(
+            work=ClaimedWork(
+                processing_id=uuid4(),
+                deployment_id=work.deployment_id,
+                target_kind=work.target_kind,
+                target_id=work.target_id,
+                stage=work.stage,
+                component_version=work.component_version,
+                content_hash=work.content_hash,
+                lane=work.lane,
+                attempt=1,
+                payload=work.payload,
+            ),
+            meter=NoopCostMeter(),
+        )
+        if not outcome.follow_up:
+            return
+        (work,) = outcome.follow_up
+    raise AssertionError("the forget never settled")
+
+
+def test_knowledge_plane_erasure_and_the_authored_wait(
+    seeded_engine: Engine, tmp_path: Path
+) -> None:
+    """§5 tests 1 (K legs) and 8: compiled page gone, old revision rewritten,
+    the citing authored page flagged and waited on, then completed by the K sync."""
+    repository = _k_repository(root=tmp_path)
+    open_page = "k/notes/open.md"
+    authored_id = uuid4()
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO knowledge_artifacts (artifact_id, deployment_id, layer,"
+                " page_kind, git_path) VALUES (:a, :d, 'K2', 'authored', :path)"
+            ),
+            {"a": authored_id, "d": _DEPLOYMENT_ID, "path": open_page},
+        )
+    catalog = ForgetCatalog(engine=seeded_engine)
+    control = KnowledgeControlPlane(engine=seeded_engine)
+    knowledge = ForgetKnowledgeEraser(
+        catalog=catalog,
+        control_plane=control,
+        repository=LocalGitRepository(
+            repository=repository, author_name="R", author_email="r@example.test"
+        ),
+    )
+    handler = ForgetHandler(
+        service=ForgetService(engine=seeded_engine, catalog=catalog),
+        catalog=catalog,
+        profile_refresher=RecordingProfileRefresher(),
+        object_purgers=(cast(ObjectPurgePort, _NoObjects()),),
+        projection_purger=cast(ProjectionPurgePort, _NoObjects()),
+        knowledge=knowledge,
+        quiet_period_s=0,
+    )
+    _hide(engine=seeded_engine)
+
+    _settle(handler=handler)
+
+    record = catalog.record(deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID)
+    assert record.status is ForgetStatus.WAITING_FOR_REDACTION
+    assert record.blocking_k_paths == (open_page,)
+    assert control.authored_review_state(artifact_id=authored_id).redaction_required
+    objects = _k_objects(repository)
+    assert _TOKEN.encode() not in objects
+    assert str(_EXCLUSIVE_RELATION_ID).encode() not in objects
+    assert (repository / "k/notes/decision.md").read_text() == "Redacted long ago.\n"
+    with seeded_engine.connect() as connection:
+        page = connection.execute(
+            text(
+                "SELECT status::text, content_hash FROM knowledge_artifacts"
+                " WHERE artifact_id = :a"
+            ),
+            {"a": _ARTIFACT_ID},
+        ).one()
+    assert tuple(page) == ("stale", None)  # ordinary K work rebuilds it
+
+    # The owner redacts; the K sync (here: its check over a fresh checkout)
+    # rewrites that page's history and completes the forget.
+    (repository / open_page).write_text("Redacted by the owner.\n", encoding="utf-8")
+    _k_commit(repository=repository, message="owner redacts")
+    checkout = tmp_path / "k-sync"
+    LocalGitRepository(
+        repository=repository, author_name="R", author_email="r@example.test"
+    ).checkout(destination=checkout)
+    knowledge.sync_redactions(deployment_id=_DEPLOYMENT_ID, worktree=checkout)
+
+    record = catalog.record(deployment_id=_DEPLOYMENT_ID, forget_id=_FORGET_ID)
+    assert (record.status, record.blocking_k_paths) == (ForgetStatus.COMPLETE, ())
+    assert str(_TARGET_DOC_ID).encode() not in _k_objects(repository)

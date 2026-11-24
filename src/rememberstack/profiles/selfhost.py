@@ -101,7 +101,6 @@ if TYPE_CHECKING:
     from rememberstack.workers import StageHandler
     from rememberstack.workers import Worker
     from rememberstack.workers.corpus_publication import CorpusPublisher
-    from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 
 _SUPPORTED_WORKER_STAGES = (
     PipelineStage.CONVERT,
@@ -951,7 +950,6 @@ class SelfHostProfile:
         conversion_routes: Mapping[str, Converter] | None = None,
         corpus_caches: CorpusCachePurgePort | None = None,
         k_git: KGitPurgePort | None = None,
-        knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process.
 
@@ -980,7 +978,6 @@ class SelfHostProfile:
         self._conversion_routes = conversion_routes
         self._corpus_caches = corpus_caches
         self._k_git = k_git
-        self._knowledge_rebuilder = knowledge_rebuilder
 
     @classmethod
     def from_settings(
@@ -993,7 +990,6 @@ class SelfHostProfile:
         conversion_routes: Mapping[str, Converter] | None = None,
         corpus_caches: CorpusCachePurgePort | None = None,
         k_git: KGitPurgePort | None = None,
-        knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
     ) -> Self:
         """Build one deployment's engine from its explicit settings (D147).
 
@@ -1041,7 +1037,6 @@ class SelfHostProfile:
             conversion_routes=conversion_routes,
             corpus_caches=corpus_caches,
             k_git=k_git,
-            knowledge_rebuilder=knowledge_rebuilder,
         )
 
     def close(self) -> None:
@@ -1649,7 +1644,6 @@ class SelfHostProfile:
             publisher=self.corpus_publisher(),
             caches=self._corpus_caches,
             k_git=self._k_git,
-            knowledge_rebuilder=self._knowledge_rebuilder,
             quiet_period_s=self._settings.forget_quiet_period_s,
         )
 

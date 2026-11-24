@@ -180,16 +180,26 @@ inside the engine. Nothing else in the deployment stops while a forget runs.
   IDs and content hashes only, never text.
 - **The sweep.** A `forget` job then deletes the document's rows, its objects
   (including retained object versions), its corpus folders and the corpus
-  navigation that listed it, and rebuilds compiled knowledge pages that cited
-  it. It sweeps again after a quiet period
+  navigation that listed it, and the compiled knowledge pages that cited it,
+  with their summaries and writer transcripts; ordinary knowledge work rebuilds
+  those pages from what remains. Compiled pages keep no Git history (each
+  publication replaces the previous set), so no old version of them is left to
+  erase. It sweeps again after a quiet period
   (`REMEMBERSTACK_SELFHOST_FORGET_QUIET_PERIOD_S`, 15 minutes by default) and
   repeats until a sweep finds nothing left; the record then becomes `complete`.
   A failed sweep records an error code on the record and is retried with
   backoff, without an attempt limit.
 - **Authored knowledge pages.** The engine never rewrites prose a person or
-  agent wrote. If an authored page still cites the document, the record stays
-  `waiting_for_redaction` and lists the page's path; once the owner removes the
-  citation, the next check erases that page's history and completes the forget.
+  agent wrote. An authored page or curation sidecar whose current file still
+  names the document (its ID, a version ID, or a fact it supported) is listed
+  on the record, which ends as `waiting_for_redaction`; an authored page also
+  gets a review flag with `redaction_required`. Remove the citation and any
+  text quoted from the document, and commit: the knowledge plane's next sync
+  rewrites that file's Git history and completes the forget, also when the
+  facts layer is off. A file whose current version is already clean but whose
+  older revisions named the document has those revisions rewritten by the
+  sweep. Rewritten history has new commit IDs, so clones of the knowledge
+  repository must fetch it again.
 - **Re-ingest.** Ingesting the same bytes or the same source (`source_kind` and
   `source_ref`) again is refused with `409 document_forgotten`; connectors skip
   the file.
