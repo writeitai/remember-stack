@@ -477,6 +477,8 @@ class ReconcileHandler:
             archived_at = catalog.lineage_archived_at(doc_id=doc_id)
             if archived_at is None:
                 return None
+            # Archived evidence never anchors identity (D102).
+            catalog.clear_document_bindings(deployment_id=deployment_id, doc_id=doc_id)
             if catalog.archive_waits_for_cycle(doc_id=doc_id):
                 # A source archive settles at its observing cycle's
                 # finalization (the retract-timing barrier); the finalizer
@@ -485,8 +487,6 @@ class ReconcileHandler:
             reconciliation_id = archive_reconciliation_id(
                 doc_id=doc_id, archived_at=archived_at
             )
-            # Archived evidence never anchors identity (D102).
-            catalog.clear_document_bindings(deployment_id=deployment_id, doc_id=doc_id)
             delta = _archive_cascade(
                 catalog=catalog,
                 deployment_id=deployment_id,
@@ -758,30 +758,32 @@ class DeletionService:
         self, *, version_id: UUID, meter: CostMeterPort | None = None
     ) -> ReconciliationDelta:
         """End one version's testimony; the lineage continues (§8)."""
-        info = self._catalog.delete_version(version_id=version_id)
-        deployment_id: UUID = info["deployment_id"]  # type: ignore[assignment]
-        doc_id: UUID = info["doc_id"]  # type: ignore[assignment]
-        context = self._catalog.reconciliation_context(version_id=version_id)
         reconciliation_id = _derived_run_id(kind="delete-version", id_=version_id)
         regained: tuple[CurrencyTransition, ...] = ()
-        if context["current_version_id"] is not None:
-            # "the lineage continues": the repointed predecessor's testimony
-            # is the current basis again — its claims regain currency. Decided
-            # and written under the lineage lock, never while the lineage is
-            # archived: unarchive restores it then (D159).
-            with self._catalog.transaction() as catalog:
-                catalog.lock_lineage(doc_id=doc_id)
-                if catalog.lineage_archived_at(doc_id=doc_id) is None:
-                    regained = catalog.regained_by_current_version(
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                        current_version_id=context["current_version_id"],  # type: ignore[arg-type]
-                    )
-                    catalog.apply_transitions(
-                        deployment_id=deployment_id,
-                        reconciliation_id=reconciliation_id,
-                        transitions=regained,
-                    )
+        # One transaction with the tombstone and repoint (which take the
+        # lineage lock): "the lineage continues", the repointed predecessor's
+        # testimony is the current basis again and its claims regain currency
+        # — never while the lineage is archived; unarchive restores it then
+        # (D159).
+        with self._catalog.transaction() as catalog:
+            info = catalog.delete_version(version_id=version_id)
+            deployment_id: UUID = info["deployment_id"]  # type: ignore[assignment]
+            doc_id: UUID = info["doc_id"]  # type: ignore[assignment]
+            context = catalog.reconciliation_context(version_id=version_id)
+            if (
+                context["current_version_id"] is not None
+                and context["lineage_archived_at"] is None
+            ):
+                regained = catalog.regained_by_current_version(
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    current_version_id=context["current_version_id"],  # type: ignore[arg-type]
+                )
+                catalog.apply_transitions(
+                    deployment_id=deployment_id,
+                    reconciliation_id=reconciliation_id,
+                    transitions=regained,
+                )
         delta = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,

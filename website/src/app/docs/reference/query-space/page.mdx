@@ -11,9 +11,11 @@ SQL queries run over **the query space**, `memory_v1`: a fixed set of
 prepared, read-only views and functions over your memory. Every statement is
 parsed and validated against it before it runs, and anything outside it is
 rejected. The views already apply the memory's rules — removed versions,
-forgotten sources and superseded readings are absent, and archived documents
-appear only in `documents_live`, marked with `archived_at` — so a statement can
-only see what the memory itself would return.
+forgotten sources and superseded readings are absent, and an archived
+document's claims are no longer current testimony. `documents_live` still lists
+an archived document, marked with `archived_at`, and history views (mentions,
+claim history) keep it, so a statement that joins them filters on
+`archived_at IS NULL` for live documents only, as `documents_about` does.
 
 This page is the reference for the query space: [identity and
 versioning](#version-and-manifest-hash), [the grammar a statement must

@@ -570,7 +570,11 @@ class LifecycleCatalog:
             for relation_id in sorted(relation_ids):
                 closed_at = connection.execute(
                     _INVALIDATE_RELATION,
-                    {"relation_id": relation_id, "deployment_id": deployment_id},
+                    {
+                        "relation_id": relation_id,
+                        "deployment_id": deployment_id,
+                        "reconciliation_id": str(reconciliation_id),
+                    },
                 ).scalar_one_or_none()
                 if closed_at is None:
                     continue  # already closed by an earlier attempt
@@ -605,7 +609,11 @@ class LifecycleCatalog:
         with self._engine.begin() as connection:
             for observation_id in sorted(observation_ids):
                 closed_at = connection.execute(
-                    _INVALIDATE_OBSERVATION, {"observation_id": observation_id}
+                    _INVALIDATE_OBSERVATION,
+                    {
+                        "observation_id": observation_id,
+                        "reconciliation_id": str(reconciliation_id),
+                    },
                 ).scalar_one_or_none()
                 if closed_at is None:
                     continue
@@ -950,7 +958,11 @@ class LifecycleCatalog:
             ):
                 if not ids:
                     continue
-                select, reopen, record = _REOPEN_SQL[kind]
+                lock, select, reopen, record = _REOPEN_SQL[kind]
+                # The fact row locks a recount or a review verdict also takes,
+                # then the eligibility read as a new statement (a fresh
+                # snapshot that sees whatever committed before the locks).
+                connection.execute(lock, {"fact_ids": sorted(ids)})
                 for fact_id in connection.execute(
                     select, {"deployment_id": deployment_id, "fact_ids": sorted(ids)}
                 ).scalars():
@@ -1628,6 +1640,14 @@ _INVALIDATE_RELATION = text(
     SET invalidated_at = clock_timestamp(), updated_at=now()
     WHERE deployment_id=:deployment_id AND relation_id = :relation_id
       AND evidence_count=0 AND invalidated_at IS NULL
+      -- a run closes a fact once: one its closure was reopened since is
+      -- another run's to close (D159)
+      AND NOT EXISTS (
+          SELECT 1 FROM relation_adjudications a
+          WHERE a.relation_id = relations.relation_id
+            AND a.outcome = 'retracted_source_removal'
+            AND a.features ->> 'reconciliation_id' = :reconciliation_id
+      )
     RETURNING invalidated_at
     """
 )
@@ -1637,6 +1657,12 @@ _INVALIDATE_OBSERVATION = text(
     UPDATE observations
     SET invalidated_at = clock_timestamp()
     WHERE observation_id = :observation_id AND evidence_count=0 AND invalidated_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM observation_adjudications a
+          WHERE a.observation_id = observations.observation_id
+            AND a.outcome = 'retracted_source_removal'
+            AND a.features ->> 'reconciliation_id' = :reconciliation_id
+      )
     RETURNING invalidated_at
     """
 )
@@ -1701,7 +1727,7 @@ _SELECT_VERSION_LINEAGE = text(
 
 _TOMBSTONE_VERSION = text(
     """
-    UPDATE document_versions SET deleted_at = coalesce(deleted_at, now())
+    UPDATE document_versions SET deleted_at = coalesce(deleted_at, clock_timestamp())
     WHERE version_id = :version_id
     RETURNING deployment_id, doc_id, version_id
     """
@@ -1867,8 +1893,8 @@ _SELECT_REGAINED_AFTER_ARCHIVE = text(
 
 def _reopen_sql(
     *, kind: str, table: str, adjudications: str
-) -> tuple[TextClause, TextClause, TextClause]:
-    """The select, reopen and record statements for one fact shape."""
+) -> tuple[TextClause, TextClause, TextClause, TextClause]:
+    """The lock, select, reopen and record statements for one fact shape."""
     select = text(
         f"""
         SELECT f.{kind}_id FROM {table} f
@@ -1889,8 +1915,14 @@ def _reopen_sql(
               LIMIT 1
           ), false)
         ORDER BY f.{kind}_id
-        -- the recount's row locks: a concurrent archive or invalidation
-        -- either commits first (and the row is re-checked) or waits
+        """
+    )
+    lock = text(
+        f"""
+        SELECT f.{kind}_id FROM {table} f
+        WHERE f.{kind}_id = ANY(CAST(:fact_ids AS uuid[]))
+          AND f.invalidated_at IS NOT NULL
+        ORDER BY f.{kind}_id
         FOR UPDATE OF f
         """
     )
@@ -1911,7 +1943,7 @@ def _reopen_sql(
         )
         """
     ).bindparams(bindparam("features", type_=JSON))
-    return select, reopen, record
+    return lock, select, reopen, record
 
 
 _REOPEN_SQL = {
@@ -2132,18 +2164,19 @@ def archive_cycle_open(*, doc: str) -> str:
 
     A source archive settles once its observing cycle is finalized (the
     retract-timing barrier). A poll that died before completing never
-    finalizes; a later finalized poll of the same source settles it then.
+    finalizes; a later finalized poll of the same source settles it then. A
+    completed poll always settles on its own finalization.
     """
     return f"""EXISTS (
           SELECT 1 FROM connector_sync_cycles y
           WHERE y.cycle_id = {doc}.archived_cycle_id AND y.finalized_at IS NULL
-            AND NOT EXISTS (
+            AND (y.completed_at IS NOT NULL OR NOT EXISTS (
                 SELECT 1 FROM connector_sync_cycles later
                 WHERE later.deployment_id = y.deployment_id
                   AND later.source_kind = y.source_kind
                   AND later.started_at > y.started_at
                   AND later.finalized_at IS NOT NULL
-            )
+            ))
       )"""
 
 

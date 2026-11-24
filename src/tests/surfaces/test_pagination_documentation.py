@@ -1,5 +1,6 @@
 """Published pagination examples and tables must agree with the shipped models."""
 
+import json
 from pathlib import Path
 import re
 from unittest.mock import Mock
@@ -31,7 +32,14 @@ def test_published_inventory_loop_consumes_next_cursor(path: str) -> None:
     ]
     exec(
         compile(example, "published-inventory-loop", "exec"),
-        {"memory": memory, "client": memory},
+        # the guide's pass also keeps a ledger of the archives it made
+        {
+            "memory": memory,
+            "client": memory,
+            "json": json,
+            "ledger": Mock(),
+            "archived_here": {},
+        },
     )
     # The guide's loop also asks for archived documents (D159); paging is
     # what this checks.
