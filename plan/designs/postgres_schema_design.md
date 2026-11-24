@@ -452,7 +452,7 @@ CREATE TABLE forgets (
   version_ids           uuid[] NOT NULL,        -- every version of the lineage at hide
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
-  k_artifact_ids        uuid[] NOT NULL DEFAULT '{}',  -- compiled pages to delete, recorded before the SQL step; emptied once the K step succeeds
+  collected             jsonb,                  -- step 0: shared fact/entity IDs, K page/summary/transcript IDs, opaque original locators (IDs and keys only)
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',  -- pending owner redaction; emptied on completion
   last_error            text,                   -- content-free code of the last failed sweep, for visibility
   status                forget_status NOT NULL DEFAULT 'erasing',

@@ -144,8 +144,11 @@ covers:
   follow, nothing finicky.
 - **Chosen: hide, then sweep until clean.** Correctness rests on three properties that do not
   depend on timing:
-  1. The hide is one transaction, and every read already filters tombstoned documents, so
-     from that commit nothing can show the document, whatever is still running.
+  1. The hide is one transaction, and every engine read already filters tombstoned
+     documents, so from that commit the document, its passages and claims are gone from every
+     engine read, whatever is still running. Copies published elsewhere (corpus files,
+     compiled K pages, the wording of shared facts) go with the first sweep, which starts at
+     once.
   2. The sweep is keyed by IDs and hashes and treats "already gone" as success, so it can run
      at any time, any number of times, and be interrupted anywhere.
   3. The job sweeps, waits a quiet period longer than any worker can keep writing, and sweeps
@@ -185,10 +188,11 @@ covers:
   Rejected.
 - **Chosen: refuse by default, allow per request.** Ingest of a forgotten source identity or
   content hash is refused with `document_forgotten` (409), naming when it was forgotten. A
-  request that sets `allow_forgotten=true` is ingested as an ordinary ingest would be, and on
-  commit the one record whose lineage identity matches the request is deleted, so a later
-  `reapply` with the latest export cannot erase the copy someone deliberately added back,
-  while a different forget that shared the bytes keeps its whole guard. Syncs never set the flag. Erasure law concerns what is stored now; storing
+  request that sets `allow_forgotten=true` is ingested as an ordinary ingest would be, under a
+  fresh document ID, and on commit the record releases only the hash (and source identity) that
+  request matched; the record is deleted when nothing is left. A later `forget-reapply` cannot
+  erase the copy added back (its ID differs), other forgotten versions stay guarded, and a
+  different forget that shared the bytes keeps its guard. Syncs never set the flag. Erasure law concerns what is stored now; storing
   the data again later is a new, deliberate decision, which the flag makes explicit.
 
 ### 3.7 Authored knowledge pages
@@ -248,9 +252,10 @@ ordinary work recomputes them.
 
 ## 4a. K erasure follows citations
 
-Compiled pages cite the evidence they use (D45/D50). The sweep rebuilds every compiled page
-that cites forgotten evidence or a fact whose wording changed, and rewrites those paths'
-history. Proving that no writer ever copied uncited text would need sandboxed writers with
+Compiled pages cite the evidence they use (D45/D50). The sweep deletes every compiled page,
+summary and transcript that cites forgotten evidence or a fact whose wording changed (ordinary
+K work rebuilds them), and purges the history of all compiled paths once, since compiled output
+is a disposable snapshot. Proving that no writer ever copied uncited text would need sandboxed writers with
 recorded inputs and provenance through every cached summary (explored in review); the owner's
 simplicity rule puts that outside the guarantee as a stated limit instead.
 

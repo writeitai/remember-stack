@@ -8535,7 +8535,8 @@ no deprecation).
   re-sent leave an archived document archived; a changed version brings it back as ordinary
   ingest. A connector that sees a source deletion archives.
 - **Forget** — "this should not be here". One transaction hides the document (the tombstone
-  every read already filters) and records the forget. A background job then sweeps everything
+  every engine read already filters, so its passages and claims vanish at once) and records the
+  forget; copies published elsewhere go with the first sweep. A background job then sweeps everything
   derived from it, keyed only by its IDs and hashes, from PostgreSQL, object storage, the
   corpus filesystem and the knowledge plane, waits a quiet period, and sweeps again until a
   sweep finds nothing. Authored pages and sidecars that still cite the document are the one
@@ -8544,7 +8545,7 @@ no deprecation).
 Forget adds no lock, barrier, admission gate or startup step beyond the lineage row lock ingest
 already takes; nothing else waits for it. Its record is one content-free PostgreSQL row, which
 also guards re-ingest: forgotten content is refused with `document_forgotten` unless that one
-request sets `allow_forgotten=true`. After restoring stores from a backup the operator can run
+request sets `allow_forgotten=true` (the content returns under a fresh document ID). After restoring stores from a backup the operator can run
 `remember ops forget-reapply`, an ordinary command that re-runs the sweep for every forget
 record.
 
