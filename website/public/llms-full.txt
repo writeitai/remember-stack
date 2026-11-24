@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.21.1](https://github.com/writeitai/remember-stack/releases/tag/v0.21.1)
-([on PyPI](https://pypi.org/project/remember/0.21.1/)).
+[v0.21.2](https://github.com/writeitai/remember-stack/releases/tag/v0.21.2)
+([on PyPI](https://pypi.org/project/remember/0.21.2/)).
 
 ## 3. Point the client at your endpoint
 
@@ -7176,8 +7176,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.21.1` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.1` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.21.2` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.2` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -7368,7 +7368,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.21.1
+git checkout v0.21.2
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -7380,7 +7380,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.21.1`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.21.2`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -8277,6 +8277,7 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | Approved endpoints in preference order; the LoCoMo Luna profile uses `["openai/flex","openai"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | Ask OpenRouter for zero-data-retention endpoints only (`zdr: true`). For strict zero retention, also set your OpenRouter account to ZDR only: otherwise endpoints with safety retention can still be used. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |
@@ -10185,7 +10186,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.1/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.2/openapi.json).
 
 ## Base URL
 
@@ -19155,7 +19156,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.21.1), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.21.2), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -20816,6 +20817,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL` | `high` | `auto`, `low`, `high`, `original` | Explicit provider observation resolution. High requests bounded preprocessing of the original image; exact sizing and supported values depend on the model. Changes refresh the description checkpoint while retaining matching OCR. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Approved endpoints in preference order. One entry disables fallback; multiple entries allow fallback only within the list. The LoCoMo profile uses `["openai/flex","openai"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | bool | Ask for zero-data-retention endpoints for the image description (`zdr: true`); strict zero retention also needs the OpenRouter account set to ZDR only. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |
@@ -21670,6 +21672,33 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## 0.21.2 (November 2026)
+
+**Images on a metered deployment.** The `image_ocr_description` route (Mistral
+OCR plus a vision-model description of each PNG or JPEG) can now run under a
+managed meter. Each image is measured as one `image` unit before either
+provider call, and processing waits for the hold to be approved, the same way
+a PDF's pages are counted before OCR. Before this release a metered
+deployment refused the route with `rate_class_unavailable`.
+
+**Oversized images fail early.** On any deployment, an image larger than the
+`image_ocr_description` route's byte ceiling (10 MB by default) now fails
+before it is downloaded, measured or sent to a provider, as an oversized PDF
+already did.
+
+**Zero-data-retention routing for image descriptions.** Set
+`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to add `zdr: true` and
+`data_collection: deny` to the image description request, like
+`REMEMBERSTACK_OPENROUTER_ZDR` for chat. To exclude endpoints with safety
+retention as well, enable **ZDR only** in your OpenRouter account. Turning the
+flag on refreshes each image's description once at its next conversion; the
+OCR is reused.
+
+**Error codes on log records.** Every ERROR log record from the engine's
+`rememberstack.*` loggers now carries an `error_code` field, such as `worker_item_failed` or
+`mcp_tool_failed`. A log handler can export it to group failures without
+parsing messages; the default text format does not print it.
 
 ## 0.21.1 (November 2026)
 
