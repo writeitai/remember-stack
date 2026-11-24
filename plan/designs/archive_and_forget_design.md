@@ -283,9 +283,10 @@ gets that for the one document, never for the deployment:
   better.
 - **Shared navigation files have their own fence.** Corpus index files (`_index.md`,
   `llms.txt`) list many documents, so a publisher for document B can render an index that
-  still lists A. Index writes therefore hold the deployment's navigation lock on a second,
-  independent session (beside the publication lock), with the same two-session rule; forget's
-  corpus step takes both exclusively, regenerates the indexes from the scrubbed database, and
+  still lists A. Index writes therefore hold the navigation fence (`nav-a`, `nav-b`, two
+  independent sessions) after the publication lock, in the one lock set and order defined in
+  [E0 §6.5](e0_files_design.md#65-incremental-work-publication-order-and-reader-observations); forget's corpus step
+  takes them exclusively, regenerates the indexes from the scrubbed database, and
   the delayed re-verification re-checks them.
 - **Derived text built from many documents is fenced by its inputs.** Entity profiles, P1
   fact labels and their vectors, entity-resolution decisions and their model rationales (whose
@@ -356,7 +357,8 @@ the document hidden and the record `erasing`; nothing reopens.
      deployment-wide by the first forget (status, receipts and costs stay). Payloads carry IDs
      only. Clear, deployment-wide,
      planner audit transcripts and legacy eval fixtures, which carry no reliable document
-     provenance, and record that step 5 must sweep the K session-transcript prefixes.
+     provenance; before clearing them, record in the inventory the planner-generated
+     registrations they show as suspect (step 5), and record that step 5 must sweep the K session-transcript prefixes.
 3. **Objects.** Under the content-hash lock, decide raw-object ownership by physical
    reference: a content object stays while any version row, of any lineage, still references
    it. Every engine key is generation-scoped and engine-generated: originals at
@@ -376,11 +378,19 @@ the document hidden and the record `erasing`; nothing reopens.
    representations and artifacts are always deleted, and a surviving version keeps its own
    reading. The guard keeps any new lineage from
    adopting it meanwhile. Otherwise delete the object and its `content_objects` row together (so a later deliberate re-add writes a fresh original
-   instead of pointing at a purged key). Delete every key under the document's prefix
-   (`{doc_id}/…`: originals, artifacts, media, source maps, checkpoints) except a shared
-   original that a retained version of any lineage, live or archived, still references
-   (which step 3 first moves to an engine-generated key, see below), the lineage's own staged objects and uploads, unadopted
-   raw originals carrying a forgotten hash (aborting tracked multipart uploads by ID), assets and transcripts. Missing keys count as success.
+   instead of pointing at a purged key). Then delete:
+   - every key of the forgotten generation only: `{doc_id}/{generation}/…` for a generation
+     n ≥ 1, and for generation 0 also the legacy pre-D159 layout `{doc_id}/<64-hex content
+     hash>/…`, which no generation directory can be mistaken for. Never the whole `{doc_id}/`
+     prefix, so a later re-add's keys are never selected. This covers originals, artifacts,
+     media, source maps and checkpoints, except a shared original that a retained version of
+     any lineage, live or archived, still references (step 3 first moves it to an
+     engine-generated key of its surviving owner, see below);
+   - the lineage's own staged objects and uploads, and unadopted raw originals carrying a
+     forgotten hash, aborting tracked multipart uploads by ID;
+   - assets and transcripts.
+
+   Missing keys count as success.
    Retained object versions follow E0 §6.7 (versioning off, or enumerate and purge every
    version). Forget does not depend on listing a provider's unfinished uploads: every
    multipart upload the engine starts is tracked (§3.6), so it is aborted by ID.
@@ -409,7 +419,9 @@ the document hidden and the record `erasing`; nothing reopens.
      hidden from the agent writer's checkout during rebuilds), so no compile can copy their
      text into a compiled page;
    - delete the compiled body, cached model summaries and kept previous Markdown of every
-     page in the inventory's K artifact list, of every compiled page whose recorded inputs
+     page in the inventory's K artifact list (which step 2 fills, before any provenance is
+     deleted, with every K input revision, summary and page that references a deleted ID or a
+     surviving fact or entity whose wording step 2 changed), of every compiled page whose recorded inputs
      (its bundle, not only its citations: a writer can copy uncited bundle text) contained any
      of the document's evidence, of every compiled page that read a blocking sidecar or
      authored page as input, and of every compiled page that read any sidecar or authored
@@ -454,7 +466,9 @@ the document hidden and the record `erasing`; nothing reopens.
      whose text came from a forgotten or renamed entity or from the forgotten document's own
      title or names; a registration made by an unrestricted planner after the document was
      first ingested has no recorded read set, so, like an agent-mode page, it is treated as
-     possibly derived and is retired or recomputed from clean inputs, before anything is rebuilt, so the
+     possibly derived and is retired or recomputed from clean inputs; retiring erases or
+     replaces its stored path, parameters and routing keys in PostgreSQL as well as in Git
+     (a retired row keeps only its ID), before anything is rebuilt, so the
      next compile cannot publish the forgotten name again;
    - publish once, then expire every reflog and prune unreachable objects in each engine
      repository (as the existing purge does), and verify both the rewritten history and that a
@@ -743,8 +757,12 @@ deleted becomes a caller archive and one a connector observed deleted becomes a 
 (versions get the archive cutoff, `deleted_at` is cleared); internal version tombstones stay
 as they are. So no lineage is left "being forgotten" without a forget record. The
 `forget_manifests` table becomes `forgets` by migration. A record that exists only in a
-deployment's old external manifest store is imported with `remember ops forget-reapply --from`
-using that store's export.
+deployment's old external manifest store (the D74 adapters keep one immutable v1 manifest JSON
+object per forget, in a local root or a dedicated bucket) is imported with
+`remember ops forget-import-d74 <root-or-bucket>`, which reads every v1 manifest, translates
+its fields (doc ID, source-identity and content hashes, chunk, claim, fact and entity IDs,
+object keys including opaque `uploads/<id>` keys, K artifact IDs) into a `complete` D159 record
+with that inventory, and is then followed by `forget-reapply`.
 
 ## 5. Acceptance tests
 
@@ -855,7 +873,13 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     opaque `uploads/<id>` original after upgrading a completed D74 forget is erased; a restored
     claim backing the same surviving fact keeps both evidence links, and only the new one
     counts; an authored page citing only a surviving shared fact never enters
-    `waiting_for_redaction`;
+    `waiting_for_redaction`; a late purge of generation 1 never touches a re-added
+    generation 2 checkpoint; identical bytes under two different file names keep each
+    lineage's own file card; a cached summary carrying a shared fact's forgotten wording is
+    excluded between the PostgreSQL scrub and the K purge; a retired planner registration
+    leaves no path or rule text in the database dump or Git history; owner redaction finalizes
+    with the facts layer disabled; an external-only completed D74 record imported with
+    `forget-import-d74` erases its restored opaque upload;
     changed index files show the regenerated content. A crash after the corpus deletion and
     before the acknowledgement is retried by suffix and still invalidates a warmed handle and
     a warmed, since-pruned index file. A multipart upload interrupted mid-write for the

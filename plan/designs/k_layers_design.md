@@ -544,8 +544,10 @@ treat "compiled never consumes authored" as an invariant, not a convention.
 
 Triggered by the D12 debounce window ("N changed evidence items or T minutes"). Plane K is a
 consumer of the facts processing layer (D143): while a deployment does not serve facts, no
-cycle runs and the page views are refused like other fact reads
-([processing layers design §7.6](processing_layers_design.md#76-plane-k-and-p3)). One cycle:
+cycle compiles and the page views are refused like other fact reads
+([processing layers design §7.6](processing_layers_design.md#76-plane-k-and-p3)). Step 1's pull
+and authored-page sync, with D159's redaction check, still run on the cycle's schedule when
+facts are off, so an owner's redaction always finalizes a waiting forget. One cycle:
 
 1. **Pull** the repo (pick up human commits: authored pages, sidecars). Sync authored
    frontmatter (`cites:`/`watch:`) to Postgres; quarantine any direct edits to compiled bodies.

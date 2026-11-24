@@ -390,7 +390,9 @@ inline every source into every answer (burning context, widening prompt-injectio
 removing the agent's judgment) nor bury the original behind a surface only a human can drive
 (removing its autonomy). This is D51's "compact by default, the source one decision away"
 applied to the moment of looking. **A mounted agent does not need this operation at all** — under
-D116 it opens `<doc_id>/<generation>/<content_hash>/original` directly, which is the better motion
+D116 it opens the original file in the document's corpus folder (D155's mounted tree; never an
+internal raw-store key, which can differ for deduplicated or registered uploads), and a
+version-addressed reader uses `source_open`; that is the better motion
 whenever the filesystem is available. `source_open` exists for the unmounted agent, which is
 most agents against a managed deployment, and for locator-scoped access to large media where
 the file is present but nobody wants all of it in context.

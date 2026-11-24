@@ -93,8 +93,10 @@ ordinary supersession path.)
    key (D12/D37, unchanged in spirit): identical bytes are stored, converted, and paid for
    once, even if two lineages carry them (the same PDF in two Drive folders). Each version
    owns its reading (D159): a second lineage's version reuses an existing conversion of the
-   same bytes by copying it into its own representation, with no second paid conversion, so
-   forgetting one lineage never removes another's reading.
+   same bytes by copying only its lineage-independent output (text, blocks, media, OCR) into
+   its own representation, with no second paid conversion, and renders lineage-specific fields
+   (a file card's file name, title headers) for itself, so forgetting one lineage never removes
+   another's reading and no copy carries the forgotten lineage's names.
 2. **Document lineage** — the *logical document over time*, the stable `doc_id`. Identity is
    **connector-native**: `(source_kind, source_ref)` — the Drive file ID, the message ID, the
    watched URL, the upload event. Bytes cannot identify a lineage (they change — that is the
@@ -358,7 +360,9 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
 1. **Connector metadata no-op** — unchanged revision/etag: no fetch.
 2. **Content-object no-op** — bytes hash to a known object: new version row, everything else
    reused (and `UNIQUE` dedup means a copy in another folder reuses conversion too).
-3. **Conversion reuse** — same content object + same converter version: artifacts reused.
+3. **Conversion reuse** — same content object + same converter version: lineage-independent
+   conversion output reused by copying into the version's own reading; lineage-specific fields
+   rendered for it (D159).
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
    **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
    block hashes + neighbor-chunk block hashes + stable header facts (deterministic document

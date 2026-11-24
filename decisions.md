@@ -605,6 +605,11 @@ claim-verifiability golden set (D25 — junk-control moved to in-call Selection,
 
 ## D23. Registry scale & schema
 
+> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** The evidence-once keys of `relation_evidence` and
+> `observation_evidence` include `testimony_episode`: (`relation_id`, `claim_id`,
+> `testimony_episode`), so a restored claim can link to the same surviving fact again while only
+> its current episode's link counts.
+
 **D153 amendment (2026-11-12).** UUIDs are opaque read coordinates; current
 writers mint UUIDv4 and supply no ID-derived partition timestamp. The UUIDv7
 pruning promise in PostgreSQL schema §12 is replaced by explicit linear
@@ -1853,8 +1858,9 @@ coordinate is persisted on occurrence records and currency transitions.
 
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** Identical bytes are still stored and converted (paid for)
 > once, but every reading belongs to one version: another lineage's version reuses a conversion
-> by copying it into its own representation, so forgetting one lineage never removes another's
-> reading. Reuse may draw on archived versions, never on tombstoned ones.
+> by copying its lineage-independent output into its own representation and rendering
+> lineage-specific fields (a file card's name) for itself, so forgetting one lineage never
+> removes another's reading or leaves its names behind. Reuse may draw on archived versions, never on tombstoned ones.
 
 > **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Lineages remain stable source
 > identities and P3 serves the completed current version. A P3 folder path may
@@ -1946,8 +1952,9 @@ identity rules per source kind are a named spike.
 
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** Identical bytes are still stored and converted (paid for)
 > once, but every reading belongs to one version: another lineage's version reuses a conversion
-> by copying it into its own representation, so forgetting one lineage never removes another's
-> reading. Reuse may draw on archived versions, never on tombstoned ones.
+> by copying its lineage-independent output into its own representation and rendering
+> lineage-specific fields (a file card's name) for itself, so forgetting one lineage never
+> removes another's reading or leaves its names behind. Reuse may draw on archived versions, never on tombstoned ones.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
 > chunk's **text origin time**, recorded once when the chunk is created: the text origin

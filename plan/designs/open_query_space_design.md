@@ -517,7 +517,8 @@ on one D41/D48/D54 authority while avoiding recursive expansion of the same
 visibility tree.
 
 **Complete public facts-layer surface.** For the `memory_v1` query space it is
-exactly `facts_current`, `facts_visible_history`, `facts_as_of`,
+exactly `facts_current`, `facts_visible_history`, `facts_as_of`, `fact_evidence_as_of`
+(D159),
 `fact_claim_evidence_live`, `evidence_lineage`,
 `contradiction_members_current`, `testimony_currency_events_visible`,
 `graph_edges_current`, `graph_edges_visible_history`, and `semantic_facts`.
@@ -686,7 +687,8 @@ optimization.
 
 | Function | Signature and row contract |
 |---|---|
-| `fact_evidence_as_of` | `(fact_kind text, fact_id uuid, believed_at timestamptz, max_rows int DEFAULT 50)` → `claim_id`, stance, testimony episode, source handle and the occurrence coordinates (document, version, chunk, character range) of every evidence link whose episode was current at `believed_at`, bounded by `max_rows` with a truncation status row (D159). This is the one public lookup for a past belief's evidence, such as a fact an archive closed |
+| `fact_evidence_as_of` | `(fact_kind text, fact_id uuid, believed_at timestamptz, max_rows int DEFAULT 50)` → `claim_id`, stance, testimony episode, source handle and the occurrence coordinates (document, version, chunk, character range) of every evidence link whose episode was current at `believed_at`, bounded by `max_rows` (§4.3) with a truncation status row (D159). Both the link and its
+occurrence must have existed at `believed_at`. This is the one public lookup for a past belief's evidence, such as a fact an archive closed |
 | `facts_as_of` | `(valid_at timestamptz, believed_at timestamptz, max_rows int)` → fact fields with `evidence_count_current`, `contradict_count_current`, `support_state_current`, applied instants, and `identity_regime = 'current'`; default/hard bounds are in §4.3 |
 | `semantic_claims` | `(query text, k int, filters jsonb DEFAULT '{}')` → confirmed `claim_id`, rank, score, channel and current embedding/freshness columns; default/hard `k` is in §4.3 |
 | `lexical_claims` | `(query text, k int, filters jsonb DEFAULT '{}')` → the same confirmed claim result columns as `semantic_claims`, with lexical-channel rank/score semantics below |
@@ -1105,6 +1107,7 @@ the applicable default/hard class and cites this table.
 | SQL/graph temporary files | 64 MiB | 64 MiB | 64 MiB |
 | Recursive CTEs / maximum depth | 1 / 4 | 1 / 6 | 1 / 6 |
 | `facts_as_of` returned rows | 200 | 1,000 | 1,000 |
+| `fact_evidence_as_of` returned rows | 50 | 200 | 1,000 |
 | Semantic or lexical nomination SRF calls / `k` each / total nominations | 1 / 20 / 100 | 3 / 100 / 200 | 3 / 100 / 200 |
 | `fetch_chunk_bodies` calls / chunk IDs each | 1 / 50 | 3 / 50 | 3 / 50 |
 | Chunk source text across `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` | 512 KiB/invocation | 4 MiB/statement | 4 MiB/statement |

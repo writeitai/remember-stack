@@ -262,9 +262,9 @@ associated with a supplied entity, **and** coming from a matching document.
 
 | Grain | Included when |
 |---|---|
-| Chunk | its document version is live and matches (tags tested on the lineage) |
-| Claim | it has a live occurrence in a matching document version |
-| Relation or observation (fact) | at least one live **supporting** claim comes from a matching document |
+| Chunk | its document version is live (or, with `include_archived`, archived) and matches (tags tested on the lineage) |
+| Claim | it has a live occurrence (or, with `include_archived`, an archived one) in a matching document version |
+| Relation or observation (fact) | at least one live **supporting** claim comes from a matching document; `include_archived` never applies here (D159: archived claims are not current support) |
 
 When a D140 time scope is also given, the filter and the scope's existing
 per-occurrence test must hold on the **same** occurrence: a claim qualifies

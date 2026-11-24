@@ -756,7 +756,8 @@ logging covers corpus-original reads as well as raw reads. API raw access keeps
 its existing audit path; a plain local filesystem cannot audit arbitrary file
 reads. No separate raw/artifact mount is required or advertised as the normal
 customer interface. Engine-controlled sessions and serving caches must apply
-forget's path invalidation and acknowledge it (§6.7); changing bucket objects alone
+forget's path invalidation and acknowledge it, or let the client's own cache-expiry bound
+pass (§6.7); changing bucket objects alone
 cannot flush a client's cached bytes.
 
 ## 6. The corpus filesystem — a mutable P3 tree (D155)
@@ -1015,11 +1016,10 @@ take only 3. Holds have deadlines independent of work heartbeats
 ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)). Acquire it after the publication lock, and
 check that session's identity and lock ownership too
 ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)).
-Every handler that writes objects for a document holds the same lock. Forget's
-object and corpus steps take it exclusively, so every issued write has finished.
-If the publication backend dies, the per-document lock still makes forget wait for
-IO; if the per-document lock's backend dies, the publication lock still keeps the
-corpus erasure from completing before IO returns. If both sessions die while one
+Every handler that writes objects for a document holds the per-document object
+fence; forget's object and corpus steps take it exclusively, so every issued write has
+finished. Because each fence is two locks on two independent sessions, one dead session
+never lets forget overtake an issued write. If both sessions die while one
 request is still in flight, the writer cleans up only what it owns (never deleting a
 shared navigation file, which it regenerates instead), and forget's delayed
 re-verification catches a request that lands later

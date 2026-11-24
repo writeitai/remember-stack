@@ -2834,8 +2834,8 @@ deadlines remain explicit when partition/provenance work cannot complete.
 **`relation_evidence` is the exception, and is the reason it is hash-partitioned:** evidence for a
 popular fact accrues over the fact's whole life, so an id-derived time bound would *not* prune a
 `relation_id → evidence` lookup. Partitioning by `HASH(relation_id)` instead prunes relation
-hydration to one partition *and* makes the real `PRIMARY KEY (relation_id, claim_id)` evidence-once
-guarantee enforceable in-DB (a partitioned PK must include the partition key, which `relation_id` now
+hydration to one partition *and* makes the real `PRIMARY KEY (relation_id, claim_id,
+testimony_episode)` evidence-once-per-episode guarantee (D159) enforceable in-DB (a partitioned PK must include the partition key, which `relation_id` now
 is). This is the D23 contract. The `claim_id` reverse lookup still fans across hash partitions, but
 it is the cold path. `observation_evidence` applies the same policy to `observation_id`.
 
