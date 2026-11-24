@@ -532,6 +532,8 @@ def _ole_office_mime(*, content: Content) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
+_BLANK_LINE = re.compile(rb"\r?\n\r?\n")
+"""The blank line that ends an Internet message's header block."""
 _RFC822_HEADER = re.compile(rb"[\x21-\x39\x3b-\x7e]+:")
 _RFC822_MAIL_FIELDS = ("To", "Date", "Subject", "Message-ID", "Received")
 """Fields besides ``From`` that mark a header block as an Internet message."""
@@ -573,11 +575,10 @@ def _looks_like_rfc822(*, content: Content) -> bool:
     characters.
     """
     head = bytes(content[:SNIFF_BYTES])
-    end = head.find(b"\r\n\r\n")
-    end = head.find(b"\n\n") if end < 0 else end
-    if end < 0 or b"\x00" in head[:end]:
+    blank = _BLANK_LINE.search(head)
+    if blank is None or b"\x00" in head[: blank.start()]:
         return False
-    block = head[:end].replace(b"\r\n", b"\n")
+    block = head[: blank.start()].replace(b"\r\n", b"\n")
     for line in block.split(b"\n"):
         if line[:1] not in {b" ", b"\t"} and not _RFC822_HEADER.match(line):
             return False
@@ -596,15 +597,16 @@ def _looks_like_rfc822(*, content: Content) -> bool:
         corroborated = any(
             str(headers.get(name, "")).strip() for name in _RFC822_MAIL_FIELDS
         )
-    except (ValueError, TypeError, IndexError, AttributeError):
-        return False  # a header the mail parser cannot read is not a message
+    except (ValueError, TypeError, IndexError, AttributeError, RecursionError):
+        # A header the mail parser cannot read (deeply nested comments recurse)
+        # is not a message.
+        return False
     if headers.defects or not (mailbox and corroborated):
         return False
-    body_start = end + (4 if head[end : end + 4] == b"\r\n\r\n" else 2)
     return _clean_through_end(
         content=content,
         decoder=codecs.getincrementaldecoder("latin-1")(),
-        skip=body_start,
+        skip=blank.end(),
     )
 
 

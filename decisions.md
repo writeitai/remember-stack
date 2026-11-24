@@ -6657,9 +6657,9 @@ for the families whose readers decode them: UTF-16 with a byte-order mark,
 without control characters to the end of the file, for delimited files (as
 with UTF-8 text, the name or declaration picks the family within the
 class); and an Internet message (a header block without binary controls or
-parse defects, holding a well-formed `From` mailbox and a non-empty To,
-Date, Subject, Message-ID or Received field, and a body without binary
-controls to the end) for email with an 8-bit body. Bytes starting with the UTF-16 little-endian
+message-level parse defects, holding a `From` field without defects naming
+a mailbox, and a non-empty To, Date, Subject, Message-ID or Received field;
+a body without binary controls to the end) for email with an 8-bit body. Bytes starting with the UTF-16 little-endian
 byte-order mark (FF FE, also an MPEG-1 Layer I frame sync) are never taken
 for audio. A declaration spelled as a registry alias of the detected
 family (Office templates and slideshows, SVG, XHTML) is compatible. The file

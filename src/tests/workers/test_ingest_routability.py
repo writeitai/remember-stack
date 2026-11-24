@@ -451,6 +451,12 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ("note.eml", "application/octet-stream", _LATIN1_EMAIL, "message/rfc822"),
         ("fold.eml", "application/octet-stream", _FOLDED_EMAIL, "message/rfc822"),
         (
+            "mixed.eml",
+            "message/rfc822",
+            b"From: a@example.org\nTo: b@example.org\n\nCaf\xe9\r\n\r\nBye\n",
+            "message/rfc822",
+        ),
+        (
             "literal.eml",
             "application/octet-stream",
             b"From: ann@[IPv6:2001:db8::1]\r\nTo: b@example.org\r\n\r\nCaf\xe9\r\n",
@@ -564,6 +570,26 @@ def test_bytes_without_a_readable_class_stay_unread(
         return
     ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
     assert catalog.recorded_mime == "application/octet-stream"
+
+
+def test_a_mail_header_the_parser_cannot_read_is_not_a_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recursing header parse (deeply nested comments) leaves the bytes binary."""
+    from rememberstack.core import content_detection
+
+    class _Recursing:
+        def __init__(self, **_: object) -> None:
+            """Accept the policy."""
+
+        def parsebytes(self, _: bytes) -> None:
+            """Recurse past the limit, as nested address comments do."""
+            raise RecursionError
+
+    monkeypatch.setattr(content_detection, "BytesHeaderParser", _Recursing)
+    assert detect_content_mime(content=_LATIN1_EMAIL, declared_mime="") == (
+        "application/octet-stream"
+    )
 
 
 def test_an_embedded_object_does_not_decide_the_office_subtype() -> None:
