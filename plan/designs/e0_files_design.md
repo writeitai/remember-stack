@@ -1136,8 +1136,9 @@ without historic titles, paths, suffix reservations or a corpus-wide purge scope
    copies. Handle abandoned multipart uploads under §5's provider rule. Never empty the
    corpus store or recopy surviving documents' originals/derivatives. Always do the full
    suffix scan, even when `corpus_paths` is empty.
-2. Lets the ordinary navigation repair regenerate affected `_index.md` and root `llms.txt`
-   from DB authority, in which the document is already hidden. Enumerate navigation-index keys too: rebuild/prune
+2. Regenerates the navigation files that listed the document (`_index.md` up the tree, root
+   `llms.txt`) from DB authority, in which the document is already hidden, purges their
+   retained object versions, and checks that none still lists it. Enumerate navigation-index keys too: rebuild/prune
    them against DB membership to cover index-only remnants whose old folder was already
    deleted before a crash. This metadata pass may revisit all shared indexes; it does not
    reset document folders or require a historic path list.

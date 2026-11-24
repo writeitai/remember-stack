@@ -764,14 +764,14 @@ plane K mechanically through citations:
   pages get review flags; pages whose rules now match nothing become planner retire proposals. No
   tombstone guesswork.
 - **Forget (GDPR)** additionally requires erasing the *text* the evidence produced. New
-  compiled bodies regenerate clean, but **git history retains prior page versions** — so each
-  forget sweep deletes every compiled page citing the forgotten evidence or a fact whose wording
-  the sweep changed, with its writer transcripts, and rewrites the history of every compiled
-  path (e.g. `git filter-repo`; compiled pages are regenerable, so no record of past citations
-  is needed), then expires reflogs and prunes unreachable objects. The rewrite is prepared
-  outside the K commit lock and published with a short check that nothing was committed
-  meanwhile; if something was, it is prepared again. Ordinary K work rebuilds the deleted
-  pages. Authored pages and compiled-page curation sidecars that still
+  compiled bodies regenerate clean, but **git history retains prior page versions** — so the
+  forget sweep, under the existing single-committer lock (K commits wait for it; compilation and
+  reads go on), deletes every compiled page citing the forgotten evidence or a fact whose wording
+  the sweep changed, with its compilation summaries and writer transcripts. On the first sweep it
+  rewrites the history of every compiled path (e.g. `git filter-repo`; compiled output is a
+  disposable snapshot, so no record of past citations is needed) and expires reflogs and prunes
+  unreachable objects; later sweeps only check the history for the document's IDs and rewrite
+  again if any appear. Ordinary K work rebuilds the deleted pages. Authored pages and compiled-page curation sidecars that still
   cite the document are flagged and listed on the forget record, which waits as
   `waiting_for_redaction`; the K sync rewrites a path's history once the owner's edit removes the
   citation. The system never rewrites an author's words. After the K repository is restored from
