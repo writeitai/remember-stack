@@ -1077,6 +1077,79 @@ def test_description_flex_then_standard_stays_within_approved_order() -> None:
     assert description_events[0].usage.cost_usd == Decimal("0.0025")
 
 
+def test_description_zdr_restricts_every_approved_attempt() -> None:
+    """ZDR rides on each approved endpoint attempt, rotation included."""
+    payloads: list[dict[str, object]] = []
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Reject Flex once without billing, then succeed on standard."""
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "gen-flex-rejection",
+                    "error": {
+                        "code": 502,
+                        "message": "Flex processing is temporarily unavailable.",
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                },
+            )
+        return httpx.Response(200, json=_description_body())
+
+    _converter(
+        description_transport=httpx.MockTransport(description),
+        provider_only=("openai/flex", "openai"),
+        zdr=True,
+    ).convert(content=_PNG, mime="image/png")
+
+    assert payloads[0]["provider"] == {
+        "only": ["openai/flex", "openai"],
+        "order": ["openai/flex", "openai"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+        "zdr": True,
+    }
+    assert payloads[1]["provider"] == {
+        "only": ["openai"],
+        "allow_fallbacks": False,
+        "data_collection": "deny",
+        "zdr": True,
+    }
+
+
+def test_description_zdr_without_allowlist_still_restricts_routing() -> None:
+    """ZDR alone sends a provider object; without it, routing stays untouched."""
+    payloads: list[dict[str, object]] = []
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Capture the description routing."""
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json=_description_body())
+
+    _converter(
+        description_transport=httpx.MockTransport(description), zdr=True
+    ).convert(content=_PNG, mime="image/png")
+    _converter(description_transport=httpx.MockTransport(description)).convert(
+        content=_PNG, mime="image/png"
+    )
+
+    assert payloads[0]["provider"] == {"data_collection": "deny", "zdr": True}
+    assert "provider" not in payloads[1]
+
+
+def test_description_zdr_does_not_rekey_conversion() -> None:
+    """A privacy filter on the same model keeps converted images reusable."""
+    plain = ImageDescriptionSettings(api_key=SecretStr("offline"))
+    restricted = ImageDescriptionSettings.model_validate(
+        {"api_key": "offline", "zdr": "true"}
+    )
+
+    assert restricted.zdr is True
+    assert plain.version_fingerprint() == restricted.version_fingerprint()
+
+
 def test_description_all_approved_capacity_rejections_are_bounded() -> None:
     """Exhausting an uncharged route is retryable and preserves completed OCR."""
     posts: list[dict[str, object]] = []

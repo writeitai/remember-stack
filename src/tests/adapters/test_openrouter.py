@@ -1108,6 +1108,221 @@ def test_empty_embedding_provider_is_unset(configured: str | None) -> None:
     assert settings.embedding_provider is None
 
 
+def test_embedding_zdr_allowlist_reaches_the_embeddings_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production policy: two approved ZDR hosts, fallback only between them."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings.model_validate(
+            {
+                "api_key": "test-key",
+                "embedding_provider_only": "nebius,deepinfra",
+                "zdr": "true",
+            }
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/embeddings"
+        observed.update(payload)
+        return {
+            "model": "qwen/qwen3-embedding-8b",
+            "usage": {"prompt_tokens": 2, "cost": "0.000001"},
+            "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.embed(
+            request=EmbeddingRequest(model="qwen/qwen3-embedding-8b", texts=("memory",))
+        )
+    finally:
+        provider._client.close()
+
+    assert observed["provider"] == {
+        "only": ["nebius", "deepinfra"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+        "zdr": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    (
+        ({}, None),
+        ({"zdr": True}, {"data_collection": "deny", "zdr": True}),
+        (
+            {"embedding_provider_only": ["nebius"]},
+            {"only": ["nebius"], "allow_fallbacks": False},
+        ),
+        (
+            {"embedding_provider_only": ["nebius", "deepinfra"]},
+            {"only": ["nebius", "deepinfra"], "allow_fallbacks": True},
+        ),
+        (
+            {
+                "embedding_provider_only": ["nebius", "deepinfra"],
+                "embedding_provider_order": ["deepinfra", "nebius"],
+            },
+            {
+                "order": ["deepinfra", "nebius"],
+                "only": ["nebius", "deepinfra"],
+                "allow_fallbacks": True,
+            },
+        ),
+        (
+            {
+                "embedding_provider_only": ["nebius", "deepinfra"],
+                "embedding_provider_order": ["nebius", "deepinfra"],
+                "zdr": True,
+            },
+            {
+                "order": ["nebius", "deepinfra"],
+                "only": ["nebius", "deepinfra"],
+                "allow_fallbacks": True,
+                "data_collection": "deny",
+                "zdr": True,
+            },
+        ),
+        (
+            {"embedding_provider_order": ["nebius", "deepinfra"], "zdr": True},
+            {
+                "order": ["nebius", "deepinfra"],
+                "allow_fallbacks": True,
+                "data_collection": "deny",
+                "zdr": True,
+            },
+        ),
+        (
+            {"embedding_provider": "nebius", "zdr": True},
+            {
+                "only": ["nebius"],
+                "allow_fallbacks": False,
+                "data_collection": "deny",
+                "zdr": True,
+            },
+        ),
+    ),
+)
+def test_embedding_provider_payload_shapes(
+    configured: dict[str, object], expected: dict[str, object] | None
+) -> None:
+    """Every routing combination maps to one exact OpenRouter provider object."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings.model_validate(
+            {"api_key": "test-key", **configured}
+        )
+    )
+    try:
+        assert provider._embedding_provider_payload() == expected
+    finally:
+        provider._client.close()
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    (
+        (None, None),
+        ("", None),
+        ("  ", None),
+        ("nebius, deepinfra", ["nebius", "deepinfra"]),
+        ('["nebius","deepinfra"]', ["nebius", "deepinfra"]),
+    ),
+)
+def test_embedding_provider_only_parses_env_shapes(
+    configured: str | None, expected: list[str] | None
+) -> None:
+    """The allowlist accepts the same empty, CSV, and JSON forms as the order."""
+    settings = OpenRouterSettings.model_validate(
+        {"api_key": "test-key", "embedding_provider_only": configured}
+    )
+
+    assert settings.embedding_provider_only == expected
+
+
+def test_embedding_provider_only_reads_its_environment_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deployments configure the allowlist and ZDR through the documented env."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY", "nebius,deepinfra"
+    )
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
+
+    settings = OpenRouterSettings()  # pyright: ignore[reportCallIssue]
+
+    assert settings.embedding_provider_only == ["nebius", "deepinfra"]
+    assert settings.zdr is True
+
+
+@pytest.mark.parametrize(
+    ("configured", "message"),
+    (
+        (
+            {"embedding_provider_only": ["nebius"], "embedding_provider": "nebius"},
+            "embedding_provider cannot be combined",
+        ),
+        (
+            {
+                "embedding_provider_only": ["nebius", "deepinfra"],
+                "embedding_provider_order": ["nebius", "siliconflow"],
+            },
+            "exactly once",
+        ),
+        (
+            {
+                "embedding_provider_only": ["nebius", "deepinfra"],
+                "embedding_provider_order": ["nebius"],
+            },
+            "exactly once",
+        ),
+        (
+            {
+                "embedding_provider_only": ["nebius", "deepinfra"],
+                "embedding_provider_order": ["nebius", "deepinfra", "nebius"],
+            },
+            "exactly once",
+        ),
+        ({"embedding_provider_only": ["nebius", "nebius"]}, "each host once"),
+    ),
+)
+def test_embedding_allowlist_rejects_contradictory_routing(
+    configured: dict[str, object], message: str
+) -> None:
+    """No setting may widen or contradict the hard embedding allowlist."""
+    with pytest.raises(ValidationError, match=message):
+        OpenRouterSettings.model_validate({"api_key": "test-key", **configured})
+
+
+def test_embedding_allowlist_does_not_constrain_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Embedding hosts never leak into chat routing; ZDR still applies there."""
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            embedding_provider_only=["nebius", "deepinfra"],
+            zdr=True,
+        ),
+        responses=[
+            httpx.Response(200, json=_completion(content='{"answer":"Prague"}'))
+        ],
+    )
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert seen[0]["provider"] == {"data_collection": "deny", "zdr": True}
+
+
 def test_embedding_provider_pin_is_not_forwarded_to_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

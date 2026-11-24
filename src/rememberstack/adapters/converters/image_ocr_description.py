@@ -139,6 +139,15 @@ class ImageDescriptionSettings(BaseSettings):
     reasoning_effort: ReasoningEffort | None = None
     provider_only: tuple[str, ...] | None = None
     """Approved vision endpoints in preference order; fallback stays in this set."""
+    zdr: bool = False
+    """Route description calls only to zero-data-retention endpoints when true.
+
+    Env: ``REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR``. Every description request's
+    ``provider`` object then carries ``zdr: true`` and
+    ``data_collection: deny``, with or without ``provider_only``. A privacy
+    filter on the same model, so it stays out of ``version_fingerprint`` and
+    never re-keys converted images.
+    """
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -627,16 +636,22 @@ class ImageOcrDescriptionConverter:
     def _post_description(self, *, payload: dict[str, object]) -> httpx.Response:
         """Try each approved endpoint once, only after proven unbilled rejection."""
         remaining = self._description_settings.provider_only
+        zdr = self._description_settings.zdr
         while True:
+            routing: dict[str, object] = {}
             if remaining is not None:
                 approved = list(remaining)
-                routing: dict[str, object] = {
+                routing = {
                     "only": approved,
                     "allow_fallbacks": len(approved) > 1,
                     "data_collection": "deny",
                 }
                 if len(approved) > 1:
                     routing["order"] = approved
+            if zdr:
+                routing["data_collection"] = "deny"
+                routing["zdr"] = True
+            if routing:
                 payload["provider"] = routing
             response = self._description_client.post("/chat/completions", json=payload)
             if (

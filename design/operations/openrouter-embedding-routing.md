@@ -2,9 +2,11 @@
 
 **Status:** Operational policy for self-host / compose / benchmark stacks.  
 **Model:** `qwen/qwen3-embedding-8b` (same id across hosts — one embedding space).  
-**Code:** `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` and
-`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` in
-`src/rememberstack/adapters/openrouter.py`.  
+**Code:** `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`,
+`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER`,
+`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` and
+`REMEMBERSTACK_OPENROUTER_ZDR` in `src/rememberstack/adapters/openrouter.py`.  
+**Binding contract:** [provider rotation design §5](../../plan/designs/openrouter_provider_rotation_design.md#5-zero-retention-enforcement).  
 **Retrieved:** OpenRouter model endpoints API,
 `GET /api/v1/models/qwen/qwen3-embedding-8b/endpoints`, 2026-08-06.
 
@@ -42,6 +44,28 @@ endpoints API when refreshing the shortlist.
 
 ---
 
+## Policy (zero-data-retention deployments, e.g. remember.dev)
+
+Customer content may reach only zero-data-retention (ZDR) endpoints. Use the
+hard allowlist, not the order, and turn on ZDR:
+
+```bash
+REMEMBERSTACK_OPENROUTER_ZDR=true
+REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY=nebius,deepinfra
+REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER=
+REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=
+```
+
+Each embedding request then sends
+`{"only": ["nebius", "deepinfra"], "allow_fallbacks": true, "data_collection": "deny", "zdr": true}`:
+OpenRouter picks between the two hosts and fails over only between them, and
+`zdr`/`data_collection` filter every candidate, fallbacks included. SiliconFlow
+is excluded: an order-only shortlist let production traffic fail over to it.
+Confirm that each listed host is ZDR for this model on OpenRouter before
+changing the list, and keep the OpenRouter account itself set to ZDR-only
+(the request flag cannot override account-level Safety Retention). Image
+descriptions need `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` separately.
+
 ## Policy (compose / smoke / local)
 
 ```bash
@@ -57,11 +81,20 @@ Semantics in the adapter:
 
 | Env | OpenRouter `provider` payload |
 | --- | --- |
-| `EMBEDDING_PROVIDER_ORDER` set | `{ "order": [...], "allow_fallbacks": true }` |
+| `EMBEDDING_PROVIDER_ONLY` with 2+ hosts | `{ "only": [...], "allow_fallbacks": true }` (fallback stays inside `only`) |
+| `EMBEDDING_PROVIDER_ONLY` with 1 host | `{ "only": [name], "allow_fallbacks": false }` |
+| `EMBEDDING_PROVIDER_ONLY` + same-host `EMBEDDING_PROVIDER_ORDER` | `{ "order": [...], "only": [...], "allow_fallbacks": true }` |
+| `EMBEDDING_PROVIDER_ORDER` set (no allowlist) | `{ "order": [...], "allow_fallbacks": true }` (may fall back to any host) |
 | only `EMBEDDING_PROVIDER` set | `{ "only": [name], "allow_fallbacks": false }` |
-| neither | omit `provider` (full OpenRouter auto routing — avoid for priced smokes) |
+| none | omit `provider` (full OpenRouter auto routing — avoid for priced smokes) |
 
-When **both** order and hard pin are set, **order wins**.
+`REMEMBERSTACK_OPENROUTER_ZDR=true` adds `"data_collection": "deny"` and
+`"zdr": true` to every row, and sends `{ "data_collection": "deny", "zdr": true }`
+when nothing else is set.
+
+When **both** order and hard pin are set, **order wins**. The allowlist cannot
+be combined with the hard pin, and an order paired with the allowlist must name
+exactly the same hosts once; the engine refuses to start otherwise.
 
 ---
 

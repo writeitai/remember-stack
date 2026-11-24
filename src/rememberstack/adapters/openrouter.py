@@ -117,7 +117,7 @@ class OpenRouterSettings(BaseSettings):
 
     Prefer ``embedding_provider_order`` when you want a priced shortlist with
     failover (e.g. Nebius then DeepInfra then SiliconFlow). When both are set,
-    the order wins.
+    the order wins. It cannot be combined with ``embedding_provider_only``.
     """
     embedding_provider_order: list[str] | None = None
     """Ordered OpenRouter embedding providers (``provider.order`` + fallbacks).
@@ -127,6 +127,19 @@ class OpenRouterSettings(BaseSettings):
     ``nebius,deepinfra,siliconflow``. Tags like ``siliconflow/fp8`` are
     endpoint labels; routing uses the base provider slug from the endpoints
     API. See ``design/operations/openrouter-embedding-routing.md``.
+    Alone, fallback may leave this list; pair it with
+    ``embedding_provider_only`` to keep fallback inside the approved hosts.
+    """
+    embedding_provider_only: list[str] | None = None
+    """Hard OpenRouter embedding provider allowlist (``provider.only``).
+
+    Env: ``REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`` as a
+    comma-separated list of *provider slugs*, e.g. ``nebius,deepinfra``. No
+    request may reach a host outside the list. With two or more hosts,
+    OpenRouter picks among them and falls back within them on failure; with
+    one host, fallback is off. An ``embedding_provider_order`` paired with it
+    must name the same hosts exactly once and fixes the try order. It cannot
+    be combined with the single ``embedding_provider`` pin.
     """
     chat_provider_only: list[str] | None = None
     """Hard OpenRouter chat provider allowlist (``provider.only``, no escape).
@@ -161,10 +174,15 @@ class OpenRouterSettings(BaseSettings):
     Retry-After below the cap wins; anything larger is clamped to the cap.
     """
     zdr: bool = False
-    """Restrict chat routing to zero-data-retention endpoints when true.
+    """Restrict chat and embedding routing to zero-data-retention endpoints.
 
-    Env: ``REMEMBERSTACK_OPENROUTER_ZDR``. Sends ``zdr: true``; provider picks
-    already exclude retaining hosts separately — this flag is the enforcement.
+    Env: ``REMEMBERSTACK_OPENROUTER_ZDR``. When true, every chat and embedding
+    request's ``provider`` object carries ``zdr: true`` and
+    ``data_collection: deny``, even when no provider list is configured.
+    Provider picks already exclude retaining hosts separately — this flag is
+    the enforcement. It is independent of the provider lists: a fallback can
+    only ever reach a ZDR endpoint. The image-description converter has its
+    own ``REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`` flag.
     """
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
@@ -212,6 +230,14 @@ class OpenRouterSettings(BaseSettings):
             value=value, field_name="embedding_provider_order"
         )
 
+    @field_validator("embedding_provider_only", mode="before")
+    @classmethod
+    def parse_embedding_provider_only(cls, value: object) -> object:
+        """Parse comma-separated or JSON list of OpenRouter provider slugs."""
+        return _parse_provider_name_list(
+            value=value, field_name="embedding_provider_only"
+        )
+
     @field_validator("chat_provider_only", mode="before")
     @classmethod
     def parse_chat_provider_only(cls, value: object, info: ValidationInfo) -> object:
@@ -242,6 +268,26 @@ class OpenRouterSettings(BaseSettings):
                 raise ValueError(
                     "chat_provider_order must name chat_provider_only hosts exactly once"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def require_consistent_embedding_routing(self) -> "OpenRouterSettings":
+        """Keep embedding routing inside one unambiguous hard allowlist."""
+        only = self.embedding_provider_only
+        if not only:
+            return self
+        if self.embedding_provider:
+            raise ValueError(
+                "embedding_provider cannot be combined with embedding_provider_only"
+            )
+        order = self.embedding_provider_order
+        if len(set(only)) != len(only):
+            raise ValueError("embedding_provider_only must name each host once")
+        if order and (set(only) != set(order) or len(only) != len(order)):
+            raise ValueError(
+                "embedding_provider_order must name embedding_provider_only hosts"
+                " exactly once"
+            )
         return self
 
     @field_validator("max_completion_tokens", mode="before")
@@ -903,20 +949,35 @@ class OpenRouterModelProvider:
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.
 
-        ``embedding_provider_order`` prefers named hosts first (price/latency
-        shortlist) but keeps ``allow_fallbacks`` on so a single-host 5xx/429 can
-        move to the next slug rather than dead-letter the stage. A single
+        ``embedding_provider_only`` is the hard allowlist: alone, OpenRouter
+        picks among its hosts and falls back within them (fallback is off for
+        a single host); with the same hosts as ``embedding_provider_order`` it
+        tries them in that order. ``embedding_provider_order`` alone prefers
+        named hosts but may fall back to any marketplace host. A single
         ``embedding_provider`` remains hard-only (no marketplace escape).
+        ``zdr`` adds ``zdr: true`` and ``data_collection: deny`` to every
+        request, including one with no provider list. Returns ``None`` only
+        when nothing is configured and ZDR is off.
         """
-        order = self._settings.embedding_provider_order
-        if order:
-            return {"order": list(order), "allow_fallbacks": True}
-        if self._settings.embedding_provider:
-            return {
-                "only": [self._settings.embedding_provider],
-                "allow_fallbacks": False,
-            }
-        return None
+        settings = self._settings
+        only = settings.embedding_provider_only
+        order = settings.embedding_provider_order
+        payload: dict[str, object] = {}
+        if only:
+            if order:
+                payload["order"] = list(order)
+            payload["only"] = list(only)
+            payload["allow_fallbacks"] = len(only) > 1
+        elif order:
+            payload["order"] = list(order)
+            payload["allow_fallbacks"] = True
+        elif settings.embedding_provider:
+            payload["only"] = [settings.embedding_provider]
+            payload["allow_fallbacks"] = False
+        if settings.zdr:
+            payload["data_collection"] = "deny"
+            payload["zdr"] = True
+        return payload or None
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """One embeddings call for the caller's batch."""

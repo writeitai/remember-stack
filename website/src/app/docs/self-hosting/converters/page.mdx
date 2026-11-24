@@ -79,7 +79,11 @@ without admitting hosts outside the list. For Flex followed by normal OpenAI
 Luna, use `["openai/flex","openai"]`. An explicit uncharged capacity rejection
 advances to the next approved endpoint without a generation-cost lookup. A
 response with choices or usage, or a generic ID-bearing error, never triggers
-that replay. OCR keeps its independent provider settings.
+that replay. Set `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to send every
+description call only to zero-data-retention endpoints (`zdr: true` and
+`data_collection: deny`), with or without an allowlist; it is separate from
+`REMEMBERSTACK_OPENROUTER_ZDR` and does not re-convert existing images. OCR
+keeps its independent provider settings.
 
 Existing multi-entry lists now permit ordered fallback within the same set.
 That transport change does not change an unchanged list's checkpoint identity;
@@ -373,6 +377,7 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | Approved endpoints in preference order; the LoCoMo Luna profile uses `["openai/flex","openai"]`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | Zero-data-retention endpoints only for the description call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |

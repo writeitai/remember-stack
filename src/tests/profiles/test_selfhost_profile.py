@@ -387,6 +387,26 @@ def test_model_bindings_report_embedding_provider_order(
 
 
 @pytest.mark.parametrize(
+    ("configured", "reported"), (("nebius,deepinfra", "nebius,deepinfra"), ("", None))
+)
+def test_model_bindings_report_embedding_allowlist_only_when_set(
+    monkeypatch: pytest.MonkeyPatch, configured: str, reported: str | None
+) -> None:
+    """The hard allowlist is disclosed; unset keeps the historic binding keys."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert (
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY:"
+        " ${REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY:-}"
+    ) in compose
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY", configured)
+
+    bindings = _model_bindings()
+
+    assert bindings.get("openrouter_embedding_provider_only") == reported
+
+
+@pytest.mark.parametrize(
     ("configured", "reported"), (("64000", "64000"), ("", "32000"))
 )
 def test_compose_and_model_bindings_expose_max_completion_tokens(
