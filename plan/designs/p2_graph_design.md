@@ -400,7 +400,7 @@ both half-open windows to every edge:
 
 ```sql
 (ingested_at IS NULL OR ingested_at <= believed_at)
-AND (invalidated_at IS NULL OR invalidated_at > believed_at)
+AND NOT closed_at(edge, believed_at)  -- D159: close/reopen events, as for facts_as_of
 AND (valid_from IS NULL OR valid_from <= valid_at)
 AND (valid_until IS NULL OR valid_until > valid_at)
 ```

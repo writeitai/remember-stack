@@ -1183,7 +1183,7 @@ CREATE TABLE documents (
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
   archived_at     timestamptz,                 -- D159 archive: testimony ended, readable as history (§13.1)
-  archived_by     text CHECK (archived_by IN ('caller','source')), -- who archived; a caller's archive is never undone by connector events
+  archived_by     text CHECK (archived_by IN ('caller','source')), -- who archived; identical bytes from a connector never undo a caller's archive (a changed version does)
   deleted_at      timestamptz,                 -- forget's hide tombstone until the sweep deletes the row (§13.2)
   UNIQUE (deployment_id, source_kind, source_ref),  -- lineage identity (D55)
   UNIQUE (deployment_id, doc_id),               -- composite-FK target (tenancy isolation, §0)

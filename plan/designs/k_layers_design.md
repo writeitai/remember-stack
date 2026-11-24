@@ -544,7 +544,8 @@ treat "compiled never consumes authored" as an invariant, not a convention.
 
 Triggered by the D12 debounce window ("N changed evidence items or T minutes"). Plane K is a
 consumer of the facts processing layer (D143): while a deployment does not serve facts, no
-cycle runs and the page views are refused like other fact reads
+compilation runs and the page views are refused like other fact reads, but step 1's pull and
+authored-page sync still run (D159 forget needs them to finish an owner's redaction)
 ([processing layers design §7.6](processing_layers_design.md#76-plane-k-and-p3)). One cycle:
 
 1. **Pull** the repo (pick up human commits: authored pages, sidecars). Sync authored
@@ -560,7 +561,8 @@ cycle runs and the page views are refused like other fact reads
    page, the driver renders the deterministic fact-sheet band and the writer produces the LLM
    band (§5) — fact-sheet-only pages skip the writer entirely.
 5. **Validate & commit**: citations resolve, exclusions honored, internal links resolve to
-   existing artifacts; one commit for the cycle; two-phase against Postgres (record compilations
+   existing artifacts; one commit for the cycle, the only step that holds the K lease (writers
+   run before it, outside the lease); two-phase against Postgres (record compilations
    `pending` → push → mark committed; reconcile HEAD on startup). Compiled pages are committed as
    a replaceable snapshot that carries no history of earlier compiled versions (D159), so
    erasing forgotten text never needs a history rewrite of compiled output; authored pages and

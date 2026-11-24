@@ -334,9 +334,9 @@ The portable restore order is deliberately small:
    it). A database restored from before a forget no longer has that record; the operator forgets
    the document again
    ([archive and forget design §3.8](archive_and_forget_design.md#38-after-a-restore)).
-4. Rebuild P1 and P3 through their normal production builders, ensure the live graph catalog
-   (node and edge views, roles) and bounded traversal helpers, run the S55/control canaries, and
-   only then admit traffic.
+4. Rebuild P1 and P3 through their normal production builders and ensure the live graph catalog
+   (node and edge views, roles) and bounded traversal helpers. `forget-reapply` is the operator's
+   repair command; the deployment does not wait for it.
 
 Credentials, provider configuration, backup retention, transfer progress, retries and
 cross-store snapshot policy remain operator or `ultimate-memory-cloud` responsibilities. The

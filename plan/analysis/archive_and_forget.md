@@ -190,7 +190,7 @@ covers:
   content hash is refused with `document_forgotten` (409), naming when it was forgotten. A
   request that sets `allow_forgotten=true` is ingested as an ordinary ingest would be, under a
   fresh document ID, and on commit the record releases only the hash (and source identity) that
-  request matched; the record is deleted when nothing is left. A later `forget-reapply` cannot
+  request matched, in separate fields; the record itself is never changed or deleted. A later `forget-reapply` cannot
   erase the copy added back (its ID differs), other forgotten versions stay guarded, and a
   different forget that shared the bytes keeps its guard. Syncs never set the flag. Erasure law concerns what is stored now; storing
   the data again later is a new, deliberate decision, which the flag makes explicit.

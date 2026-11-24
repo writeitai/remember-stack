@@ -211,8 +211,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 - **Freshness**: plane E processes promptly per document; planes K and P are
   debounced/scheduled — staleness bounded by an explicit, configurable cadence.
 - **Observable and recoverable, without an OSS operations platform**: typed telemetry and
-  CLI/admin inspection cover every pipeline; the portable-state definition, fail-closed restore
-  order, and non-resurrection contract cover the sources of truth. Operators move bytes with
+  CLI/admin inspection cover every pipeline; the portable-state definition and the operator's
+  forget repair command (D159) cover the sources of truth. Operators move bytes with
   native tools. Dashboard backends, alerts, HA, and physical backup schedules/retention are
   deployment-operator or cloud responsibilities (D60/D61/D75).
 
