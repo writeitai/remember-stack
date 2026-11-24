@@ -110,8 +110,8 @@ CREATE INDEX ix_effective_periods_lineage
 
 The composite foreign key uses the existing `UNIQUE (deployment_id, doc_id, version_id)` on
 `document_versions`, so a period for lineage A can never name a version of lineage B. There
-is no `ON DELETE` action: versions and lineages are soft-deleted (D135, §9), and periods are
-removed only by hard forget (D74), which deletes them explicitly.
+is no `ON DELETE` action: archive keeps versions and lineages (§9), and periods are removed only
+by forget's sweep (D159), which deletes them explicitly.
 
 Rows are a ledger: a correction sets `retracted_at` on the old row and inserts the new one in
 the same transaction. The lineage's mode is a second, tiny ledger
@@ -160,7 +160,7 @@ Two access paths compute the same intervals:
 
   It is rewritten **for one lineage at a time**, in the same transaction as every write that
   can change it: a declaration or retraction, a mode event, a version becoming ready or current,
-  a version or lineage deletion. A lineage has a handful of versions, so each rewrite is small.
+  a version deletion, or a lineage archive or unarchive. A lineage has a handful of versions, so each rewrite is small.
   It is a projection: dropping and rebuilding it from the ledgers and version rows yields the
   same rows.
 - **The belief-pinned function** `memory_v1.effective_intervals(deployment_id, doc_ids uuid[],
@@ -1048,8 +1048,8 @@ application would ever reach the adjudicator again. A **window review** closes t
      change that made such a fact stale queued its review.
 - **The period fence.** Every certifier (ordinary apply and review apply) takes a
   per-deployment advisory lock *shared*. It takes it after the entity adjudication lock and
-  before its final validation, and holds it through commit. Lock order: hard-forget fence,
-  identity epoch, entity lock, period fence, then row locks.
+  before its final validation, and holds it through commit. Lock order: identity epoch, entity
+  lock, period fence, then row locks.
 
   A lineage fan-out takes the same lock *exclusively* before its first page. It holds no
   other lock while doing so, and it reads stored and current bases in one statement.
@@ -1063,12 +1063,12 @@ application would ever reach the adjudicator again. A **window review** closes t
   that writer's fan-out could see the still-stored A and skip the fact, and only then would
   the review commit B's window.
 - **Triggers.** A lineage *review request* is queued — only for a lineage that has ever
-  recorded an effective-time event, and never while a hard forget is honored (D74 scrubs the
+  recorded an effective-time event, and never for a forgotten lineage (forget's sweep handles the
   touched facts itself) — in the transaction of the change: a period write that changed
   anything, `clear`, an ingest that declares or corrects a period on an existing version (a D55
   no-op ingest, which no processing follows), an operator version deletion, a lineage
-  deletion (public delete, operator delete, source-deletion finalisation), and late testimony
-  retired from a deleted version. A **new** version declared at ingest is reviewed when its
+  archive (caller archive, source-deletion finalisation), and late testimony
+  retired from an archived or deleted version. A **new** version declared at ingest is reviewed when its
   processing completes (the reconcile stage), not at ingest: until then its reused claims have
   no occurrences in it, so the predecessor's facts would look closed and be reviewed twice. A
   version whose processing never completes (no route, dead letter) is reviewed when it is
@@ -1132,7 +1132,7 @@ application would ever reach the adjudicator again. A **window review** closes t
     not spend its retries. It reschedules itself as a new job that becomes due when that claim
     goes stale. A claim older than 15 minutes (a starting value) may be taken over.
 
-  The row is deleted when its answer is applied. Hard forget deletes the rows of the facts it
+  The row is deleted when its answer is applied. Forget's sweep deletes the rows of the facts it
   touches and clears their `period_basis`.
 - **Cost.** A fact whose basis did not move is never reviewed, and a review of a fact whose
   stored basis already matches returns without a model call, so duplicate triggers are free.
@@ -1144,10 +1144,10 @@ Belief time is the current belief: a review answers "given what is now believed 
 periods, is this window right?", and windows change through the normal mutable-window path,
 so open PR #486's belief-time rule applies without special cases.
 
-## 9. Deletion and forgetting
+## 9. Archive and forgetting
 
-D135 deletes by soft tombstone (`document_versions.deleted_at`, `documents.deleted_at`,
-`lifecycle.py` `_TOMBSTONE_VERSION` / `_TOMBSTONE_LINEAGE_BY_ID`); rows stay. D140 therefore
+Archive (D159) keeps a lineage's rows and sets `documents.archived_at`; an internal version
+removal tombstones the version (`document_versions.deleted_at`); rows stay. D140 therefore
 specifies visibility, not cascades:
 
 - **Version deleted.** Its declarations stop taking part in interval derivation (§2.2 joins
@@ -1155,15 +1155,17 @@ specifies visibility, not cascades:
   reference generations and outgoing references stop being readable (every read joins non-deleted
   versions). Incoming references whose pinned `version_key` named it return
   `pinned_version_unavailable`; floating references simply stop selecting it. The declaration
-  ledger rows remain as history, as D135 retains all version rows.
-- **Lineage deleted.** Everything above for all its versions; incoming references return
-  `target_unavailable`. `to_doc_id` is kept: if the lineage is revived (D55/D135 resurrection of
-  a tombstoned lineage), resolution works again without re-binding.
-- **Hard forget (D74).** The forget worker explicitly deletes the lineage's period rows,
+  ledger rows remain as history, as archive retains all version rows.
+- **Lineage archived.** Everything above for all its versions; incoming references return
+  `target_unavailable` until it comes back. `to_doc_id` is kept: when the lineage comes back
+  (unarchive or a changed version,
+  [archive and forget design §2.3](archive_and_forget_design.md#23-undo-and-coming-back)),
+  resolution works again without re-binding.
+- **Forget (D159).** Forget's sweep explicitly deletes the lineage's period rows,
   effective-time events, `document_version_scope` rows, reference generations and artifacts, and the references it made; for references *to* it made by
   other lineages it sets `to_doc_id = NULL, resolved = false` and keeps the source-named target
   (it is the source's content, like `raw_citation`), so a re-ingest can re-bind it. Deleting
-  the chunk and section rows follows D74 unchanged; `text_origin_at` values on other lineages
+  the chunk and section rows follows the forget sweep; `text_origin_at` values on other lineages
   are unaffected (they never cross lineages).
 
 ## 10. Non-goals and scope boundaries

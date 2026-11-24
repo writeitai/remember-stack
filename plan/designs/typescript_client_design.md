@@ -60,8 +60,8 @@ columns and truncated properties.
 All public client methods are covered, including assured operations; SQL and
 saved-query execution/discovery; primitive search, resolve, hydration,
 transcripts and graph operations; deployment build information; pipeline
-readiness and waiting; binary/path ingestion; document listing, metadata search
-and deletion; all four connector methods; `fromEnv`; and `account.whoami/get`.
+readiness and waiting; binary/path ingestion; document listing, metadata search,
+archive, unarchive and forget (D159); all four connector methods; `fromEnv`; and `account.whoami/get`.
 Connector methods work against a deployment composing that port and propagate
 its refusal otherwise. They do not add `/connectors` to the standard exported
 deployment profile. No method returns a fabricated success for an absent API.
@@ -202,8 +202,8 @@ an unredacted inspect/toJSON representation.
 
 No generic automatic retry is permitted. A key-routed eligible read may re-resolve on
 network failure, 421 or a non-engine 404, and retry once only if the URL changed.
-Never replay ingest, connector creation, mutating operations or DELETE,
-including on 421. Refresh the host mapping after a write network failure/421
+Never replay ingest, connector creation, mutating operations, archive, unarchive,
+forget or DELETE, including on 421. Refresh the host mapping after a write network failure/421
 without replay; surface the original error. For reads, use the source-owned
 _READ_ROUTES table in `src/rememberstack/surfaces/route_scope.py` (not the
 separate spend-gate table in http_api.py), not HTTP method alone: POST readiness, graph and queries
@@ -215,7 +215,7 @@ adapter transmits exactly once. Both injected client and transport modes must tr
 per invocation, honor cancellation and return redirects without following them;
 the SDK cannot detect violations inside a caller-owned transport. The retired
 fetch option is removed rather than retained as a nonconforming fallback. One
-`deleteDocument` sends one DELETE to the engine, including after a 421. The
+`forgetDocument` sends one POST to the engine, including after a 421. The
 universal no-write-replay contract applies at the wire, not merely to adapter
 call counts. See
 [the measured 421 transport evidence](../analysis/typescript_transport_421.md).

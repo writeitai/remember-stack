@@ -300,8 +300,8 @@ the control-plane tables in
    [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)),
    which defines their name, description and parameters once; the registry rows take those
    fields from it. The catalogue's other entries are infrastructure, not intent tools:
-   `ingest`, `pipeline_readiness`, `delete_document`, `source_open` and the seven open-query
-   tools. Customer-authored behavior belongs in the saved-query registry
+   `ingest`, `pipeline_readiness`, `archive_document`, `unarchive_document`,
+   `forget_document`, `source_open` and the seven open-query tools. Customer-authored behavior belongs in the saved-query registry
    and never becomes a top-level intent tool merely by inserting a row.
 
 Assured operations never add base capability — anything they do is composed from §3 and the
@@ -712,9 +712,9 @@ class becomes labeled query/expected-result pairs; the harness measures recall@k
 precision per **operation or saved query × scenario class × corpus slice**, plus contract tests that are
 non-negotiable CI: grain labels present and truthful; contradiction co-members always
 returned (S23); truncation always marked (S18/S49);
-forgotten ≡ never-existed (S55 — the *contract*; D74 designs the end-to-end active-store cascade
-and restore non-resurrection behavior, and WP-7.5 activates the CI gate only when its executable
-canary is green); operation-vs-primitive-plan
+forgotten ≡ never-existed (S55 — the *contract*; the
+[archive and forget design](archive_and_forget_design.md) (D159) designs the sweep and the
+restore reapply, and its canary test is the CI gate); operation-vs-primitive-plan
 equivalence (§4); and S58 as the
 skill's acceptance test. Rerank weights (graph distance, evidence count) are tuned on the
 harness, never in production.
