@@ -110,6 +110,16 @@ Notes an implementer needs:
   does not replace local decode bounds or guarantee acceptance by every provider;
   rejected requests remain visible failures. Rationale and the one-time checkpoint
   boundary: `../analysis/image_description_detail_20261110.md`.
+- **Zero-data-retention routing is explicit.** `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`
+  (default off) adds `zdr: true` and `data_collection: deny` to the description
+  request, with or without a provider allowlist. Strict zero retention also needs the
+  OpenRouter account set to ZDR only. Declared reuse boundary (CLAUDE.md Rule 4): the
+  flag is in the description fingerprint, so turning it on refreshes the vision
+  checkpoint once at each image's next conversion and reuses a matching OCR
+  checkpoint. That is a conversion-level guarantee only: a changed description
+  changes `document.md`, and downstream work then follows the existing reuse keys
+  (an edited chunk can also re-run Claimify for up to eight following chunks,
+  known gap 1).
 - **One versioned representation, two attributed outputs.** Assemble `document.md` in
   deterministic order: `## Visible text (OCR)` then `## Visual description`. OCR ranges
   retain `ocr` / `source_expression`; description ranges retain the appropriate
