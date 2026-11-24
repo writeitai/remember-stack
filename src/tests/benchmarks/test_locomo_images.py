@@ -676,9 +676,12 @@ def test_prepare_images_plan_checks_admission_limits_and_output(
     assert not (tmp_path / "cache").exists()
 
 
-def test_a_profile_frozen_before_zdr_still_validates() -> None:
-    """A stored profile without ``vision.zdr`` is the same identity with zdr off."""
+def test_a_profile_frozen_before_zdr_still_validates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stored profile without ``vision.zdr`` is zdr off, whatever the environment."""
     _, profile = _binding(calls=[])
+    monkeypatch.setenv("REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR", "true")
     legacy = profile.model_dump(mode="json")
     del legacy["vision"]["zdr"]
     assert ImageConversionProfile.model_validate(legacy).vision == legacy["vision"]

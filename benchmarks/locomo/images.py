@@ -153,14 +153,15 @@ class ImageConversionProfile(FrozenModel):
                 raise ValueError("image profiles must not contain credentials")
         credential = SecretStr("offline-identity-only")
         ocr = MistralOcrSettings.model_validate(dict(self.ocr, api_key=credential))
+        # Profiles frozen before the zdr setting existed omit it (false); set
+        # it before validation so the environment cannot supply it.
+        stored_vision = {"zdr": False, **self.vision}
         vision = ImageDescriptionSettings.model_validate(
-            dict(self.vision, api_key=credential)
+            dict(stored_vision, api_key=credential)
         )
-        # Profiles frozen before the zdr setting existed omit it (false).
-        if self.ocr != ocr.model_dump(mode="json", exclude={"api_key"}) or {
-            "zdr": False,
-            **self.vision,
-        } != vision.model_dump(mode="json", exclude={"api_key"}):
+        if self.ocr != ocr.model_dump(
+            mode="json", exclude={"api_key"}
+        ) or stored_vision != vision.model_dump(mode="json", exclude={"api_key"}):
             raise ValueError(
                 "image profile must contain the complete canonical non-secret settings"
             )

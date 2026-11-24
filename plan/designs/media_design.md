@@ -116,8 +116,10 @@ Notes an implementer needs:
   OpenRouter account set to ZDR only. Declared reuse boundary (CLAUDE.md Rule 4): the
   flag is in the description fingerprint, so turning it on refreshes the vision
   checkpoint once at each image's next conversion and reuses a matching OCR
-  checkpoint; downstream chunks and claims re-run only where the new description
-  differs.
+  checkpoint. That is a conversion-level guarantee only: a changed description
+  changes `document.md`, and downstream work then follows the existing reuse keys
+  (an edited chunk can also re-run Claimify for up to eight following chunks,
+  known gap 1).
 - **One versioned representation, two attributed outputs.** Assemble `document.md` in
   deterministic order: `## Visible text (OCR)` then `## Visual description`. OCR ranges
   retain `ocr` / `source_expression`; description ranges retain the appropriate
