@@ -359,8 +359,11 @@ the document hidden and the record `erasing`; nothing reopens.
      provenance, and record that step 5 must sweep the K session-transcript prefixes.
 3. **Objects.** Under the content-hash lock, decide raw-object ownership by physical
    reference: a content object stays while any version row, of any lineage, still references
-   it. Raw keys are engine-generated (`{doc_id}/{generation}/{content_hash}/original`, with no
-   suffix taken from the caller's file name); a retained legacy original whose key still
+   it. Every engine key is generation-scoped and engine-generated: originals at
+   `{doc_id}/{generation}/{content_hash}/original` (no suffix taken from the caller's file
+   name), and artifacts, checkpoints and media under
+   `{doc_id}/{generation}/{content_hash}/{representation_id}/…`; purge selectors are the
+   forgotten generation's prefixes, disjoint from a re-added generation's; a retained legacy original whose key still
    carries the forgotten lineage's prefix or file-name suffix is first copied, under the hash
    lock, to an engine-generated key of a surviving owner and `content_objects.raw_uri` is
    updated, so nothing of the forgotten lineage survives in a key. Before purging any old key,
@@ -400,7 +403,8 @@ the document hidden and the record `erasing`; nothing reopens.
    and each hold revalidates and publishes conditionally; forget tries the lock and
    reschedules on contention. The step, in order:
    - first determine **blocking** paths: authored pages and curation sidecars whose *current*
-     file still cites an ID in the inventory. They get the `redaction_required` review flag,
+     file still cites an ID in the inventory's delete set (a citation to a surviving shared
+     fact does not block). They get the `redaction_required` review flag,
      are listed on the record, and are treated as absent compile inputs until redacted (also
      hidden from the agent writer's checkout during rebuilds), so no compile can copy their
      text into a compiled page;
@@ -448,7 +452,9 @@ the document hidden and the record `erasing`; nothing reopens.
      survive the sweep;
    - retire or recompute every planner-generated registration (a page path, a routing rule)
      whose text came from a forgotten or renamed entity or from the forgotten document's own
-     title or names, before anything is rebuilt, so the
+     title or names; a registration made by an unrestricted planner after the document was
+     first ingested has no recorded read set, so, like an agent-mode page, it is treated as
+     possibly derived and is retired or recomputed from clean inputs, before anything is rebuilt, so the
      next compile cannot publish the forgotten name again;
    - publish once, then expire every reflog and prune unreachable objects in each engine
      repository (as the existing purge does), and verify both the rewritten history and that a
@@ -583,8 +589,8 @@ deployment or project setting.
   bound of its own, and a session that reconnects after a disconnect must replay pending
   invalidations before it serves any cached read, so a disconnected client cannot keep
   serving warm entries for an erased path. Step 6 accepts either the acknowledgement or the
-  passing of that bound, so a client that never reconnects cannot keep a forget open. Step 6 requires the
-  acknowledgement. The cloud repository implements the adapter.
+  passing of that bound, so a client that never reconnects cannot keep a forget open. The
+  cloud repository implements the adapter.
 - **Operator-managed S3 FUSE mounts** (self-host): the objects are deleted, and new listings
   and opens stop showing them when the tool's metadata cache expires; the filesystem-view
   docs require bounded stat, listing and data caches, and that bound is the guarantee. No
@@ -607,7 +613,8 @@ not run `VACUUM FULL` (it locks the table exclusively). The public docs state th
 The K sync runs under the single-committer lock. On every sync it rechecks every path of
 every `waiting_for_redaction` record, changed or not (so an edit that landed while the record
 was being written is not missed), including curation sidecars and deleted files (a deleted
-file cites nothing). When a path's current file no longer cites any inventory ID, the sync erases the path from all
+file cites nothing). When a path's current file no longer cites any ID in the inventory's
+delete set, the sync erases the path from all
 reachable Git history, re-adds the current file, verifies the rewritten history, and removes
 the path from `blocking_k_paths`; when none remain the record becomes `complete`. It uses
 the same bounded holds, conditional publication, reflog expiry, pruning and fresh-checkout
@@ -722,7 +729,10 @@ operations, parameters, answers and errors (D141 parity); `reapply` is CLI-only.
 
 The migration from the D135/D74 release first classifies existing D74 records: a `complete`
 manifest becomes a `complete` forget, and its retired placeholder rows are removed so a
-flagged re-add can register; a `preparing` or `accepted` one, whose document may still be
+flagged re-add can register. Every D74 manifest, complete or not, has its purge inventory
+(object keys, including opaque `uploads/<id>` locators, chunk, claim, fact and entity IDs, K
+artifact IDs) translated once into the D159 `inventory` JSON before it is dropped, so a later
+independent restore can still be re-erased; a `preparing` or `accepted` one, whose document may still be
 live, gets the D159 hide transaction (§3.2 steps 1–4) inside the migration and becomes an
 `erasing` forget with its work item enqueued; its D74 manifest's purge inventory (object keys,
 including opaque `uploads/<id>` locators the D74 scrub may already have replaced in
@@ -840,6 +850,12 @@ Run against real PostgreSQL and MinIO with deterministic providers and no hosted
     handle opened before the forget fails its next read, without the session restarting; a
     client that disconnects with a warmed handle lets the forget complete once its cache bound
     passes, and on reconnect replays the invalidation before serving any cached read;
+    a K session started during the erasure produces no canary while an unrelated compile
+    completes; an uncited canary in a planner rule in another scope is retired; restoring an
+    opaque `uploads/<id>` original after upgrading a completed D74 forget is erased; a restored
+    claim backing the same surviving fact keeps both evidence links, and only the new one
+    counts; an authored page citing only a surviving shared fact never enters
+    `waiting_for_redaction`;
     changed index files show the regenerated content. A crash after the corpus deletion and
     before the acknowledgement is retried by suffix and still invalidates a warmed handle and
     a warmed, since-pruned index file. A multipart upload interrupted mid-write for the

@@ -1217,6 +1217,7 @@ CREATE TABLE documents (
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
   archived_at     timestamptz,                 -- D159 archive mark (§13.1); cleared when a changed version or unarchive brings the lineage back
+  generation      smallint NOT NULL DEFAULT 0, -- D159 re-add generation: 0, incremented when a forgotten lineage is deliberately re-added; scopes every object key and the corpus suffix
   archived_by     text CHECK (archived_by IN ('caller','source')), -- who archived: a caller, or a connector that observed the source deletion (a reappearing source file revives only the latter)
   deleted_at      timestamptz,                 -- forget tombstone, set by the forget request until the job erases the row (§13.2)
   UNIQUE (deployment_id, source_kind, source_ref),  -- lineage identity (D55)
@@ -1312,7 +1313,7 @@ ALTER TABLE documents ADD FOREIGN KEY (deployment_id, doc_id, current_version_id
 -- kept); document_versions.current_representation_id names the live one and is swapped ONLY
 -- on completion of the new representation's conversion→E1→E2 chain (no window where old
 -- testimony is retired and new hasn't landed — the D54 completion rule). Artifact paths carry
--- the representation dimension (…/<doc_id>/<content_hash>/<representation_id>/…), so a
+-- the representation dimension (…/<doc_id>/<generation>/<content_hash>/<representation_id>/…), so a
 -- re-conversion can never overwrite the coordinate system historical claims' spans and
 -- locators resolve against. Rows are NEVER updated after status='ready'; a re-run of the same
 -- (content, route, versions) replays this row's stored output (D7) — the model is not
@@ -1591,7 +1592,7 @@ CREATE TABLE document_reference_generations (
   crossref_version text,                       -- extracted only
   input_hash      text NOT NULL,               -- supplied: sha256 of the NDJSON body; extracted: hash(representation_id, crossref_version)
   request_seq     bigint,                      -- supplied: per-version PUT order; the newest non-superseded generation is the caller's intent
-  artifact_uri    text,                        -- supplied only: …/<doc_id>/<content_hash>/references/<input_hash>.ndjson
+  artifact_uri    text,                        -- supplied only: …/<doc_id>/<generation>/<content_hash>/references/<input_hash>.ndjson
   item_count      integer,
   status          text NOT NULL CHECK (status IN ('pending','active','rejected','superseded')),
   errors          jsonb,                       -- rejected: bounded [{item, field, reason}]
@@ -2802,8 +2803,8 @@ documented revision to the monthly cadence or the measured HASH starting count o
 | `claim_extraction_decisions` | monthly RANGE (`decided_at`) | (`decision_id`, `decided_at`) | `pg_partman` | logical |
 | `testimony_currency_events` | monthly RANGE (`occurred_at`) | (`event_id`, `occurred_at`) | `pg_partman` | logical |
 | `document_entity_bindings` | HASH (`doc_id`) | (`deployment_id`, `doc_id`, `canonical_lemma`, `entity_id`) | 64 static migration-created children | real document/entity; logical source decision |
-| `relation_evidence` | HASH (`relation_id`) | (`relation_id`, `claim_id`) | 64 static migration-created children | logical |
-| `observation_evidence` | HASH (`observation_id`) | (`observation_id`, `claim_id`) | 64 static migration-created children | logical |
+| `relation_evidence` | HASH (`relation_id`) | (`relation_id`, `claim_id`, `testimony_episode`) | 64 static migration-created children | logical |
+| `observation_evidence` | HASH (`observation_id`) | (`observation_id`, `claim_id`, `testimony_episode`) | 64 static migration-created children | logical |
 
 `pg_partman` creates and maintains only the six monthly RANGE families. It does not manage the
 three HASH families; migrations create all remainders `0..63` before inserts can reach those parents.

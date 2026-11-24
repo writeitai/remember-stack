@@ -91,7 +91,10 @@ ordinary supersession path.)
 
 1. **Content object** — immutable bytes, keyed `content_hash`. The idempotency and blob-reuse
    key (D12/D37, unchanged in spirit): identical bytes are stored, converted, and paid for
-   once, even if two lineages carry them (the same PDF in two Drive folders).
+   once, even if two lineages carry them (the same PDF in two Drive folders). Each version
+   owns its reading (D159): a second lineage's version reuses an existing conversion of the
+   same bytes by copying it into its own representation, with no second paid conversion, so
+   forgetting one lineage never removes another's reading.
 2. **Document lineage** — the *logical document over time*, the stable `doc_id`. Identity is
    **connector-native**: `(source_kind, source_ref)` — the Drive file ID, the message ID, the
    watched URL, the upload event. Bytes cannot identify a lineage (they change — that is the
@@ -99,7 +102,7 @@ ordinary supersession path.)
    `source_ref`). A genuinely new `source_ref` is a new lineage even if the content is
    similar. Everything durable anchors on the lineage: P3 handles (`doc_id`, resolved to a
    movable applied folder path under D155),
-   K citations, crossrefs, GCS path prefixes (`<doc_id>/<content_hash>/…` — the layout that
+   K citations, crossrefs, GCS path prefixes (`<doc_id>/<generation>/<content_hash>/…` — the layout that
    always implied this design).
 3. **Document version** — one observed immutable snapshot of a lineage, pointing at one
    content object, carrying the per-snapshot state: artifact URIs, conversion/structure
@@ -409,7 +412,9 @@ map (schema §7).
 - Claim-grain default search and `claims_and_sources_context` return **current
   testimony**. Historical testimony is reached explicitly through
   `claims_visible_history`, direct audit queries, or `examples.claims_as_of`;
-  `claims_and_sources_context` has no history flag.
+  `claims_and_sources_context` has no history flag, but it accepts `include_archived`
+  (D159): passages and claims of archived documents are then returned, each marked archived;
+  they never count as current fact support.
 - `examples.claims_as_of` is historical by definition and runs over **all** testimony — versions
   finally give it a real corpus (per-version assertion times via chunk membership, §6).
 - **P1 claim search** indexes current testimony into the default channel — one current claim

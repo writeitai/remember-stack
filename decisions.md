@@ -1851,6 +1851,11 @@ coordinate is persisted on occurrence records and currency transitions.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
 
+> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** Identical bytes are still stored and converted (paid for)
+> once, but every reading belongs to one version: another lineage's version reuses a conversion
+> by copying it into its own representation, so forgetting one lineage never removes another's
+> reading. Reuse may draw on archived versions, never on tombstoned ones.
+
 > **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Lineages remain stable source
 > identities and P3 serves the completed current version. A P3 folder path may
 > move on type/topic/title or shard changes: store `doc_id` and resolve its applied
@@ -1938,6 +1943,11 @@ denormalized. Refines D37 (identity) and enriches D41 (per-version assertion tim
 identity rules per source kind are a named spike.
 
 ## D56. Content-addressed reuse — the cost of a new version is proportional to the edit
+
+> **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment) (2026-11-24).** Identical bytes are still stored and converted (paid for)
+> once, but every reading belongs to one version: another lineage's version reuses a conversion
+> by copying it into its own representation, so forgetting one lineage never removes another's
+> reading. Reuse may draw on archived versions, never on tombstoned ones.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
 > chunk's **text origin time**, recorded once when the chunk is created: the text origin

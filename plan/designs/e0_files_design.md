@@ -51,7 +51,8 @@ Three stores per deployment have distinct purposes (D37/D55/D65/D155):
   routing and provider access logging apply. The deployment is one trust domain
   (D50); originals can contain EXIF, tracked changes and other source metadata.
 - **artifacts** holds immutable readings under
-  `<doc_id>/<content_hash>/<representation_id>/`: `document.md`, `blocks.json`,
+  `<doc_id>/<generation>/<content_hash>/<representation_id>/` (`generation` is the lineage's
+  D159 re-add generation, 0 until a forgotten lineage is deliberately re-added): `document.md`, `blocks.json`,
   `conversion.json`, `meta.json`, optional `source_map.json`, and `media/`.
   The active PageIndex URI can instead be
   `<representation-prefix>/structure/<structure_generation_id>/pageindex.json`.
@@ -1001,12 +1002,17 @@ taking the lock. Keep the claim alive while streaming. Before each object write
 or delete, confirm ownership of that advisory lock on the same PostgreSQL session
 and that the work claim is still live; abort further mutations on loss.
 
-Beside it, hold forget's **per-document object lock** — a shared advisory lock
-keyed by the document — on an independent PostgreSQL session through all issued
-requests and own-upload cleanup. One lock order holds everywhere: the publication lock,
-then the navigation lock, then per-document object locks (full reconcile visits documents
-in that order, and forget's corpus step takes them in that order too); writers that touch no
-corpus object take only the per-document lock. Acquire it after the publication lock, and
+**One lock set, one order (D159).** The fences, each a pair of advisory locks with
+distinct keys held on two independent PostgreSQL sessions, are taken in this order and only
+in this order: (1) the deployment publication lock; (2) the navigation fence (`nav-a`,
+`nav-b`), for any write of `_index.md` or `llms.txt`; (3) the per-document object fence
+(`object-a:<doc_id>`, `object-b:<doc_id>`), for any object of that document. Ordinary
+publication takes 1, then 2 if it writes navigation, then 3 for the document it publishes;
+full reconcile takes 1 per bounded batch, then 2 and 3 as the batch needs; archive's and the
+forget request's synchronous removal take 1, 2 and 3; forget's background corpus step takes
+1, 2 and 3 exclusively per batch with try-and-reschedule; writers that touch no corpus object
+take only 3. Holds have deadlines independent of work heartbeats
+([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)). Acquire it after the publication lock, and
 check that session's identity and lock ownership too
 ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)).
 Every handler that writes objects for a document holds the same lock. Forget's

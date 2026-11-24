@@ -45,7 +45,7 @@ are starting points to measure (CLAUDE.md).
 transcription, with the original always one explicit pointer away.** Three objects, three
 jobs — never conflated:
 
-1. **The source asset** — the immutable raw bytes (`raw/<doc_id>/<content_hash>/original.ext`).
+1. **The source asset** — the immutable raw bytes (`raw/<doc_id>/<generation>/<content_hash>/original`).
    The audit target, and what a multimodal agent inspects when it decides the derivation
    isn't enough (listen to the tone; look at the picture). Never copied into browse trees,
    never replaced by its derivation.
@@ -390,7 +390,7 @@ inline every source into every answer (burning context, widening prompt-injectio
 removing the agent's judgment) nor bury the original behind a surface only a human can drive
 (removing its autonomy). This is D51's "compact by default, the source one decision away"
 applied to the moment of looking. **A mounted agent does not need this operation at all** — under
-D116 it opens `<doc_id>/<content_hash>/original.<ext>` directly, which is the better motion
+D116 it opens `<doc_id>/<generation>/<content_hash>/original` directly, which is the better motion
 whenever the filesystem is available. `source_open` exists for the unmounted agent, which is
 most agents against a managed deployment, and for locator-scoped access to large media where
 the file is present but nobody wants all of it in context.
@@ -497,7 +497,7 @@ Three boundaries, each explicit:
 **representation generation**: `representation_id`, belonging to exactly one document
 version, stamped with the route + full component versions and the manifest's output hashes,
 **never mutated after creation**. Artifact paths carry the representation dimension —
-`gs://…-artifacts/<doc_id>/<content_hash>/<representation_id>/document.md` — so a
+`gs://…-artifacts/<doc_id>/<generation>/<content_hash>/<representation_id>/document.md` — so a
 re-conversion of unchanged bytes **cannot overwrite** the coordinate system that historical
 claims' spans and locators resolve against (schema: a `document_representations` table; the
 version's `current_representation_id` points at the live one). One byte object, several

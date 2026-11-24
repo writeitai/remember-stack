@@ -28,7 +28,7 @@ Python surface (D141), because the parity check compares that inventory with the
   409 `document_forgotten`) on every ingest path, so the old permanent guard is never removed
   without its replacement in place. Only the `allow_forgotten` override waits for slice 2.
 - Mount invalidation (§3.7): `invalidate(doc_suffix)` on the corpus purge port, the in-repo
-  test adapter, acknowledgement in step 6, and the S3 FUSE cache-bound documentation. The
+  test adapter, acknowledgement (or the client's cache-expiry bound) in step 6, and the S3 FUSE cache-bound documentation. The
   cloud repository's controlled-session adapter, qualified by running the warmed-handle test
   through `remember mount` with the real Mountable client (the in-repo adapter cannot exercise
   the client and kernel caches), must ship before remember.dev deploys this

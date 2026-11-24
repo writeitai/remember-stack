@@ -614,7 +614,7 @@ CREATE TABLE document_reference_generations (
   crossref_version text,                   -- extracted: the crossreferencer generation
   input_hash       text NOT NULL,          -- supplied: sha256 of the canonical NDJSON body; extracted: hash(representation_id, crossref_version)
   request_seq      bigint,                 -- supplied: per-version order of PUTs (latest intent wins, §6.3)
-  artifact_uri     text,                   -- supplied: …/<doc_id>/<content_hash>/references/<input_hash>.ndjson (content-addressed, shared by generations with the same body)
+  artifact_uri     text,                   -- supplied: …/<doc_id>/<generation>/<content_hash>/references/<input_hash>.ndjson (content-addressed, shared by generations with the same body)
   item_count       integer,
   status           text NOT NULL CHECK (status IN ('pending', 'active', 'rejected', 'superseded')),
   errors           jsonb,                  -- rejected: [{item, field, reason}], bounded
@@ -908,9 +908,9 @@ excludes that edition. The gate closes this without touching fact windows:
   also belong to the claim's testimony episode current at the scope's belief instant (D159):
   after un-archive, a new occurrence cannot make an ended episode's link qualify the old fact,
   and evidence hydration applies the same predicate for current reads. An archive-closed
-  fact is a past belief, so it is read through the existing belief-as-of path (`facts_as_of`
-  and the context operations with `believed_at` before the archive): evidence is hydrated
-  from the links whose episode was current at that belief instant, with their occurrences and
+  fact is a past belief, so it is read through the belief-as-of path: `facts_as_of` for the
+  fact and `fact_evidence_as_of` for its evidence, with `believed_at` before the archive.
+  Evidence comes from the links whose episode was current at that belief instant, with their occurrences and
   historical endpoint eligibility. So after un-archive the old fact and its evidence stay
   readable as of before the archive, while that link contributes nothing to current support.
 - **A fact with no supporting evidence at all** — D54's zero-support case, typically a fact
