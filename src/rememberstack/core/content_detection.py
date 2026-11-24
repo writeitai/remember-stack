@@ -423,6 +423,7 @@ _CFB_STREAM_MIMES = {
 }
 """Root streams that name a legacy Office subtype (MS-DOC, MS-XLS, MS-PPT)."""
 _CFB_LAST_SECTOR = 0xFFFFFFFA
+_CFB_END_OF_CHAIN = 0xFFFFFFFE
 _CFB_MAX_SECTORS = 4096
 """Directory, FAT and DIFAT sectors read at most: a bound on crafted chains."""
 
@@ -435,10 +436,12 @@ def _u32(data: bytes, offset: int) -> int:
 def _ole_office_mime(*, content: Content) -> str | None:
     """The legacy Office subtype an OLE file's root streams name, or None.
 
-    Reads the compound file's header, the FAT sectors it needs and the
-    directory chain (MS-CFB), bounded by :data:`_CFB_MAX_SECTORS`, and looks
-    at the root storage's own children only, so an embedded object's streams
-    do not count. None when no subtype or more than one is named.
+    Reads the compound file's header, the FAT and DIFAT sectors it needs and
+    the directory chain (MS-CFB), bounded by :data:`_CFB_MAX_SECTORS`. Any
+    malformed chain (a sector outside the file or past the header's FAT
+    count, a repeated sector, a chain not ended by ENDOFCHAIN) gives None.
+    Only the root storage's own children count, so an embedded object's
+    streams do not; None when no subtype or more than one is named.
     """
     header = bytes(content[:512])
     if len(header) < 512 or not header.startswith(_CFB_SIGNATURE):
@@ -448,41 +451,51 @@ def _ole_office_mime(*, content: Content) -> str | None:
         return None
     size = 1 << shift
     per_sector = size // 4
+    fat_sectors = _u32(header, 44)
     difat = [_u32(header, 76 + 4 * index) for index in range(109)]
     next_difat = _u32(header, 68)
+    difat_seen: set[int] = set()
     reads = 0
 
     def sector(sid: int) -> bytes | None:
         nonlocal reads
         reads += 1
+        if reads > _CFB_MAX_SECTORS or sid > _CFB_LAST_SECTOR:
+            return None
         start = (sid + 1) * size
         data = bytes(content[start : start + size])
-        if reads > _CFB_MAX_SECTORS or len(data) < size:
-            return None
-        return data
+        return data if len(data) == size else None
 
     def next_sector(sid: int) -> int | None:
         nonlocal next_difat
         index, slot = divmod(sid, per_sector)
-        while index >= len(difat) and next_difat <= _CFB_LAST_SECTOR:
+        if index >= fat_sectors:
+            return None
+        while index >= len(difat):
+            if next_difat > _CFB_LAST_SECTOR or next_difat in difat_seen:
+                return None
+            difat_seen.add(next_difat)
             block = sector(next_difat)
             if block is None:
                 return None
             difat.extend(_u32(block, 4 * i) for i in range(per_sector - 1))
             next_difat = _u32(block, size - 4)
-        if index >= len(difat) or difat[index] > _CFB_LAST_SECTOR:
-            return None
         fat = sector(difat[index])
         return None if fat is None else _u32(fat, 4 * slot)
 
     entries: list[bytes] = []
-    sid: int | None = _u32(header, 48)
-    while sid is not None and sid <= _CFB_LAST_SECTOR:
+    directory_seen: set[int] = set()
+    sid = _u32(header, 48)
+    while sid != _CFB_END_OF_CHAIN:
+        if sid in directory_seen:
+            return None
+        directory_seen.add(sid)
         data = sector(sid)
-        if data is None:
+        following = None if data is None else next_sector(sid)
+        if data is None or following is None:
             return None
         entries.extend(data[offset : offset + 128] for offset in range(0, size, 128))
-        sid = next_sector(sid)
+        sid = following
     if not entries or entries[0][66] != 5:
         return None
     found: set[str] = set()
@@ -490,7 +503,7 @@ def _ole_office_mime(*, content: Content) -> str | None:
     seen: set[int] = set()
     while pending:
         index = pending.pop()
-        if index > _CFB_LAST_SECTOR or index >= len(entries) or index in seen:
+        if index >= len(entries) or index in seen:
             continue
         seen.add(index)
         entry = entries[index]
@@ -504,44 +517,64 @@ def _ole_office_mime(*, content: Content) -> str | None:
 
 
 _RFC822_HEADER = re.compile(rb"[\x21-\x39\x3b-\x7e]+:")
-_RFC822_KEY_FIELDS = (b"from:", b"received:", b"message-id:", b"date:")
+_RFC822_MAIL_FIELDS = frozenset(
+    {b"to", b"date", b"subject", b"message-id", b"received", b"mime-version"}
+)
+"""Fields besides ``From`` that mark a header block as an Internet message."""
+_DELIMITERS = (",", "\t", ";", "|")
 _UTF16_TEXT_MIMES = frozenset({"text/csv", "text/tab-separated-values"})
 """Text the delimited reader decodes from a UTF-16 byte-order mark."""
 
 
 def _looks_like_utf16_text(*, content: Content) -> bool:
-    """A UTF-16 byte-order mark followed by text without control characters."""
+    """Delimited text in UTF-16 with a byte-order mark.
+
+    The sample decodes strictly (to the end when the file fits in it), has
+    no control characters, and its first line holds a delimiter.
+    """
     head = bytes(content[:SNIFF_BYTES])
     if not head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
         return False
+    whole = len(content) <= SNIFF_BYTES
     try:
-        text = codecs.getincrementaldecoder("utf-16")().decode(head[: len(head) & ~1])
+        text = codecs.getincrementaldecoder("utf-16")().decode(
+            head if whole else head[: len(head) & ~1], final=whole
+        )
     except UnicodeDecodeError:
         return False
-    return bool(text.strip()) and not _CONTROL_CHARACTERS.search(text)
+    first_line = text.split("\n", 1)[0]
+    return not _CONTROL_CHARACTERS.search(text) and any(
+        delimiter in first_line for delimiter in _DELIMITERS
+    )
 
 
 def _looks_like_rfc822(*, content: Content) -> bool:
-    """An Internet message: a header block of named fields, then a blank line.
+    """An Internet message: mail header fields, a blank line, a text body.
 
     For a message whose body is not UTF-8 (an 8-bit transfer encoding); a
-    UTF-8 message is already text. At least two fields, one of them From,
-    Received, Message-ID or Date, and no NUL in the header block.
+    UTF-8 message is already text. The header block holds a ``From`` with an
+    address and another mail field, and has no NUL; the sampled body has no
+    binary control characters.
     """
     head = bytes(content[:SNIFF_BYTES]).replace(b"\r\n", b"\n")
-    block, separator, _ = head.partition(b"\n\n")
+    block, separator, body = head.partition(b"\n\n")
     if not separator or b"\x00" in block:
         return False
-    fields = 0
-    key = False
+    names: set[bytes] = set()
+    sender = False
     for line in block.split(b"\n"):
-        if line[:1] in {b" ", b"\t"} and fields:
+        if line[:1] in {b" ", b"\t"} and names:
             continue
         if not _RFC822_HEADER.match(line):
             return False
-        fields += 1
-        key = key or line.lower().startswith(_RFC822_KEY_FIELDS)
-    return fields >= 2 and key
+        name, _, value = line.partition(b":")
+        names.add(name.lower())
+        sender = sender or (name.lower() == b"from" and b"@" in value)
+    return (
+        sender
+        and bool(names & _RFC822_MAIL_FIELDS)
+        and not _CONTROL_CHARACTERS.search(body.decode("latin-1"))
+    )
 
 
 def sniffed_text_mimes(*, content: Content) -> frozenset[str]:
@@ -652,6 +685,7 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
             declared.startswith(("text/", "image/", "audio/", "video/"))
             or declared == "application/pdf"
             or declared in _OFFICE_MIMES
+            or family_for_mime(mime=declared).name in _OFFICE_FAMILIES
         ):
             raise ContentDetectionError(code="content_type_mismatch")
         return detected
@@ -704,11 +738,7 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     ):
         raise ContentDetectionError(code="content_type_mismatch")
     if detected == "application/x-ole-office":
-        if declared in {
-            "application/msword",
-            "application/vnd.ms-excel",
-            "application/vnd.ms-powerpoint",
-        }:
-            return declared
+        # Its root streams named no Word, Excel or PowerPoint document (or
+        # more than one); a declaration does not decide what the bytes do not.
         raise ContentDetectionError(code="ambiguous_office_format")
     return detected

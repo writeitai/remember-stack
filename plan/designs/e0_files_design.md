@@ -87,7 +87,9 @@ office ZIP packages, their member names. Printable prefix strings alone do
 not establish a binary class; a PDF token after a bounded preamble requires a
 PDF object body and end marker, even if the file has trailing padding.
 Remaining content must be valid UTF-8 text without binary controls; a UTF-8 BOM
-and CRLF are valid. It detects text, PDF, image, audio, video, and office
+and CRLF are valid. Two exceptions keep a text family whose reader decodes
+them: UTF-16 delimited text with a byte-order mark, and an Internet message
+whose body is not UTF-8. It detects text, PDF, image, audio, video, and office
 classes. A contradictory declared class is a typed ingest refusal, surfaced
 as HTTP 422. Binary bytes D132 cannot classify may use a D138 registry hint
 for a family D132 does not cover (for example, an archive); the converter
@@ -107,11 +109,9 @@ minimum (D150).
 
 For legacy OLE office containers, bytes establish the office class and the
 root storage's streams select its subtype (`WordDocument`, `Workbook` or
-`Book`, `PowerPoint Document`); a declared legacy office MIME applies only
-when they name none. Otherwise an ambiguous OLE container is refused. UTF-16
-text with a byte-order mark keeps a delimited family (the table reader
-decodes it), and an Internet message whose body is not UTF-8 keeps the email
-family; other text that is not UTF-8 is binary. This check identifies the class; a converter still
+`Book`, `PowerPoint Document`). A container whose streams name none, or more
+than one, or whose directory is malformed is refused as ambiguous; a
+declaration does not decide it. This check identifies the class; a converter still
 validates the complete format before producing evidence.
 
 **Class on every object (D132).** The object-store write contract requires an

@@ -119,7 +119,7 @@ structural tests a family design may use to recognize or validate its format.
    (for example a Slack export's `channels.json` and `users.json`). A ZIP
    matching none of these is an **archive**.
 3. **OLE containers by stream names:** legacy Word, Excel and PowerPoint
-   (D132, with the declared legacy office MIME selecting the subtype), MSG
+   (D132, the root storage's streams selecting the subtype), MSG
    (`__properties_version1.0` stream). An OLE container matching none is
    an unrecognized format and gets a `binary` card (D138).
 4. **Text.** Strict UTF-8 validation as D132 defines it. Then structural

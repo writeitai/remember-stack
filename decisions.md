@@ -6649,12 +6649,13 @@ and follows D139's every-page OCR route.
 **Refined 2026-11-24 (content sniffing for formats the readers already
 decode).** A legacy OLE container takes its Word, Excel or PowerPoint subtype
 from its root storage's streams (`WordDocument`, `Workbook` or `Book`,
-`PowerPoint Document`; MS-CFB, bounded reads); a declared subtype applies
-only when they name none, and otherwise the upload stays
-`ambiguous_office_format`. Two text encodings that are not UTF-8 are admitted
-for the families whose readers decode them: UTF-16 with a byte-order mark for
-delimited files, and an Internet message header block for email with an
-8-bit body. A declaration spelled as a registry alias of the detected
+`PowerPoint Document`; MS-CFB, bounded reads). When they name none, more
+than one, or the compound file is malformed, the upload is
+`ambiguous_office_format`; a declaration never decides it. Two text encodings that are not UTF-8 are admitted
+for the families whose readers decode them: UTF-16 with a byte-order mark
+and a delimiter on its first line for delimited files, and an Internet
+message (a `From` address and another mail field, a body without binary
+controls) for email with an 8-bit body. A declaration spelled as a registry alias of the detected
 family (Office templates and slideshows, SVG, XHTML) is compatible. The file
 name still never decides a class the bytes do not establish.
 
@@ -6670,7 +6671,8 @@ legacy OLE signatures identify office; strict UTF-8 identifies text. A
 declaration contradicting a recognizable byte class raises a typed client
 error. For formats indistinguishable within a class, the filename and
 declaration select the D133/D138 registry family and posture, while
-legacy OLE needs a declared office subtype. Store the resulting MIME, and use
+legacy OLE takes its office subtype from its root streams (refined below;
+originally a declared subtype). Store the resulting MIME, and use
 it consistently for the conversion route, original storage class, and (through
 the route) the managed meter's cost class (D150). Every object-store write must provide a class: raw media hot,
 other raw originals cold; query-facing derived objects and P3 snapshots hot;

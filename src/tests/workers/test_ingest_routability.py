@@ -14,6 +14,7 @@ from collections.abc import Callable
 from collections.abc import Collection
 from collections.abc import Iterator
 import io
+import mmap
 from pathlib import Path
 import tempfile
 from typing import cast
@@ -70,23 +71,23 @@ def _ooxml(*, part: str) -> bytes:
     return buffer.getvalue()
 
 
-def _cfb(
-    *, streams: list[str], embedded: tuple[str, ...] = (), loop: bool = False
-) -> bytes:
-    """A small OLE compound file (MS-CFB v3) with these root streams.
+_END, _FREE, _FAT_SECTOR, _NO_ENTRY = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD, 0xFFFFFFFF
 
-    ``embedded`` streams sit in a child storage (an embedded object);
-    ``loop`` makes the last root sibling point back at itself.
-    """
-    free, end, fat_sector, none = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFF
 
-    def entry(*, name: str, kind: int, right: int = none, child: int = none) -> bytes:
+def _cfb_entries(
+    *, streams: list[str], embedded: tuple[str, ...], loop: bool
+) -> list[bytes]:
+    """Directory entries: the root, its streams, and an embedded storage."""
+
+    def entry(
+        *, name: str, kind: int, right: int = _NO_ENTRY, child: int = _NO_ENTRY
+    ) -> bytes:
         encoded = name.encode("utf-16-le")
         return (
             encoded.ljust(64, b"\x00")
             + (len(encoded) + 2).to_bytes(2, "little")
             + bytes([kind, 1])
-            + none.to_bytes(4, "little")
+            + _NO_ENTRY.to_bytes(4, "little")
             + right.to_bytes(4, "little")
             + child.to_bytes(4, "little")
             + bytes(128 - 80)
@@ -96,44 +97,75 @@ def _cfb(
     entries = [entry(name="Root Entry", kind=5, child=1)]
     for index, (name, kind) in enumerate(names, start=1):
         last = index == len(names)
-        right = (index if loop else none) if last else index + 1
-        child = len(names) + 1 if kind == 1 else none
+        right = (index if loop else _NO_ENTRY) if last else index + 1
+        child = len(names) + 1 if kind == 1 else _NO_ENTRY
         entries.append(entry(name=name, kind=kind, right=right, child=child))
     for index, name in enumerate(embedded):
-        right = len(names) + 2 + index if index + 1 < len(embedded) else none
+        right = len(names) + 2 + index if index + 1 < len(embedded) else _NO_ENTRY
         entries.append(entry(name=name, kind=2, right=right))
-    while len(entries) % 4:
+    return entries
+
+
+def _cfb(
+    *,
+    streams: list[str],
+    embedded: tuple[str, ...] = (),
+    loop: bool = False,
+    shift: int = 9,
+    terminator: int = _END,
+    far: bool = False,
+) -> bytes:
+    """A small OLE compound file (MS-CFB) with these root streams.
+
+    ``embedded`` streams sit in a child storage (an embedded object);
+    ``loop`` makes the last root sibling point back at itself; ``shift`` 12
+    gives a version 4 file with 4096-byte sectors; ``terminator`` ends the
+    directory chain in the FAT; ``far`` places the directory past the 109
+    FAT sectors the header lists, so finding it needs a DIFAT sector.
+    """
+    size = 1 << shift
+    per_sector = size // 4
+
+    def u32s(values: list[int]) -> bytes:
+        return b"".join(value.to_bytes(4, "little") for value in values)
+
+    entries = _cfb_entries(streams=streams, embedded=embedded, loop=loop)
+    while len(entries) % (size // 128):
         entries.append(bytes(128))
     directory = b"".join(entries)
-    directory_sectors = len(directory) // 512
-    fat = [fat_sector] + [
-        index + 2 if index + 1 < directory_sectors else end
-        for index in range(directory_sectors)
-    ]
-    fat_bytes = b"".join(value.to_bytes(4, "little") for value in fat)
-    fat_bytes = fat_bytes.ljust(512, b"\xff")
+    directory_sectors = len(directory) // size
+    if far:
+        directory_sid = 109 * per_sector
+        header_difat = [0] * 109
+        fat_count, first_difat, difat_count = 110, 1, 1
+        fat0 = u32s([_FAT_SECTOR, 0xFFFFFFFC, _FAT_SECTOR]).ljust(size, b"\xff")
+        difat_sector = u32s([2] + [_FREE] * (per_sector - 2) + [_END])
+        fat_far = u32s([terminator]).ljust(size, b"\xff")
+        filler = bytes(size * (directory_sid - 3))
+        body = fat0 + difat_sector + fat_far + filler + directory
+    else:
+        directory_sid = 1
+        header_difat = [0] + [_FREE] * 108
+        fat_count, first_difat, difat_count = 1, _END, 0
+        chain = [
+            index + 2 if index + 1 < directory_sectors else terminator
+            for index in range(directory_sectors)
+        ]
+        body = u32s([_FAT_SECTOR, *chain]).ljust(size, b"\xff") + directory
     header = (
         b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
         + bytes(16)
         + (0x3E).to_bytes(2, "little")
-        + (3).to_bytes(2, "little")
+        + (4 if shift == 12 else 3).to_bytes(2, "little")
         + b"\xfe\xff"
-        + (9).to_bytes(2, "little")
+        + shift.to_bytes(2, "little")
         + (6).to_bytes(2, "little")
         + bytes(10)
-        + (1).to_bytes(4, "little")
-        + (1).to_bytes(4, "little")
-        + bytes(4)
-        + (4096).to_bytes(4, "little")
-        + end.to_bytes(4, "little")
-        + bytes(4)
-        + end.to_bytes(4, "little")
-        + bytes(4)
-        + (0).to_bytes(4, "little")
-        + free.to_bytes(4, "little") * 108
+        + u32s([fat_count, directory_sid, 0, 4096, _END, 0, first_difat, difat_count])
+        + u32s(header_difat)
     )
     assert len(header) == 512
-    return header + fat_bytes + directory
+    return header.ljust(size, b"\x00") + body
 
 
 _PPT_BYTES = _cfb(streams=["Current User", "PowerPoint Document"])
@@ -258,7 +290,7 @@ def _ingest(
     content = {
         "audio/mpeg": b"ID3\x04\x00\x00\x00\x00\x00\x00",
         "application/pdf": b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF",
-        "application/msword": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+        "application/msword": _cfb(streams=["WordDocument"]),
     }.get(mime, b"hello")
     upload = DocumentUpload(filename=filename, mime=mime, content=content)
     if observed:
@@ -440,6 +472,10 @@ def test_registry_family_survives_compatible_byte_class(
         ("mail.eml", b"From: a@example.org\nhello\n\nbody \xff"),
         ("mail.eml", b"Subject: only one field\nX-A: b\n\nbody \xff"),
         ("data.csv", b"\xff\xfe" + b"\x01\x00" * 8),
+        ("prose.csv", "Plain words and no columns.\nMore prose.\n".encode("utf-16")),
+        ("short.csv", "a,b\n".encode("utf-16") + b"\x00"),
+        ("note.eml", b"From: Ann\r\nX-Note: hi\r\n\r\nCaf\xe9\r\n"),
+        ("note.eml", b"From: a@example.org\r\nTo: b@example.org\r\n\r\n\xe9\x00\x01"),
         ("old.msg", _cfb(streams=["__properties_version1.0"])),
     ],
 )
@@ -470,6 +506,55 @@ def test_an_embedded_object_does_not_decide_the_office_subtype() -> None:
     """Only the root storage's streams name the subtype (MS-CFB)."""
     content = _cfb(streams=["Workbook"], embedded=("WordDocument",))
     assert detect_content_mime(content=content, declared_mime="") == _XLS
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (_cfb(streams=["PowerPoint Document"], shift=12), _PPT),
+        (_cfb(streams=["WordDocument"], far=True), "application/msword"),
+    ],
+    ids=["version-4", "difat-chain"],
+)
+def test_a_compound_file_is_read_from_bytes_and_from_a_map(
+    tmp_path: Path, content: bytes, expected: str
+) -> None:
+    """4096-byte sectors and a DIFAT chain classify alike on bytes and mmap."""
+    path = tmp_path / "upload"
+    path.write_bytes(content)
+    with (
+        path.open("rb") as file,
+        mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+    ):
+        for view in (content, mapped):
+            assert detect_content_mime(content=view, declared_mime="") == expected
+
+
+@pytest.mark.parametrize(
+    ("content", "declared"),
+    [
+        (_cfb(streams=["WordDocument"], terminator=_FREE), ""),
+        (_cfb(streams=["WordDocument"], far=True, terminator=_FREE), ""),
+        (_cfb(streams=["Workbook", "WordDocument"]), _PPT),
+        (_cfb(streams=["__properties_version1.0"]), "application/msword"),
+    ],
+    ids=["broken-chain", "broken-far-chain", "two-subtypes", "outlook-as-word"],
+)
+def test_a_declaration_never_decides_an_unreadable_compound_file(
+    content: bytes, declared: str
+) -> None:
+    """Malformed chains and unnamed or conflicting streams stay ambiguous."""
+    with pytest.raises(ContentDetectionError) as raised:
+        detect_content_mime(content=content, declared_mime=declared)
+    assert raised.value.code == "ambiguous_office_format"
+
+
+def test_declared_delimited_prose_in_utf16_is_refused() -> None:
+    """A UTF-16 file without a delimiter is not a table, whatever its type."""
+    content = "Plain words and no columns.\n".encode("utf-16")
+    with pytest.raises(ContentDetectionError) as raised:
+        detect_content_mime(content=content, declared_mime="text/csv")
+    assert raised.value.code == "content_type_mismatch"
 
 
 def test_a_cyclic_compound_directory_is_read_once() -> None:
