@@ -857,7 +857,7 @@ format. These are the fixed top-level document types, each with an `_index.md`:
 
 | Directory | Deterministic match |
 |---|---|
-| `email/` | Email source kind or email family (`message/rfc822`, validated MSG/email route) |
+| `email/` | Email source kind or email family (`message/rfc822`, the email route) |
 | `chat/` | Chat/message-thread source kind or conversation route, excluding email |
 | `image/` | Image MIME or `image` family |
 | `audio/`, `video/` | Stored `audio/*` or `video/*` MIME, respectively; both belong to the `media` family |

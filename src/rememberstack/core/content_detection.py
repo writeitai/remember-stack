@@ -730,7 +730,7 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     declared = _AUDIO_MIME_ALIASES.get(declared, declared)
     if detected == "application/octet-stream":
         sniffed = sniffed_text_mimes(content=content)
-        if sniffed and (declared in sniffed or declared == "text/plain"):
+        if sniffed and (declared in sniffed or declared.startswith("text/")):
             # Text the bytes allow for these families: E0's registry routing
             # picks the family (name first, then declaration), as for UTF-8.
             return detected

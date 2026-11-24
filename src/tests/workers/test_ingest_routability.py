@@ -443,6 +443,7 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ("data.csv", "text/plain", _UTF16_CSV, "text/csv"),
         ("data.tsv", "text/csv", _UTF16_TSV, "text/tab-separated-values"),
         ("export.txt", "text/csv", _UTF16_CSV, "text/csv"),
+        ("export.csv", "text/x-csv", _UTF16_CSV, "text/csv"),
         ("long.csv", "application/octet-stream", _LONG_UTF16_CSV, "text/csv"),
         (
             "data.tsv",
