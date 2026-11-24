@@ -336,7 +336,15 @@ def fact_supported_matching(
     periodised lineage, carried by a live occurrence (which the occurrence
     test requires). ``OFFSET 0`` keeps each probe from being flattened into a
     join.
+
+    A filter carrying only ``include_archived`` selects no documents: it
+    widens passage reads and restricts no fact (D159).
     """
+    if (
+        filters.model_copy(update={"include_archived": False})
+        == DocumentSearchFilters()
+    ):
+        return "TRUE", {}
     occurrence_sql, parameters = matching_occurrence_exists(
         filters=filters, claim="support.claim_id", prefix=prefix, in_scope="evidence"
     )

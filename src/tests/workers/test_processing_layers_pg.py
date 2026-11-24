@@ -2040,7 +2040,7 @@ def test_a_living_deletion_while_layers_are_off_reopens_the_restored_version_ato
     def died(**_: object) -> object:
         raise RuntimeError("the worker died right after the repoint committed")
 
-    monkeypatch.setattr(rig.lifecycle, "reconciliation_context", died)
+    monkeypatch.setattr(rig.lifecycle, "stale_for_version_deletion", died)
     with pytest.raises(RuntimeError, match="died right after the repoint"):
         rig.deletion.delete_version(version_id=deleted)
     monkeypatch.undo()

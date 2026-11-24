@@ -434,14 +434,17 @@ class ReconcileHandler:
         lineage regains only through its current version.
         """
         doc_id = context["doc_id"]
-        if not isinstance(doc_id, UUID) or (
-            context["versioning_mode"] == "living"
-            and context["current_version_id"] != version_id
-        ):
+        if not isinstance(doc_id, UUID):
             return ()
         with self._catalog.transaction() as catalog:
             catalog.lock_lineage(doc_id=doc_id)
-            if catalog.lineage_archived_at(doc_id=doc_id) is not None:
+            # the head and the archive as they are under the lock, not as this
+            # run first read them
+            locked = catalog.reconciliation_context(version_id=version_id)
+            if locked["lineage_archived_at"] is not None or (
+                locked["versioning_mode"] == "living"
+                and locked["current_version_id"] != version_id
+            ):
                 return ()
             regained = catalog.regained_after_archive(
                 deployment_id=deployment_id, version_id=version_id

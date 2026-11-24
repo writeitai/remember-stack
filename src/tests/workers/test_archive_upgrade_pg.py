@@ -16,7 +16,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from uuid import NAMESPACE_URL
 from uuid import uuid4
+from uuid import uuid5
+from zoneinfo import ZoneInfo
 
 from alembic import command
 from alembic.config import Config
@@ -332,4 +335,60 @@ def test_the_upgrade_leaves_documents_live_inert_below_it(
         engine,
         "SELECT to_regprocedure("
         "'rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz)') IS NOT NULL",
+    )
+
+
+def test_a_d135_caller_closure_rendered_in_a_session_offset_is_relabelled(
+    migration_config: tuple[Config, Engine],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D135's caller delete derived its run id from ``deleted_at.isoformat()``
+    in the session's time zone; the upgrade, run in that time zone, finds a
+    closure recorded under that id."""
+    config, engine = migration_config
+    reset_database(config=config)
+    command.upgrade(config=config, revision="head")
+    _bootstrap(engine)
+    rig = _LifecycleRig(engine=engine, root=tmp_path)
+    added = rig.observe(source_ref="offset.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+    deleted_at = _scalar(
+        engine, "SELECT deleted_at FROM documents WHERE doc_id = :d", d=added.doc_id
+    )
+    assert isinstance(deleted_at, datetime)
+    zone = ZoneInfo("Europe/Prague")
+    caller_run = uuid5(
+        NAMESPACE_URL,
+        f"rememberstack:delete-lineage:{added.doc_id}:"
+        f"{deleted_at.astimezone(zone).isoformat()}",
+    )
+    command.downgrade(config=config, revision=_PREVIOUS)
+    with engine.begin() as connection:
+        # the closure as D135's caller delete recorded it, without its event
+        connection.execute(
+            text(
+                "UPDATE relation_adjudications SET features = jsonb_set("
+                "features, '{reconciliation_id}', to_jsonb(CAST(:r AS text)))"
+                " WHERE outcome = 'retracted_source_removal'"
+            ),
+            {"r": str(caller_run)},
+        )
+        connection.execute(
+            text("DELETE FROM testimony_currency_events WHERE doc_id = :d"),
+            {"d": added.doc_id},
+        )
+
+    monkeypatch.setenv("PGTZ", "Europe/Prague")
+    command.upgrade(config=config, revision="head")
+
+    assert (
+        _scalar(
+            engine,
+            "SELECT count(*) FROM relation_adjudications"
+            " WHERE outcome = 'retracted_source_removal'"
+            " AND (features ->> 'archive')::boolean",
+        )
+        == 1
     )

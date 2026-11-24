@@ -460,15 +460,16 @@ def _d135_run_ids(*, doc_id: UUID, at: datetime) -> tuple[UUID, ...]:
     A run that closed a fact without retiring a claim (its claim was already
     non-current) left no currency event to find it by: the caller's delete,
     the connector finalization, and the operator grain. D135 rendered the
-    instant with ``isoformat()`` in the session time zone; deployments run in
-    UTC, so the UTC rendering is the one to match.
+    instant with ``isoformat()`` in the session time zone: ``at`` as this
+    session reads it carries that offset, and the UTC rendering covers a UTC
+    session.
     """
-    instant = at.astimezone(UTC).isoformat()
+    instants = sorted({at.isoformat(), at.astimezone(UTC).isoformat()})
     return tuple(
         uuid5(NAMESPACE_URL, f"rememberstack:{kind}:{suffix}")
         for kind, suffix in (
-            ("delete-lineage", f"{doc_id}:{instant}"),
-            ("finalize-delete", f"{doc_id}:{instant}"),
+            *(("delete-lineage", f"{doc_id}:{instant}") for instant in instants),
+            *(("finalize-delete", f"{doc_id}:{instant}") for instant in instants),
             ("delete-lineage", f"{doc_id}"),
         )
     )

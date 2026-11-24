@@ -1337,7 +1337,9 @@ Self-hosted deployments choose how this decision is made with
   answer.
 - `jev` answers the same questions with a decision model (TypeSafe AI's
   System One) that picks from fixed choices (match, stance, window action)
-  instead of writing free text. It needs a TypeSafe API key.
+  instead of writing free text. It uses a TypeSafe API key, or your
+  OpenRouter key when it is served through OpenRouter
+  (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`).
 
 Both engines go through the same validation, the same confidence floor and
 the same writer. See [Models and providers](https://remember.dev/docs/self-hosting/models).
@@ -4471,10 +4473,16 @@ cursor = None
 while True:
     page = client.list_documents(cursor=cursor, include_archived=True)
     for document in page.documents:
-        if document.source_kind != "file":
+        # only the folder and pattern the ingest loop covers
+        uri = document.source_uri or ""
+        if document.source_kind != "file" or not (
+            uri.startswith("specs/")
+            and "/" not in uri.removeprefix("specs/")
+            and uri.endswith(".md")
+        ):
             continue
         doc_id = str(document.doc_id)
-        gone = document.source_uri not in present
+        gone = uri not in present
         if gone and document.archived_at is None:
             archive = client.archive_document(doc_id=document.doc_id)
             archived_here[doc_id] = archive.archived_at.isoformat()
@@ -7331,7 +7339,7 @@ objects are absent. This does not verify immediate erasure of unfinished parts.
 | OpenRouter API key (`REMEMBERSTACK_OPENROUTER_API_KEY`) | Yes | Every model call: structure, claim extraction, entity resolution, fact adjudication, and all embeddings, including query embeddings for search |
 | Mistral API key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`) | Required to read PDFs, or images routed to OCR | The `mistral_ocr` and `image_ocr_description` converters |
 | A second OpenRouter key (`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`) | Only if you route images to `image_ocr_description` | The vision-model description of an image |
-| TypeSafe AI key (`REMEMBERSTACK_TYPESAFE_API_KEY`) | Only with `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev` | The alternative fact adjudicator |
+| TypeSafe AI key (`REMEMBERSTACK_TYPESAFE_API_KEY`) | Only with `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev` on the default `typesafe` route; not needed with `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`, which uses the OpenRouter key | The alternative fact adjudicator |
 
 The engine starts with the placeholder OpenRouter key from `.env.example`,
 but the first document or search fails at the first model call. The model
@@ -7768,11 +7776,69 @@ The `jev` engine needs its own key and settings:
 
 | Variable | Default |
 |---|---|
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev`; the fact workers refuse to start without it) |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe`. Set `openrouter` to call Jev through OpenRouter instead (see below). |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev` on the `typesafe` route; the fact workers refuse to start without it) |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` |
 | `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false`. When `true`, a failed TypeSafe call falls back to the `prompt` engine instead of failing the work item. |
+
+### Jev through OpenRouter
+
+OpenRouter serves a TypeSafe-compatible System One endpoint
+(`POST /api/v1/systemone`). With `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`,
+the `jev` engine calls it with `REMEMBERSTACK_OPENROUTER_API_KEY` and
+`REMEMBERSTACK_OPENROUTER_BASE_URL`, so Jev spend lands on your OpenRouter
+account and no TypeSafe key is needed. `REMEMBERSTACK_TYPESAFE_BASE_URL` and
+`REMEMBERSTACK_TYPESAFE_API_KEY` are ignored on this route. The recorded cost
+is the `usage.cost` OpenRouter reports; a response without it fails as an
+accounting error.
+
+With `REMEMBERSTACK_OPENROUTER_ZDR=true`, every Jev call also sends
+`"provider": {"zdr": true, "data_collection": "deny"}`, so OpenRouter routes
+it only to endpoints your account or key policy counts as zero data retention:
+TypeSafe's ZDR endpoint, plus Safety Retention endpoints if that policy allows
+them (see below). With ZDR on, the engine
+refuses to start on the default `typesafe` route, because TypeSafe's own API
+cannot be held to zero data retention, refuses a
+`REMEMBERSTACK_OPENROUTER_BASE_URL` outside the `https://openrouter.ai` origin
+(the default, `https://openrouter.ai/api/v1`, is fine; `provider.zdr` binds
+only OpenRouter), and refuses the OpenAI Decisions backup
+below, because it would send the same content outside OpenRouter; keep
+`REMEMBERSTACK_TYPESAFE_BACKUP=none`.
+
+The request flag alone does not guarantee strict zero retention. OpenRouter
+combines `zdr: true` with your account's policy (or the policy of the
+guardrail on the API key), and that policy decides whether Safety Retention
+endpoints also count. A Safety Retention endpoint may keep any request,
+flagged or not, to detect and prevent abuse. OpenRouter sets this choice
+separately for **Google models** and **All other models**; Jev is in **All
+other models**. Self-serve accounts allow Safety Retention by default, and no
+request field turns it off. For strict zero retention, set your OpenRouter
+account, or the guardrail on every key the engine uses, to ZDR only with
+Safety Retention excluded for that group, and confirm it before you send
+customer content. Also keep OpenRouter's own input and output logging turned
+off for the account, since that is a separate setting from provider routing.
+OpenRouter also screens requests for child sexual abuse material, ZDR
+traffic included: flagged content may be retained for OpenRouter's human
+review, and material reported where the law requires it is preserved for the
+legal period. No setting removes that, so check that OpenRouter's terms meet
+your retention requirement.
+See OpenRouter's
+[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
+The response names `TypeSafe` as the provider for both Jev endpoints, so it
+does not show which one served a call.
+
+```bash
+REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev
+REMEMBERSTACK_TYPESAFE_ROUTE=openrouter
+REMEMBERSTACK_OPENROUTER_ZDR=true
+```
+
+With Docker Compose, put these in the project `.env`. The services read
+`REMEMBERSTACK_OPENROUTER_ZDR` and `REMEMBERSTACK_OPENROUTER_BASE_URL` only
+from there (`env_file`), so a value exported in your shell does not reach the
+engine, and an alternate `--env-file` cannot override or clear them.
 
 ## Change a model
 
@@ -7868,7 +7934,7 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. Other providers remain a fallback unless the same set is also supplied as the embedding allowlist. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off, also when an order is set. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. A blank entry (including a trailing comma) stops startup. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls to zero-data-retention endpoints. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls, and Jev calls on the `openrouter` route, to endpoints your OpenRouter account or key policy counts as zero data retention (see the Safety Retention note above). |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |
@@ -9614,7 +9680,7 @@ Source: https://remember.dev/docs/self-hosting/observability
 # Observability
 
 A self-hosted deployment tells you what it is doing in four ways: container
-logs, an optional error tracker, the pipeline report from
+logs, coded error records you can send to a tracker, the pipeline report from
 `remember ops inspect`, and a cost export of every billed model call. None
 of them sends anything off the machine unless you configure it to.
 
@@ -9652,14 +9718,68 @@ For the state of the pipeline as a whole (what is pending, what has failed
 for good), use `remember ops inspect`; see
 [Operating the pipeline](https://remember.dev/docs/self-hosting/operating#inspect-the-pipeline).
 
-## Error tracking
+## Errors
 
-The engine can send errors to any service that speaks the Sentry protocol:
-Sentry, GlitchTip or Bugsink. It is off unless you set a DSN.
+### What the engine reports
+
+At the places listed below, an unexpected failure ends one of two ways:
+
+- **It is raised.** It leaves the engine as an exception, and whatever runs
+  the engine reports it: Uvicorn's error log for a request, the process exit
+  for a command.
+- **It is logged once at ERROR.** When the engine turns the failure into a
+  response, a skipped item or a fallback, it logs one record on a
+  `rememberstack.*` logger, at the point where it does so.
+
+Expected outcomes, such as a retry that will run again or a busy graph, are
+logged at WARNING. Every such record carries a stable code in `error_code`,
+for example `worker_item_failed` or `graph_query_failed`. A code starts with
+a lowercase letter, then lowercase letters, digits and underscores, 3 to 64
+characters in all, and stays the same across releases; a renamed or removed
+code is listed in the changelog. The worker runner's records (item
+failures, retries and leases), live graph records and metering records use a
+fixed message, with identifiers such as `processing_id`, `stage`,
+`attempt` or `sqlstate` as separate fields on the record. Other parts of the
+engine, such as the query sandbox, are being brought under the same rules.
+
+A worker item's failure, a model provider failure on a request and a live
+graph query failure can carry your content in their text: a provider's error
+can quote the request, and a database error can quote a query's values.
+Those records (the worker item records, `provider_call_failed` and
+`graph_query_failed`) hold only the exception's type, in `exception_type`,
+and no traceback; so do the worker's `worker_finalizer_failed` and
+`provider_usage_unrecorded` records. An MCP tool failure keeps the exception
+and its traceback.
+
+The main places the engine logs:
+
+| Where | Code | Level |
+|---|---|---|
+| A worker item fails and will be retried | `worker_item_retry` | WARNING |
+| A worker item fails with no retry left, or cannot be retried | `worker_item_failed` | ERROR |
+| An expired lease is requeued / dead-lettered | `worker_lease_expired_retry` / `worker_lease_expired` | WARNING / ERROR |
+| A run finishes after losing its lease | `worker_lease_lost` | WARNING |
+| A model provider call fails on a request (503) | `provider_call_failed` | ERROR |
+| A live graph query times out or loses its connection (503) | `graph_query_failed` | ERROR |
+| A live graph result no longer matches its rows (503) | `graph_hydration_mismatch` | ERROR |
+| The live graph has no free slot (503) | `graph_capacity_exhausted` | WARNING |
+| An MCP tool fails unexpectedly | `mcp_tool_failed` | ERROR |
+| The control plane rejects the meter's producer credential | `meter_receipt_unauthorized` | ERROR |
+| The control plane is unavailable; the receipt is retried | `meter_receipt_retry` | WARNING |
+| A receipt conflicts with the recorded one | `meter_measurement_quarantined` / `meter_receipt_conflict` | ERROR |
+
+Forwarding is off by default: the engine sends nothing anywhere itself. To
+collect these records, attach a handler to the `rememberstack` logger, as
+below.
+
+### Sentry, GlitchTip or Bugsink
+
+The engine has a built-in Sentry-protocol reporter. It is off unless you set
+a DSN.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `REMEMBERSTACK_SENTRY_DSN` | unset | The project DSN. Unset or empty keeps error tracking off. |
+| `REMEMBERSTACK_SENTRY_DSN` | unset | The project DSN. Unset or empty keeps it off. |
 | `REMEMBERSTACK_SENTRY_ENVIRONMENT` | the deployment slug | The environment name on each event. |
 | `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | Share of error events sent, from 0.0 to 1.0. |
 
@@ -9670,9 +9790,147 @@ processes report errors; the one-shot projection command does not.
 Events are stripped to metadata before they leave the process: the
 exception type and stack trace stay; the exception message is replaced by
 `[redacted]`; request bodies, breadcrumbs, local variables, user data and
-extras are removed. A worker failure carries the tags `stage`, `lane` and
-`processing_id`, which you can look up with `remember ops inspect`.
-Performance tracing is off.
+extras are removed. Because extras are removed, the `error_code` is not on
+the event. A failed worker attempt that is recorded as a retry or a dead
+letter is reported (subject to the sample rate) with the tags `stage` and
+`processing_id`, and `lane` when the item has one;
+`remember ops inspect` lists a sample of dead-lettered items by
+`processing_id`. The adapter forwards no log records from the worker
+loop itself (`rememberstack.workers.base`): an expired lease, a failed
+finalizer, or an item that failed after its worker lost the lease. ERROR
+records from other engine loggers reach it. Collect the worker loop's records
+with a logging handler as below. Performance tracing is off.
+
+To keep the codes, leave `REMEMBERSTACK_SENTRY_DSN` unset and initialise the
+SDK yourself in a bootstrap module (see [Where the setup runs](#where-the-setup-runs)):
+
+```python
+import logging
+
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
+
+sentry_sdk.init(
+    dsn="https://…",
+    send_default_pii=False,
+    integrations=[LoggingIntegration(level=None, event_level=logging.ERROR)],
+)
+```
+
+Sentry's logging integration then sends each ERROR record, with its fields,
+as an event. This replaces the adapter's metadata-only filtering: by
+default the event includes the exception text and frame local variables.
+Use the SDK's `before_send` hook and its `include_local_variables=False`
+option if your policy needs metadata only.
+
+### PostHog
+
+A short handler sends each ERROR record to PostHog Error Tracking, with the
+code as a property:
+
+```python
+import logging
+
+from posthog import Posthog
+
+client = Posthog("phc_…", host="https://eu.i.posthog.com")
+
+class PostHogErrors(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        code = getattr(record, "error_code", "uncoded")
+        error = record.exc_info[1] if record.exc_info else RuntimeError(code)
+        client.capture_exception(
+            error,
+            distinct_id="rememberstack",
+            properties={"error_code": code, "logger": record.name},
+        )
+
+logging.getLogger("rememberstack").addHandler(PostHogErrors(level=logging.ERROR))
+```
+
+PostHog's SDK also sends the exception's message. If your policy allows
+metadata only, drop it in the client's `before_send` hook. PostHog also accepts OpenTelemetry
+logs at `https://eu.i.posthog.com/i/v1/logs`, with your project token as a
+bearer token, which feeds PostHog Logs rather than Error Tracking; see
+[PostHog's logs setup](https://posthog.com/docs/logs).
+
+### OpenTelemetry
+
+For zero-code export, install `opentelemetry-distro` in an image built on
+the engine's, pinned to the release that matches the image's
+`opentelemetry-sdk` (for example `opentelemetry-distro==0.65b0` with SDK
+1.44.0; an unpinned install upgrades the SDK past the image's exporter), and run the engine's command under `opentelemetry-instrument`
+with these settings (the image's exporter speaks HTTP, while the agent
+defaults to gRPC):
+
+```bash
+export OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://collector.example:4318/v1/logs
+export OTEL_TRACES_EXPORTER=none
+export OTEL_METRICS_EXPORTER=none
+opentelemetry-instrument python -m rememberstack.profiles.selfhost api
+```
+
+Or attach the SDK's handler in a bootstrap module:
+
+```python
+import logging
+
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+provider = LoggerProvider()
+provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
+set_logger_provider(provider)
+logging.getLogger("rememberstack").addHandler(
+    LoggingHandler(level=logging.ERROR, logger_provider=provider)
+)
+```
+
+The record's fields, `error_code` among them, become log attributes.
+
+### Where the setup runs
+
+Add a handler before the engine starts, in a small module that then runs
+the engine's own command. Keep a handler that writes to standard output, so
+`docker compose logs` still works: adding any handler turns off Python's
+fallback output.
+
+```python
+# bootstrap/remember_logging.py
+import logging
+import sys
+
+from rememberstack.profiles.selfhost import main
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+# … attach the tracker handler from one of the sections above …
+
+sys.exit(main(sys.argv[1:]))
+```
+
+Mount it and use it as the entrypoint for each service, in a
+`compose.override.yaml` next to `compose.yaml`:
+
+```yaml
+# compose.override.yaml
+x-bootstrap: &bootstrap
+  entrypoint: ["python", "/bootstrap/remember_logging.py"]
+  volumes:
+    - ./bootstrap:/bootstrap:ro
+
+services:
+  api: *bootstrap
+  worker-convert: *bootstrap
+  worker-llm: *bootstrap
+```
+
+Each service keeps its own `command`. Install your tracker's package in an
+image built on the engine's, or add it to the mounted directory and put that
+directory on `PYTHONPATH`.
 
 ## Model-call tracing
 
@@ -21092,13 +21350,14 @@ transports. Run a small live API check before enabling this default-off backup.
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these embedding providers. Two or more allow fallback within the set; one disables fallback. An embedding order used with it must name the same unique slugs. Not combinable with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat and embeddings (`zdr: true`, `data_collection: deny`). Strict zero retention also needs the OpenRouter account or key guardrail to enforce ZDR for each model group used, with Safety Retention excluded; see [models](https://remember.dev/docs/self-hosting/models). |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat and embeddings, and for Jev on `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter` (which it then requires when Jev is the adjudication engine) (`zdr: true`, `data_collection: deny`). What counts as ZDR follows the OpenRouter account or key policy: strict zero retention needs it to enforce ZDR for each model group used, with Safety Retention excluded; see [models](https://remember.dev/docs/self-hosting/models). |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Reasoning effort for every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | Reasoning effort per model id; wins over the global value. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | Longest wait before retrying an overloaded provider. |
 | `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | Debug only: keep schema-invalid model answers as files. |
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe` | `typesafe`, `openrouter` | Who serves the `jev` fact engine. `openrouter` calls OpenRouter's System One endpoint with the deployment's OpenRouter key, base URL and ZDR setting, and ignores the TypeSafe key and base URL. |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine on the `typesafe` route. Also read as `TYPESAFE_AI_API_KEY`. |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | TypeSafe model. |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | TypeSafe API address. |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | TypeSafe request timeout. |
