@@ -129,10 +129,9 @@ different scopes and cannot substitute for one another.
 ## Deletion, rollout and acceptance
 
 Selection outputs/cards are source-owned content. Include them, their occurrence
-links and pending work in forget's erasure and verification (D159). Publication
-takes forget's per-document fence (a share lock on the version,
-[archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence))
-so a late Selection/Claimify answer cannot resurrect erased text. Multi-version reuse does not exempt source
+links and pending work in hard-forget deletion and verification. Deletion and
+publication must use existing forget coordination so a late Selection/Claimify
+answer cannot resurrect erased text. Multi-version reuse does not exempt source
 copies from erasure. No additional long-lived profile or quote cache.
 
 Coordinate schema/component generations with D119. Use the project's clean-store

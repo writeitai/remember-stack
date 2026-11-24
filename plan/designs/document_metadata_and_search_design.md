@@ -104,12 +104,12 @@ Nothing else changes: the lineage's `title` stays first-write-wins, so a
 rename never changes an extraction reuse key, and the version's
 `document_metadata` keeps what was observed when it was ingested.
 
-**Archive and forget.** Archive keeps version rows (schema §13.1), so the
-metadata rows stay too; every read in §3 and §4 considers only **live** versions
-of live lineages by default, so an archived document matches only when the read
-sets `include_archived=true` ([archive and forget §2.3](archive_and_forget_design.md#23-what-stays-visible)).
-Forget deletes the lineage's rows from all three tables (D159) — `document_names`
-holds file names and paths, so it is source-bearing like the others.
+**Deletion.** Normal delete soft-tombstones versions and keeps their rows for
+audit (schema §13.1), so the metadata rows stay too; every read in §3 and §4
+considers only **live** versions of live lineages, so a deleted document
+never matches. Hard forget deletes the lineage's rows from all three tables
+(D74) — `document_names` holds file names and paths, so it is source-bearing
+like the others.
 
 ## 3. `search_documents`
 
@@ -335,7 +335,7 @@ Nothing in this design reads or writes it.
   person whose name equals the document's title still resolves; "Alice wrote
   the report Alice" skips nothing.
 - A same-byte rename is found by `search_documents` under the new name.
-- Archived lineages match `search_documents` or document filters only with
-  `include_archived=true`; forget removes metadata, names and people rows.
+- Deleted versions and lineages never match `search_documents` or
+  document filters; hard forget removes metadata and people rows.
 - `versions: all` returns the matching version's metadata, never the current
   version's when only an older version matched.

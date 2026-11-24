@@ -7,7 +7,7 @@ per-chunk location LLMs.
 
 **Status:** binding design.  
 **Decisions:** **D80** (this design); amends consequences of **D63**, **D56/A3**,
-**D58**, **D79** consumption; composes **D8**, **D32**, **D37**, **D61**, **D159**.  
+**D58**, **D79** consumption; composes **D8**, **D32**, **D37**, **D61**, **D74**.  
 **Normative home for embedding-input semantics** (retrieval owns query filters;
 E2 owns grounding membership of *typed* location elements).  
 **Parent:** `e1_chunks_design.md` §5 (granularity) — this document owns the
@@ -113,7 +113,7 @@ PRs; they must not be required to start D80.
    author set size, primary channel_ref).  
 3. **E0/E1 mapping** — prepare copies available refs into location facts; missing fields
    stay absent (policy must not invent them).  
-4. **D159 forget** — purge refs, display maps, and joined authority metadata with the lineage.
+4. **D74** — purge refs, display maps, and joined authority metadata with the lineage.
 5. **Shape choice** (one message = one doc vs export) is **connector + deployment policy**,
    recorded as `source_shape`, not guessed in the embed renderer.
 
@@ -308,7 +308,7 @@ ids** are preferred; mutable display names live in PostgreSQL/P3 reconstruction.
 ### 5.4 Postgres authority
 
 Full typed location snapshot, provenance, display names, exact timestamps,
-id↔name maps. P3/mounts present friendly paths; never sole authority; forget (D159) purges
+id↔name maps. P3/mounts present friendly paths; never sole authority; D74 purges
 with lineage.
 
 ### 5.5 Claims channel (decision — no open choice)
@@ -404,7 +404,7 @@ A deployment may swap conventional embedders when:
 | D32 / E2 | Typed groundable location elements; free-form header out of union |
 | D37 / D94 | Exact source bodies stay in artifacts; one normalized current chunk body lives in `chunk_search` |
 | D61 | Connector metadata port for message facts |
-| D159 (forget; formerly D74) | Purge location metadata + `chunk_search` with lineage |
+| D74 | Purge location metadata + `chunk_search` with lineage |
 | D8 / retrieval | Scalar filter operators declared per recipe |
 | Orchestration | Prepare stamps + batch embed + readiness barrier |
 
@@ -423,7 +423,7 @@ A deployment may swap conventional embedders when:
    embedding_text_hash; content-only body edit without location change reuses
    vector when hash matches.  
 6. **Two conventional embedders** — exercise unready/rebuild/verify/publish.
-7. **D159** — forget purges derived search state and location facts.
+7. **D74** — forget purges derived search state and location facts.
 
 ---
 
@@ -447,4 +447,4 @@ A deployment may swap conventional embedders when:
 - `orchestration_design.md` (stages, readiness)  
 - `postgres_schema_design.md` (D37 keys vs bodies)  
 - `plan/analysis/e1_context_prefix_efficiency/`  
-- Decisions: **D80**, D56, D58, D63 (amended), D79, D8, D32, D37, D61, D159  
+- Decisions: **D80**, D56, D58, D63 (amended), D79, D8, D32, D37, D61, D74  

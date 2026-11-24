@@ -269,8 +269,8 @@ application attempt, and budget parking can never take either failure transition
 
 A claim is only valid while the worker that made it is alive. Without a time limit, a worker that
 is killed mid-task (out of memory, a container restart, a preempted instance) would leave its row
-`running` forever: nothing would retry it, the stages after it would wait, and a forget of its
-document (which waits for that document's running work to finish) would never start. So every claim carries a **lease**:
+`running` forever: nothing would retry it, the stages after it would wait, and a hard forget
+(which waits for running work to drain) would never start. So every claim carries a **lease**:
 
 - **Claim.** Claiming sets `lease_until = now() + lease` (default 60 s,
   `REMEMBERSTACK_WORK_LEASE_S`) in the same transaction that moves the row to `running` and

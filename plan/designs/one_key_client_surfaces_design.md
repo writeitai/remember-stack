@@ -117,8 +117,8 @@ It defines one `ToolDefinition` per memory tool:
 | `http_route` | The engine route the tool calls (method and path template). |
 
 The catalogue contains exactly the memory tools the binding designs expose
-over MCP: `ingest`, `pipeline_readiness`, `archive_document`,
-`unarchive_document`, `forget_document`, `resolve_entity`, `facts_context`, `claims_and_sources_context`,
+over MCP: `ingest`, `pipeline_readiness`, `delete_document`,
+`resolve_entity`, `facts_context`, `claims_and_sources_context`,
 `combined_context`, `adjacent_chunks`, `source_open`, `query_sql`, `explain_sql`,
 `describe_query_space`, `search_query_space`, `list_saved_queries`,
 `describe_saved_query`, `run_saved_query`, `search_documents` (D134),
@@ -128,9 +128,8 @@ D156's tag tools — `list_tags` (read), `create_tag`, `update_tag`,
 `document_references` and `section_history` (reading cross-references and a section's
 versions, [effective time design §6.2](effective_time_and_section_references_design.md#62-reading-references)).
 (`adjacent_chunks` is D130/D137's
-tool, for neighbouring chunk retrieval; `archive_document`,
-`unarchive_document` and `forget_document` are D159's tools
-([archive and forget design](archive_and_forget_design.md) §2.4 and §3.11); `source_open` is D115's, [media_design.md §4a](media_design.md), and
+tool, for neighbouring chunk retrieval; `delete_document` is D135's tool,
+PR #456; `source_open` is D115's, [media_design.md §4a](media_design.md), and
 returns MCP content blocks — text, image or audio — rather than one JSON text
 block.) A new MCP-exposed memory tool is added here, never in a host. Saved queries, including the
 `examples.*` set, stay reachable only through `run_saved_query` (D83/D87); the
@@ -160,9 +159,7 @@ The module also exports, as the single implementation every host uses:
   the call itself, or an in-process engine answered).
 - MCP tool annotations on every rendered tool: `readOnlyHint: true` for
   `memory:read` tools and `false` for `memory:write` tools, and
-  `destructiveHint: true` for `forget_document` (`archive_document` and
-  `unarchive_document` are reversible and carry `destructiveHint: false`).
-  Hosts must not alter them;
+  `destructiveHint: true` for `delete_document`. Hosts must not alter them;
   the bridge's read-only mode relies on them (§5.3).
 - `ToolBackend` — the protocol a host implements to execute a validated call
   (in process, over the engine HTTP API via `MemoryClient`, or by forwarding).
@@ -208,9 +205,8 @@ separately, so a host's catalogue and a deployment can differ.
   `memory:read`; PR #455 adds the route to the read table), in a new `tools`
   object mapping tool name to `tool_version`, e.g. `{"facts_context": 3, …}`.
   The seven query tools appear only when the open query facade is composed,
-  `adjacent_chunks` whenever operations are composed, and `archive_document`,
-  `unarchive_document` and `forget_document` only when archive and forget are
-  composed. `facts_context` and `resolve_entity` appear
+  `adjacent_chunks` whenever operations are composed, and `delete_document`
+  only when deletion is composed. `facts_context` and `resolve_entity` appear
   only while the deployment serves its facts layer (D143); the layer states
   themselves are read from `GET /processing-layers`, and this response's
   shape is unchanged
@@ -516,7 +512,7 @@ memory permissions map to it:
 | Permission | Engine scope | Allows |
 | --- | --- | --- |
 | `memory:read` | `READ` | every route enumerated as a read in `route_scope.py`, including `GET /deployment` (added by PR #455), `GET /documents`, readiness, search, graph, SQL, and non-mutating assured operations |
-| `memory:write` | `WRITE` | everything, including `POST /ingest`, archive and forget (D159) and connector changes |
+| `memory:write` | `WRITE` | everything, including `POST /ingest`, document deletion (D135) and connector changes |
 | `memory:ingest` | `INGEST` | only `POST /ingest` (the narrow browser-upload credential; only on `session` credentials) |
 | `account:*`, and any permission without the `memory:` prefix | — | ignored (another service's authority) |
 | any other `memory:…` value | — | the credential is refused: a permission this build cannot bound is not treated as a narrower one |
@@ -625,7 +621,8 @@ and 150 above.
   exempt. A request is admitted only when every check passes, and a refused
   request consumes no token. A slot is released when the response finishes,
   fails, or the client disconnects, but not before any synchronous handler
-  or dependency already running on a worker thread returns: a disconnect cannot stop that thread, so its work still
+  or dependency (such as the D74 barrier check) already running on a worker
+  thread returns: a disconnect cannot stop that thread, so its work still
   counts as in flight.
 - **Refusal.** `429`, error code `rate_limited` or `concurrency_limited`, and
   `Retry-After` in whole seconds (time until a token is available; 1 for an
@@ -636,7 +633,7 @@ and 150 above.
   contention on hot rows, and a slow database refusing healthy reads. With N
   API replicas the effective ceilings are N times the numbers; an operator
   running N replicas divides by N. The self-host profile runs one replica.
-- Spend metering (D91) and the spend lease are
+- Spend metering (D91), the spend lease and the D74 admission barrier are
   unchanged and apply after this check (when configured): authentication, then admission, then
   the spend hold, then routing. An unauthenticated or refused request never
   places a hold.
@@ -858,12 +855,11 @@ The account API's operations and their permissions are defined by the issuer
 ## 10. Tests to add
 
 Catalogue (`remember.mcp_tools`):
-- the catalogue lists exactly the tools of §3.1; `examples.*` never appear;
+- the catalogue lists exactly the fifteen tools of §3.1; `examples.*` never appear;
 - `render_tools_list` output is identical for the in-process server and
   engine mode for the same options (golden file);
 - `path_ingest=False` removes `path` from `ingest`; `read_only=True` removes
-  `ingest`, `archive_document`, `unarchive_document` and `forget_document`;
-  `project` adds the argument with the
+  `ingest` and `delete_document`; `project` adds the argument with the
   catalogue text;
 - import test: the module imports with only the base dependencies installed
   and performs no network or file I/O.
@@ -875,8 +871,7 @@ Engine consistency:
   requires for its `http_route` (and `operation_scope` for operations);
 - `GET /deployment` `tools` lists the query tools only when the open query
   facade is composed, `adjacent_chunks` whenever operations are composed,
-  and `archive_document`, `unarchive_document` and `forget_document` only when
-  archive and forget are composed;
+  and `delete_document` only when deletion is composed;
 - engine HTTP and in-process MCP reject a `project` argument.
 
 `remember mcp`:

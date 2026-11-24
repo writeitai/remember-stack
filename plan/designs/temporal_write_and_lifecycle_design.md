@@ -5,11 +5,6 @@
 > authority. The text
 > below is historical rationale, including any old “binding” or “required” labels.
 
-> **D159 (2026-11-23).** The D74 forget machinery this historical text relies on — accepted
-> portable manifests, the deployment-wide intake fence and work drain, and the replay of
-> manifests before serving — no longer exists. Erasing a document is now the per-document
-> forget of the [archive and forget design](archive_and_forget_design.md).
-
 **Historical status:** D110 framework, superseded by D118.
 **Date:** 2026-09-07 (analysis and local probes began 2026-09-06).
 **Scope:** the four D107 implementation gates #365–#368; amends D107, D108,

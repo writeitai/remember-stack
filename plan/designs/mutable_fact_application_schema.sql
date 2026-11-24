@@ -41,8 +41,7 @@ CREATE TABLE public.fact_applications (
   support_stance public.evidence_stance NOT NULL DEFAULT 'supports',
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (deployment_id, application_id),
-  testimony_episode smallint NOT NULL DEFAULT 1, -- D159: a restored claim is applied afresh
-  UNIQUE (deployment_id, claim_id, testimony_episode, normalizer_version, output_kind,
+  UNIQUE (deployment_id, claim_id, normalizer_version, output_kind,
           output_ordinal, adjudicator_version),
   FOREIGN KEY (deployment_id, claim_id, normalizer_version)
     REFERENCES public.normalization_outputs

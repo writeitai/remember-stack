@@ -623,10 +623,10 @@ fresh restore/replay—not silently by a no-op Alembic invocation. There is no
 graph object-store inventory, download, validation, pointer reconciliation, or
 local cache recovery.
 
-### Forget
+### Hard forget
 
-The forget request's tombstone, the erasure job's deletes (D159) and the live
-source views remove forgotten material from later graph statements immediately. Backups follow the
+The authority deletion/tombstone transaction and live source views remove
+forgotten material from later graph statements immediately. Backups follow the
 single PostgreSQL retention/erasure contract. There are no Ladybug files or P2
 generations to enumerate or purge. In-flight statements may retain their MVCC
 snapshot only until the bounded transaction ends.

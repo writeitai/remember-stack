@@ -1,6 +1,6 @@
 # Archive and forget — analysis (D159)
 
-**Status:** analysis for [D159](../../decisions.md#d159-archive-and-forget-replace-delete-forget-erases-one-document-without-stopping-the-deployment)
+**Status:** analysis for [D159](../../decisions.md#d159-archive-and-forget-replace-delete-forget-hides-at-once-and-sweeps-until-clean)
 and the binding [archive and forget design](../designs/archive_and_forget_design.md).
 Non-binding; it records why the design looks the way it does. Date: 2026-11-23.
 
@@ -110,75 +110,71 @@ covers:
 
 ### 3.3 Un-archive
 
-- **Reopen the old claims and facts.** Needs a reopening outcome for
-  `retracted_source_removal` closures that D118's fact windows do not have (the same reason
-  D135 rejected undelete). Rejected.
 - **Coming back as a full re-read** (D135's re-add, where reuse never drew on a deleted
-  version). Simple, but it breaks Rule 4: un-archiving identical bytes, or a one-section
-  edit to an archived document, would pay to extract and embed the whole document again.
-  Rejected in review round 1.
-- **Un-archive as a new version reusing paid work** (review round 1). Breaks for documents
-  with D140 editions: the returning version has no edition key or in-force period of its own,
-  and copying the old ones violates their uniqueness (review round 3).
-- **Chosen: un-archive restores the latest version.** It lifts that version's cutoff and the
-  lineage's archive mark; no new version, no reading, no edition problem. Its claims start a
-  new testimony episode: D135 rejected undelete because a reused claim kept its ended
-  testimony and old fact links. Episode-scoped support links fix that: links from the ended
-  episode stay as history, the restored claims are applied to facts afresh, and closed facts
-  stay closed, so no reopening outcome is needed. A changed version of an archived document
-  is an ordinary new version whose D56 reuse may draw on archived versions, with reused
-  claims starting a new episode the same way.
-- **Identical bytes re-sent to an archived document.** Under D135 a re-sent identical
-  upload resurrected a deleted lineage. For archive that would let a full resync silently
-  undo every archive and pay to reprocess it. Chosen: identical bytes to the archived
-  latest version are a no-op that leaves it archived; changed bytes are a new version and
-  bring the document back.
+  version). Breaks Rule 4: un-archiving, or a one-section edit to an archived document, would
+  pay to extract and embed the whole document again.
+- **A new testimony episode per return** (review rounds 1–14 explored this). Restored claims
+  would start a fresh episode with episode-scoped support links and a fresh fact application,
+  so old closed facts stay closed and new ones are created. It works, but every evidence key,
+  application key, flush unit and time-scoped read has to carry the episode, which is exactly
+  the kind of pervasive, hard-to-explain machinery the owner rejected (2026-11-24).
+- **Chosen: unarchive is the exact undo of the archive.** The archive's reconciliation id
+  already records which claims it ended and which facts it closed. Unarchive makes those claims
+  current again and reopens those facts (a new recorded outcome, `reopened_unarchive`) when they
+  have support again, leaving alone anything something else has changed since. No model call,
+  no new version, no episode. A changed version of an archived document is ordinary ingest whose
+  D56 reuse may draw on archived versions; a reused claim becoming current reopens a fact the
+  archive closed for it by the same rule. D135 rejected undelete because D118 had no reopening
+  outcome and because it revived testimony a person deliberately removed; for archive, reviving
+  is the point, and one recorded outcome is far simpler than the alternatives.
+- **Identical bytes re-sent to an archived document.** Under D135 a re-sent identical upload
+  resurrected a deleted lineage, so a full resync would silently undo every archive. Chosen:
+  whatever is a no-op for a live document is a no-op for an archived one; it stays archived.
 
-### 3.4 How forget stays available
+### 3.4 How forget stays available, without locks
 
-- **Keep the global barrier.** Rejected by the owner and by the analysis above.
-- **Chosen: hide first, fence one document, erase in the background.**
-  1. The request runs the lineage cascade at once (the document disappears from every read
-     in the same transaction) and records the forget.
-  2. Only work for that document is held: its running work items are allowed to finish (a
-     work item's lease bounds the wait), its queued ones find nothing left when they run,
-     and a late writer cannot attach rows because every writer re-checks its version under
-     a share lock that forget's delete transaction excludes. Object writers hold a
-     per-document advisory lock on two independent sessions for their IO (D155's
-     two-session publication fence, scoped to one document), and forget verifies again after
-     a delay to catch a request still in flight from a process whose sessions both died. Foreign keys cannot do this job:
-     most document-derived tables use logical references PostgreSQL does not enforce. Forget
-     therefore keeps the existing cascades for children the document exclusively owns,
-     deletes logically referenced rows explicitly, and relies on a schema-coverage test plus
-     a fixture that seeds every table. Turning the cascades off was considered and dropped
-     in review: it adds schema churn without proving more than the seeded test does.
-  3. The erasure runs as one ordinary resumable work item. Everything else keeps serving
-     and processing.
+- **Keep the global barrier.** Rejected by the owner and by §2.
+- **Fence one document** (review rounds 1–14). Hide, then keep every writer of that document
+  out while erasing: share locks in every writer, two-session advisory fences around object
+  writes, a navigation fence, lineage-identity locks across ingest, staged-object tracking,
+  re-add generation prefixes, an erasure generation for K sessions, sandboxed K writers.
+  Each review round found another writer the fence missed or another way a lock could be held
+  too long, and each fix added a lock or a gate that could itself fail. The owner rejected
+  this on 2026-11-24: no locks or gates that can break things, a mental model people can
+  follow, nothing finicky.
+- **Chosen: hide, then sweep until clean.** Correctness rests on three properties that do not
+  depend on timing:
+  1. The hide is one transaction, and every read already filters tombstoned documents, so
+     from that commit nothing can show the document, whatever is still running.
+  2. The sweep is keyed by IDs and hashes and treats "already gone" as success, so it can run
+     at any time, any number of times, and be interrupted anywhere.
+  3. The job sweeps, waits a quiet period longer than any worker can keep writing, and sweeps
+     again until a sweep finds nothing. Whatever a slow worker wrote in between was invisible
+     (property 1) and is removed (property 2).
 
-  What the global barrier bought was a frozen inventory. The per-document fence buys the
-  same thing for the one document that matters: after the hide, no new testimony can
-  attach to it (claim publication already refuses a tombstoned lineage), and the erasure
-  takes its inventory inside the transaction that deletes it. Shared rows (a fact also
-  supported by another document, an entity mentioned elsewhere) are recounted under the
-  same row locks ordinary fact work takes, as archive and delete already do.
+  Writers keep the checks they already have (claim publication refuses a tombstoned version);
+  those checks reduce late writes but correctness does not depend on them. The only lock forget
+  takes is the lineage row lock ingest already takes, which makes the re-ingest guard exact.
+  The cost is a bounded delay before `complete` (two sweeps and a quiet period) and a stated
+  residual: a worker that keeps writing for longer than the quiet period without its lease or
+  database session.
 
 ### 3.5 Where the forget record lives and what happens after a restore
 
 - **Keep the separate manifest store and replay on every start.** Rejected (§2).
 - **Keep a separate copy but replay only on demand.** Still a second store to provision and
   keep healthy for a case remember.dev does not have. Rejected.
-- **Chosen: one PostgreSQL row per forget, plus an operator command.** The row carries the
-  content-free inventory (IDs, hashes, object keys) and drives the background job, the
-  re-ingest guard and verification. `remember ops forget-export` exports the records, and
-  `remember ops forget-reapply` re-runs erasure for every record (and for records from an
-  exported file). The documented restore procedure runs `reapply` before the restored
-  deployment takes traffic.
+- **Chosen: one PostgreSQL row per forget, plus an operator command.** The row holds only the
+  document's ID, version IDs, content hashes and source-identity hash. Because the sweep is
+  keyed by exactly those, the row is all `remember ops forget-reapply` needs to erase again
+  after a restore, whichever stores were restored; no object-key inventory is kept.
+  `remember ops forget-export` writes the records for the operator to keep outside the
+  database backup.
 
   The honest limitation: a database restored from before a forget no longer contains that
-  forget's row. The operator re-applies it from an export kept outside the database
-  backup, as with any other erasure log a controller keeps. Restore is an operator action
-  (D60), so the operator is present to do it; the engine never blocks starting on it.
-  remember.dev keeps no database backups, so it has no such case.
+  forget's row; the operator re-applies it from the export, as with any erasure log a
+  controller keeps. Restore is an operator action (D60), so the operator is present; the
+  engine never blocks starting on it. remember.dev keeps no database backups.
 
 ### 3.6 Adding a forgotten document back
 
@@ -224,18 +220,13 @@ with an S3 FUSE tool (self-host) or `remember mount` (remember.dev, through moun
 sessions the cloud controls). D74 stopped controlled sessions and required operator mounts
 to be remounted.
 
-- **Chosen:** the forget request removes the document's recorded folders and rewrites the
-  affected indexes synchronously, as D155's normal removal already does. The background job
-  then scans for every copy carrying the document's suffix. Controlled sessions receive an
-  invalidation for the document's paths through the existing corpus purge port and must drop
-  them (and their cached bytes) without being stopped. An operator-managed FUSE mount sees
-  the deletion when its metadata cache expires; the filesystem-view docs already require
-  bounded caches, and that bound is the stated guarantee. A process that already opened and
-  read a file through such a tool may keep those bytes, and some tools serve an open handle
-  until it closes; the engine cannot revoke them, so the docs say so rather than promise
-  more. Controlled sessions are held to the stronger rule: reads on already-open handles of
-  erased paths fail. Bytes a client copied out of a mount are outside the engine's
-  boundary, as downloads always were.
+- **Chosen:** each sweep deletes the document's corpus folders and regenerates the indexes, and
+  tells remember.dev mount sessions to drop those paths, best effort. A disconnected client
+  catches up on reconnect and its cache expiry bounds what it can serve meanwhile; delivery
+  never holds a forget open. An operator-managed FUSE mount sees the deletion when its cache
+  expires; the filesystem-view docs require bounded caches and state that a file already open
+  in such a tool may keep serving what it read. Requiring acknowledgements was considered and
+  dropped: a client that never reconnects would hold the forget open forever.
 
 ### 3.9 Physical residue in PostgreSQL
 
@@ -251,13 +242,19 @@ implying more.
 
 ## 4. Rule 4 (a new version costs only its edit)
 
-Forget and archive do not change any reuse key. Two declared costs:
+No reuse key changes. Unarchive makes no extraction or embedding call (it undoes the archive).
+A changed version of an archived document costs what the same edit to a live document costs:
+D56 reuse may draw on archived versions, and only tombstoned (forgotten) versions are never
+reuse candidates. Forget clears derived embeddings of surviving shared rows whose text changed;
+ordinary work recomputes them.
 
-- Un-archive, and a new version of an archived document, reuse unchanged embeddings and
-  Selection/Claimify results from archived versions (§3.3); only forgotten versions, whose
-  rows are erased, are never reuse candidates.
-- Forget clears derived embeddings on surviving shared rows whose input text changed, as
-  D74 already did; they are recomputed by ordinary work.
+## 4a. K erasure follows citations
+
+Compiled pages cite the evidence they use (D45/D50). The sweep rebuilds every compiled page
+that cites forgotten evidence or a fact whose wording changed, and rewrites those paths'
+history. Proving that no writer ever copied uncited text would need sandboxed writers with
+recorded inputs and provenance through every cached summary (explored in review); the owner's
+simplicity rule puts that outside the guarantee as a stated limit instead.
 
 ## 5. What is removed
 

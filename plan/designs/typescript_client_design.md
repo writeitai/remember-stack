@@ -215,7 +215,7 @@ adapter transmits exactly once. Both injected client and transport modes must tr
 per invocation, honor cancellation and return redirects without following them;
 the SDK cannot detect violations inside a caller-owned transport. The retired
 fetch option is removed rather than retained as a nonconforming fallback. One
-`forgetDocument` sends one POST to the engine, including after a 421. The
+`deleteDocument` sends one DELETE to the engine, including after a 421. The
 universal no-write-replay contract applies at the wire, not merely to adapter
 call counts. See
 [the measured 421 transport evidence](../analysis/typescript_transport_421.md).

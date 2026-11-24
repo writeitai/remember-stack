@@ -54,7 +54,7 @@ re-extracting or re-embedding anything. The Czech-legislation product that motiv
 | `reconcile` at `reconcile-2026.07:claims` | claims | The claims tail's reconcile (§4.2). |
 | `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `label_relation`, `review_fact_windows` | facts | |
 | `reconcile` at `reconcile-2026.07` | facts | The full reconcile, unchanged. |
-| `forget` | — | Never gated. |
+| `hard_forget` | — | Never gated. |
 
 Plane-K stages consume the facts layer and run only while facts are served (§7.6).
 
@@ -107,8 +107,7 @@ CREATE INDEX ix_layer_gaps_open
 need no data migration. A gap row is inserted once per version and layer and keeps its lane
 through discharge and reopening until it is deleted. A gap is *open* while `discharged_at` is null; a layer is backfilling
 while it is enabled and has an open gap of a live version. Like `obs_flush_version_state`, gap
-rows carry no foreign key; archive parks them (excluded from admission until the version
-returns) and forget deletes them explicitly (§6.3).
+rows carry no foreign key; deletion and hard forget delete them explicitly (§6.3).
 
 ### 3.3 One fence
 
@@ -118,8 +117,8 @@ Every decision that reads the layer configuration and writes chain work or gaps 
 to change the configuration. The fence exists whether or not a configuration row exists, so a
 boundary can never decide under the old configuration and commit under the new one.
 
-Lock order, everywhere: layer fence → the existing barrier locks of the completing stage → the
-D135 lineage lock (`documents` row `FOR UPDATE`).
+Lock order, everywhere: hard-forget fence (where already taken) → layer fence → the existing
+barrier locks of the completing stage → the D135 lineage lock (`documents` row `FOR UPDATE`).
 
 ### 3.4 `setup` reconciles the setting
 
@@ -162,10 +161,8 @@ and its component versions are unchanged.
 1. If the layer is **disabled**: do not enter. Record a gap (at the claims boundary a claims gap
    and a facts gap) unless the version or its lineage is deleted. The facts boundary opens the
    **claims tail** (§4.2).
-2. If the version or its lineage is **archived**: enter as today, so the chain's reconcile
-   retires the late work (D135); record no gap. If it is **deleted** (tombstoned by forget or
-   internal version retirement): enter nothing and record no gap; forget has already marked
-   the version's queued work `skipped`.
+2. If the version or its lineage is **deleted**: enter as today, so the chain's reconcile retires
+   the late work (D135); record no gap.
 3. Otherwise record a gap for the version (lane `steady`, or the lane of the completing work)
    and run **advance** for the lineage (§5.2) in the same transaction. Advance either enters this
    version — stamping its gap entered — or leaves it waiting behind a predecessor that has not
@@ -334,8 +331,7 @@ Steps, in this order:
    **Discharge follows the layer dependency:** discharging a version's claims gap also records its
    facts gap as discharged (it will never extract, so it can never reach a facts boundary).
 3. Choose the **target**: for a living lineage its current version, if it has an open unentered gap;
-   for a snapshot lineage the oldest version with an open unentered gap. Parked gaps (of
-   D159-archived versions) are never targets; un-archive re-arms them and runs advance.
+   for a snapshot lineage the oldest version with an open unentered gap.
 4. Decide whether the target is **admitted**:
    - its sources layer is complete (otherwise its own claims boundary will record its gap and run
      advance again; a target whose sources work failed terminally stays unprocessed and visible in
@@ -446,12 +442,11 @@ still run their own fact updates; they are explicit operator actions.
 
 ### 6.3 Deletion and forgetting are never gated
 
-Archive and forget (D159) remove a document's contribution from every layer, whatever the
-configuration, through the lineage cascade (forget then erases the document). Late pipeline work
-after an archive reaches a reconcile in either mode, both of which run the D135 deleted-testimony
-path in full (§4.2). Archive parks the version's gaps (they are re-armed on un-archive) and
-advances the surviving lineage (§5.2) in the same transaction, so an archived head never
-blocks its successors; forget deletes the gaps with the version; a boundary never records a gap
+Document deletion (D135) and hard forget remove a document's contribution from every layer,
+whatever the configuration, through their existing cascades. Late pipeline work after a deletion
+reaches a reconcile in either mode, both of which run the D135 deleted-testimony path in full
+(§4.2). Deletion also deletes the version's gaps and advances the surviving lineage (§5.2) in the
+same transaction, so a deleted head never blocks its successors; a boundary never records a gap
 for a deleted version (§4.1).
 
 ## 7. Retrieval
@@ -570,11 +565,9 @@ or function of a disabled or excluded layer is refused with the existing `relati
 
 ### 7.6 Plane K and P3
 
-Plane K compiles pages about entities and predicates from facts, so compilation runs only while
-facts are served; the page views are facts views (§7.5), and the knowledge mount is not published
-while facts are not served. The authored-page sync and forget's redaction check are not
-compilation and keep running regardless, so an owner's redaction always finalizes a waiting
-forget (D159).
+Plane K compiles pages about entities and predicates from facts, so it runs only while facts are
+served; the page views are facts views (§7.5), and the knowledge mount is not published while facts
+are not served.
 
 P3 is the sources-only mutable document tree defined by [D155 in E0 §6](e0_files_design.md#6-the-corpus-filesystem--a-mutable-p3-tree-d155).
 It has no `entities/`, fact metadata or K links under any layer configuration, so
@@ -583,7 +576,7 @@ filter or mount swap. The transaction serving a completed version/representation
 under this document's enabled-layer rules clears its nullable publication marker
 and enqueues ordinary `publish_corpus(doc_id)` work. P3 readiness compares that
 marker with the current computed export digest; processing completion does not
-wait for P3. Archive and forget remain unconditional, and their per-document
+wait for P3. Deletion and hard forget remain unconditional, and their per-document
 corpus erasure/index regeneration cannot be disabled with a layer.
 
 ## 8. Compatibility
@@ -704,8 +697,8 @@ database-level, with recorded or fake model providers:
 
 - **Per-document, per-source-kind or per-ingest-call layer selection.** Coverage would become
   per-document and retrieval could not disclose it per result; use separate deployments.
-- **Deleting a disabled layer's data.** Switching off never deletes; removing a document's
-  contribution is archive's and forget's job (D159).
+- **Deleting a disabled layer's data.** Switching off never deletes; deletion is D135's and hard
+  forget's job.
 - **Holding a layer's in-flight work.** Switching off drains; budgets stop spend at once.
 - **A deployment-level retrieval default different from the enabled layers.** Narrow per request or
   per MCP connection.

@@ -69,8 +69,8 @@ existing.
    Billed-but-invalid provider responses (`ProviderCallError.usage`)
    **are** recorded. Successful embeds always have `ProviderCallUsage`.
 5. **Export HTTP is a separate listener.** It is never a route on the
-   customer FastAPI app (that app’s `dependencies=` list is the perimeter
-   and applies to every route). If
+   customer FastAPI app (that app’s `dependencies=` list is perimeter +
+   D74 admission and applies to every route). If
    `REMEMBERSTACK_COST_EXPORT_BIND` is unset, the listener is not
    started. The customer port physically cannot serve export.
 6. **`rememberstack.cost_export.v1` is an immutable path**
@@ -590,7 +590,7 @@ Consumer obligations (not engine code):
 process. When `REMEMBERSTACK_COST_EXPORT_BIND` is set, the profile
 starts a **second uvicorn server in a daemon thread** serving a
 separate ASGI app that mounts **only** `/ops/cost-export/v1`. It does
-not import `build_api`. Token rotation
+not import `build_api`. D74 admission does not apply. Token rotation
 restarts the whole API process (there is no independent export
 process). Examples: `127.0.0.1:8001`, `[::1]:8001`,
 `unix:/run/rememberstack/cost-export.sock`.
@@ -709,7 +709,8 @@ The parts of the original D92 contract that remain binding:
 - Golden v1 field set (page + receipt) matches the frozen list.
 - HTTP export is **not** registered on `build_api`.
 - Export listener accepts export token; rejects a customer perimeter
-  token.
+  token; D74 forget-in-progress on the **customer** app does not stop
+  the export listener.
 - `persist_failures` increments when insert is forced to fail; page
   reports the new value.
 - Tiny embed `cost_usd` (`1e-9`) round-trips at `numeric(20,12)`.
@@ -743,7 +744,7 @@ Docs describe what the tree runs.
 | Unified discriminator table | Honest, but forces every budget SQL and D67 sentence to grow branches; two tables + one view keep worker code literally true |
 | Metrics/logs as the record | Not replay-safe |
 | Push to a cloud URL | Library becomes a cloud agent |
-| Export route on `build_api` | Unimplementable exemption from app-level `Depends` |
+| Export route on `build_api` | Unimplementable exemption from app-level `Depends`; also inherits D74 503 |
 | Customer token for export | Blast radius |
 | Derive token host from `--api-url` | Wrong-host footgun; encodes a commercial URL layout (D136 discovers endpoints from the issuer instead) |
 | Ambient credential file in `MemoryClient` | Embedded callers silently acquire a human cloud token |

@@ -12,7 +12,7 @@ context operations, and changes which fact evidence a filtered read returns.
 schemas and operation versions, and §3.2's view catalog; the
 [MCP catalogue](one_key_client_surfaces_design.md) tool list.
 **Composes with:** D140 time scope, D142/D153 eligibility before ranking, D54
-counting by lineage, D56 reuse, and D159 archive and forget.
+counting by lineage, D56 reuse, D135 deletion and D74 hard forget.
 
 ## 1. The problem
 
@@ -154,7 +154,7 @@ resubmission of the lineage's latest live version (D134's
 metadata-observation rule) stays one when it carries tags: the tags are
 added, nothing is processed, and the existing version is returned with
 `created=False`. Whether an ingest creates a version is decided exactly as
-today (bytes, D140 `version_key`, reversion and D159 archive rules); tags
+today (bytes, D140 `version_key`, reversion and D135 deletion rules); tags
 take no part in it.
 
 **By update.** `update_document_tags(doc_id, add?, remove?)` adds and
@@ -187,13 +187,12 @@ The same separation keeps the memory's content independent of how it is
 labelled. Tagging a document `project:legalit` cannot change a claim
 extracted from it, an entity it mentions, or a fact it supports.
 
-### 3.5 Archive and forget
+### 3.5 Deletion and hard forget
 
-Archive (D159) keeps a lineage's assignment rows, like its D134 metadata rows;
-an archived lineage matches a tag filter, and its tags are returned, only when
-the read asks for archived material (`include_archived=true`,
-[archive and forget §2.3](archive_and_forget_design.md#23-what-stays-visible)).
-Forget deletes the lineage's assignment rows. The registry itself is the deployment's
+Normal deletion (D135) keeps a lineage's assignment rows for audit, like its
+D134 metadata rows; a deleted lineage never matches a filter and its tags
+are never returned. D74 hard forget deletes the
+lineage's assignment rows. The registry itself is the deployment's
 vocabulary, not content from any source, and is unaffected by forgetting a
 document; a tag whose name or description must go is removed with
 `delete_tag`.
@@ -262,9 +261,9 @@ associated with a supplied entity, **and** coming from a matching document.
 
 | Grain | Included when |
 |---|---|
-| Chunk | its document version is live (or, with `include_archived`, archived) and matches (tags tested on the lineage) |
-| Claim | it has a live occurrence (or, with `include_archived`, an archived one) in a matching document version |
-| Relation or observation (fact) | at least one live **supporting** claim comes from a matching document; `include_archived` never applies here (D159: archived claims are not current support) |
+| Chunk | its document version is live and matches (tags tested on the lineage) |
+| Claim | it has a live occurrence in a matching document version |
+| Relation or observation (fact) | at least one live **supporting** claim comes from a matching document |
 
 When a D140 time scope is also given, the filter and the scope's existing
 per-occurrence test must hold on the **same** occurrence: a claim qualifies
@@ -472,6 +471,6 @@ coordinate.
   of force and whose in-force support is untagged is not returned.
 - A tag-filtered read stopped by a work bound reports `boundary`, not
   `known_empty`.
-- Archive keeps assignment rows and matches or returns them only with
-  `include_archived=true`; forget removes them and leaves the registry unchanged.
+- Deletion keeps assignment rows but never matches or returns them;
+  hard forget removes them and leaves the registry unchanged.
 - `resolve_entity` results are unaffected by any tag state.

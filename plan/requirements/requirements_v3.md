@@ -40,8 +40,8 @@ truth, and rebuild semantics. L-numbers from earlier drafts survive as shorthand
   documents (every version stays independent testimony) from **living** documents (the latest
   version is the source's standing statement, and removing content **retracts** beliefs it
   solely supported — recorded and reversible, never silent). Confidence signals count **distinct
-  sources**, never versions, re-processings, or repetition. **Archiving a document** (at the
-  source or by an operator, D159) removes its contribution — facts it alone supported are closed,
+  sources**, never versions, re-processings, or repetition. **Deleting a document** (at the
+  source or by an operator) removes its contribution — facts it alone supported are closed,
   recorded and reversibly, while facts other documents also support live on. Re-ingesting an
   edited document must cost **proportional to the edit, not the document**.
 - **E1 — Chunks** *(formerly L1)*: retrieval-sized units that preserve their surrounding
@@ -114,7 +114,7 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   out. Deterministic type first, optional model-chosen topic below it, readable
   title plus a deterministic suffix derived from `doc_id`, which survives path
   moves. Idempotent publication, DB-derived bounded member indexes/root `llms.txt`,
-  full repair and per-document forget erasure (D159) without wiping surviving folders
+  full repair and per-document D74 erasure without wiping surviving folders
   are required. Raw stays source of truth. K repos are standalone (D155).
 
 ## Knowledge lifecycle
@@ -127,9 +127,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 - **Two time axes** everywhere knowledge lives: when a fact was true in the world, and when
   the system learned/believed it.
 - **Time-travel**: reconstruct both "what was true at T" and "what did we believe at T".
-- **Archive and forget** (D159): archiving an input ends its testimony through every derived
-  layer while keeping it readable as history; forgetting it erases it from every
-  engine-controlled store without stopping the deployment.
+- **Deletion cascade**: removing an input must propagate through every derived layer; hard
+  delete supported where required.
 
 ## Retrieval
 
@@ -212,9 +211,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 - **Freshness**: plane E processes promptly per document; planes K and P are
   debounced/scheduled — staleness bounded by an explicit, configurable cadence.
 - **Observable and recoverable, without an OSS operations platform**: typed telemetry and
-  CLI/admin inspection cover every pipeline; the portable-state definition and the
-  operator-run restore step (`remember ops forget-reapply` before traffic, D159) cover the sources
-  of truth. Operators move bytes with
+  CLI/admin inspection cover every pipeline; the portable-state definition, fail-closed restore
+  order, and non-resurrection contract cover the sources of truth. Operators move bytes with
   native tools. Dashboard backends, alerts, HA, and physical backup schedules/retention are
   deployment-operator or cloud responsibilities (D60/D61/D75).
 

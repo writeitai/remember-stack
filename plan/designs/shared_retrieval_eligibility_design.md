@@ -145,10 +145,7 @@ CREATE INDEX ix_documents_entity ON public.documents
 ```
 
 The correlated membership probe keeps all three predicates (deployment,
-member, and a live document: `deleted_at IS NULL AND archived_at IS NULL`, so an entity whose
-only source is archived (D159) leaves current retrieval). Historical eligibility, which the
-history views' endpoint join uses, admits archived documents (still excluding deleted ones),
-so closed historical facts keep their endpoints. The probe and uses `ORDER BY document.doc_id::text
+member and `deleted_at IS NULL`) and uses `ORDER BY document.doc_id::text
 COLLATE pg_catalog."C" LIMIT 1 OFFSET 0`. This order selects any live bridge;
 it is not relevance, temporal or identity order. Only this native expression
 index supplies it without sorting. `OFFSET 0` prevents PostgreSQL from
@@ -384,10 +381,6 @@ its survivor endpoints pass `entities_current`.
 Redefine `v_memory_fact_visible` on this helper plus exactly this endpoint rule:
 subject must match `entities_current` by deployment and survivor ID; for a
 relation the object must match too, while an observation needs no object.
-`facts_visible_history` and the runtime builder of historical fact reads use the
-historical endpoint eligibility instead (an entity whose evidence is only in archived
-documents, D159, still qualifies there), so an entity that leaves current retrieval
-when its sole source is archived keeps its closed facts readable in history.
 Keep the existing first fourteen columns and append the four presentation
 columns listed above. Rewrite `memory_v1.facts_visible_history` as an explicit
 projection of these eighteen columns, removing its superseded inline count/
@@ -397,11 +390,7 @@ sets where extra columns would change a public row or JSON payload. This is
 not permission to expose a changed public column set.
 
 The runtime builder reads only the source-qualified helper and authoritative
-`entities_current` for current reads; for belief-as-of reads it uses the historical endpoint
-eligibility and the evidence of the links whose episode was current at the belief instant
-(D159), so an
-archive-closed fact and its evidence stay readable in history after un-archive without
-counting toward current support. Its **only independently assembled eligibility rule** is
+`entities_current`. Its **only independently assembled eligibility rule** is
 the endpoint conjunction above. That small rule is pinned structurally and by
 complete-row tests against the immutable migration's wrapper. All historical
 source predicates, presentation and count arithmetic live in the helper;

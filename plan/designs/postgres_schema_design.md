@@ -5,7 +5,7 @@
 > decision writes its document/canonical-lemma coordinate transactionally;
 > only T4 match stores a source decision and partition timestamp. Deployment
 > generation readiness, source validation, conservative conflicts, rebuild,
-> and forget (D159) lifecycle are part of the schema contract.
+> and hard-forget lifecycle are part of the schema contract.
 
 > **Binding D98/D157 amendment (2026-11-14).** PostgreSQL 18 is also the live graph
 > execution host. Private live views over normalized authority data are the
@@ -210,14 +210,14 @@ CREATE TYPE pipeline_component     AS ENUM (
   'extractor','grounder','resolver','normalizer','adjudicator','embedder','fact_labeler',
   'profile_summarizer','corpus_publisher','knowledge_planner',
   'knowledge_writer','knowledge_reflector','knowledge_linter','judge','forgetter');
-CREATE TYPE processing_target      AS ENUM ('forget','document','document_section','chunk','claim','relation','observation','entity','knowledge_artifact','document_version','knowledge_dispatch','corpus_publication');
-CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','publish_corpus','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','forget','review_fact_windows');
+CREATE TYPE processing_target      AS ENUM ('document','document_section','chunk','claim','relation','observation','entity','knowledge_artifact','document_version','knowledge_dispatch','corpus_publication');
+CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','publish_corpus','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget','review_fact_windows');
 CREATE TYPE processing_status      AS ENUM ('pending','running','succeeded','failed','dead_letter','skipped');
 -- D67: only plane-E routes use operational lanes. K/P (and other scheduled aggregate) jobs
 -- represent their single unlaned route with SQL NULL, never a synthetic third enum value.
 CREATE TYPE processing_lane        AS ENUM ('steady','backfill');
 CREATE TYPE processing_defer_reason AS ENUM ('scheduled','retry_backoff','budget');
-CREATE TYPE forget_status          AS ENUM ('erasing','waiting_for_redaction','complete');
+CREATE TYPE forget_manifest_status AS ENUM ('preparing','accepted','complete');
 
 CREATE TYPE ontology_tier          AS ENUM ('core','extension','other','deprecated');
 CREATE TYPE ontology_status        AS ENUM ('active','deprecated');
@@ -252,7 +252,7 @@ CREATE TYPE document_origin        AS ENUM ('external','system_generated');  -- 
 -- living = the current version is the source's standing statement (currency follows it, D54):
 CREATE TYPE versioning_mode        AS ENUM ('snapshot','living');
 -- D54 testimony-currency transitions (append-only ledger; bookkeeping, never validity):
-CREATE TYPE currency_reason        AS ENUM ('reextracted','version_superseded','version_archived','version_restored','review_restored');
+CREATE TYPE currency_reason        AS ENUM ('reextracted','version_superseded','version_deleted','review_restored');
 -- 'review_restored' = the support_withdrawn triage's verdict A (became_current=true): a reviewer
 -- judged the old claim correct and the new extractor regressed — the old claim stands as the
 -- chunk's current transcription until a fixed extractor re-derives it (lifecycle §4).
@@ -275,7 +275,7 @@ CREATE TYPE evidence_stance        AS ENUM ('supports','contradicts');
 CREATE TYPE relation_status        AS ENUM ('active','invalidated');  -- generated mirror of invalidated_at; retirement (zero-evidence GC, §13) = setting invalidated_at
 CREATE TYPE adjudication_outcome   AS ENUM ('add','noop','supersede','contradict','same_as_merge_proposal','retracted_source_removal');
 -- 'retracted_source_removal' = D54/D55 source-acted closure: a living lineage's removal, OR
--- an archive or forget (version / lineage / source-observed deletion), withdrew a fact's sole current support →
+-- any deletion (version / lineage / source-observed), withdrew a fact's sole current support →
 -- adjudicated closed per shape (states: valid_until cap; measurements: invalidated_at — the
 -- D43 no-cap rule); the adjudication row is the audit record. (support_withdrawn is
 -- exclusively the RE-EXTRACTION zero-support flag, D54 — never removal, never deletion.)
@@ -438,68 +438,37 @@ COMMENT ON TABLE pipeline_component_versions IS
   'Catalog resolving every *_version string to its model/prompt/params, so replay-on-rebuild (D7) and version-scoped reprocessing are auditable (D1, D12). Every pipeline_component enum value can be catalogued here.';
 
 -- ─────────────────────────────────────────────────────────────────────────
--- forgets — D159's one content-free record per forgotten document
--- (archive_and_forget_design.md §3.5). It drives the background erasure job, the re-ingest
--- guard (refused unless one request sets allow_forgotten) and verification, and is what
--- `remember ops forget-export` exports and `remember ops forget-reapply` re-runs after a restore.
--- There is no second store. Attempts/retry/DLQ remain in processing_state, never here.
+-- forget_manifests — D74's local materialization of one portable, content-free hard-forget
+-- intent. The external ForgetManifestPort remains the restore-surviving intent source; this row
+-- supplies admission, exact worker input, irreversible ingest guards, and verification progress.
+-- Attempts/retry/DLQ remain in processing_state, never here.
 -- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE forgets (
-  forget_id             uuid PRIMARY KEY,
-  deployment_id         uuid NOT NULL REFERENCES deployments,
-  doc_id                uuid NOT NULL,          -- no FK: the document row is erased
-  generation            smallint NOT NULL DEFAULT 0, -- the lineage's re-add generation at hide (selects the -r<n> suffix and prefix)
-  source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
-  content_hashes        text[] NOT NULL,        -- every version's raw content hash
-  inventory             jsonb,                  -- content-free row IDs (delete vs scrub), content hashes, object locators and K artifact IDs; never full keys or paths; set by the erasure job
-  blocking_k_paths      text[] NOT NULL DEFAULT '{}',
-  status                forget_status NOT NULL DEFAULT 'erasing',
-  requested_at          timestamptz NOT NULL DEFAULT now(),
-  erased_at             timestamptz,            -- every engine-owned store verified clean
-  completed_at          timestamptz,            -- blocking pages redacted and erased too
-  UNIQUE (deployment_id, doc_id, generation),
+CREATE TABLE forget_manifests (
+  forget_id            uuid PRIMARY KEY,
+  deployment_id        uuid NOT NULL REFERENCES deployments,
+  doc_id                uuid NOT NULL,               -- hard-forget v1 is lineage-scoped
+  schema_version        smallint NOT NULL,
+  manifest_hash         text,                        -- set with manifest before portable append
+  manifest              jsonb,                       -- stable IDs/hashes/keys only; no source prose
+  source_identity_hash  text,                        -- irreversible stable-source ingest guard
+  content_hashes        text[] NOT NULL DEFAULT '{}',-- irreversible raw-content ingest guards
+  status                forget_manifest_status NOT NULL DEFAULT 'preparing',
+  prepared_at           timestamptz NOT NULL DEFAULT now(),
+  accepted_at           timestamptz,
+  completed_at          timestamptz,
+  last_verified_at      timestamptz,                 -- latest all-store readiness re-honor
+  UNIQUE (deployment_id, doc_id),
   UNIQUE (deployment_id, forget_id),
-  CHECK ((status = 'complete') = (completed_at IS NOT NULL)),
-  CHECK (status = 'erasing' OR (erased_at IS NOT NULL AND inventory IS NOT NULL))
+  CHECK ((status = 'preparing') OR
+         (manifest_hash IS NOT NULL AND manifest IS NOT NULL AND accepted_at IS NOT NULL)),
+  CHECK ((status = 'complete') = (completed_at IS NOT NULL))
 );
-COMMENT ON TABLE forgets IS
-  'D159 forget record: erasing until every engine-owned store is verified clean; waiting_for_redaction while authored K pages still cite the document; complete after that. Content-free: no text, names, titles, title-derived paths, URIs or prompts.';
-CREATE INDEX ix_forgets_source ON forgets (deployment_id, source_identity_hash)
+COMMENT ON TABLE forget_manifests IS
+  'D74 hard-forget manifest materialization: preparing is the temporary admission barrier; accepted means the portable append is durable; complete means one purge succeeded, never that readiness may skip re-honoring external stores.';
+CREATE INDEX ix_forget_source_guard
+  ON forget_manifests (deployment_id, source_identity_hash)
   WHERE source_identity_hash IS NOT NULL;
-CREATE INDEX ix_forgets_content ON forgets USING gin (content_hashes);
-
--- D159 staged objects: every engine write path records a key (and, for multipart, the upload ID
--- before the first part) before writing. The row is deleted only once the object is published
--- in its store (a version's original, an artifact or a corpus copy) or deleted and verified
--- absent (a refused or duplicate copy); the janitor's ownership check runs under the same lock as
--- publication, so it never deletes a published object,
--- so a crash never leaves an untracked object or upload. Forget sweeps its own lineage and
--- generation's staged objects and aborts their uploads by ID; only unadopted raw originals are
--- swept by content hash. The janitor deletes rows older than the request bound.
-CREATE TABLE staged_objects (
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  store           text NOT NULL,               -- raw | artifacts | corpus
-  object_key      text NOT NULL,
-  doc_id          uuid,                        -- owning lineage; NULL only for an unadopted raw original, the one kind swept by content hash
-  generation      smallint NOT NULL DEFAULT 0, -- the owning lineage's re-add generation
-  content_hash    text,                        -- set for raw originals
-  multipart_upload_id text,                    -- set while a multipart upload is open, so forget can abort it by ID without provider listing
-  staged_at       timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, store, object_key, staged_at)
-);
-CREATE INDEX ix_staged_objects_owner ON staged_objects (deployment_id, doc_id, generation);
-CREATE INDEX ix_staged_objects_hash ON staged_objects (deployment_id, content_hash);
-
--- D159 archive intervals in belief time: one row per archive of a version, closed by unarchive, so
--- reads of belief as of a past instant (D140 pinned selection and support) see the version as
--- archived exactly while it was. documents/document_versions.archived_at hold the current state.
-CREATE TABLE version_archive_events (
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  version_id      uuid NOT NULL,               -- LOGICAL FK → document_versions; erased with the version by forget
-  archived_at     timestamptz NOT NULL,
-  restored_at     timestamptz,                 -- set by unarchive of the latest version; NULL while archived
-  PRIMARY KEY (deployment_id, version_id, archived_at)
-);
+CREATE INDEX ix_forget_content_guard ON forget_manifests USING gin (content_hashes);
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- processing_state — idempotency + status + dead-letter, the D12 spine.
@@ -520,7 +489,7 @@ CREATE TABLE version_archive_events (
 CREATE TABLE processing_state (
   processing_id   uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  target_kind     processing_target NOT NULL,  -- forget targets its forgets row (target_kind forget, target_id = forget_id), so a re-added lineage's later forget never collides
+  target_kind     processing_target NOT NULL,  -- hard_forget reuses document; no deletion-only target kind
   target_id       uuid NOT NULL,               -- LOGICAL FK → target PK; corpus_publication is an event UUID with payload doc_id (§10)
   stage           pipeline_stage NOT NULL,     -- the processing stage (see pipeline_stage enum, §1)
   component_version text NOT NULL,             -- LOGICAL FK → pipeline_component_versions(version); the version this attempt ran
@@ -531,7 +500,7 @@ CREATE TABLE processing_state (
   defer_reason    processing_defer_reason,      -- scheduled | retry_backoff | budget; constrained to the corresponding status below
   attempts        smallint NOT NULL DEFAULT 0, -- handler executions actually begun; delivery attempts and budget parking do not increment it
   max_attempts    smallint NOT NULL DEFAULT 3, -- total handler-attempt limit; starting point = initial + D12's two retries
-  last_error      text,                        -- exception types, content-free error codes and stack frames of the most recent failure and its cause chain, never exception messages (D159: no source text); failures never disappear
+  last_error      text,                        -- full traceback + cause chain for the most recent handler failure; failures never disappear
   payload         jsonb,                       -- open-ended handler input for DLQ inspection/replay; never route, due, retry, budget, or DLQ state
   enqueued_at     timestamptz NOT NULL DEFAULT now(),
   started_at      timestamptz,
@@ -1163,8 +1132,7 @@ sub-worker (ingest → convert → structure → crossref, D36) is **separately 
 idempotent on `content_hash + its own version`.
 
 **Three identities (D55).** A **content object** = immutable bytes (`content_hash` — the
-idempotency/dedup key, stored once even across lineages; every reading of it belongs to one
-version, D159); a **document lineage**
+idempotency/dedup key, stored and converted once even across lineages); a **document lineage**
 (`doc_id`) = the logical document over time, identified by connector-native
 `(source_kind, source_ref)` (a Drive file ID, a message ID — renames/moves are metadata over a
 stable ref); a **document version** = one observed immutable snapshot of a lineage pointing at
@@ -1176,9 +1144,9 @@ anchors on the lineage; per-snapshot state lives on the version. Full design:
 -- ─────────────────────────────────────────────────────────────────────────
 -- content_objects — immutable bytes, deduplicated (D55/D56). One row per distinct byte content
 -- per deployment; two lineages carrying identical bytes (the same PDF in two Drive folders)
--- share one object — stored once. Readings are owned by versions (document_representations
--- below: a representation reads one snapshot), so a new ASR/VLM re-reads a version into a new
--- immutable representation beside the old one, never over it.
+-- share one object — stored once; converted once PER TOOLCHAIN (D65): one byte object can own
+-- several representation generations (document_representations below) — a new ASR/VLM re-reads
+-- the same bytes into a new immutable representation beside the old one, never over it.
 -- NEVER dedup across deployments (D37/D16).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE content_objects (
@@ -1186,21 +1154,20 @@ CREATE TABLE content_objects (
   content_hash    text NOT NULL,               -- sha256 of raw bytes — THE idempotency key (D12)
   mime            text NOT NULL,               -- detected MIME, drives the conversion router (D38)
   byte_size       bigint,
-  raw_uri         text NOT NULL,               -- engine-generated, extension-free: gs://…-raw/<doc_id-of-owner>/<generation>/<content_hash>/original (D159; legacy keys are relocated when their owner is forgotten)
+  raw_uri         text NOT NULL,               -- gs://…-raw/<doc_id-of-first-observer>/<content_hash>/original.<ext> (D155 private source store; corpus serves copies)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
-  purged_at       timestamptz,                 -- forget: bytes erased when no version of any lineage, live or archived, references this object (§13.2)
+  purged_at       timestamptz,                 -- hard-forget: bytes erased when no live version references this object (§13)
   PRIMARY KEY (deployment_id, content_hash)
 );
 COMMENT ON TABLE content_objects IS
-  'Deduplicated immutable bytes (D55/D56): one row per distinct content per deployment; versions reference these, so identical bytes across lineages are stored once (each version owns its own readings). content_hash idempotency (D12) lives here.';
+  'Deduplicated immutable bytes (D55/D56): one row per distinct content per deployment; versions reference these, so identical bytes across lineages are stored and converted once. content_hash idempotency (D12) lives here.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- documents — one row per DOCUMENT LINEAGE (D55): the logical document over time, identified
 -- by connector-native (source_kind, source_ref). Stable anchor for P3 handles, K citations,
--- crossrefs, GCS path prefixes. Per-snapshot state lives on document_versions. Archive sets
--- archived_at and keeps the row as readable history (§13.1). Forget sets deleted_at (the tombstone
--- every read filters) and its background job then deletes the row and everything derived from it
--- (§13.2).
+-- crossrefs, GCS path prefixes. Per-snapshot state lives on document_versions. A hard-delete
+-- SOFT-TOMBSTONES the lineage (deleted_at set) rather than removing it (§13) — auditors can
+-- tell "forgotten" from "never existed".
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE documents (
   doc_id          uuid PRIMARY KEY,            -- stable lineage identity (used in GCS path prefixes)
@@ -1216,15 +1183,12 @@ CREATE TABLE documents (
   corpus_paths    text[],                      -- nullable D155 set of possibly written folders; commit before IO, reduce after cleanup/navigation
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
-  archived_at     timestamptz,                 -- D159 archive mark (§13.1); cleared when a changed version or unarchive brings the lineage back
-  generation      smallint NOT NULL DEFAULT 0, -- D159 re-add generation: 0, incremented when a forgotten lineage is deliberately re-added; scopes every object key and the corpus suffix
-  archived_by     text CHECK (archived_by IN ('caller','source')), -- who archived: a caller, or a connector that observed the source deletion (a reappearing source file revives only the latter)
-  deleted_at      timestamptz,                 -- forget tombstone, set by the forget request until the job erases the row (§13.2)
+  deleted_at      timestamptz,                 -- lineage tombstone for hard-delete/forget (§13)
   UNIQUE (deployment_id, source_kind, source_ref),  -- lineage identity (D55)
   UNIQUE (deployment_id, doc_id)                -- composite-FK target (tenancy isolation, §0)
 );
 COMMENT ON TABLE documents IS
-  'Document LINEAGES (D55): the logical document over time, connector-native identity. Snapshot state lives on document_versions; bytes on content_objects; bodies in GCS. versioning_mode drives testimony currency (D54); origin is the D42 stamp. Archive marks the lineage (archived_at); forget tombstones it (deleted_at) and then erases it.';
+  'Document LINEAGES (D55): the logical document over time, connector-native identity. Snapshot state lives on document_versions; bytes on content_objects; bodies in GCS. versioning_mode drives testimony currency (D54); origin is the D42 stamp. A forget soft-tombstones the lineage.';
 CREATE INDEX ix_documents_live     ON documents (deployment_id) WHERE deleted_at IS NULL;
 
 -- D102 bounded same-document exact-name projection. Append-only decisions
@@ -1248,7 +1212,7 @@ CREATE TABLE document_entity_bindings (
   CHECK ((anchor_decision_id IS NULL) = (anchor_decided_at IS NULL))
 ) PARTITION BY HASH (doc_id);
 COMMENT ON TABLE document_entity_bindings IS
-  'D102 bounded derived membership for exact T0 replay inside one document. Every resolver decision upserts membership; only T4 match stores its source decision id plus decided_at partition coordinate. Exactly one active row with a still-current source may authorize replay. Extra rows fail closed. Archive and forget delete by document; setup rebuilds before deployments.document_binding_generation becomes document-t0-v1.';
+  'D102 bounded derived membership for exact T0 replay inside one document. Every resolver decision upserts membership; only T4 match stores its source decision id plus decided_at partition coordinate. Exactly one active row with a still-current source may authorize replay. Extra rows fail closed. Normal delete and D74 delete by document; setup rebuilds before deployments.document_binding_generation becomes document-t0-v1.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- document_versions — semantically append-only observed snapshots of a lineage (D55).
@@ -1282,8 +1246,7 @@ CREATE TABLE document_versions (
   error           text,
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- system-time origin for everything derived from this version
   superseded_at   timestamptz,                 -- set when a newer version becomes current (lineage pointer moved)
-  archived_at     timestamptz,                 -- D159 testimony cutoff: set on every version that existed when the lineage was archived; cleared only by unarchive, and only on the latest version, so older pre-archive versions never testify again
-  deleted_at      timestamptz,                 -- version tombstone: internal version retirement (§13.1) or forget (§13.2); archive never sets it
+  deleted_at      timestamptz,                 -- version tombstone (delete-a-version, §13)
   version_key     text,                        -- D140: optional caller-chosen version address, assigned only at creation (a new key always creates a version; an existing key on any other observation is rejected); unique per lineage; NOT the mutable source_version_ref cursor
   UNIQUE (deployment_id, doc_id, version_no),   -- no per-lineage content uniqueness: A→B→A is a third version sharing one content object (migration p3_01_0008)
   UNIQUE (deployment_id, version_id),           -- composite-FK target
@@ -1313,11 +1276,11 @@ ALTER TABLE documents ADD FOREIGN KEY (deployment_id, doc_id, current_version_id
 -- kept); document_versions.current_representation_id names the live one and is swapped ONLY
 -- on completion of the new representation's conversion→E1→E2 chain (no window where old
 -- testimony is retired and new hasn't landed — the D54 completion rule). Artifact paths carry
--- the representation dimension (…/<doc_id>/<generation>/<content_hash>/<representation_id>/…), so a
+-- the representation dimension (…/<doc_id>/<content_hash>/<representation_id>/…), so a
 -- re-conversion can never overwrite the coordinate system historical claims' spans and
 -- locators resolve against. Rows are NEVER updated after status='ready'; a re-run of the same
 -- (content, route, versions) replays this row's stored output (D7) — the model is not
--- re-called. Old representations are deleted only by forget (§13.2).
+-- re-called. Old representations are deleted only by the version/lineage deletion cascade.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE document_representations (
   representation_id uuid PRIMARY KEY,
@@ -1484,7 +1447,7 @@ CREATE INDEX ix_document_tags_tag ON document_tags (deployment_id, tag_id, doc_i
 -- ─────────────────────────────────────────────────────────────────────────
 -- document_sections — the queryable PageIndex section index (D39). Every document gets rows here
 -- unconditionally (a short doc gets one synthetic root section). Summaries are kept as context,
--- never facts. parent_section_id cascades on delete so forget's erasure removes the whole subtree (§13.2).
+-- never facts. parent_section_id cascades on delete so a hard-delete removes the whole subtree (§13).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE document_sections (
   section_id      uuid PRIMARY KEY,
@@ -1551,8 +1514,8 @@ CREATE INDEX ix_version_scope_in_force ON document_version_scope USING gist (dep
 -- document_effective_periods — D140: declared periods during which a version's text is in force.
 -- A ledger: a correction retracts a row and inserts its replacement. An undeclared end is DERIVED
 -- at read time from the next start known at the belief instant (memory_v1.effective_intervals).
--- Only snapshot lineages declare periods. No ON DELETE actions: archive keeps these rows (reads
--- join live versions); forget (D159) deletes them explicitly.
+-- Only snapshot lineages declare periods. No ON DELETE actions: versions/lineages are soft-deleted
+-- (D135, reads join non-deleted versions); hard forget (D74) deletes these rows explicitly.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE document_effective_periods (
   period_id       uuid PRIMARY KEY,
@@ -1592,7 +1555,7 @@ CREATE TABLE document_reference_generations (
   crossref_version text,                       -- extracted only
   input_hash      text NOT NULL,               -- supplied: sha256 of the NDJSON body; extracted: hash(representation_id, crossref_version)
   request_seq     bigint,                      -- supplied: per-version PUT order; the newest non-superseded generation is the caller's intent
-  artifact_uri    text,                        -- supplied only: …/<doc_id>/<generation>/<content_hash>/references/<input_hash>.ndjson
+  artifact_uri    text,                        -- supplied only: …/<doc_id>/<content_hash>/references/<input_hash>.ndjson
   item_count      integer,
   status          text NOT NULL CHECK (status IN ('pending','active','rejected','superseded')),
   errors          jsonb,                       -- rejected: bounded [{item, field, reason}]
@@ -1614,8 +1577,8 @@ CREATE UNIQUE INDEX ux_reference_generations_active
 -- generation (extracted or supplied) of the E0 crossref sub-worker. Section endpoints are named by
 -- key and resolved at read time; floating targets resolve to the readable versions in force in the
 -- read window (a temporal join), pinned ones to the target's immutable version_key. to_doc_id is NULL
--- until the target lineage is matched (late binding). No ON DELETE actions (archive keeps rows, §13;
--- forget updates/deletes explicitly).
+-- until the target lineage is matched (late binding). No ON DELETE actions (soft deletion, §13; D74
+-- hard forget updates/deletes explicitly).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE document_crossrefs (
   crossref_id     uuid PRIMARY KEY,
@@ -1951,16 +1914,16 @@ CREATE TABLE testimony_currency_events (
   claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the lineage; the recount scope)
   reconciliation_id uuid NOT NULL,             -- identifies ONE reconciliation run = one completed basis change per lineage (a new version's extraction completing, or a version-bump re-extraction completing). Minted when the run starts and stored in processing_state, so a RETRIED run reuses it — its re-emitted events hit the UNIQUE below as no-ops
-  became_current  boolean NOT NULL,            -- false = lost currency; true = regained (version_restored on return from archive, review restore, mode change)
-  reason          currency_reason NOT NULL,    -- reextracted | version_superseded | version_archived | version_restored | review_restored
+  became_current  boolean NOT NULL,            -- false = lost currency; true = regained (un-delete, mode change)
+  reason          currency_reason NOT NULL,    -- reextracted | version_superseded | version_deleted
   from_extractor_version text,                 -- the superseded generation (reason=reextracted)
-  from_version_id uuid,                        -- the superseded/archived document version (reason=version_*)
+  from_version_id uuid,                        -- the superseded/deleted document version (reason=version_*)
   occurred_at     timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (event_id, occurred_at),
   UNIQUE (claim_id, reconciliation_id, reason, became_current, occurred_at)  -- a retried reconciliation re-emits as a no-op, never a duplicate (F11)
 ) PARTITION BY RANGE (occurred_at);
 COMMENT ON TABLE testimony_currency_events IS
-  'Append-only D54 testimony-currency transitions. Truth for claims.is_current_testimony (cache); replayable (D7). Reasons: reextracted (a newer extraction generation covers the chunk), version_superseded (living-mode lineage moved past the claim''s version), version_archived (the lineage cascade: archive, or forget''s first step), version_restored (a reused claim of an archived version becomes current again when the document returns). Never validity, never supersession — D3 untouched.';
+  'Append-only D54 testimony-currency transitions. Truth for claims.is_current_testimony (cache); replayable (D7). Reasons: reextracted (a newer extraction generation covers the chunk), version_superseded (living-mode lineage moved past the claim''s version), version_deleted. Never validity, never supersession — D3 untouched.';
 CREATE INDEX ix_currency_claim ON testimony_currency_events (claim_id);
 CREATE INDEX ix_currency_doc   ON testimony_currency_events (deployment_id, doc_id, occurred_at);
 ```
@@ -2090,8 +2053,7 @@ CREATE TABLE relation_evidence (
   stance          evidence_stance NOT NULL,    -- supports | contradicts (concepts §3/§4)
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions; which normalizer linked them
   created_at      timestamptz NOT NULL DEFAULT now(),
-  testimony_episode smallint NOT NULL DEFAULT 1, -- D159: the claim's testimony episode that created this link; current support counts only links from the claim's current episode
-  PRIMARY KEY (relation_id, claim_id, testimony_episode) -- evidence-once per episode, DB-enforced (partition key relation_id is included); re-link via ON CONFLICT DO NOTHING is a no-op
+  PRIMARY KEY (relation_id, claim_id)          -- evidence-once, DB-enforced (partition key relation_id is included); re-link via ON CONFLICT DO NOTHING is a no-op
 ) PARTITION BY HASH (relation_id);
 COMMENT ON TABLE relation_evidence IS
   'Many-to-many evidence links (D2). Corpus redundancy collapses here into relations.evidence_count. Partitioned by HASH(relation_id) so relation hydration prunes to one partition and PRIMARY KEY (relation_id, claim_id) enforces evidence-once in-DB (D23; §17 item 1 resolved). claim_id reverse lookup scans all partitions (cold path). Logical FKs (D23).';
@@ -2120,7 +2082,7 @@ CREATE TABLE relation_adjudications (
   method          adjudication_method NOT NULL,  -- novelty_gate | exact | fuzzy | embedding | small_model | frontier_llm (cheap-first cascade, D4)
   confidence      real,
   triggering_claim_id uuid,                     -- LOGICAL FK → claims; the new claim that triggered adjudication
-  features        jsonb,                        -- scores/rationale the decision used (audit); scrubbed on forget (§13.2)
+  features        jsonb,                        -- scores/rationale the decision used (audit); scrubbed on hard-forget (§13)
   adjudicator_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions
   decided_by      decision_actor NOT NULL DEFAULT 'auto',
   decided_at      timestamptz NOT NULL DEFAULT now(),
@@ -2183,7 +2145,7 @@ The contrast with `relations` is deliberate and is the whole point of D43:
 -- ─────────────────────────────────────────────────────────────────────────
 -- D140 §8.2: one claimed fact window review per fact and input fingerprint, with the completed
 -- model answer once it exists; reused by retries and duplicate jobs, deleted when applied, and
--- deleted for the touched facts by forget (which also clears their period_basis).
+-- deleted for the touched facts by hard forget (which also clears their period_basis).
 CREATE TABLE fact_window_review_attempts (
   deployment_id uuid NOT NULL REFERENCES deployments ON DELETE CASCADE,
   fact_kind     text NOT NULL CHECK (fact_kind IN ('relation', 'observation')),
@@ -2258,8 +2220,7 @@ CREATE TABLE observation_evidence (
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the claim's lineage, write-once) — D54 recount without cross-partition claim joins (F7)
   created_at      timestamptz NOT NULL DEFAULT now(),
-  testimony_episode smallint NOT NULL DEFAULT 1, -- D159: see relation_evidence
-  PRIMARY KEY (observation_id, claim_id, testimony_episode) -- evidence-once per episode, DB-enforced; re-link via ON CONFLICT DO NOTHING is a no-op
+  PRIMARY KEY (observation_id, claim_id)       -- evidence-once, DB-enforced; re-link via ON CONFLICT DO NOTHING is a no-op
 ) PARTITION BY HASH (observation_id);
 -- 64 static hash children created by the migration, same as relation_evidence (§9):
 DO $$ BEGIN
@@ -2286,7 +2247,7 @@ CREATE TABLE observation_adjudications (
   method          adjudication_method NOT NULL,  -- novelty_gate | exact | fuzzy | embedding | small_model | frontier_llm (cheap-first cascade, D4)
   confidence      real,
   triggering_claim_id uuid,                     -- LOGICAL FK → claims; the new claim that triggered adjudication
-  features        jsonb,                        -- scores/rationale (audit); scrubbed on forget (§13.2)
+  features        jsonb,                        -- scores/rationale (audit); scrubbed on hard-forget (§13)
   adjudicator_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions
   decided_by      decision_actor NOT NULL DEFAULT 'auto',
   decided_at      timestamptz NOT NULL DEFAULT now(),
@@ -2337,7 +2298,7 @@ recorded prefixes. Write files first, remove other recorded folders and repair
 only affected ancestor indexes/root from DB membership. Keep old paths through
 index repair, so a crash after their last object deletion cannot lose the stale
 ancestors. Then reduce the set to `[desired]` (or null after removal). Full-store
-suffix discovery remains for reconcile, forget and post-restore `reapply`; reconcile repairs the
+suffix discovery remains for reconcile and forget/restore; reconcile repairs the
 set and all navigation, including after independent restores. The set is cleanup
 state, never navigation membership or desired authority. Only after success and
 a final input check does publication set the nullable marker. `p3_path` and
@@ -2348,14 +2309,14 @@ are SQL results over live served selections, not another projection table.
 Successful null topic has a non-null placement generation and null root placement
 path; failure has no complete placement generation.
 
-Forget (D159) uses the forget record's `doc_id` to erase only that document's
-suffix-bearing folders, clear its marker and regenerate/prune navigation indexes
-from scrubbed authority. Clear `corpus_paths` after cleanup/navigation; a null set
-never skips full suffix discovery on forget or `remember ops forget-reapply`. It leaves
-surviving original/media objects in place. Retry and `reapply` need no historic
-path list; complete local markers never skip independently restored stores. The
-forget job clears its work rows' payloads and errors and cannot reintroduce
-erased authority.
+D74 uses manifest `doc_id` to erase only that document's suffix-bearing folders,
+clear its marker and regenerate/prune navigation indexes from scrubbed authority.
+Clear `corpus_paths` after cleanup/navigation; a null set never skips full suffix
+discovery on forget or restore replay. It leaves surviving original/media objects
+in place. Retry and restore replay
+need no historic path list; complete local markers never skip independently
+restored stores. Work-row scrub/retention follows existing D74 rules and cannot
+reintroduce scrubbed authority.
 
 The graph schema consists of private current/history node and edge views
 (`rememberstack_graph_internal`), the normalized `memory_v1` hydration views,
@@ -2803,8 +2764,8 @@ documented revision to the monthly cadence or the measured HASH starting count o
 | `claim_extraction_decisions` | monthly RANGE (`decided_at`) | (`decision_id`, `decided_at`) | `pg_partman` | logical |
 | `testimony_currency_events` | monthly RANGE (`occurred_at`) | (`event_id`, `occurred_at`) | `pg_partman` | logical |
 | `document_entity_bindings` | HASH (`doc_id`) | (`deployment_id`, `doc_id`, `canonical_lemma`, `entity_id`) | 64 static migration-created children | real document/entity; logical source decision |
-| `relation_evidence` | HASH (`relation_id`) | (`relation_id`, `claim_id`, `testimony_episode`) | 64 static migration-created children | logical |
-| `observation_evidence` | HASH (`observation_id`) | (`observation_id`, `claim_id`, `testimony_episode`) | 64 static migration-created children | logical |
+| `relation_evidence` | HASH (`relation_id`) | (`relation_id`, `claim_id`) | 64 static migration-created children | logical |
+| `observation_evidence` | HASH (`observation_id`) | (`observation_id`, `claim_id`) | 64 static migration-created children | logical |
 
 `pg_partman` creates and maintains only the six monthly RANGE families. It does not manage the
 three HASH families; migrations create all remainders `0..63` before inserts can reach those parents.
@@ -2818,7 +2779,7 @@ document/canonical-lemma/entity membership: no more than mentions and expected
 to be roughly aliases-order (starting planning bound ≤10⁷, to be checked from
 operations). It is nevertheless hash-partitioned now because millions of
 documents make a single text-bearing primary-key tree avoidable. Every hot
-lookup, archive, and forget erasure supplies exact `doc_id`, pruning to one of
+lookup, normal delete, and D74 purge supplies exact `doc_id`, pruning to one of
 64 children; the primary-key prefix then bounds work to one document/name.
 
 **Partition pruning on ID lookups (D153).** Monthly-partitioned UUID probes
@@ -2834,8 +2795,8 @@ deadlines remain explicit when partition/provenance work cannot complete.
 **`relation_evidence` is the exception, and is the reason it is hash-partitioned:** evidence for a
 popular fact accrues over the fact's whole life, so an id-derived time bound would *not* prune a
 `relation_id → evidence` lookup. Partitioning by `HASH(relation_id)` instead prunes relation
-hydration to one partition *and* makes the real `PRIMARY KEY (relation_id, claim_id,
-testimony_episode)` evidence-once-per-episode guarantee (D159) enforceable in-DB (a partitioned PK must include the partition key, which `relation_id` now
+hydration to one partition *and* makes the real `PRIMARY KEY (relation_id, claim_id)` evidence-once
+guarantee enforceable in-DB (a partitioned PK must include the partition key, which `relation_id` now
 is). This is the D23 contract. The `claim_id` reverse lookup still fans across hash partitions, but
 it is the cold path. `observation_evidence` applies the same policy to `observation_id`.
 
@@ -2849,64 +2810,55 @@ pair keys are also the intended evidence-once identity.
 
 ## 13. Deletion / forget cascade (D37, requirements_v3)
 
-Removing an input propagates through every derived layer, and **erasure** of the original bytes
-and everything derived only from them must be supported (GDPR forget, D37). D159 gives callers two
-verbs ([archive and forget design](archive_and_forget_design.md)): **archive** (§13.1) ends the
-document's contribution and keeps it as readable history; **forget** (§13.2) runs the same
-cascade and then erases it. The large tables are partitioned and use logical references
-(columns PostgreSQL does not enforce), so there is no single giant `ON DELETE CASCADE`; the real
-composite FKs on the smaller tables are the integrity backstop, and inside the document subtree
-their cascades remove exclusively owned children.
+Removing an input propagates through every derived layer, and **hard delete** of the original bytes
+must be supported (GDPR forget, D37). Deletion is executed by a **deletion worker in batches**
+(the large tables are partitioned and logical-FK, so there is no single giant `ON DELETE CASCADE`
+transaction); the real composite FKs on the smaller tables are the integrity backstop. Two modes:
 
-### 13.1 Archive (end a document's contribution; keep it as history)
+### 13.1 Normal delete (remove a document; retain audit history)
 
-The lineage cascade of [evidence lifecycle §8](evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
-runs in one transaction under the lineage row lock:
 
-1. **K refresh first.** Before touching evidence, enqueue `knowledge_refresh_queue` rows for the
-   artifacts that cite the document (found via `knowledge_artifact_evidence`), so the K driver
-   recompiles affected **compiled** pages without the archived evidence and raises
-   `authored_review` flags on **authored** pages that cited it (a review flag, not a redaction
-   flag; D45/D46). Doing this first ensures the links are still present to discover.
-2. **Objects stay.** The document's raw and artifact objects are kept: an archived document is
-   readable as history and `unarchive` restores its newest surviving version.
-3. **`documents` + `document_versions`** (D55 grains): archiving the **lineage** sets
-   `documents.archived_at`; nothing is tombstoned. Version rows, sections, artifact URIs and
-   crossrefs are **kept**, so the document, its versions and its stored original stay readable.
-   Every existing version also gets `document_versions.archived_at` (the D159 cutoff). A version
-   carries current testimony only while its lineage is live and the version itself is neither
-   archived nor deleted, so an archived lineage's versions carry none, and after the lineage
-   comes back only its restored or new version does. Retiring **one version** (an internal operation, not on the
-   public surface) sets only that version's `deleted_at` (its claims' currency ends,
-   `version_archived` — the lineage continues). The archive also deletes every
-   `document_entity_bindings` row for that `doc_id` in the same transaction. The table is
-   document-scoped rather than version-scoped, so clearing the whole prefix is the safe rule: a
-   surviving or returning version earns a new T4 anchor and cannot reuse a judgment grounded in
-   archived evidence.
-4. **`chunks`** (logical FK) and their P1 rows are **retained** (they are the occurrence record,
-   D56/F4): default search excludes an archived document, and `include_archived=true` returns its
-   passages marked archived. Archived versions stay D56 reuse candidates: when the document
-   returns, unchanged chunks reuse their embeddings and extraction results, and a reused claim
-   becomes current again through a `version_restored` currency event.
-5. **`claims` are NOT deleted on archive** (Codex review F12 — this is the fix that keeps
-   "archive retains audit history" true): archive **ends the claims' testimony
-   currency** (`version_archived` events; `is_current_testimony=false`) so they stop counting,
+1. **K tombstone first.** Before touching evidence, enqueue a `knowledge_refresh_queue` row with
+   `trigger='tombstone'` carrying the doc/claim ids (found via `knowledge_artifact_evidence`), so
+   the K driver recompiles affected **compiled** pages without the removed evidence and raises
+   `authored_review` flags on **authored** pages that cited it (D45/D46; the tombstone signal,
+   D37). Doing this first ensures the links are still present to discover.
+2. **GCS**: purge the document's raw + artifacts objects.
+3. **`documents` + `document_versions`** (D55 grains): deleting the **lineage** soft-tombstones
+   it (`deleted_at`) and every version (`status='deleted'`, artifact URIs nulled, `deleted_at`);
+   deleting **one version** tombstones only that version row (its claims' currency ends,
+   `version_deleted` — the lineage continues) and purges its content object if no live version
+   references it. Rows are **kept** (the `deleted` enum value and `ix_documents_live` stay
+   meaningful, the logical-FK auditor distinguishes "forgotten" from "never existed", and
+   crossref targets resolve sanely). The worker then clears the affected `document_sections`
+   (cascade) and sets dependent `document_crossrefs.to_doc_id = NULL, resolved = false` while
+   **retaining `raw_citation`** so the link can be re-resolved if the target is re-ingested.
+   Both a single-version delete and a lineage delete also delete every
+   `document_entity_bindings` row for that `doc_id` under the deletion admission
+   barrier. The table is document-scoped rather than version-scoped, so clearing
+   the whole prefix is the safe rule: a surviving or reingested version earns a
+   new T4 anchor and cannot reuse a judgment grounded in deleted evidence.
+4. **`chunks`** (logical FK): rows are **retained** (they are the occurrence record, D56/F4) but
+   their P1 rows are deleted by the lifecycle transaction/repair path and are
+   immediately ineligible through the authority join. The auditor ignores rows
+   for documents with `deleted_at` set.
+5. **`claims` are NOT deleted on a normal delete** (Codex review F12 — this is the fix that keeps
+   "normal delete retains audit history" true): normal deletion **ends the claims' testimony
+   currency** (`version_deleted` events; `is_current_testimony=false`) so they stop counting,
    stop surfacing in default search, and stop supporting current belief — while the assertion
-   history (`claims_as_of`, audit opt-ins, adjudication transcripts) survives. Only **forget**
-   (§13.2) deletes claim texts/spans and the dependent `mentions`,
+   history (`claims_as_of`, audit opt-ins, adjudication transcripts) survives. Only **hard
+   forget** (§13.2) scrubs claim texts/spans and the dependent `mentions`,
    `claim_extraction_decisions`, and `grounding_audits` content — S55's forgotten≡never-existed
-   applies to forget alone. `relation_evidence`/`observation_evidence` rows are likewise
+   applies to hard forget alone. `relation_evidence`/`observation_evidence` rows are likewise
    retained as historical links (their claims are non-current, so counts exclude them).
 6. **`relations`**: **not** deleted with one document's claims — a relation is a *shared* fact. The
-   cascade recomputes `evidence_count`/`contradict_count` (the D54 rule: `COUNT(DISTINCT doc_id)` over
-   evidence rows whose claims are current testimony and whose `testimony_episode` is the claim's
-   current episode, per stance — the write-once `doc_id` on evidence
+   worker recomputes `evidence_count`/`contradict_count` (the D54 rule: `COUNT(DISTINCT doc_id)` over
+   evidence rows whose claims are current testimony, per stance — the write-once `doc_id` on evidence
    rows makes this a single-table scan per fact; so duplicates
-   cannot inflate it). A relation whose **current** support drops to zero via archive is
-   **closed** per the D54 source-acted rule, as a belief change: `invalidated_at` is set and
-   world-time `valid_until` is left as the evidence said (D118); recorded
-   `retracted_source_removal` adjudication — the `support_withdrawn`
-   flag is exclusively the re-extraction path, never archive). Where closure sets
+   cannot inflate it). A relation whose **current** support drops to zero via deletion is
+   **closed** per the D54 source-acted rule (states: `valid_until` cap; measurements:
+   `invalidated_at`; recorded `retracted_source_removal` adjudication — the `support_withdrawn`
+   flag is exclusively the re-extraction path, never deletion). Where closure sets
    `invalidated_at`, the generated `status` becomes `invalidated` and the projection stops
    emitting it — it is **not physically deleted**, because `relation_adjudications` and
    `knowledge_artifact_evidence` reference it and the audit trail is retained. A
@@ -2917,57 +2869,45 @@ runs in one transaction under the lineage row lock:
    `resolution_exclusions` and `relation_adjudications` reference them and D21 mandates retaining
    merge history for un-merge. Retired entities disappear from later live-graph statements.
 8. **Derived reads**: PostgreSQL P1 indexes and live-graph views reflect the committed authority
-   change without a projection generation; the current-testimony views exclude the archived
-   document. The cascade queues ordinary D155 removal of its P3 copies and index membership.
+   change without a projection generation. D155 enqueues/finishes affected P3 removal or republish; normal delete
+   reports success only after its corpus copies/index membership are removed.
 
-### 13.2 Forget (GDPR — erase the bytes *and* the derived text)
+### 13.2 Hard forget (GDPR — erase the bytes *and* the derived text)
 
-**[Archive and forget §3](archive_and_forget_design.md#3-forget) is authoritative for the
-request, the per-document fence, the background erasure job, the `forgets` record (DDL in §2), the
-re-ingest guard and `remember ops forget-reapply` after a restore.** This
-section owns only the PostgreSQL part. The request runs §13.1's cascade, or finishes a pending
-archive cascade idempotently through D135's finish-or-refuse rerun, sets `deleted_at` on the lineage and its versions, marks the document's
-pending and failed work items `skipped` and inserts the `forgets` row in one transaction.
-The job then, in one transaction, records the content-free inventory, detaches what must
-survive (the current-version and current-representation pointers, incoming D140
-cross-references from other documents, metering receipts and cost rows), and **deletes** every
-source-bearing row rather than scrubbing it in place: exclusively owned children by the
-existing FK cascades, logically referenced rows explicitly, children before parents. The implementation owns one explicit column/table inventory, and the
-schema-coverage test fails when a new column that references document data is not classified
-([archive and forget §5](archive_and_forget_design.md#5-acceptance-tests)). At minimum it covers:
+**D74 / `hard_forget_design.md` is authoritative for orchestration, portable manifest shape,
+active-store adapter hooks, and restore non-resurrection.** This section owns only the PostgreSQL
+part. Normal delete already purges the GCS bytes and the document row's text-bearing URIs. A full
+forget additionally **scrubs or deletes every source-bearing payload** that normal delete retains
+for audit. The implementation owns one explicit column/table inventory, and the deterministic S55
+test fails when a new source-bearing field is not classified. At minimum it covers:
 
-- lineage/version/representation rows with their source refs, titles, URIs, errors and hashes
-  (the `forgets` row keeps only the content-free source-identity and content hashes), sections,
-  cross-reference rows the document made (other documents' references to it keep
-  `raw_citation` with `to_doc_id = NULL, resolved = false`), representation metadata, and assets;
-- chunks/occurrences and their P1 rows, claims and their text/spans/added context, mentions and
-  aliases exclusive to the lineage, Selection and extraction payloads, grounding/resolution
-  decisions, review payloads, locators, audit rationales/features, every
-  `document_entity_bindings` row for the lineage, the lineage's `document_metadata`,
-  `document_people` and `document_names` rows (D134: they hold names, paths and people), its
+- lineage/version/representation source refs, titles, URIs, errors, hashes that are not retained as
+  content-free guards, sections, cross-reference citation text, representation metadata, and assets;
+- chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
+  the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
+  audit rationales/features, every `document_entity_bindings` row for the lineage, the
+  lineage's `document_metadata`, `document_people` and `document_names`
+  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), its
   `document_tags` assignment rows (D156; the deployment's tag registry is not source content
-  and is unaffected), and source-exclusive relation/observation evidence;
+  and is unaffected), and
+  source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
-  independent support retain only that independently supported state: their stored wording,
-  canonical names, aliases and validity are recomputed from the surviving provenance (or
-  cleared until recomputed), their profile cache is invalidated and derived embeddings whose
-  input text changed are cleared;
-- K refresh/compile/plan payloads and transcript URIs tied to the affected evidence (the objects
-  themselves are deleted by the job's object step), and, on the first forget, every legacy
-  `last_error` written before diagnostics became content-free, deployment-wide (statuses,
-  receipts and costs stay; payloads carry IDs only); and
-- eval/golden/canary payloads derived from the forgotten lineage, and deployment-wide planner
-  audit transcripts and legacy eval fixtures that carry no reliable document provenance.
+  independent live support retain only that independently supported state;
+- K refresh/compile/plan payloads and transcript URIs tied to the affected evidence (the object
+  payloads themselves are purged through D74); and
+- eval/golden/canary payloads derived from the forgotten lineage.
 
 Because audit rows reference `relations`/`entities` via real composite FKs, a forget that physically
 deletes a relation/entity must first delete or anonymize the referencing audit rows (or use the
-retire-don't-delete handle from §13.1 and scrub every free-text field in place). The job performs
-this explicit pass after the currency/counting cascade. The `forgets` row keeps only content-free
-IDs, hashes and object keys; the ordinary `processing_state` row records execution and failure.
-Nothing outside the forgotten document waits for it: ordinary work and reads continue throughout.
+retire-don't-delete handle from §13.1 and scrub every free-text field in place). The worker performs
+this explicit pass after the normal currency/counting cascade. `forget_manifests` retains only the
+portable manifest and irreversible ingest guards; the ordinary `processing_state` row records
+execution and failure. Any `preparing` or accepted-incomplete row closes public/ordinary-work
+admission until full cross-store verification succeeds; the authorized forget coordinator remains
+able to call its internal purge services.
 
 The logical-FK **auditor** (run periodically) catches orphans and worker-owned logical-uniqueness
-violations, and ignores rows belonging to documents with `deleted_at` set (a forget in flight).
+violations, and ignores rows belonging to documents with `deleted_at` set (a delete in flight).
 The evidence joins' pair primary keys enforce evidence-once directly, so the auditor does not
 duplicate that check.
 

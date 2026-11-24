@@ -70,8 +70,7 @@ published to PyPI (D108).
   primitives, the four closed assured operations, D49 envelopes, open SQL with bounded live-graph helpers, and governed
   saved queries. The four platform-owned assured operations are the only MCP intent tools;
   MCP renders the full shared catalogue, whose other entries are infrastructure (`ingest`,
-  `pipeline_readiness`, `archive_document`, `unarchive_document`, `forget_document`,
-  `source_open`, the seven open-query tools);
+  `pipeline_readiness`, `delete_document`, `source_open`, the seven open-query tools);
   customer and `examples.*` saved queries do not become top-level tools.
   Every memory tool's definition lives once in the public `remember.mcp_tools` catalogue,
   which every MCP host imports (D136,
@@ -100,7 +99,7 @@ is an engine operational capability, not a new queue or service. Both
 maintained substrate families must meet the same qualified capture contract;
 an unsupported configured store refuses evidence rather than falling back to
 live listing. Existing unmetered memory semantics, processing admission and
-forget (D159) remain. Shipping capture requires its native/profile
+hard-forget authority remain. Shipping capture requires its native/profile
 tests and matching operator contract; design acceptance does not advertise it.
 
 **The unifying rule (this section's core, refining D61's queue-port row):**
@@ -231,7 +230,7 @@ rememberstack/
   core/        # PURE logic, zero I/O: blockizer, packer, snap algorithm, grounding checks,
                # counting rules, currency rules, envelope assembly — unit-testable with no infra
   spine/       # the Postgres access layer — the ONLY place SQL lives (repositories per aggregate)
-  ports/       # seven D61 substrate Protocols + forget's narrow purge capabilities (D159)
+  ports/       # seven D61 substrate Protocols + D74's narrow intent/purge capabilities
   adapters/
     selfhost/  # S3-compatible object store, the pg-queue shell (§3), local-dir mount publisher,
                # plain git remote, BYO model keys, OTLP telemetry, API-key auth
@@ -292,8 +291,9 @@ ports and published extension points, keeping it portable off GCP too.
   library's (D60).
   A push-delivery host also gets: the rows a task or request creates announced through the
   context's `TaskQueuePort` after it finishes (collected in `enqueue_on`; the janitor stays the
-  backstop); conversion routes it can replace; a credential per bucket; and extra engine
-  options for its pools (D147 item 4).
+  backstop); conversion routes it can replace; hard-forget manifests in a dedicated bucket
+  (`forget_manifest_bucket_name`) instead of a local root; a credential per bucket; and extra
+  engine options for its pools (D147 item 4).
 
 ## 6. Releases, upgrades, portability
 
@@ -316,8 +316,8 @@ ports and published extension points, keeping it portable off GCP too.
   through the Phase-7 lanes.
 - **Portability is a state-and-ordering contract, not a transport subsystem (D75)**: a
   deployment's portable state is exactly its **sources of truth** — the Postgres database,
-  raw + artifact objects, and the K git repository. Forget records live in the database
-  (D159); there is no separate store to move. Operators move those stores with their native tools (`pg_dump`/`pg_restore`,
+  raw + artifact objects, the K git repository, and the separately durable D74 hard-forget
+  manifest root. Operators move those stores with their native tools (`pg_dump`/`pg_restore`,
   provider object copy, and ordinary Git); the library does not wrap them in `remember export` /
   `remember import`, define a universal archive, or schedule backups. P1 and P3 are derived and are
   rebuilt after restore rather than transported; the live graph is PostgreSQL metadata/views and
@@ -328,27 +328,21 @@ The portable restore order is deliberately small and fail-closed:
 
 1. Quiesce writes and capture a consistent operator-managed snapshot of Postgres, objects, and
    the K repository while preserving the deployment id.
-2. Restore Postgres, raw/artifact objects, and the K repository with their native tools, then run
+2. Transfer and verify the deployment's hard-forget manifest root **first**, through the
+   separate durability channel required by D74.
+3. Restore Postgres, raw/artifact objects, and the K repository with their native tools, then run
    normal schema migrations.
-3. Run `remember ops forget-reapply [--from forgets.json]` before the restored deployment takes
-   traffic. With `--from`, the latest exported file is the authoritative record set (it
-   replaces the restored database's records rather than merging with them, and supplies forgets
-   made after the backup); without it, the database's records are used. For each record it
-   first stores, and then erases, the union of the exported inventory, any inventory an earlier
-   attempt already stored on that record, and what the restored stores still hold, so a retry
-   after a crash never loses a locator. It matches a
-   restored document by its exact `doc_id`, never by hash, so another lineage owning identical
-   bytes is untouched ([archive and forget §3.10](archive_and_forget_design.md#310-after-a-restore)).
-4. Rebuild P1 and P3 through their normal production builders, ensure the live graph catalog
+4. Run the ordinary hard-forget readiness pass before any serving surface opens. It rematerializes
+   missing local intent and re-honors every manifest against every restored store.
+5. Rebuild P1 and P3 through their normal production builders, ensure the live graph catalog
    (node and edge views, roles) and bounded traversal helpers, run the S55/control canaries, and
    only then admit traffic.
 
-The engine does not run `reapply` at start and never refuses to start because of it; a restore is
-a deliberate operator action, so the operator runs it. Credentials, provider configuration, backup
-retention, transfer progress, retries, and cross-store snapshot policy remain operator or
-`ultimate-memory-cloud` responsibilities, and so does keeping `remember ops forget-export`
-exports outside the database backup, so that forgets newer than a restored backup can be
-re-applied with `--from`; without that export, such a forget does not survive the restore.
+Credentials, provider configuration, backup retention, transfer progress, retries, manifest-root
+verification, and cross-store snapshot policy remain operator or `ultimate-memory-cloud`
+responsibilities. Losing or omitting the manifest root makes a restore unsafe. An unavailable or
+unprovisioned root fails readiness; a reachable empty replacement cannot disclose what was lost and
+must be rejected by the operator's transfer verification.
 
 ## 7. Decision interactions
 
@@ -371,10 +365,9 @@ re-applied with `--from`; without that export, such a forget does not survive th
    granularity — measure under Phase 7's fixed portable scale profiles.
 3. **Compose quickstart UX**: measure the cold-start-to-first-query time; it is a release
    gate (target: minutes).
-4. **Portable restore round-trip drill**: restore the pre-forget PostgreSQL fixture and
-   independently restore external stores, run `remember ops forget-reapply --from` the exported
-   forget list, then prove forgotten-data non-resurrection and an independent control green
-   ([archive and forget §5](archive_and_forget_design.md#5-acceptance-tests), test 11). Production-builder
+4. **Portable restore round-trip drill — completed by WP-7.7**: retain the manifest root, restore
+   the pre-forget PostgreSQL fixture and independently restore external stores, run readiness, then
+   prove forgotten-data non-resurrection and an independent control green. Production-builder
    delegation remains the separately green WP-7.4/WP-7.5 contract. No library transport feature is
    involved.
 5. **MCP server distribution** — resolved by D108 and D136: `uvx remember mcp` needs no

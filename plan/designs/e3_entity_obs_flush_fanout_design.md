@@ -127,12 +127,8 @@ When claim barrier is ready for version V + normalizer generation N:
 1. If a **non-terminal legacy** version-level `adjudicate_observations` row exists
    for V at a **pre-entity-fanout** component version → **do not fan out**; leave
    legacy to finish (or ops dead-letters legacy first). Mutual exclusion §5.8.
-2. If membership already materialized for (V, N, processing run) → do not re-insert
-   units; only ensure barrier evaluation can still fire (idempotent complete path). Units
-   and readiness are keyed by the version's processing run, because one edited version can
-   hold fresh claims (episode 1) and reused claims restored into a new episode (D159) for
-   the same entity. Commit validation checks each application against its own claim's
-   current episode, so a pre-archive attempt cannot apply after un-archive.
+2. If membership already materialized for (V, N) → do not re-insert units;
+   only ensure barrier evaluation can still fire (idempotent complete path).
 3. Else `SELECT DISTINCT subject_entity_id, doc_id …` plus per-entity
    `min(asserted_at)` from staging joined to claims for (V, N). Coordinates
    `representation_id`, `chunker_version`, `extractor_version` come from the
@@ -280,7 +276,7 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 | --- | --- |
 | Readiness | Join `obs_flush_entity_units` → `processing_state` by `unit_id` for the version; empty completion signal reports succeeded for obs stage |
 | Lifecycle / connector-cycle | Wait on unit rows for the version (include DLQ); not only document_version work |
-| Forget | Scrub **units and processing rows for forgotten versions** via membership `version_id` / `doc_id`. A unit whose membership names a forgotten version counts as work for that document under forget's per-document fence ([archive and forget §3.3](archive_and_forget_design.md#33-the-per-document-fence)): forget waits for it while it runs, and its writing transaction share-locks the member version and writes nothing for a version that is gone. Do **not** null payloads or kill units solely because `target_id` equals a canonical entity id that appears in a forgotten document’s entity set (that strand unrelated versions). Staging delete-by-doc remains. |
+| Forget | Scrub **units and processing rows for forgotten versions** via membership `version_id` / `doc_id`. Do **not** null payloads or kill units solely because `target_id` equals a canonical entity id that appears in a forgotten document’s entity set (that strand unrelated versions). Staging delete-by-doc remains. |
 
 ### 5.9 Workers and indexes
 

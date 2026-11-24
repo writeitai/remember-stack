@@ -238,9 +238,9 @@ one after measurement requires an operation-version and manifest roll.
 | Operation | Inputs |
 |---|---|
 | `resolve_entity` | Existing v1 schema, unchanged |
-| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `include_archived`: optional boolean, default false (D159: passages and claims of archived documents are included and marked `archived`; never fact support); `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: optional D140 testimony time scope ([effective time design](effective_time_and_section_references_design.md)) |
+| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: optional D140 testimony time scope ([effective time design](effective_time_and_section_references_design.md)) |
 | `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–19 unique UUIDs; `hops`: integer 1–2, default 1, live-graph expansion from the anchors; `predicate`: optional string, length 1–200, restricting expansion edges; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
-| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–19 unique UUIDs; `hops` and `predicate` as for `facts_context`; `include_archived`: optional boolean, default false, affecting only the passage and claim part as in `claims_and_sources_context` (D159); `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: the same closed fact-time union, default `{"mode":"current"}` |
+| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–19 unique UUIDs; `hops` and `predicate` as for `facts_context`; `documents`: optional D134/D156 document filter ([document tags design §4.1](document_tags_design.md#41-the-tags-selector)); `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: the same closed fact-time union, default `{"mode":"current"}` |
 
 All objects forbid unknown fields. A present `entity_ids` array cannot be empty
 or contain duplicates. A present `documents` filter is validated by D134/D156's
@@ -329,8 +329,7 @@ instant; the non-parameterized view would choose a new statement timestamp.
 They
 do not call the current-only public `semantic_facts` SRF and do not reuse
 `facts_as_of` accidentally. The operation returns supporting and contradicting
-current testimony (for `history`, the evidence of each link's recorded testimony episode,
-D159), explicit `fact_evidence[]`, exact `evidence_totals[]`,
+current testimony, explicit `fact_evidence[]`, exact `evidence_totals[]`,
 contradiction co-members and support state in every mode. The evidence-association
 budget is max(60, 2*k), allocated in rounds across facts and both stances, so
 every selected fact can retain one available supporting and contradicting claim
@@ -383,8 +382,8 @@ keeps its bounded batches and one shared operation deadline at every depth.
 Ending a fact's world-valid interval does not delete its label from P1: an
 ended-but-still-believed fact remains searchable for `at`, `overlap`, and
 `history`. Invalidation updates the proposal status so ordinary nomination can
-avoid it, while PostgreSQL still makes the authoritative decision. Forget
-(D159) purges the row rather than relying on that status filter.
+avoid it, while PostgreSQL still makes the authoritative decision. D74 hard
+forget purges the row rather than relying on that status filter.
 
 Coverage count is also a pre-depth ranking key, not merely a final reranker:
 the scoped nomination orders higher coverage before relevance and applies
@@ -473,12 +472,11 @@ labeled orientation text, never evidence.
 
 | View | Row grain and key | Required semantics |
 |---|---|---|
-| `documents_live` | one live document lineage; `(deployment_id, doc_id)` | Current version/representation coordinates, source identity, D55 mode, origin and source clocks; archived and deleted lineages absent |
-| `documents_inventory` | one live or archived lineage (D159); `(deployment_id, doc_id)` | The `documents_live` columns plus `archived_at` and `archived_by` (NULL when live); deleted (being forgotten) lineages absent. Callers filter `archived_at IS NULL` for the live inventory |
+| `documents_live` | one live document lineage; `(deployment_id, doc_id)` | Current version/representation coordinates, source identity, D55 mode, origin and source clocks; deleted lineages absent |
 | `document_versions_visible` | one visible version of a live lineage; `(deployment_id, version_id)` | Stable `doc_id`, version number/hash, representation, status, ingest/supersession clocks, `is_current_version`; tombstoned versions absent |
 | `sections_live` | one section in a current ready representation; `(deployment_id, section_id)` | Parent/path, block/character/page ranges, title/role/ordinal, orientation summary, D140 `section_key`, `own_content_hash`, `subtree_content_hash` (NULL until backfilled) |
 | `chunks_live` | one chunk coordinate in a current ready representation; `(deployment_id, chunk_id)` | Metadata only: document/version/representation/section, ordinals/ranges, content and embedding-text hashes, D80 location facts/header/policy/embedder generations, D140 `text_origin_at`; no authoritative body column |
-| `chunks_all_versions_live` | one chunk coordinate in the current ready representation of any testifying (neither deleted nor D159-archived) ready version of a live lineage (D140); `(deployment_id, chunk_id)` | Same columns as `chunks_live`; the relation time-scoped reads select from through `versions_in_scope` |
+| `chunks_all_versions_live` | one chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage (D140); `(deployment_id, chunk_id)` | Same columns as `chunks_live`; the relation time-scoped reads select from through `versions_in_scope` |
 | `document_effective_periods_live` | one currently known declared effective period (D140); `(deployment_id, period_id)` | The current-belief projection's periodised rows: lineage, version, `effective_from`, derived `effective_until` (declared end, else the next declared start in the lineage), `until_declared`; live lineages and non-deleted versions of any processing status |
 | `claims_live` | one current-testimony claim; `(deployment_id, claim_id)` | Claim/source text and anchors, attribution, asserted clock, immutable D41 claim-validity fields, audit state, source handle |
 | `claims_visible_history` | one historically visible claim with surviving lineage; `(deployment_id, claim_id)` | Same claim fields plus `is_current_testimony`; name and comment forbid current-fact interpretation |
@@ -517,8 +515,7 @@ on one D41/D48/D54 authority while avoiding recursive expansion of the same
 visibility tree.
 
 **Complete public facts-layer surface.** For the `memory_v1` query space it is
-exactly `facts_current`, `facts_visible_history`, `facts_as_of`, `fact_evidence_as_of`
-(D159),
+exactly `facts_current`, `facts_visible_history`, `facts_as_of`,
 `fact_claim_evidence_live`, `evidence_lineage`,
 `contradiction_members_current`, `testimony_currency_events_visible`,
 `graph_edges_current`, `graph_edges_visible_history`, and `semantic_facts`.
@@ -687,8 +684,6 @@ optimization.
 
 | Function | Signature and row contract |
 |---|---|
-| `fact_evidence_as_of` | `(fact_kind text, fact_id uuid, believed_at timestamptz, max_rows int DEFAULT 50)` → `claim_id`, stance, testimony episode, source handle and the occurrence coordinates (document, version, chunk, character range) of every evidence link whose episode was current at `believed_at`, bounded by `max_rows` (§4.3) with a truncation status row (D159). Both the link and its
-occurrence must have existed at `believed_at`. This is the one public lookup for a past belief's evidence, such as a fact an archive closed |
 | `facts_as_of` | `(valid_at timestamptz, believed_at timestamptz, max_rows int)` → fact fields with `evidence_count_current`, `contradict_count_current`, `support_state_current`, applied instants, and `identity_regime = 'current'`; default/hard bounds are in §4.3 |
 | `semantic_claims` | `(query text, k int, filters jsonb DEFAULT '{}')` → confirmed `claim_id`, rank, score, channel and current embedding/freshness columns; default/hard `k` is in §4.3 |
 | `lexical_claims` | `(query text, k int, filters jsonb DEFAULT '{}')` → the same confirmed claim result columns as `semantic_claims`, with lexical-channel rank/score semantics below |
@@ -699,8 +694,8 @@ occurrence must have existed at `believed_at`. This is the one public lookup for
 | `semantic_entities` | `(query text, k int, filters jsonb DEFAULT '{}')` → description/profile-vector search over the existing canonical entity/profile row, returning authority-confirmed survivor `entity_id`, entity type/name/profile orientation fields, rank, score, channel and current embedding/freshness columns; confirmation is against `entities_current` in the request's snapshot (D142). The scored entity-nomination method does not exist on the shared P1 port today and is ADDED by this change (the port exposes only id-addressed `entity_vectors`), parallel to the lexical score extension |
 | `graph_neighborhood` | `(deployment_id uuid, start_entity_id uuid, max_depth int DEFAULT 2, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_results int DEFAULT 100, expansion_budget int DEFAULT 2000, frontier_budget int DEFAULT 1000, time_budget_ms int DEFAULT 1000)` → deterministic complete path rows plus exactly one terminal status row. Every row has `row_kind`; the status carries `truncated`, `truncation_reason`, `examined_edges`, `returned_paths`, and every effective depth/work/result/time budget |
 | `graph_path` | `(deployment_id uuid, from_entity_id uuid, to_entity_id uuid, max_depth int DEFAULT 4, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_paths int DEFAULT 3, expansion_budget int DEFAULT 2000, frontier_budget int DEFAULT 1000, time_budget_ms int DEFAULT 1000)` → zero or more deterministic complete **equal-length shortest-tier** path rows plus the same terminal status; it never returns longer paths after a target-bearing level |
-| `versions_in_scope` | `(deployment_id uuid, mode text, at timestamptz DEFAULT NULL, range_start timestamptz DEFAULT NULL, range_end timestamptz DEFAULT NULL, evaluated_at timestamptz DEFAULT now(), believed_at timestamptz DEFAULT NULL, doc_ids uuid[] DEFAULT NULL)` → `(doc_id, version_id, representation_id, effective_from, effective_until)`: the testifying (neither deleted nor D159-archived, as known at the belief instant) ready versions a D140 time scope selects — versions in force under `current`/`at`/`overlap`/`history` for periodised lineages, the served version for every other live lineage. Without `believed_at` it reads the current-belief projection (optionally restricted to `doc_ids`); with `believed_at`, `doc_ids` is required and the declaration and mode ledgers are evaluated as known then for those lineages only |
-| `effective_intervals` | `(deployment_id uuid, doc_ids uuid[], believed_at timestamptz DEFAULT now())` → `(doc_id, version_id, period_id, effective_from, effective_until, until_declared)`: D140 derived in-force intervals, as known at `believed_at`, of every testifying (neither deleted nor D159-archived as of `believed_at`) version of the given lineages, whatever its processing status (bounded by the caller's lineage list) |
+| `versions_in_scope` | `(deployment_id uuid, mode text, at timestamptz DEFAULT NULL, range_start timestamptz DEFAULT NULL, range_end timestamptz DEFAULT NULL, evaluated_at timestamptz DEFAULT now(), believed_at timestamptz DEFAULT NULL, doc_ids uuid[] DEFAULT NULL)` → `(doc_id, version_id, representation_id, effective_from, effective_until)`: the non-deleted ready versions a D140 time scope selects — versions in force under `current`/`at`/`overlap`/`history` for periodised lineages, the served version for every other live lineage. Without `believed_at` it reads the current-belief projection (optionally restricted to `doc_ids`); with `believed_at`, `doc_ids` is required and the declaration and mode ledgers are evaluated as known then for those lineages only |
+| `effective_intervals` | `(deployment_id uuid, doc_ids uuid[], believed_at timestamptz DEFAULT now())` → `(doc_id, version_id, period_id, effective_from, effective_until, until_declared)`: D140 derived in-force intervals, as known at `believed_at`, of every non-deleted version of the given lineages, whatever its processing status (bounded by the caller's lineage list) |
 | `fact_in_scope_support` | `(deployment_id uuid, fact_kind text, fact_id uuid, mode text, at timestamptz DEFAULT NULL, range_start timestamptz DEFAULT NULL, range_end timestamptz DEFAULT NULL, evaluated_at timestamptz DEFAULT now(), believed_at timestamptz DEFAULT NULL)` → boolean: the D140 evidence gate — at least one supporting claim occurs in a version the scope selects or in an undeclared lineage |
 | `graph_citation_path` | `(deployment_id uuid, from_doc_id uuid, to_doc_id uuid, max_depth int DEFAULT 6, max_paths int DEFAULT 3, expansion_budget int DEFAULT 2000, frontier_budget int DEFAULT 1000, time_budget_ms int DEFAULT 1000)` → zero or more deterministic complete equal-length shortest-tier directed citation paths plus the same terminal status; citation follows only `from_doc_id → to_doc_id` and has current structural semantics |
 
@@ -1107,7 +1102,6 @@ the applicable default/hard class and cites this table.
 | SQL/graph temporary files | 64 MiB | 64 MiB | 64 MiB |
 | Recursive CTEs / maximum depth | 1 / 4 | 1 / 6 | 1 / 6 |
 | `facts_as_of` returned rows | 200 | 1,000 | 1,000 |
-| `fact_evidence_as_of` returned rows | 50 | 200 | 1,000 |
 | Semantic or lexical nomination SRF calls / `k` each / total nominations | 1 / 20 / 100 | 3 / 100 / 200 | 3 / 100 / 200 |
 | `fetch_chunk_bodies` calls / chunk IDs each | 1 / 50 | 3 / 50 | 3 / 50 |
 | Chunk source text across `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` | 512 KiB/invocation | 4 MiB/statement | 4 MiB/statement |
@@ -1512,7 +1506,7 @@ never grants raw tables or bypasses deployment/time/provenance predicates.
 | P1 state and authority disagree | For chunks, authority confirmation in the request's snapshot (D142) rejects an ineligible `chunk_search` row; the rejection is counted in the invocation's drop disclosure. For in-row targets, null/stale embedding attestation makes the semantic row unready. Authorization uncertainty always fails the invocation. |
 | Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch marks the chunk channel unready and schedules repair |
 | Runtime public interface shape disagrees with the manifest | Open SQL and saved queries fail `schema_version_mismatch`. Exact semantic view-definition disagreement fails the deploy/CI same-server comparison. The four core operations remain available only if their own descriptors/invariants verify |
-| A forget is still erasing | The document is already tombstoned, so live SQL/core lineage and graph paths exclude it under D48; no copied graph or older generation exists to retain forgotten content |
+| Forget is pending or incomplete | Live SQL/core lineage and graph paths fail closed under D48/D74; no copied graph or older generation exists to retain forgotten content |
 
 ## 8. Pre-release surface cut and terminal criteria
 

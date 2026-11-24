@@ -96,10 +96,10 @@ The FK is `ON DELETE SET NULL`: deleting a principal nulls attribution and
 honest answer.
 
 *Known gap, stated rather than implied:* this is row deletion, **not** a
-document-grade forget (D159). There is no forget record, residual
-verification or post-restore `reapply` for principals, and this deletion is
-not offered as an erasure guarantee. Person-grain forget is outside this
-design's scope (D159's non-goals).
+D74-grade forget. There is no portable manifest, barrier, residual
+verification or restore replay for principals. A person-grain hard-forget
+target is required before this is offered as an erasure guarantee, and is
+the next slice.
 
 ### 2.6 Compatibility
 
@@ -175,8 +175,7 @@ schema rollback, not a data-preserving one.
   header pair, one composition flag.
 - No read path, authorization behaviour, retrieval result, or extraction
   output changes.
-- Erasure is **weaker than document forget (D159)** (§2.5); person-grain forget is a
-  documented non-goal.
+- Erasure is **weaker than D74** until the follow-up slice lands (§2.5).
 - Attribution within a trusted perimeter is caller-asserted (§2.3).
 - Operators must apply `p9_21_0042` and start the new runtime **before**
   any client forwards attribution: an older engine accepts the upload,
