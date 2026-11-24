@@ -31,7 +31,7 @@ Run the commands on this page from the directory that holds your
 | Work waits and nothing fails | `defer_reason` in [See what is waiting and why](#see-what-is-waiting-and-why) | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
 | The answer is empty or not what you expected | `negative`, `temporal_scope`, the operation you called | [Empty or surprising answers](#empty-or-surprising-answers) |
 | A SQL query returns `200` with no rows and an `error_code` | `termination_reason` | [A SQL query is rejected](#a-sql-query-is-rejected) |
-| `503` with `forget_in_progress` | `docker compose logs api` | [503 forget_in_progress](#503-forget_in_progress) |
+| `409` with `document_forgotten` | the `forget_id` in the answer | [409 document_forgotten](#409-document_forgotten) |
 | `setup` stops after an upgrade | `docker compose logs setup` | [setup refuses an existing database](#setup-refuses-an-existing-database) |
 
 ## Running operator commands
@@ -415,15 +415,14 @@ The codes you meet most often:
 
 Every code is in [Errors and status codes](/docs/reference/errors#sql-query-codes).
 
-## 503 forget_in_progress
+## 409 document_forgotten
 
-The API answers `503` with `{"code": "forget_in_progress"}` while a hard
-forget is running, and the operator commands that copy or replay data
-refuse to run. There is no public CLI command that starts hard-forget. Startup
-also closes admission while replaying portable intent from a restore, and a
-failed replay leaves it closed for retry. See
-[Hard-forget manifests](/docs/self-hosting/upgrades#hard-forget-manifests) and
-[When a hard forget is in progress](/docs/self-hosting/operating#when-a-hard-forget-is-in-progress).
+An ingest answered `409` with
+`{"code": "document_forgotten", "forget_id": "...", "forgotten_at": "..."}`:
+the same bytes, or the same `source_kind` and `source_ref`, belong to a
+document this deployment forgot. Connectors skip such a file and log
+`sync.item_forgotten`. The refusal is deliberate; do not retry. See
+[Forgetting a document](/docs/self-hosting/operating#forgetting-a-document).
 
 ## setup refuses an existing database
 

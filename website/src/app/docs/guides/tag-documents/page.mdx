@@ -309,7 +309,7 @@ the name and look the id up.
 A deleted document never shows its tags: it leaves `GET /documents`, search
 and the SQL views, and its tags with it. The engine keeps the record of which
 tags it carried, so if you ingest the document again it comes back with
-those tags. Forgetting a document (the operator's hard forget) removes that
+those tags. Forgetting a document removes that
 record; the registered tags themselves stay, because they are the
 deployment's vocabulary, not content from any document.
 

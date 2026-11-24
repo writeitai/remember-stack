@@ -25,9 +25,17 @@ absent from the current release; nothing here has a date.
 
 ## Documents
 
-- **Erasing a document.** Deleting a document removes it from the memory
-  but keeps its claims and stored original as history; the HTTP API, the
-  SDK, the CLI and the MCP tools cannot erase a document's bytes.
+- **Forgetting a document from a client.** The engine can forget (erase) a
+  document, but no HTTP route, SDK method, CLI command or MCP tool requests a
+  forget yet, and `GET /forgets` does not exist. Deleting a document removes it
+  from the memory but keeps its claims and stored original as history. A
+  forgotten document's content cannot be ingested again: there is no
+  `allow_forgotten` option yet.
+- **Rewriting clean authored-page history on forget.** A forget erases the
+  history of compiled knowledge pages that cited the document and of authored
+  pages once their owner removes the citation; an authored page whose current
+  file no longer cites the document but whose older revisions do keeps those
+  revisions.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
 - **Document filters on fact lookups and SQL functions.** Claim and chunk

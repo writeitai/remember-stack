@@ -52,7 +52,7 @@ RUN apt-get update \
 RUN addgroup --system app \
     && adduser --system --ingroup app \
         --home /var/lib/rememberstack --no-create-home app \
-    && mkdir -p /var/lib/rememberstack/forget-manifests \
+    && mkdir -p /var/lib/rememberstack \
     && chown -R app:app /var/lib/rememberstack
 
 # The virtualenv is built at this same path, so it is copied rather than rebuilt.

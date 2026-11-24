@@ -121,10 +121,10 @@ publication uses complete-object replacement, streaming large files through mult
 uploads, with digest metadata and paged listings. The project's checks exercise SeaweedFS
 and real MinIO adapter contracts. Another S3-compatible store has to support
 path-style requests, conditional writes and user metadata on objects. Complete-object replacement, multipart streaming and fully paged listings
-are also required for the corpus. Hard-forget reads the bucket's versioning policy;
-when versions are retained, it must list and delete every matching object version
-and delete marker. Grant those operations to the purge adapter. An unknown policy
-or failed retained-version purge keeps admission closed.
+are also required for the corpus. A forget reads the bucket's versioning policy;
+when versions are retained, it must list, read and delete every matching object
+version and delete marker. Grant those operations to the purge adapter. A failed
+retained-version purge fails that sweep, which is retried until it succeeds.
 
 SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
 of them, so the bundled store holds up to about 100 GiB before writes fail
@@ -132,7 +132,7 @@ of them, so the bundled store holds up to about 100 GiB before writes fail
 preallocated, so unused capacity takes no disk. To store more, raise
 `-volume.max` on the `object-store` service in `compose.yaml`. The engine
 sets no S3 lifecycle (expiry) rules; it deletes published objects itself
-during a hard forget.
+when it forgets a document.
 
 For unfinished multipart uploads, purge aborts matching uploads when the
 provider supports listing them. A `NotImplemented`/501 response to that listing
@@ -181,7 +181,7 @@ below and [Scaling](/docs/self-hosting/scaling)).
   is capped at about 100 GiB (see
   [S3-compatible object storage](#s3-compatible-object-storage)).
 
-Nothing is deleted automatically; a hard forget removes a document's data.
+Nothing is deleted automatically; a forget removes a document's data.
 
 **Database connections.** Compose starts PostgreSQL with
 `max_connections` from `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS`, `300` by

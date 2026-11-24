@@ -202,17 +202,16 @@ Backups are your responsibility. RememberStack does not schedule them, and
 the project does not test a restore procedure. What follows is grounded in
 how the Compose deployment stores its data.
 
-A deployment's state lives in four Docker volumes:
+A deployment's state lives in three Docker volumes:
 
 | Volume | Must be backed up |
 |---|---|
 | `rememberstack_postgres-data` | Yes: the database |
 | `rememberstack_object-store-data` | Yes: original files and derived artifacts |
-| `rememberstack_forget-manifests` | Yes, separately durable: never roll portable intent back with an older data backup |
 | `rememberstack_app-state` | Optional: working directories and debug captures |
 
 Corpus folders in the object store can be reconciled; everything else in the
-first three volumes cannot. The database and the object store refer to
+first two volumes cannot. The database and the object store refer to
 each other, so back them up at the same moment.
 
 ### A cold backup of the volumes
@@ -222,7 +221,7 @@ The simplest consistent backup stops the stack and copies the volumes:
 ```bash
 docker compose stop
 mkdir -p backup
-for volume in postgres-data object-store-data forget-manifests app-state; do
+for volume in postgres-data object-store-data app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/source:ro" \
     -v "$PWD/backup:/backup" \
@@ -234,15 +233,10 @@ docker compose start
 Keep the `backup/` directory and your `.env` together: a restore needs the
 same deployment id and the same database and object-store credentials.
 
-For a same-machine restore, retain the current `forget-manifests` volume.
-Restore only the ordinary data volumes from the older backup, with the same
-`.env`. On another machine, first provision the manifest volume from your latest
-separately durable intent store; the copy captured with an older data backup can
-be missing later forget requests.
+To restore, put the volumes back with the same `.env`:
 
 ```bash
 docker compose down
-# Keep rememberstack_forget-manifests and its latest accepted intent.
 docker volume rm rememberstack_postgres-data rememberstack_object-store-data rememberstack_app-state
 docker compose create
 for volume in postgres-data object-store-data app-state; do
@@ -253,10 +247,14 @@ for volume in postgres-data object-store-data app-state; do
 done
 docker compose up -d --wait
 docker compose exec -T api remember ops graph-catalog ensure
+docker compose exec -T api remember ops forget-reapply --deployment "$DEPLOYMENT_ID"
 ```
 
-The last command checks that the graph views and functions in the restored database
-match this release ([Operating the pipeline](/docs/self-hosting/operating#the-graph-catalog)).
+The graph-catalog command checks that the graph views and functions in the
+restored database match this release
+([Operating the pipeline](/docs/self-hosting/operating#the-graph-catalog)). The
+last command re-runs the erasure of every document the restored database
+records as forgotten; see [forgets after a restore](#forgets-after-a-restore).
 
 ### A logical backup
 
@@ -278,24 +276,26 @@ creating the roles, restoring the dump into an empty database with
 `pg_restore`, copying the buckets back, and running `setup`; the project
 has not tested this path.
 
-### Hard-forget manifests
+### Forgets after a restore
 
-The `forget-manifests` volume holds portable, content-free intent for permanently
-removed documents. Keep it independently durable and carry all accepted intent
-into a restore. An older database or object bucket cannot undo that intent.
+A forget erases the active stores, not your backups. Each forget leaves a
+content-free record in the database, so after restoring object storage, the
+corpus bucket or the knowledge repository from a backup taken before a forget,
+`remember ops forget-reapply` erases that document from them again. It is an
+ordinary command: it queues the sweeps, workers run them, and nothing waits for
+them. A database restored from before a forget no longer has that forget's
+record, and the document comes back; forget it again.
 
-Before any API or controlled mount reopens, startup rematerializes every manifest,
-scrubs restored authority, scans the corpus for the document's deterministic
-suffix, erases its copies/uploads and retained versions, and regenerates shared
-indexes. It repeats this even when PostgreSQL still says `complete`, covering
-bucket-only, database-only and combined restores. A failure leaves admission
-closed for retry. Other documents' originals and media remain in place.
-
-The PostgreSQL + real MinIO canary exercises these independent data restores;
-transporting production backups, backup expiry and provisioning remain operator
-responsibilities. Stop and remount operator-managed FUSE sessions. A composing
-host must supply cache acknowledgements for sessions it controls, and K purge and
-rebuild capabilities when K history exists.
+**Upgrading from a release with D74 hard-forget.** The upgrade turns each
+complete hard-forget into a complete forget record, and an unfinished one into
+a forget that is erasing: the document is hidden and its sweeps are queued.
+The `forget-manifests` volume and the
+`REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` and
+`REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` settings are no longer
+used; after the upgrade you can remove the volume
+(`docker volume rm rememberstack_forget-manifests`). A forget kept only in that
+volume and not in the database is not carried over: forget the document again
+if a restore brings it back.
 
 <Cloud>
 

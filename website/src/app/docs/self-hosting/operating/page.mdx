@@ -167,20 +167,59 @@ The output has `ready`, `changed`, `problems_before` and `problems_after`.
 It also checks the versions of `pgvector`,
 `pg_textsearch` and `pg_partman`.
 
-## When a hard forget is in progress
+## Forgetting a document
 
-While a hard forget is running, the API answers `503` with
-`{"code": "forget_in_progress"}`. Ordinary claims, publication and reconcile
-refuse to run. The coordinator alone can erase source bytes and regenerate
-navigation under the closed barrier.
+A forget erases one document and everything derived only from it. It is not
+yet exposed on the HTTP API, SDK, CLI or MCP surfaces (see
+[not built yet](/docs/project/not-built-yet)); in this release it is requested
+inside the engine. Nothing else in the deployment stops while a forget runs.
 
-The Python hard-forget coordinator and ordinary workers use the same purge path.
-There is no public CLI command that starts a hard forget. API startup and
-`project --plane p3` replay every portable manifest before serving or repairing
-restored data, including manifests previously marked complete. Any error keeps
-admission closed. A host with controlled mount sessions must acknowledge stopping
-them and erasing their caches; operator-managed FUSE mounts must be stopped and
-remounted. See [restore ordering](/docs/self-hosting/upgrades#hard-forget-manifests).
+- **The hide.** In one database transaction the document, its versions,
+  passages and testimony disappear from every read, and its queued or running
+  work can no longer be claimed or renew its lease. A forget record is written:
+  IDs and content hashes only, never text.
+- **The sweep.** A `forget` job then deletes the document's rows, its objects
+  (including retained object versions), its corpus folders and the corpus
+  navigation that listed it, and rebuilds compiled knowledge pages that cited
+  it. It sweeps again after a quiet period
+  (`REMEMBERSTACK_SELFHOST_FORGET_QUIET_PERIOD_S`, 15 minutes by default) and
+  repeats until a sweep finds nothing left; the record then becomes `complete`.
+  A failed sweep records an error code on the record and is retried with
+  backoff, without an attempt limit.
+- **Authored knowledge pages.** The engine never rewrites prose a person or
+  agent wrote. If an authored page still cites the document, the record stays
+  `waiting_for_redaction` and lists the page's path; once the owner removes the
+  citation, the next check erases that page's history and completes the forget.
+- **Re-ingest.** Ingesting the same bytes or the same source (`source_kind` and
+  `source_ref`) again is refused with `409 document_forgotten`; connectors skip
+  the file.
+
+### After restoring a backup
+
+Forget erases the active stores; your backups follow your own policy. After you
+restore object storage, the corpus bucket or the knowledge repository from a
+backup taken before a forget, re-run the sweeps of every forget the database
+still records:
+
+```bash
+docker compose exec -T api \
+  remember ops forget-reapply --deployment "$DEPLOYMENT_ID"
+```
+
+It prints the forget IDs it re-armed; ordinary workers run the sweeps, and
+nothing waits for them. A database restored from before a forget no longer has
+that forget's record: forget the document again.
+
+### Limits
+
+- PostgreSQL erasure is logical: no later query or dump returns the content, but
+  old row versions stay in table files and write-ahead log until PostgreSQL
+  overwrites them. Forget does not run `VACUUM FULL`.
+- An operator-managed S3 FUSE mount stops listing the document when its cache
+  expires; a file already open in such a tool may keep serving what it read
+  until it is closed. See [filesystem views](/docs/self-hosting/filesystem-views).
+- A worker stalled for longer than the quiet period after the hide could still
+  write once; the quiet period is set longer than a work lease for this reason.
 
 <Cloud>
 

@@ -243,7 +243,7 @@ for it; it will not become ready on its own.
 |---|---|---|
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
 | `413` | `body_too_large` | The body is over the deployment's cap. |
-| `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
+| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | These bytes, or this `source_kind` and `source_ref`, belong to a document this deployment forgot. Checked before any byte is stored and again when the version is registered. Do not retry. |
 | `409` | `{"code": "version_key_conflict", "message": …, "version_id": …, "version_key": …}` | The `version_key` already names another version of this document (`version_id`), or names the latest version but the bytes differ. Nothing was stored. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version of this document (`version_id`) already declares this `effective_from`. Nothing was stored. |
 | `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing was stored. |
@@ -258,7 +258,6 @@ for it; it will not become ready on its own.
 | `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
 | `422` | `ambiguous_office_format` | Legacy Office container bytes have no declared Word, Excel or PowerPoint subtype. |
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
 
 <Cloud>
 
@@ -795,7 +794,6 @@ new version.
 | `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
 | `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
 | `422` | validation list | `doc_id` is not a UUID. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running, or started preparing just before the delete. Nothing was deleted; retry later. |
 
 ### Example
 
