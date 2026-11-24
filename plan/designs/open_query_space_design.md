@@ -624,10 +624,15 @@ applies:
 
 ```sql
 (ingested_at IS NULL OR ingested_at <= believed_at)
-AND (invalidated_at IS NULL OR invalidated_at > believed_at)
+AND NOT closed_at(fact, believed_at)  -- D159: from the fact's close/reopen events, not one invalidated_at
 AND valid_from <= valid_at
 AND (valid_precision = 'open' OR valid_until > valid_at)
 ```
+
+`closed_at(fact, b)` is true when the fact's latest close or reopen adjudication at or before
+`b` is a close; `invalidated_at` holds only the current state. An unarchive's
+`reopened_unarchive` event ends a closure without erasing it (D159), so a read inside an
+archive interval still sees the fact closed. Graph reads with `believed_at` use the same rule.
 
 The world-window columns in this predicate are the fact's current values.
 A later window correction can therefore add or remove a fact from a query with

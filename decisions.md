@@ -8067,6 +8067,8 @@ retained. The provider boundary and closed content-free engine records are
 specified in the design, including native filesystem identity distinctions.
 The provider captures a nonempty exact same-organisation/cell filesystem set;
 the managed adapter independently keeps its four distinct role binding.
+(**Amended by [D159](#d159-archive-and-forget-replace-delete-forget-hides-at-once-and-sweeps-until-clean)**: three roles, raw, artifacts and corpus; the forget-record role is gone with
+its store.)
 
 **Alternatives.** Counter sums conflate canonical, staged and replicated data;
 processing sequence prefixes admit uncommitted holes; row-byte estimates change
@@ -8556,6 +8558,12 @@ ingest guard. A first replacement fenced one document with per-writer locks; rev
 lock could miss a writer or be held too long. Hiding first and sweeping until clean is correct
 regardless of timing, because reads never show a hidden document and a repeatable sweep removes
 whatever is written late.
+
+**Consequences.** Compiled K pages become a replaceable snapshot with no Git history (a
+one-time migration strips their legacy history), so forget rewrites history only for authored
+pages. Forget records are immutable; a flagged re-add records the guard entries it releases and
+gets a fresh document ID. The D141 TypeScript parity inventory still lists `delete_document`
+until the code PR regenerates it; this decision is authoritative meanwhile.
 
 **Stated limits.** PostgreSQL erasure is logical; K erasure follows citations; client caches
 (FUSE tools, remember.dev clients) clear on their own expiry; a worker that keeps writing longer

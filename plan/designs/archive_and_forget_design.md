@@ -44,7 +44,8 @@ in one transaction under the lineage row lock and sets `documents.archived_at`:
   its world-time window is left as the evidence stated it, and the closure is recorded as
   `retracted_source_removal` under the archive's reconciliation id;
 - open `support_withdrawn` reviews on claims no current version carries close as
-  `auto_resolved`; T4 anchors (D102) are cleared;
+  `auto_resolved` (recorded under the archive id, so unarchive reopens any that still apply,
+  together with the belief they held open); T4 anchors (D102) are cleared;
 - the K citation path emits the usual evidence-changed delta, so compiled pages rebuild and
   authored pages citing the document get an ordinary review flag.
 
@@ -162,8 +163,9 @@ deletes removed the links to. Every step deletes what exists and treats "already
 success, so a sweep can be interrupted and run again at any point.
 
 0. **Collect (first sweep only, one read-only transaction).** Before anything is deleted, store
-   on the record: the IDs of shared facts and entities whose wording the document contributed
-   to; the K pages, authored pages, sidecars, compilation summaries and transcripts that cite
+   on the record: the IDs of every fact and entity the document's evidence touches (exclusive
+   and shared), so later sweeps and authored-page checks can still recognize citations to
+   them; the K pages, authored pages, sidecars, compilation summaries and transcripts that cite
    the document's evidence or those facts; and the opaque locators of originals the document
    owns (an `uploads/<id>` key, D147). All are IDs or opaque keys, never text.
 1. **PostgreSQL, one transaction.**
@@ -173,35 +175,42 @@ success, so a sweep can be interrupted and run again at any point.
      D118 §7 mutable-fact payloads, versions and the document row. Children are deleted before
      parents; the foreign-key cascades that already exist inside the subtree do part of it.
    - Facts and entities: a relation or observation whose only evidence (current or archived)
-     came from this document is deleted with its adjudication rows. An entity whose only
+     came from this document is deleted with its adjudication rows, and a source-generated
+     `other:` predicate that no remaining relation uses is deleted from the registry (E3 records
+     generated predicates with the relation that uses them). An entity whose only
      evidence came from it is reduced to a content-free retired row (merge logs reference it).
      Every collected shared fact or entity has its wording, names, aliases, labels, vectors and
      profile recomputed from surviving evidence, or cleared until ordinary work recomputes
      them; adjudication rows of surviving facts lose payload text from the document.
    - Raw originals: for each content hash, if no surviving version of any lineage uses it, the
-     `content_objects` row is marked retired in this transaction (an ingest that arrives later
-     sees a retired row and stores a fresh original under its own key), and its object is
-     purged in step 2.
+     `content_objects` row is marked retired in this transaction and its object key is kept on
+     the record; an ingest that attaches to a content row locks that existing row, so it either
+     attached before (and the hash is still in use) or sees it retired and stores a fresh
+     original under its own key. Retired objects are purged in step 2.
    - Clear content in rows that must stay: the document's current pointers and incoming D140
      references from other documents are unbound; metering receipts and cost rows keep their
-     counts and lose their links to the erased document and versions (those links become
-     nullable); entity-resolution audit text for entities this document touched is cleared;
+     counts, their foreign keys to the erased document and versions are dropped before the
+     versions are deleted, and a receipt keeps the erased version's UUID only as billing
+     metadata so outstanding receipts are still delivered; entity-resolution audit text for entities this document touched is cleared;
      work-ledger error text of the document's work items is cleared.
 2. **Objects.** Delete every object (and every retained object version) under the document's
-   artifact prefix, and the objects of retired originals found through their `raw_uri` or the
-   collected opaque locators. An original another lineage still uses is never touched.
+   prefix that no surviving version references (this also catches an original an ingest wrote
+   but never registered), and the retired originals kept on the record or collected as opaque
+   locators. An original another lineage still uses is never touched.
 3. **Corpus filesystem (D155).** Delete the folders carrying the document's suffix and
    regenerate the navigation files that listed it (`_index.md` up the tree, root `llms.txt`)
    from the database, including retained object versions, then check that no navigation file
-   still lists it. Then tell controlled mount sessions to drop those paths (best effort; §3.7).
-4. **Knowledge plane (K)**, under the existing single-committer lock, so K commits wait for the
-   step while K compilation, reads and everything else go on. Delete the collected compiled
-   pages, their compilation summaries and transcripts; ordinary K work rebuilds the pages. On
-   the first sweep, rewrite the Git history of every compiled path (compiled output is a
-   disposable current snapshot, so its old history can be purged wholesale), expire reflogs and
-   prune unreachable objects. Later sweeps only check the history for the document's IDs and
-   rewrite again if any appear. Authored pages and sidecars that still cite the document are
-   flagged and listed on the record (§3.4).
+   still lists it. Then tell controlled mount sessions to drop the document's paths and the
+   rewritten navigation files (best effort; §3.7). None of this takes the corpus publication
+   lock.
+4. **Knowledge plane (K).** Compiled pages are a replaceable snapshot with no Git history (each
+   publication replaces the previous snapshot; a one-time migration strips their legacy history),
+   so forget never rewrites compiled history: it deletes the collected compiled pages, their
+   compilation summaries and transcripts, and ordinary K work rebuilds them. Authored pages and
+   sidecars whose current file cites the document's evidence or any collected ID are flagged
+   and listed on the record (§3.4). Those whose current file is clean but whose history cites a
+   collected ID have that history rewritten now; the rewrite is prepared outside the K lease and
+   only its publication takes the lease.
 
 ### 3.4 Sweep until clean
 
@@ -213,10 +222,12 @@ finds nothing to delete or recompute, the record becomes `complete`, or
 does find something (a slow worker wrote late, or a stale label job wrote old wording back), the
 job simply waits and sweeps again.
 
-Writers help but are not relied on: every handler already checks that its attempt is still
-current before it writes, a revoked attempt (§3.2) writes nothing, and shared publishers (corpus
-repair, label and profile jobs, K compilation) skip a hidden document. Whatever slips through is
-found by the next sweep.
+Writers help but are not relied on: revoked work is skipped, every handler checks that its
+attempt is still current before each write, and shared publishers (corpus repair, label and
+profile jobs, K compilation) revalidate the inputs they rendered from at publication and skip a
+hidden document. Whatever slips through is found by the next sweep. A sweep "finds something"
+only when it removes forgotten residue; an ordinary rebuild of a clean page or label is not
+residue.
 
 The job never waits on another job and holds no lock while it waits: it reschedules itself with
 the work ledger's `not_before`. Its work item has no attempt cap: a failed sweep, or a crashed
@@ -245,6 +256,8 @@ CREATE TABLE forgets (
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
   collected             jsonb,                  -- step 0: shared fact/entity IDs, K page/summary/transcript IDs, opaque original locators (IDs and keys only)
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',  -- pending owner redaction; emptied on completion
+  released_hashes       text[] NOT NULL DEFAULT '{}',  -- guard entries released by a flagged re-add (§3.6); never removes sweep keys
+  identity_released     boolean NOT NULL DEFAULT false,
   last_error            text,                   -- content-free code of the last failed sweep, for visibility
   status                forget_status NOT NULL DEFAULT 'erasing',
   requested_at          timestamptz NOT NULL DEFAULT now(),
@@ -271,14 +284,17 @@ at registration under the lineage row lock.
   Connectors and syncs log it and skip the item.
 - **`allow_forgotten=true` on that one request**, once the matching record's automated sweep is
   clean (`complete` or `waiting_for_redaction`; before that, 409 `forget_not_complete`): the content is ingested as an ordinary ingest
-  would, and in the same transaction the record releases only what this request matched: the
-  content hash it carries (and the source identity, if the request carries it). The record is
-  deleted when nothing is left. So adding back one forgotten version leaves the lineage's other
-  forgotten versions guarded, and another forget that happened to share the bytes keeps its
-  record.
+  would, and in the same transaction the record notes, in its separate `released_hashes` and
+  `identity_released` fields, only what this request matched: the content hash it carries (and
+  the source identity, if the request carries it). The record itself, and the IDs and hashes
+  the sweep uses, never change and are never deleted, so a pending authored-page wait and a
+  later `forget-reapply` work as before. Adding back one forgotten version leaves the lineage's
+  other forgotten versions guarded, and another forget that happened to share the bytes keeps
+  its guard.
 - **A re-added lineage gets a fresh `doc_id`.** E0 derives a lineage's ID from its identity;
-  for an identity that has been forgotten before, the derivation also includes the number of
-  earlier forgets. Everything keyed by the document's ID (rows, object prefixes, corpus
+  when it creates a replacement lineage for an identity that has forget records, the
+  derivation also includes the number of those records (which never change, so the count is
+  stable). Everything keyed by the document's ID (rows, object prefixes, corpus
   suffix, K citations) is therefore disjoint from the forgotten lineage's, so neither a later
   `forget-reapply` of the old record nor a second forget can touch the copy added back. The flag exists only
   per request (HTTP, `MemoryClient`, `remember ingest --allow-forgotten`, MCP `ingest`, whose
@@ -354,9 +370,11 @@ description telling the agent to confirm with the user first (omitted by `--read
 **Upgrade.** The migration turns each `forget_manifests` row into a `forgets` record: complete
 ones as `complete`, unfinished ones as `erasing` with the hide transaction applied and the job
 enqueued. Lineages deleted with D135's delete become caller archives, and lineages a connector
-deleted become source archives, with `archived_at` set to their deletion time, so the D135
-deletion run id (derived from the lineage and its tombstone instant) is the archive
-reconciliation id and unarchive can undo them; internal version tombstones stay. A record kept only in a D74
+deleted become source archives, with `archived_at` set to their deletion time; the migration
+re-labels the currency events and closures of every D135 run for that lineage (the caller's
+delete, connector finalization and late reconcile each used their own run id) with the one
+archive reconciliation id, so unarchive can undo them, and clears only the version tombstones
+that lineage deletion set; internal version tombstones stay. A record kept only in a D74
 external manifest store (not in the table) is outside the upgrade; the operator forgets that
 document again if a restore brings it back.
 
@@ -366,10 +384,12 @@ Real PostgreSQL and MinIO, deterministic providers, no hosted model calls.
 
 1. **Canary.** Plant a unique token in one metered document (body, title, file name, metadata,
    claims, an entity name another document's fact also uses, a compiled K page, the corpus
-   folder). Right after the hide, no engine read returns it. After completion, `pg_dump` the
+   folder, a source-generated predicate). Right after the hide, the lineage, versions, passages
+   and testimony are hidden from every engine read. After completion, `pg_dump` the
    database, read every object and object version in every bucket, walk the K repository's
-   history and the corpus tree: the token is nowhere, and the other document's fact survives
-   with clean wording.
+   history and the corpus tree: the token is nowhere (copied wording included), and the other
+   document's fact survives with clean wording. An old authored revision citing only an
+   exclusive relation of the document is rewritten.
 2. **Schema coverage.** Every table and column that references a document, version,
    representation, section, chunk, claim or mention (real foreign keys, logical references by
    column name, and payload columns) is either deleted or cleared by the sweep, or on a reviewed
@@ -390,8 +410,9 @@ Real PostgreSQL and MinIO, deterministic providers, no hosted model calls.
 8. **Authored pages.** A page citing the document makes the forget wait; after the owner's edit
    the sync completes it, also with the facts layer switched off.
 9. **Re-ingest.** Refused without the flag; refused while erasing; accepted with the flag under a
-   fresh `doc_id`, and for a lineage that had versions A and B, adding back A leaves B guarded
-   and a later `forget-reapply` leaves A alone; a connector resync skips the forgotten file; an
+   fresh `doc_id`, and for a lineage that had versions A and B, adding back A leaves B guarded;
+   then a second forget of the re-added lineage and a `forget-reapply` of both records each
+   erase only their own copy; a connector resync skips the forgotten file; an
    ingest racing the sweep on another lineage with the same bytes keeps its own original.
 10. **Mounts.** A remember.dev session open during the forget stops listing the document
     without restarting; an S3 FUSE mount with bounded caches stops listing it within its bound;

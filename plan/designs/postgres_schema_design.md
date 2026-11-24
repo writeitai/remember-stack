@@ -276,7 +276,9 @@ CREATE TYPE adjudication_outcome   AS ENUM ('add','noop','supersede','contradict
 -- 'retracted_source_removal' = D54/D55 source-acted closure: a living lineage's removal, OR
 -- an archive (version / lineage / source-observed), withdrew a fact's sole current support →
 -- adjudicated closed per shape (states: valid_until cap; measurements: invalidated_at — the
--- D43 no-cap rule); the adjudication row is the audit record. (support_withdrawn is
+-- D43 no-cap rule; an archive closes by invalidated_at only, D159); the adjudication row is the
+-- audit record. 'reopened_unarchive' ends an archive closure without erasing it; belief-as-of
+-- reads take a fact's belief intervals from these close/reopen rows. (support_withdrawn is
 -- exclusively the RE-EXTRACTION zero-support flag, D54 — never removal, never archive.)
 -- 'reopened_unarchive' = D159: unarchive reopened a fact that archive closed, once it has
 -- support again (archive and forget design §2.3).
@@ -452,8 +454,10 @@ CREATE TABLE forgets (
   version_ids           uuid[] NOT NULL,        -- every version of the lineage at hide
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
-  collected             jsonb,                  -- step 0: shared fact/entity IDs, K page/summary/transcript IDs, opaque original locators (IDs and keys only)
+  collected             jsonb,                  -- step 0: touched fact/entity IDs, K page/summary/transcript IDs, opaque original locators, retired raw keys (IDs and keys only)
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',  -- pending owner redaction; emptied on completion
+  released_hashes       text[] NOT NULL DEFAULT '{}',  -- guard entries released by a flagged re-add; never removes sweep keys
+  identity_released     boolean NOT NULL DEFAULT false,
   last_error            text,                   -- content-free code of the last failed sweep, for visibility
   status                forget_status NOT NULL DEFAULT 'erasing',
   requested_at          timestamptz NOT NULL DEFAULT now(),

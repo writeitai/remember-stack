@@ -988,8 +988,8 @@ requirement, not a hosted scheduler or correctness authority. Inactive-policy wo
 cannot write; seed current-policy work instead.
 
 One deployment-scoped PostgreSQL advisory lock serializes publication, including
-index regeneration, normal removal, reconcile and forget's authorized internal
-calls. Reuse caller lock ownership for internal calls. Re-read authority after
+index regeneration, normal removal and reconcile. Forget's sweep does not take it
+(§6.7). Reuse caller lock ownership for internal calls. Re-read authority after
 taking the lock. Keep the claim alive while streaming. Before each object write
 or delete, confirm ownership of that advisory lock on the same PostgreSQL session
 and that the work claim is still live; abort further mutations on loss.

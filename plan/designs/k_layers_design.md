@@ -561,7 +561,10 @@ cycle runs and the page views are refused like other fact reads
    band (§5) — fact-sheet-only pages skip the writer entirely.
 5. **Validate & commit**: citations resolve, exclusions honored, internal links resolve to
    existing artifacts; one commit for the cycle; two-phase against Postgres (record compilations
-   `pending` → push → mark committed; reconcile HEAD on startup).
+   `pending` → push → mark committed; reconcile HEAD on startup). Compiled pages are committed as
+   a replaceable snapshot that carries no history of earlier compiled versions (D159), so
+   erasing forgotten text never needs a history rewrite of compiled output; authored pages and
+   sidecars keep ordinary Git history.
 
 A failed writer job leaves its page at the previous version — stale but consistent, retried
 next cycle, dead-lettered after the D12 retry budget. There is no partial-page state.
@@ -656,7 +659,8 @@ decision point outside the automatic path**, not specifically a person. In agent
 deployments (the norm for the named targets), the review-band consumer is a designated
 **reviewer agent**, authored pages are owned by the operating agents that wrote them, and the
 user is *notified, never consulted*. This is safe to run because structure is revertible by
-construction (append-only plan decisions + git history + snapshots), so a wrong verdict costs
+construction (append-only plan decisions, authored-page git history, compile records and
+snapshots), so a wrong verdict costs
 a revert, not a loss. The residual risk — agents reviewing agents, the same family as D42's
 self-confirmation concern — is accepted and priced: every decision carries its trigger and
 rationale, every compile its inputs and citation deltas, so a human can always **audit after
@@ -763,15 +767,14 @@ plane K mechanically through citations:
   scrub → affected **compiled** pages recompile without the removed evidence; affected **authored**
   pages get review flags; pages whose rules now match nothing become planner retire proposals. No
   tombstone guesswork.
-- **Forget (GDPR)** additionally requires erasing the *text* the evidence produced. New
-  compiled bodies regenerate clean, but **git history retains prior page versions** — so the
-  forget sweep, under the existing single-committer lock (K commits wait for it; compilation and
-  reads go on), deletes every compiled page citing the forgotten evidence or a fact whose wording
-  the sweep changed, with its compilation summaries and writer transcripts. On the first sweep it
-  rewrites the history of every compiled path (e.g. `git filter-repo`; compiled output is a
-  disposable snapshot, so no record of past citations is needed) and expires reflogs and prunes
-  unreachable objects; later sweeps only check the history for the document's IDs and rewrite
-  again if any appear. Ordinary K work rebuilds the deleted pages. Authored pages and compiled-page curation sidecars that still
+- **Forget (GDPR)** additionally requires erasing the *text* the evidence produced. Compiled
+  pages are kept as a **replaceable snapshot with no Git history** (D159: each publication
+  replaces the previous compiled snapshot; a one-time migration strips their legacy history), so
+  forget only deletes the compiled pages citing the forgotten evidence or a fact it touched,
+  with their compilation summaries and writer transcripts, and ordinary K work rebuilds them.
+  Git history matters only for authored pages and sidecars: one whose history (not its current
+  file) cites the document has that history rewritten by the sweep, prepared outside the K lease
+  and published under it. Authored pages and compiled-page curation sidecars that still
   cite the document are flagged and listed on the forget record, which waits as
   `waiting_for_redaction`; the K sync rewrites a path's history once the owner's edit removes the
   citation. The system never rewrites an author's words. After the K repository is restored from
@@ -812,7 +815,8 @@ structurally (one committer, disjoint writes, DAG order).
 4. Compile-cycle economics at scale (dirty-pages distribution per debounce window; hub-page
    budgets; shared-model-page recompile blast radius).
 5. ~~Git-history erasure + restore non-resurrection mechanics for forget~~ **DESIGNED by
-   D159** — compiled-path history is erased from every reachable ref, and
+   D159** — compiled pages keep no history, authored-page history citing the document is
+   rewritten, and
    `remember ops forget-reapply` sweeps a restored remote again. Provider backup
    rotation remains an operator/cloud concern under D60.
 6. **Future-state extraction** for migration-style scopes (§9): decision-language →

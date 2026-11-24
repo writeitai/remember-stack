@@ -253,7 +253,9 @@ they always assumed.
   These events carry a decision ("this is withdrawn" / "this no longer belongs in the
   memory"), so the system acts on it: solely-supported facts are **closed, per shape**
   (states: `valid_until` capped; fixed-period measurements: `invalidated_at` — the D43 no-cap
-  rule), recorded as a `retracted_source_removal` adjudication. Loud, attributed, reversible —
+  rule), recorded as a `retracted_source_removal` adjudication. An archive (D159) is the
+  exception: it closes by `invalidated_at` only and leaves world time untouched, because an
+  unarchive can reopen the fact. Loud, attributed, reversible —
   **no flag, no queue, no limbo.**
 - **Only our transcription changed** — a new toolchain generation (an extractor bump, or for
   media the common case: a converter — ASR/VLM — upgrade) re-read the *unchanged* file and
