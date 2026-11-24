@@ -86,6 +86,9 @@ class _Catalog:
     def current_series(self, *, forget: Forget) -> str:
         return self.series
 
+    def mark_stale(self, **_: object) -> None:
+        return None
+
     def clear_k_pending(
         self, *, forget: Forget, artifact_ids: tuple[UUID, ...]
     ) -> None:

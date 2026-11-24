@@ -783,7 +783,7 @@ class WorkLedger:
             attempts, max_attempts = int(row["attempts"]), int(row["max_attempts"])
             if retryable and attempts < max_attempts:
                 backoff_s = min(
-                    self._settings.retry_backoff_base_s * 2 ** (attempts - 1),
+                    self._settings.retry_backoff_base_s * 2 ** min(attempts - 1, 30),
                     self._settings.retry_backoff_max_s,
                 )
                 scheduled = connection.execute(

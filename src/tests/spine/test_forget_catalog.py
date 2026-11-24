@@ -211,9 +211,12 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
     assert findings.compiled_artifact_ids == (_ARTIFACT_ID,)
     assert {key.root for key in findings.object_keys} == {
         f"{_TARGET_DOC_ID}/{_TARGET_CONTENT_HASH}/original.txt",
-        # transcripts of the rebuilt page's compilation and of every plan run
+        # the transcript of the rebuilt page's compilation
         "mem://artifacts/writer-transcript.json",
-        "mem://artifacts/planner-transcript.json",
+    }
+    # Plan-run transcripts go with the deployment's plan runs, uncounted.
+    assert {key.root for key in findings.fixture_keys} == {
+        "mem://artifacts/planner-transcript.json"
     }
     assert findings.blocking_k_paths == ()
     _assert_scrubbed_and_control_survives(engine=seeded_engine)
@@ -2000,7 +2003,32 @@ def test_readiness_answers_for_a_forgotten_version_as_for_an_unknown_one(
     from rememberstack.model import ReadinessRequirements
     from rememberstack.spine import PipelineReadinessCatalog
 
-    readiness = PipelineReadinessCatalog(engine=seeded_engine, expected_components={})
+    # The seeded target has a convert work row; an unknown version has none.
+    readiness = PipelineReadinessCatalog(
+        engine=seeded_engine,
+        expected_components={PipelineStage.CONVERT: "converter-test"},
+    )
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO processing_state (processing_id, deployment_id,"
+                " target_kind, target_id, stage, component_version, content_hash,"
+                " lane, status, finished_at) VALUES (gen_random_uuid(), :d,"
+                " 'document_version', :v, 'convert', 'converter-test', 'h',"
+                " 'steady', 'succeeded', now())"
+            ),
+            {"d": _DEPLOYMENT_ID, "v": _TARGET_VERSION_ID},
+        )
+    assert (
+        '"succeeded"'
+        in readiness.inspect(
+            deployment_id=_DEPLOYMENT_ID,
+            version_ids=(_TARGET_VERSION_ID,),
+            require=ReadinessRequirements(
+                pipeline=True, p1=False, live_graph=False, p3=False
+            ),
+        ).model_dump_json()
+    )
     require = ReadinessRequirements(pipeline=True, p1=False, live_graph=False, p3=False)
 
     def answer(version_id: UUID) -> str:

@@ -218,7 +218,7 @@ class ForgetHandler:
             # A forget-reapply started a newer series; this one stops here.
             return HandlerOutcome()
         try:
-            found = self.sweep(forget=forget, payload=payload, meter=meter)
+            status = self._sweep_and_settle(forget=forget, payload=payload, meter=meter)
         except Exception as error:  # noqa: BLE001 — retried with backoff, never capped
             _logger.exception(
                 "forget.sweep_failed forget_id=%s sweep=%s",
@@ -232,12 +232,20 @@ class ForgetHandler:
                     self._retry(deployment_id=work.deployment_id, payload=payload),
                 )
             )
-        if found or payload.first:
-            return HandlerOutcome(
-                follow_up=(
-                    self._next(deployment_id=work.deployment_id, payload=payload),
-                )
-            )
+        if status is ForgetStatus.COMPLETE:
+            return HandlerOutcome()
+        # Residue found (or the first sweep, or the authored-page wait):
+        # look again after a quiet period.
+        return HandlerOutcome(
+            follow_up=(self._next(deployment_id=work.deployment_id, payload=payload),)
+        )
+
+    def _sweep_and_settle(
+        self, *, forget: Forget, payload: _SweepPayload, meter: CostMeterPort
+    ) -> ForgetStatus:
+        """Sweep; when nothing was left after a quiet period, settle the record."""
+        if self.sweep(forget=forget, payload=payload, meter=meter) or payload.first:
+            return ForgetStatus.ERASING
         blocking = self._catalog.still_blocking(forget=forget)
         if not blocking:
             authored = self._catalog.authored_artifact_ids(forget=forget)
@@ -248,17 +256,9 @@ class ForgetHandler:
                     forget_id=forget.forget_id,
                     artifact_ids=authored,
                 )
-        status = self._catalog.finish(
+        return self._catalog.finish(
             forget=forget, blocking_k_paths=blocking, series=payload.series
         )
-        if status is ForgetStatus.WAITING_FOR_REDACTION:
-            # The one wait: authored pages. Look again after a quiet period.
-            return HandlerOutcome(
-                follow_up=(
-                    self._next(deployment_id=work.deployment_id, payload=payload),
-                )
-            )
-        return HandlerOutcome()
 
     def sweep(
         self, *, forget: Forget, payload: _SweepPayload, meter: CostMeterPort | None
@@ -297,13 +297,19 @@ class ForgetHandler:
                 keep=live,
             )
             found |= removed > 0
+        if findings.fixture_keys:
+            # Deployment-wide K plan transcripts: purged, never counted.
+            for purger in self._object_purgers:
+                purger.purge_objects(keys=findings.fixture_keys, prefixes=())
         found |= self._projection_purger.erase_document(
             deployment_id=forget.deployment_id, doc_id=forget.doc_id
         )
         compiled = findings.compiled_artifact_ids
         if payload.reapply and payload.first:
-            # A restored K repository may hold history the record names.
+            # A restored K repository may hold history the record names; its
+            # restored bodies are rebuilt, never kept as owner edits.
             compiled = self._catalog.collected_artifact_ids(forget=forget)
+            self._catalog.mark_stale(forget=forget, artifact_ids=compiled)
         if compiled:
             self._knowledge_rebuilder.recompile_without_lineage(
                 deployment_id=forget.deployment_id, artifact_ids=compiled

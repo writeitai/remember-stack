@@ -206,6 +206,7 @@ class CorpusPublisher:
             self._navigation(
                 deployment_id=deployment_id, before_write=None, ancestors=ancestors
             )
+
         removed = 0
         if folders:
             removed += purger.purge_objects(

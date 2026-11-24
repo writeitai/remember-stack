@@ -59,6 +59,9 @@ class SweepFindings:
     """Authored pages and curation sidecars whose current file still cites it."""
     profile_entity_ids: tuple[UUID, ...]
     """Surviving entities whose profile this step cleared, for a refresh."""
+    fixture_keys: tuple[ObjectKey, ...] = ()
+    """Plan-run transcripts deleted with the deployment's plan runs: purged,
+    but never counted as the document's residue."""
 
 
 def sweep_work(
@@ -355,6 +358,17 @@ class ForgetCatalog:
             ]
             _store_collected(connection=connection, forget=forget, collected=collected)
 
+    def mark_stale(self, *, forget: Forget, artifact_ids: tuple[UUID, ...]) -> None:
+        """Reapply: recorded compiled pages are rebuilt, never kept as edited."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _COMPILED_ARTIFACT_STATEMENTS[1],
+                {
+                    "deployment_id": forget.deployment_id,
+                    "compiled_artifact_ids": list(artifact_ids),
+                },
+            )
+
     def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
         """The compiled K artifacts the record names, for a reapply."""
         with self._engine.connect() as connection:
@@ -456,6 +470,9 @@ class _Sweep:
             },
         )
         self._exec(_SKIP_DOCUMENT_WORK, p, residue=False)
+        # Error text and payloads of every owned work row, finished ones too,
+        # while the rows that tie the work to the document still exist.
+        self._exec(_SCRUB_DOCUMENT_WORK, p)
         profile_entities = self._shared_wording(p=p)
         self._exclusive_facts(p=p)
         self._entities(p=p)
@@ -463,6 +480,11 @@ class _Sweep:
         for statement in _SUBTREE:
             self._exec(statement, p)
         self._retire_originals(p=p, collected=collected)
+        fixture_keys = tuple(
+            ObjectKey(str(key))
+            for key in self._c.execute(_PLAN_TRANSCRIPTS, p).scalars()
+            if key
+        )
         for statement in _DEPLOYMENT_FIXTURES:
             self._exec(statement, p, residue=False)
         self._stale_labels(p=p, collected=collected)
@@ -485,6 +507,7 @@ class _Sweep:
                 connection=self._c, forget=forget, collected=collected
             ),
             profile_entity_ids=profile_entities,
+            fixture_keys=fixture_keys,
         )
 
     def _exec(
@@ -528,10 +551,20 @@ class _Sweep:
             "SELECT claim_id FROM claims WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
             p,
         )
-        p["chunk_ids"] = self._ids(
-            "SELECT chunk_id FROM chunks WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
-            p,
+        # Chunk IDs are kept on the record: a late P1 write keyed only by a
+        # chunk ID is still found after the chunk rows are gone.
+        p["chunk_ids"] = sorted(
+            set(
+                self._ids(
+                    "SELECT chunk_id FROM chunks"
+                    " WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
+                    p,
+                )
+            )
+            | {UUID(value) for value in collected["chunk_ids"]},
+            key=str,
         )
+        collected["chunk_ids"] = sorted(map(str, p["chunk_ids"]))
         p["mention_ids"] = self._ids(
             "SELECT mention_id FROM mentions"
             " WHERE deployment_id=:deployment_id AND doc_id=:doc_id",
@@ -655,11 +688,20 @@ class _Sweep:
 
     def _exclusive_facts(self, *, p: dict[str, Any]) -> None:
         """Delete facts only this document evidenced, with their adjudications."""
+        # Candidates: predicates of the relations about to go, and every
+        # predicate the document's normalization outputs named (an attempt
+        # can register a generated predicate and fail before its relation).
         p["exclusive_predicates"] = list(
             self._c.execute(
-                text("""SELECT DISTINCT predicate FROM relations
+                text("""SELECT predicate FROM relations
                 WHERE deployment_id=:deployment_id
-                  AND relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))"""),
+                  AND relation_id=ANY(CAST(:exclusive_fact_ids AS uuid[]))
+                UNION
+                SELECT r->>'predicate' FROM normalization_outputs n,
+                  jsonb_array_elements(COALESCE(n.output->'relations', '[]'::jsonb)) r
+                WHERE n.deployment_id=:deployment_id
+                  AND n.claim_id=ANY(CAST(:claim_ids AS uuid[]))
+                  AND jsonb_typeof(n.output->'relations') = 'array'"""),
                 p,
             ).scalars()
         )
@@ -701,6 +743,9 @@ class _Sweep:
         for statement in _COMPILED_ARTIFACT_STATEMENTS:
             self._exec(statement, params)
         collected["k_pending"] = sorted({*collected["k_pending"], *map(str, ids)})
+        collected["k_artifact_ids"] = sorted(
+            {*collected["k_artifact_ids"], *map(str, ids)}
+        )
 
     def _retire_originals(
         self, *, p: dict[str, Any], collected: dict[str, Any]
@@ -796,7 +841,14 @@ def _collected(
         {"d": deployment_id, "f": forget_id},
     ).scalar_one()
     collected: dict[str, Any] = dict(value or {})
-    for key in ("fact_ids", "entity_ids", "k_artifact_ids", "k_pending", "object_keys"):
+    for key in (
+        "fact_ids",
+        "entity_ids",
+        "chunk_ids",
+        "k_artifact_ids",
+        "k_pending",
+        "object_keys",
+    ):
         collected[key] = sorted(collected.get(key) or ())
     collected["authored"] = dict(collected.get("authored") or {})
     return collected
@@ -935,9 +987,15 @@ _TRANSCRIPTS = text(
     SELECT session_transcript_uri FROM knowledge_compilations
     WHERE deployment_id=:deployment_id
       AND artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
-    UNION
+    """
+)
+
+# Plan-run transcripts go with the deployment's plan runs (below); they are
+# not the document's residue, so purging them never keeps a forget erasing.
+_PLAN_TRANSCRIPTS = text(
+    """
     SELECT session_transcript_uri FROM knowledge_plan_runs
-    WHERE deployment_id=:deployment_id
+    WHERE deployment_id=:deployment_id AND session_transcript_uri IS NOT NULL
     """
 )
 
@@ -949,6 +1007,16 @@ _SKIP_DOCUMENT_WORK = text(
     WHERE deployment_id = :deployment_id
       AND stage <> 'forget'
       AND status IN ('pending', 'failed', 'running')
+      AND """
+    + FORGOTTEN_WORK.format(work="processing_state")
+)
+
+_SCRUB_DOCUMENT_WORK = text(
+    """
+    UPDATE processing_state SET payload = NULL, last_error = NULL
+    WHERE deployment_id = :deployment_id
+      AND stage <> 'forget'
+      AND (payload IS NOT NULL OR last_error IS NOT NULL)
       AND """
     + FORGOTTEN_WORK.format(work="processing_state")
 )
@@ -1334,7 +1402,7 @@ _COMPILED_ARTIFACT_STATEMENTS = (
         UPDATE knowledge_artifacts
         SET page_summary=NULL, content_hash=NULL, inputs_hash=NULL,
             last_compiled_at=NULL, status='stale'
-        WHERE deployment_id=:deployment_id
+        WHERE deployment_id=:deployment_id AND page_kind='compiled'
           AND artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
         """
     ),
@@ -1565,7 +1633,11 @@ _RETIRE_ORIGINALS = text(
       AND NOT EXISTS (
         SELECT 1 FROM document_versions v
         WHERE v.deployment_id=object.deployment_id
-          AND v.content_hash=object.content_hash)
+          AND v.content_hash=object.content_hash
+          -- a scrubbed version row an upgraded D74 forget left keeps nothing
+          AND NOT EXISTS (SELECT 1 FROM forgets f
+                          WHERE f.deployment_id=v.deployment_id
+                            AND f.doc_id=v.doc_id))
     RETURNING original.raw_uri
     """
 )
@@ -1578,6 +1650,34 @@ _DEPLOYMENT_FIXTURES = (
     text("DELETE FROM canary_cases WHERE deployment_id=:deployment_id"),
     text("DELETE FROM golden_claim_labels WHERE deployment_id=:deployment_id"),
     text("DELETE FROM golden_pairs WHERE deployment_id=:deployment_id"),
-    text("DELETE FROM knowledge_plan_decisions WHERE deployment_id=:deployment_id"),
-    text("DELETE FROM knowledge_plan_runs WHERE deployment_id=:deployment_id"),
+    # A decision a page rule or quarantine still references stays, emptied.
+    text(
+        """
+        UPDATE knowledge_plan_decisions d SET payload='{}'::jsonb, plan_run_id=NULL
+        WHERE d.deployment_id=:deployment_id
+          AND (d.payload <> '{}'::jsonb OR d.plan_run_id IS NOT NULL)
+          AND (EXISTS (SELECT 1 FROM knowledge_page_rules r
+                       WHERE r.plan_decision_id=d.decision_id)
+               OR EXISTS (SELECT 1 FROM knowledge_quarantines q
+                          WHERE q.decision_id=d.decision_id))
+        """
+    ),
+    text(
+        """
+        DELETE FROM knowledge_plan_decisions d
+        WHERE d.deployment_id=:deployment_id
+          AND NOT EXISTS (SELECT 1 FROM knowledge_page_rules r
+                          WHERE r.plan_decision_id=d.decision_id)
+          AND NOT EXISTS (SELECT 1 FROM knowledge_quarantines q
+                          WHERE q.decision_id=d.decision_id)
+        """
+    ),
+    text(
+        """
+        DELETE FROM knowledge_plan_runs r
+        WHERE r.deployment_id=:deployment_id
+          AND NOT EXISTS (SELECT 1 FROM knowledge_plan_decisions d
+                          WHERE d.plan_run_id=r.run_id)
+        """
+    ),
 )

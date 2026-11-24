@@ -95,6 +95,9 @@ class _Catalog:
     def current_series(self, **_: object) -> str:
         return ""
 
+    def mark_stale(self, **_: object) -> None:
+        return None
+
     def clear_k_pending(self, **_: object) -> None:
         return None
 
