@@ -6495,6 +6495,20 @@ proxy was rejected per the D60/D61 library boundary.
 
 ## D127. Rotate OpenRouter chat providers on overload in the core engine
 
+**Retention clarification, 2026-11-24:** the opt-in ZDR flag below now covers
+embeddings as well as chat: with `REMEMBERSTACK_OPENROUTER_ZDR=true`, every
+chat and embedding request carries `zdr: true` and `data_collection: deny`,
+even with no provider list. Embeddings gain a hard host allowlist,
+`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`, that permits fallback only
+within the listed hosts; an embedding order alone could fall back to any host
+serving the model, and did reach a non-ZDR host in production. The image
+description converter has its own `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`
+(see the media design; it is part of that route's version). The engine-wide
+flag does not enter readiness bindings. The owner
+requires remember.dev to send customer content only to ZDR endpoints. See the
+[current contract](plan/designs/openrouter_provider_rotation_design.md#5-zero-retention-enforcement)
+and [analysis](plan/analysis/openrouter-embedding-zdr-20261124.md).
+
 **Routing clarification, 2026-11-06:** an identical hard allowlist and ordered
 list may be combined to permit fallback only within the approved set. The owner
 approved Flex followed by standard OpenAI Luna for current LoCoMo validation.

@@ -387,6 +387,21 @@ def test_model_bindings_report_embedding_provider_order(
 
 
 @pytest.mark.parametrize(
+    ("configured", "reported"), (("nebius,deepinfra", "nebius,deepinfra"), ("", None))
+)
+def test_model_bindings_report_embedding_allowlist_only_when_set(
+    monkeypatch: pytest.MonkeyPatch, configured: str, reported: str | None
+) -> None:
+    """The hard allowlist is disclosed; unset keeps the historic binding keys."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY", configured)
+
+    bindings = _model_bindings()
+
+    assert bindings.get("openrouter_embedding_provider_only") == reported
+
+
+@pytest.mark.parametrize(
     ("configured", "reported"), (("64000", "64000"), ("", "32000"))
 )
 def test_compose_and_model_bindings_expose_max_completion_tokens(
@@ -668,3 +683,48 @@ def test_jev_via_openrouter_uses_each_deployments_own_key(
         ("project-a-key", "https://openrouter.ai/api/v1", True),
         ("project-b-key", "https://openrouter.ai/api/v1", True),
     ]
+
+
+def test_compose_reads_the_retention_policy_only_from_dotenv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The engine ZDR flag and the embedding allowlist come only from ``.env``.
+
+    An ``environment:`` entry outranks ``env_file``, so ``${VAR:-false}`` or
+    ``${VAR-false}`` would let a shell export, or an alternate ``--env-file``
+    that omits the key, silently override or clear what ``.env`` sets. With no
+    entry, every app service gets ``.env``'s value through ``env_file``, and a
+    blank value there stops startup instead of reading as ``false``.
+    """
+    from pydantic import ValidationError
+    import yaml
+
+    from rememberstack.adapters.converters.image_ocr_description import (
+        ImageDescriptionSettings,
+    )
+    from rememberstack.adapters.openrouter import OpenRouterSettings
+
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    services = yaml.safe_load(compose)["services"]
+    policy = (
+        "REMEMBERSTACK_OPENROUTER_ZDR",
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY",
+    )
+    for name in ("setup", "api", "worker-convert", "worker-llm", "projections"):
+        service = services[name]
+        assert service["env_file"] == [{"path": ".env", "required": False}]
+        assert not set(policy) & set(service.get("environment", {}))
+    example = (_ROOT / ".env.example").read_text(encoding="utf-8")
+    for name in policy:
+        assert f"# {name}=" in example
+
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY", "test-key")
+    assert OpenRouterSettings().zdr is False  # pyright: ignore[reportCallIssue]
+    assert ImageDescriptionSettings().zdr is False  # pyright: ignore[reportCallIssue]
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "")
+    with pytest.raises(ValidationError, match="zdr"):
+        OpenRouterSettings()  # pyright: ignore[reportCallIssue]
+    monkeypatch.setenv("REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR", "")
+    with pytest.raises(ValidationError, match="zdr"):
+        ImageDescriptionSettings()  # pyright: ignore[reportCallIssue]
