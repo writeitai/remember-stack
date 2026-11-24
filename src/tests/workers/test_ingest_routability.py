@@ -13,11 +13,13 @@ resuming really releases it — are proved against PostgreSQL in
 from collections.abc import Callable
 from collections.abc import Collection
 from collections.abc import Iterator
+import io
 from pathlib import Path
 import tempfile
 from typing import cast
 from uuid import UUID
 from uuid import uuid4
+import zipfile
 
 import pandas as pd
 from pydantic import SecretStr
@@ -25,6 +27,8 @@ import pyreadstat
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
+from rememberstack.core.content_detection import detect_content_mime
+from rememberstack.model import ContentDetectionError
 from rememberstack.model import DeferReason
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
@@ -35,6 +39,105 @@ from rememberstack.model import UploadRecord
 from rememberstack.model.metering import ManagedMeterScope
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.e0 import UploadIngestor
+
+_XLS = "application/vnd.ms-excel"
+_PPT = "application/vnd.ms-powerpoint"
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+_DOTX = "application/vnd.openxmlformats-officedocument.wordprocessingml.template"
+_PPSX = "application/vnd.openxmlformats-officedocument.presentationml.slideshow"
+_UTF16_CSV = "name,value\na,1\n".encode("utf-16")
+_UTF16_TSV = "name\tvalue\na\t1\n".encode("utf-16-be")
+_UTF16_TSV = b"\xfe\xff" + _UTF16_TSV
+_LATIN1_EMAIL = (
+    b"From: a@example.org\r\nTo: b@example.org\r\nSubject: Hi\r\n"
+    b"Date: Thu, 1 Jan 2026 00:00:00 +0000\r\n"
+    b"Content-Type: text/plain; charset=iso-8859-1\r\n"
+    b"Content-Transfer-Encoding: 8bit\r\n\r\nCaf\xe9.\r\n"
+)
+_XLS_BYTES = (
+    Path(__file__).parents[1] / "adapters" / "fixtures" / "tiny_budget.xls"
+).read_bytes()
+"""A real Excel 97-2003 workbook (an OLE compound file)."""
+
+
+def _ooxml(*, part: str) -> bytes:
+    """A minimal Office Open XML package with one main part."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as package:
+        package.writestr("[Content_Types].xml", "<Types/>")
+        package.writestr(part, "<x/>")
+    return buffer.getvalue()
+
+
+def _cfb(
+    *, streams: list[str], embedded: tuple[str, ...] = (), loop: bool = False
+) -> bytes:
+    """A small OLE compound file (MS-CFB v3) with these root streams.
+
+    ``embedded`` streams sit in a child storage (an embedded object);
+    ``loop`` makes the last root sibling point back at itself.
+    """
+    free, end, fat_sector, none = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFF
+
+    def entry(*, name: str, kind: int, right: int = none, child: int = none) -> bytes:
+        encoded = name.encode("utf-16-le")
+        return (
+            encoded.ljust(64, b"\x00")
+            + (len(encoded) + 2).to_bytes(2, "little")
+            + bytes([kind, 1])
+            + none.to_bytes(4, "little")
+            + right.to_bytes(4, "little")
+            + child.to_bytes(4, "little")
+            + bytes(128 - 80)
+        )
+
+    names = [(name, 2) for name in streams] + ([("ObjectPool", 1)] if embedded else [])
+    entries = [entry(name="Root Entry", kind=5, child=1)]
+    for index, (name, kind) in enumerate(names, start=1):
+        last = index == len(names)
+        right = (index if loop else none) if last else index + 1
+        child = len(names) + 1 if kind == 1 else none
+        entries.append(entry(name=name, kind=kind, right=right, child=child))
+    for index, name in enumerate(embedded):
+        right = len(names) + 2 + index if index + 1 < len(embedded) else none
+        entries.append(entry(name=name, kind=2, right=right))
+    while len(entries) % 4:
+        entries.append(bytes(128))
+    directory = b"".join(entries)
+    directory_sectors = len(directory) // 512
+    fat = [fat_sector] + [
+        index + 2 if index + 1 < directory_sectors else end
+        for index in range(directory_sectors)
+    ]
+    fat_bytes = b"".join(value.to_bytes(4, "little") for value in fat)
+    fat_bytes = fat_bytes.ljust(512, b"\xff")
+    header = (
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+        + bytes(16)
+        + (0x3E).to_bytes(2, "little")
+        + (3).to_bytes(2, "little")
+        + b"\xfe\xff"
+        + (9).to_bytes(2, "little")
+        + (6).to_bytes(2, "little")
+        + bytes(10)
+        + (1).to_bytes(4, "little")
+        + (1).to_bytes(4, "little")
+        + bytes(4)
+        + (4096).to_bytes(4, "little")
+        + end.to_bytes(4, "little")
+        + bytes(4)
+        + end.to_bytes(4, "little")
+        + bytes(4)
+        + (0).to_bytes(4, "little")
+        + free.to_bytes(4, "little") * 108
+    )
+    assert len(header) == 512
+    return header + fat_bytes + directory
+
+
+_PPT_BYTES = _cfb(streams=["Current User", "PowerPoint Document"])
+"""A PowerPoint 97-2003 container: its root holds a PowerPoint Document stream."""
 
 _DEPLOYMENT_ID = UUID("106a0000-0000-0000-0000-000000000001")
 _ROUTES = {"text/markdown": "passthrough", "text/plain": "passthrough"}
@@ -268,6 +371,23 @@ def test_unknown_archive_uses_registry_card_family() -> None:
             "application/x-spss-por",
         ),
         ("data.csv", "text/csv", b"name,value\na,1\n", "text/csv"),
+        ("data.csv", "text/csv", _UTF16_CSV, "text/csv"),
+        ("data.csv", "application/octet-stream", _UTF16_CSV, "text/csv"),
+        (
+            "data.tsv",
+            "application/octet-stream",
+            _UTF16_TSV,
+            "text/tab-separated-values",
+        ),
+        ("note.eml", "message/rfc822", _LATIN1_EMAIL, "message/rfc822"),
+        ("note.eml", "application/octet-stream", _LATIN1_EMAIL, "message/rfc822"),
+        ("budget.xls", "application/octet-stream", _XLS_BYTES, _XLS),
+        ("budget.xls", "application/msword", _XLS_BYTES, _XLS),
+        ("deck.ppt", "application/octet-stream", _PPT_BYTES, _PPT),
+        ("letter.dotx", _DOTX, _ooxml(part="word/document.xml"), _DOCX),
+        ("show.ppsx", _PPSX, _ooxml(part="ppt/presentation.xml"), _PPTX),
+        ("logo.svg", "image/svg+xml", b'<svg xmlns="x"/>', "text/x-config"),
+        ("page.xhtml", "application/xhtml+xml", b"<html><p>Hi</p></html>", "text/html"),
         (
             "book.epub",
             "application/epub+zip",
@@ -311,6 +431,53 @@ def test_registry_family_survives_compatible_byte_class(
     )
     assert catalog.recorded_mime == expected
     assert store.classes == ["hot" if expected.startswith("image/") else "cold"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("notes.txt", "plain words\n".encode("utf-16")),
+        ("mail.eml", b"From: a@example.org\nhello\n\nbody \xff"),
+        ("mail.eml", b"Subject: only one field\nX-A: b\n\nbody \xff"),
+        ("data.csv", b"\xff\xfe" + b"\x01\x00" * 8),
+        ("old.msg", _cfb(streams=["__properties_version1.0"])),
+    ],
+)
+def test_bytes_without_a_readable_class_stay_unread(
+    filename: str, content: bytes
+) -> None:
+    """UTF-16 only for delimited files, real headers only, and OLE by its streams."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    upload = DocumentUpload(
+        filename=filename, mime="application/octet-stream", content=content
+    )
+    if content.startswith(b"\xd0\xcf"):
+        with pytest.raises(ContentDetectionError) as raised:
+            ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+        assert raised.value.code == "ambiguous_office_format"
+        return
+    ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    assert catalog.recorded_mime == "application/octet-stream"
+
+
+def test_an_embedded_object_does_not_decide_the_office_subtype() -> None:
+    """Only the root storage's streams name the subtype (MS-CFB)."""
+    content = _cfb(streams=["Workbook"], embedded=("WordDocument",))
+    assert detect_content_mime(content=content, declared_mime="") == _XLS
+
+
+def test_a_cyclic_compound_directory_is_read_once() -> None:
+    """A sibling that points back at itself ends the walk instead of looping."""
+    content = _cfb(streams=["Current User", "WordDocument"], loop=True)
+    assert detect_content_mime(content=content, declared_mime="") == (
+        "application/msword"
+    )
 
 
 @pytest.mark.parametrize(

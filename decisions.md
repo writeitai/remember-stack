@@ -6646,6 +6646,18 @@ binary is stored with a binary card rather than refused.
 Recognized binary signatures override filename hints; PDF always remains PDF
 and follows D139's every-page OCR route.
 
+**Refined 2026-11-24 (content sniffing for formats the readers already
+decode).** A legacy OLE container takes its Word, Excel or PowerPoint subtype
+from its root storage's streams (`WordDocument`, `Workbook` or `Book`,
+`PowerPoint Document`; MS-CFB, bounded reads); a declared subtype applies
+only when they name none, and otherwise the upload stays
+`ambiguous_office_format`. Two text encodings that are not UTF-8 are admitted
+for the families whose readers decode them: UTF-16 with a byte-order mark for
+delimited files, and an Internet message header block for email with an
+8-bit body. A declaration spelled as a registry alias of the detected
+family (Office templates and slideshows, SVG, XHTML) is compatible. The file
+name still never decides a class the bytes do not establish.
+
 **Status:** accepted. **Date:** 2026-09-23.
 
 **Context.** Declared MIME could select conversion, metering, and storage for a

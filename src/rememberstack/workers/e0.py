@@ -63,6 +63,7 @@ from rememberstack.core import UrlConverter
 from rememberstack.core import UrlPageCountingConverter
 from rememberstack.core import with_content_hashes
 from rememberstack.core.content_detection import detect_content_mime
+from rememberstack.core.content_detection import sniffed_text_mimes
 from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import is_model_free
 from rememberstack.core.extraction_eligibility import is_search_only_text
@@ -659,12 +660,10 @@ class UploadIngestor:
                 or routed in _TEXT_DOCUMENT_MIMES
             ):
                 detected = routed
-            elif detected == "application/octet-stream" and family in {
-                "archive",
-                "dataset",
-                "ebook",
-                "binary",
-            }:
+            elif detected == "application/octet-stream" and (
+                family in {"archive", "dataset", "ebook", "binary"}
+                or routed in sniffed_text_mimes(content=content)
+            ):
                 detected = routed
         return detected
 

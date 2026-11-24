@@ -106,8 +106,12 @@ is valid text in every deployment; a metered one bills it at the per-source
 minimum (D150).
 
 For legacy OLE office containers, bytes establish the office class and the
-declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE
-container is refused. This check identifies the class; a converter still
+root storage's streams select its subtype (`WordDocument`, `Workbook` or
+`Book`, `PowerPoint Document`); a declared legacy office MIME applies only
+when they name none. Otherwise an ambiguous OLE container is refused. UTF-16
+text with a byte-order mark keeps a delimited family (the table reader
+decodes it), and an Internet message whose body is not UTF-8 keeps the email
+family; other text that is not UTF-8 is binary. This check identifies the class; a converter still
 validates the complete format before producing evidence.
 
 **Class on every object (D132).** The object-store write contract requires an
