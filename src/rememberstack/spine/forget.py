@@ -38,6 +38,8 @@ from rememberstack.spine.work_ledger import FORGOTTEN_WORK
 FORGET_COMPONENT_VERSION: Final = "forget-v1"
 """The sweep generation; each sweep's work row is ``forget-v1/<sweep>``."""
 
+_CLEARED_RATIONALE: Final = "Rationale cleared by a forget."
+
 MAX_SWEEP_ATTEMPTS: Final = 32_767
 """A sweep row's attempt ceiling: a crashed worker's sweep is simply retried."""
 
@@ -178,10 +180,19 @@ class ForgetCatalog:
             .mappings()
             .one()
         )
+        # A one-shot upload's lineage is its bytes (source_ref is the content
+        # hash); an upload with an explicit stable source_ref is an identity.
+        one_shot = (
+            document["source_kind"] == UPLOAD_SOURCE_KIND
+            and connection.execute(
+                text("""SELECT EXISTS (SELECT 1 FROM document_versions
+            WHERE deployment_id = :d AND doc_id = :doc AND content_hash = :ref)"""),
+                {"d": deployment_id, "doc": doc_id, "ref": document["source_ref"]},
+            ).scalar_one()
+        )
         identity = (
             None
-            if document["source_kind"] == UPLOAD_SOURCE_KIND
-            or document["source_ref"] is None
+            if one_shot or document["source_ref"] is None
             else source_identity_hash(
                 deployment_id=deployment_id,
                 source_kind=str(document["source_kind"]),
@@ -410,7 +421,7 @@ def guard_forgotten_on(
     """
     identity = (
         None
-        if source_kind == UPLOAD_SOURCE_KIND
+        if source_kind == UPLOAD_SOURCE_KIND and source_ref == content_hash
         else source_identity_hash(
             deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
         )
@@ -480,13 +491,16 @@ class _Sweep:
         for statement in _SUBTREE:
             self._exec(statement, p)
         self._retire_originals(p=p, collected=collected)
-        fixture_keys = tuple(
-            ObjectKey(str(key))
-            for key in self._c.execute(_PLAN_TRANSCRIPTS, p).scalars()
-            if key
+        # Kept on the record in this transaction: a retry still finds them.
+        collected["fixture_keys"] = sorted(
+            {
+                *collected["fixture_keys"],
+                *(str(key) for key in self._c.execute(_PLAN_TRANSCRIPTS, p).scalars()),
+            }
+            - {"None", ""}
         )
         for statement in _DEPLOYMENT_FIXTURES:
-            self._exec(statement, p, residue=False)
+            self._exec(statement, {**p, "cleared": _CLEARED_RATIONALE}, residue=False)
         self._stale_labels(p=p, collected=collected)
         self._c.execute(
             text("""UPDATE forgets SET collected = CAST(:collected AS jsonb)
@@ -507,7 +521,7 @@ class _Sweep:
                 connection=self._c, forget=forget, collected=collected
             ),
             profile_entity_ids=profile_entities,
-            fixture_keys=fixture_keys,
+            fixture_keys=tuple(ObjectKey(key) for key in collected["fixture_keys"]),
         )
 
     def _exec(
@@ -721,6 +735,16 @@ class _Sweep:
                 p,
             ).scalars()
         )
+        p["doc_forms"] = list(
+            self._c.execute(
+                text("""SELECT DISTINCT form FROM mentions m
+                CROSS JOIN LATERAL (VALUES (m.surface_form),
+                  (m.canonical_name_form)) v(form)
+                WHERE m.deployment_id=:deployment_id AND m.doc_id=:doc_id
+                  AND v.form IS NOT NULL"""),
+                p,
+            ).scalars()
+        )
         for statement in _ENTITY_STATEMENTS:
             self._exec(statement, p)
 
@@ -848,6 +872,7 @@ def _collected(
         "k_artifact_ids",
         "k_pending",
         "object_keys",
+        "fixture_keys",
     ):
         collected[key] = sorted(collected.get(key) or ())
     collected["authored"] = dict(collected.get("authored") or {})
@@ -1097,9 +1122,18 @@ _EXCLUSIVE_ENTITIES = """
         WHERE d.deployment_id=e.deployment_id AND d.entity_id=e.entity_id
           AND m.doc_id=:doc_id)
       AND NOT EXISTS (
+        -- surviving provenance anywhere in the merge closure that resolves
+        -- to this entity (itself and every entity redirected into it)
+        WITH RECURSIVE closure(entity_id) AS (
+          SELECT e.entity_id
+          UNION
+          SELECT x.entity_id FROM entities x JOIN closure c ON x.merged_into=c.entity_id
+          WHERE x.deployment_id=e.deployment_id
+        )
         SELECT 1 FROM resolution_decisions d JOIN mentions m
           ON m.deployment_id=d.deployment_id AND m.mention_id=d.mention_id
-        WHERE d.deployment_id=e.deployment_id AND d.entity_id=e.entity_id
+        WHERE d.deployment_id=e.deployment_id
+          AND d.entity_id IN (SELECT entity_id FROM closure)
           AND d.superseded_by IS NULL AND m.doc_id<>:doc_id
           AND NOT m.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[])))
       AND NOT EXISTS (
@@ -1295,6 +1329,18 @@ _PRUNE_PREDICATES = text(
     """
 )
 
+# Exact spellings surviving mentions resolved to one entity use.
+_SURVIVING_FORMS = """
+    SELECT v.form, m.normalized_lemma AS lemma
+    FROM resolution_decisions d JOIN mentions m
+      ON m.deployment_id=d.deployment_id AND m.mention_id=d.mention_id
+    CROSS JOIN LATERAL (VALUES (m.surface_form), (m.canonical_name_form)) v(form)
+    WHERE d.deployment_id=:deployment_id AND d.entity_id={entity}
+      AND d.superseded_by IS NULL AND m.doc_id<>:doc_id
+      AND NOT m.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[]))
+      AND v.form IS NOT NULL
+"""
+
 _ENTITY_STATEMENTS = (
     # Exclusive entities: content-free retired rows (merge logs reference them).
     text(
@@ -1316,41 +1362,67 @@ _ENTITY_STATEMENTS = (
           AND (status <> 'retired' OR canonical_name <> '' OR normalized_name <> '')
         """
     ),
-    # Shared entities: aliases only this document's mentions named go, and a
-    # canonical name that came only from it is replaced by a surviving alias.
+    # Shared entities keep only spellings a surviving mention of that entity
+    # uses. An alias spelled as this document spelled it takes a surviving
+    # spelling of the same lemma, or goes; a canonical name spelled only by
+    # this document is replaced by a surviving alias.
     text(
-        """
-        DELETE FROM aliases a
+        f"""
+        UPDATE aliases a SET alias_text = (
+          SELECT s.form FROM ({_SURVIVING_FORMS.format(entity="a.entity_id")}) s
+          WHERE lower(s.form) = a.normalized_lemma OR s.lemma = a.normalized_lemma
+          ORDER BY s.form LIMIT 1)
         WHERE a.deployment_id=:deployment_id
           AND a.entity_id=ANY(CAST(:resolved_entity_ids AS uuid[]))
-          AND a.normalized_lemma=ANY(CAST(:doc_lemmas AS text[]))
+          AND a.alias_text=ANY(CAST(:doc_forms AS text[]))
           AND NOT EXISTS (
-            SELECT 1 FROM mentions m
-            WHERE m.deployment_id=a.deployment_id AND m.doc_id<>:doc_id
-              AND NOT m.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[]))
-              AND (m.normalized_lemma=a.normalized_lemma
-                   OR lower(m.canonical_name_form)=a.normalized_lemma))
+            SELECT 1 FROM ({_SURVIVING_FORMS.format(entity="a.entity_id")}) s
+            WHERE s.form = a.alias_text)
+          AND EXISTS (
+            SELECT 1 FROM ({_SURVIVING_FORMS.format(entity="a.entity_id")}) s
+            WHERE lower(s.form) = a.normalized_lemma OR s.lemma = a.normalized_lemma)
         """
     ),
     text(
+        f"""
+        DELETE FROM aliases a
+        WHERE a.deployment_id=:deployment_id
+          AND a.entity_id=ANY(CAST(:resolved_entity_ids AS uuid[]))
+          AND (a.alias_text=ANY(CAST(:doc_forms AS text[]))
+               OR a.normalized_lemma=ANY(CAST(:doc_lemmas AS text[])))
+          AND NOT EXISTS (
+            SELECT 1 FROM ({_SURVIVING_FORMS.format(entity="a.entity_id")}) s
+            WHERE s.form = a.alias_text)
         """
+    ),
+    text(
+        f"""
         UPDATE entities e SET (canonical_name, normalized_name, updated_at) = (
-          SELECT a.alias_text, a.normalized_lemma, now() FROM aliases a
-          WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id
-          ORDER BY (a.provenance='llm_canonical') DESC, a.confidence DESC NULLS LAST,
-                   a.last_seen DESC, a.alias_id
+          SELECT x.name, x.lemma, now() FROM (
+            SELECT a.alias_text AS name, a.normalized_lemma AS lemma, 0 AS rank,
+                   (a.provenance='llm_canonical') AS llm, a.confidence AS confidence,
+                   a.last_seen AS seen
+            FROM aliases a
+            WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id
+            UNION ALL
+            SELECT s.form, s.lemma, 1, false, NULL, NULL
+            FROM ({_SURVIVING_FORMS.format(entity="e.entity_id")}) s
+          ) x
+          ORDER BY x.rank, x.llm DESC, x.confidence DESC NULLS LAST,
+                   x.seen DESC NULLS LAST, x.name
           LIMIT 1)
         WHERE e.deployment_id=:deployment_id
           AND e.entity_id=ANY(CAST(:resolved_entity_ids AS uuid[]))
           AND e.status <> 'retired'
-          AND e.normalized_name=ANY(CAST(:doc_lemmas AS text[]))
-          AND EXISTS (
-            SELECT 1 FROM aliases a
-            WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id)
+          AND e.canonical_name=ANY(CAST(:doc_forms AS text[]))
           AND NOT EXISTS (
-            SELECT 1 FROM aliases a
-            WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id
-              AND a.normalized_lemma=e.normalized_name)
+            SELECT 1 FROM ({_SURVIVING_FORMS.format(entity="e.entity_id")}) s
+            WHERE s.form = e.canonical_name)
+          AND (EXISTS (
+                 SELECT 1 FROM aliases a
+                 WHERE a.deployment_id=e.deployment_id AND a.entity_id=e.entity_id)
+               OR EXISTS (
+                 SELECT 1 FROM ({_SURVIVING_FORMS.format(entity="e.entity_id")}) s))
         """
     ),
     text(
@@ -1401,7 +1473,8 @@ _COMPILED_ARTIFACT_STATEMENTS = (
         """
         UPDATE knowledge_artifacts
         SET page_summary=NULL, content_hash=NULL, inputs_hash=NULL,
-            last_compiled_at=NULL, status='stale'
+            last_compiled_at=NULL,
+            status=CASE WHEN status='tombstoned' THEN status ELSE 'stale' END
         WHERE deployment_id=:deployment_id AND page_kind='compiled'
           AND artifact_id=ANY(CAST(:compiled_artifact_ids AS uuid[]))
         """
@@ -1650,12 +1723,16 @@ _DEPLOYMENT_FIXTURES = (
     text("DELETE FROM canary_cases WHERE deployment_id=:deployment_id"),
     text("DELETE FROM golden_claim_labels WHERE deployment_id=:deployment_id"),
     text("DELETE FROM golden_pairs WHERE deployment_id=:deployment_id"),
-    # A decision a page rule or quarantine still references stays, emptied.
+    # A decision a page rule or quarantine still references stays, a valid
+    # proposal with its prose rationale replaced.
     text(
         """
-        UPDATE knowledge_plan_decisions d SET payload='{}'::jsonb, plan_run_id=NULL
+        UPDATE knowledge_plan_decisions d
+        SET payload=jsonb_set(d.payload, '{rationale}', to_jsonb(CAST(:cleared AS text))),
+            plan_run_id=NULL
         WHERE d.deployment_id=:deployment_id
-          AND (d.payload <> '{}'::jsonb OR d.plan_run_id IS NOT NULL)
+          AND (d.payload->>'rationale' IS DISTINCT FROM :cleared
+               OR d.plan_run_id IS NOT NULL)
           AND (EXISTS (SELECT 1 FROM knowledge_page_rules r
                        WHERE r.plan_decision_id=d.decision_id)
                OR EXISTS (SELECT 1 FROM knowledge_quarantines q
