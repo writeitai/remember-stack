@@ -62,7 +62,7 @@ class LocalGitRepository:
             raise ValueError("self-host Plane-K truth must be a working repository")
 
     def checkout(self, *, destination: Path) -> KRevision:
-        """Clone the branch and lay the compiled snapshot over it."""
+        """Clone the branch and add the compiled snapshot's files to it."""
         _run("git", "clone", "--quiet", str(self._repository), str(destination))
         head = _git(destination, "rev-parse", "HEAD")
         _git(destination, "update-ref", _BASE_REF, head)
@@ -82,7 +82,17 @@ class LocalGitRepository:
                 capture_output=True,
             ).stdout
             with tarfile.open(fileobj=io.BytesIO(archive)) as files:
-                files.extractall(destination, filter="data")
+                # A file committed on the branch wins: a direct edit of a
+                # compiled page is then seen (and quarantined) by the driver.
+                files.extractall(
+                    destination,
+                    members=[
+                        member
+                        for member in files.getmembers()
+                        if member.isdir() or not (destination / member.name).exists()
+                    ],
+                    filter="data",
+                )
         return KRevision(root=head)
 
     def publish(self, *, worktree: Path, compiled_paths: Collection[str]) -> KRevision:

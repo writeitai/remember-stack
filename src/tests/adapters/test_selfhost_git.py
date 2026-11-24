@@ -167,6 +167,25 @@ def test_compiled_pages_form_a_parentless_snapshot_and_drop_without_trace(
     assert _everything(repository).lower().count(_TOKEN.encode()) == 0
 
 
+def test_a_compiled_page_committed_on_the_branch_wins_at_checkout(
+    tmp_path: Path,
+) -> None:
+    """A direct edit reaches the driver, which quarantines it; nothing is lost."""
+    repository = _repository(root=tmp_path)
+    adapter = _adapter(repository)
+    first = tmp_path / "first"
+    adapter.checkout(destination=first)
+    (first / "K1/compiled.md").write_text("machine text\n", encoding="utf-8")
+    adapter.publish(worktree=first, compiled_paths=_COMPILED)
+    (repository / "K1/compiled.md").write_text("human edit\n", encoding="utf-8")
+    _commit(repository=repository, message="direct edit")
+
+    second = tmp_path / "second"
+    adapter.checkout(destination=second)
+
+    assert (second / "K1/compiled.md").read_text(encoding="utf-8") == "human edit\n"
+
+
 def test_publish_refuses_a_moved_branch_and_keeps_the_human_commit(
     tmp_path: Path,
 ) -> None:
