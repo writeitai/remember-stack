@@ -6,7 +6,6 @@ import time
 from typing import Any
 from typing import Literal
 from typing import Mapping
-from urllib.parse import urlsplit
 
 import httpx
 from pydantic import AliasChoices
@@ -72,14 +71,31 @@ class TypeSafeSettings(BaseSettings):
 _OPENROUTER_HOSTS: frozenset[str] = frozenset({"openrouter.ai"})
 
 
+def systemone_url(*, base_url: str) -> httpx.URL:
+    """Return the ``/systemone`` request URL exactly as it will be posted."""
+    return httpx.URL(f"{base_url.rstrip('/')}/systemone")
+
+
 def require_openrouter_origin(*, base_url: str) -> None:
     """Under ZDR, System One may only be sent to OpenRouter itself over HTTPS.
 
     The base URL is OpenRouter's API root, e.g. ``https://openrouter.ai/api/v1``;
-    its origin must be ``https://openrouter.ai``.
+    its origin must be ``https://openrouter.ai``. The check runs on the final
+    request URL as HTTPX parses it, so a URL HTTPX would treat as relative
+    (and resolve against an injected client's base URL) is refused.
     """
-    parsed = urlsplit(base_url)
-    if parsed.scheme != "https" or (parsed.hostname or "") not in _OPENROUTER_HOSTS:
+    try:
+        url = systemone_url(base_url=base_url)
+    except httpx.InvalidURL:
+        url = None
+    if (
+        url is None
+        or base_url != base_url.strip()
+        or not url.is_absolute_url
+        or url.scheme != "https"
+        or url.host not in _OPENROUTER_HOSTS
+        or url.port not in (None, 443)
+    ):
         raise ConfigurationError(
             "REMEMBERSTACK_OPENROUTER_ZDR=true with REMEMBERSTACK_TYPESAFE_ROUTE="
             "openrouter needs REMEMBERSTACK_OPENROUTER_BASE_URL on"
@@ -137,6 +153,7 @@ class TypeSafeSystemOneClient(SystemOnePort):
                 " System One client"
             )
         self._zdr = zdr
+        self._url = systemone_url(base_url=self._settings.base_url)
         self._client = client or httpx.Client(timeout=self._settings.timeout_s)
 
     def evaluate(
@@ -149,7 +166,7 @@ class TypeSafeSystemOneClient(SystemOnePort):
     ) -> tuple[Mapping[str, Any], ProviderCallUsage]:
         """Evaluate state against typed questions, returning answers and usage."""
         target_model = model or self._settings.model
-        url = f"{self._settings.base_url.rstrip('/')}/systemone"
+        url = self._url
         headers = {
             "Authorization": f"Bearer {self._settings.api_key}",
             "Content-Type": "application/json",

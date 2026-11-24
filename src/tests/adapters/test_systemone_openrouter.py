@@ -390,6 +390,9 @@ def test_compose_takes_the_jev_route_and_reads_zdr_only_from_dotenv() -> None:
         "https://api.typesafe.ai/v1",
         "https://gateway.example/api/v1",
         "http://openrouter.ai/api/v1",
+        "https://openrouter.ai:8443/api/v1",
+        " https://openrouter.ai/api/v1",
+        "/api/v1",
     ),
 )
 def test_zdr_openrouter_route_refuses_a_host_other_than_openrouter(
@@ -409,7 +412,11 @@ def test_zdr_openrouter_route_refuses_a_host_other_than_openrouter(
         TypeSafeSystemOneClient(
             settings=TypeSafeSettings(route="openrouter"),
             openrouter=openrouter,
-            client=httpx.Client(transport=_capture(body=_OPENROUTER_BODY, seen=seen)),
+            # A relative URL would resolve against this base: it must not leave.
+            client=httpx.Client(
+                base_url="https://gateway.example",
+                transport=_capture(body=_OPENROUTER_BODY, seen=seen),
+            ),
         )
     assert seen == []
 
