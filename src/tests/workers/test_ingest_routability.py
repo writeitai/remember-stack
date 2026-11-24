@@ -608,6 +608,13 @@ def test_office_bytes_declared_as_rtf_are_refused(content: bytes) -> None:
     assert raised.value.code == "content_type_mismatch"
 
 
+def test_utf16_text_declared_as_a_binary_format_is_refused() -> None:
+    """As for UTF-8 text, a non-text declaration contradicts the bytes."""
+    with pytest.raises(ContentDetectionError) as raised:
+        detect_content_mime(content=_UTF16_CSV, declared_mime="application/zip")
+    assert raised.value.code == "content_type_mismatch"
+
+
 def test_an_embedded_object_does_not_decide_the_office_subtype() -> None:
     """Only the root storage's streams name the subtype (MS-CFB)."""
     content = _cfb(streams=["Workbook"], embedded=("WordDocument",))

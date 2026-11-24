@@ -730,9 +730,17 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     declared = _AUDIO_MIME_ALIASES.get(declared, declared)
     if detected == "application/octet-stream":
         sniffed = sniffed_text_mimes(content=content)
-        if sniffed and (declared in sniffed or declared.startswith("text/")):
+        if sniffed:
             # Text the bytes allow for these families: E0's registry routing
-            # picks the family (name first, then declaration), as for UTF-8.
+            # picks the family (name first, then declaration), as for UTF-8;
+            # a declaration of a non-text family contradicts the bytes.
+            if (
+                declared not in {"", "application/octet-stream"}
+                and declared not in sniffed
+                and not declared.startswith("text/")
+                and family_for_mime(mime=declared).name not in _TEXT_FAMILIES
+            ):
+                raise ContentDetectionError(code="content_type_mismatch")
             return detected
         if (
             declared.startswith(("text/", "image/", "audio/", "video/"))
