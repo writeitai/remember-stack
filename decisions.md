@@ -8001,6 +8001,16 @@ and gains `cost_class`, `unit` and `format_family` (`p9_46_0067`, which refuses 
 while staged originals remain undrained). Unmetered deployments are unaffected. The
 control plane must accept the v3 receipt before a deployment runs this release.
 
+*Amended 2026-11-24 (managed image reading).* The `image_ocr_description` route (Mistral
+OCR plus one vision-model description of every PNG or JPEG, D65/D115) is `image`: one unit
+(`image`) per source version, recorded **before** either provider call, and the work parks
+for approval exactly like a PDF's pre-OCR page count. The quantity is always 1, so nothing
+is read to measure it; the receipt's algorithm version is `one-still-image-v1`, and the
+classifier version becomes `route-cost-class-v2`. A metered deployment that routes images
+to `card` still pays only for storage. The route's input ceiling (the smaller of the
+description and OCR byte limits) is its `provider_limit_bytes`: a larger file fails the
+version before measurement, download or any provider call, as an over-limit PDF does.
+
 
 
 ## D151. Parallel identity matches survive ordinary profile enrichment
