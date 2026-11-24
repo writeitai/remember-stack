@@ -155,10 +155,12 @@ class ManagedMeterCatalog:
                     reason_code="receipt_conflict",
                 )
                 _logger.error(
-                    "managed meter measurement quarantined reason=receipt_conflict "
-                    "measurement_id=%s",
-                    receipt.measurement_id,
-                    extra={"error_code": "meter_measurement_quarantined"},
+                    "managed meter measurement quarantined reason=receipt_conflict",
+                    exc_info=True,
+                    extra={
+                        "error_code": "meter_measurement_quarantined",
+                        "measurement_id": str(receipt.measurement_id),
+                    },
                 )
                 parked += 1
                 continue
@@ -167,9 +169,24 @@ class ManagedMeterCatalog:
                     measurement_id=receipt.measurement_id,
                     reason_code="producer_credential_rejected",
                 )
+                _logger.error(
+                    "managed meter measurement rejected: producer credential refused",
+                    exc_info=True,
+                    extra={
+                        "error_code": "meter_receipt_unauthorized",
+                        "measurement_id": str(receipt.measurement_id),
+                    },
+                )
                 parked += 1
                 continue
-            except MeterReceiptUnavailable:
+            except MeterReceiptUnavailable:  # error-contract: expected retry
+                _logger.warning(
+                    "managed meter measurement deferred: control plane unavailable",
+                    extra={
+                        "error_code": "meter_receipt_retry",
+                        "measurement_id": str(receipt.measurement_id),
+                    },
+                )
                 self._record_measurement_retry(
                     measurement_id=receipt.measurement_id,
                     reason_code="control_plane_unavailable",
@@ -421,7 +438,38 @@ class ManagedMeterCatalog:
             receipt = _outcome_from_row(row=dict(row))
             try:
                 self._receipts.acknowledge_outcome(outcome=receipt)
-            except (MeterReceiptConflict, MeterReceiptUnavailable):
+            except (
+                MeterReceiptConflict,
+                MeterReceiptUnauthorized,
+                MeterReceiptUnavailable,
+            ) as error:
+                # Unauthorized subclasses Unavailable, so it is tested first.
+                if isinstance(error, MeterReceiptUnauthorized):
+                    _logger.error(
+                        "managed meter outcome rejected: producer credential refused",
+                        exc_info=error,
+                        extra={
+                            "error_code": "meter_receipt_unauthorized",
+                            "measurement_id": str(receipt.measurement_id),
+                        },
+                    )
+                elif isinstance(error, MeterReceiptUnavailable):
+                    _logger.warning(
+                        "managed meter outcome deferred: control plane unavailable",
+                        extra={
+                            "error_code": "meter_receipt_retry",
+                            "measurement_id": str(receipt.measurement_id),
+                        },
+                    )
+                else:
+                    _logger.error(
+                        "managed meter outcome conflicts with the recorded receipt",
+                        exc_info=error,
+                        extra={
+                            "error_code": "meter_receipt_conflict",
+                            "measurement_id": str(receipt.measurement_id),
+                        },
+                    )
                 with self._engine.begin() as connection:
                     attempts = int(
                         connection.execute(

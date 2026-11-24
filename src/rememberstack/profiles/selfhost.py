@@ -48,6 +48,8 @@ from rememberstack.adapters.selfhost import HashedBearerAuth
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.adapters.systemone import build_systemone_provider
+from rememberstack.adapters.systemone import validate_systemone_routing
+from rememberstack.adapters.typesafe import ConfigurationError
 from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
@@ -58,6 +60,7 @@ from rememberstack.model import PipelineStage
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.systemone import SystemOnePort
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
@@ -892,9 +895,11 @@ class EngineSettings:
     several deployments from one process makes one per deployment and builds
     each engine from it, so no deployment's values live in process globals.
     Model policy (which models each stage calls) and the accounts of the
-    optional converter providers (OCR, image description) and of System One
-    still come from the environment and are the same for every deployment a
-    process serves.
+    optional converter providers (OCR, image description) still come from the
+    environment and are the same for every deployment a process serves. So
+    does System One's account on its direct ``typesafe`` route; on the
+    ``openrouter`` route (``REMEMBERSTACK_TYPESAFE_ROUTE``) System One uses
+    this deployment's ``model_provider`` key, base URL and ZDR flag.
     """
 
     deployment: SelfHostSettings
@@ -964,6 +969,16 @@ class SelfHostProfile:
         environment's. ``conversion_routes`` (MIME type to converter) replace
         the routes named by ``settings.conversion_routes``, for a host that
         runs conversion elsewhere.
+
+        When fact adjudication uses Jev, the System One settings are read and
+        checked here (route, ZDR and backup) against the deployment's
+        OpenRouter settings, so an unsafe combination stops the profile before
+        it serves readiness or takes a task. For Jev, an injected
+        ``OpenRouterModelProvider``'s own settings are the source of truth:
+        explicit ``model_provider_settings`` that differ are refused, and with
+        neither Jev is refused. Both Jev stages and the readiness bindings
+        reuse the same checked System One settings; the other readiness
+        bindings keep their source (explicit settings, else the environment).
         """
         self._settings = settings
         self._engine = engine
@@ -975,12 +990,85 @@ class SelfHostProfile:
         self._model_provider = model_provider
         self._error_telemetry = error_telemetry
         self._task_queue = task_queue
+        # Readiness keeps its historical source: explicit settings, else env.
         self._model_provider_settings = model_provider_settings
         self._work_ledger_settings = work_ledger_settings or WorkLedgerSettings()
         self._conversion_routes = conversion_routes
         self._corpus_caches = corpus_caches
         self._k_git = k_git
         self._knowledge_rebuilder = knowledge_rebuilder
+        self._systemone_settings: TypeSafeSettings | None = None
+        self._systemone_openrouter: OpenRouterSettings | None = None
+        fact_settings = FactAdjudicationSettings.model_validate({})
+        self._fact_settings = fact_settings
+        if fact_settings.engine == "jev":
+            openrouter = _jev_openrouter_settings(
+                model_provider=model_provider,
+                model_provider_settings=model_provider_settings,
+            )
+            systemone_settings = TypeSafeSettings.model_validate({})
+            validate_systemone_routing(
+                settings=systemone_settings, openrouter=openrouter
+            )
+            if (
+                openrouter.zdr
+                and fact_settings.fallback_to_prompt
+                and not isinstance(model_provider, OpenRouterModelProvider)
+            ):
+                # The prompt fallback resends the same facts through the
+                # deployment's chat provider; only the OpenRouter provider
+                # built from these settings is known to carry ZDR.
+                raise ConfigurationError(
+                    "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT=true under"
+                    " REMEMBERSTACK_OPENROUTER_ZDR needs the deployment's"
+                    " OpenRouter model provider, so the fallback stays on"
+                    " zero-data-retention endpoints"
+                )
+            self._systemone_settings = systemone_settings
+            self._systemone_openrouter = openrouter
+
+    def _checked_fact_settings(self) -> FactAdjudicationSettings:
+        """The fact-adjudication settings checked when the profile was built.
+
+        The engine and the prompt-fallback flag decide where facts and claims
+        are sent, and the routing and zero-data-retention checks ran against
+        the values read at construction. A process whose environment changed
+        either afterwards is refused instead of building handlers on settings
+        that were never checked.
+        """
+        current = FactAdjudicationSettings()
+        checked = self._fact_settings
+        if (
+            current.engine != checked.engine
+            or current.fallback_to_prompt != checked.fallback_to_prompt
+        ):
+            raise ConfigurationError(
+                "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE or"
+                " REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT changed after this profile"
+                " was built; build a new profile so the routing and"
+                " zero-data-retention checks run"
+            )
+        return checked
+
+    def _jev_systemone_provider(
+        self, *, fact_settings: FactAdjudicationSettings
+    ) -> SystemOnePort | None:
+        """Build Jev's System One client from the settings checked at construction.
+
+        A process whose engine setting changed to ``jev`` after the profile was
+        built is refused: its routing and retention were never checked.
+        """
+        if fact_settings.engine != "jev":
+            return None
+        if self._systemone_settings is None:
+            raise ConfigurationError(
+                "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE became jev after this"
+                " profile was built; build a new profile so the Jev routing and"
+                " zero-data-retention checks run"
+            )
+        return build_systemone_provider(
+            settings=self._systemone_settings, openrouter=self._systemone_openrouter
+        )
 
     @classmethod
     def from_settings(
@@ -1433,7 +1521,11 @@ class SelfHostProfile:
 
     def _model_bindings(self) -> dict[str, str]:
         """This deployment's non-secret model bindings."""
-        return _model_bindings(openrouter=self._model_provider_settings)
+        return _model_bindings(
+            openrouter=self._model_provider_settings,
+            systemone=self._systemone_settings,
+            facts=self._fact_settings,
+        )
 
     def _managed_meter_scope(self):  # noqa: ANN202
         """Return the fleet-authored commercial scope, or None for OSS self-host."""
@@ -1807,7 +1899,7 @@ class SelfHostProfile:
             )
         if stage is PipelineStage.NORMALIZE_RELATIONS:
             observation_settings = ObservationSettings.model_validate({})
-            fact_settings = FactAdjudicationSettings()
+            fact_settings = self._checked_fact_settings()
             return NormalizeRelationsHandler(
                 claim_catalog=claims,
                 chunk_catalog=chunks,
@@ -1824,10 +1916,8 @@ class SelfHostProfile:
                     engine=self._engine,
                     model_provider=self._model_provider,
                     settings=fact_settings,
-                    systemone_provider=(
-                        build_systemone_provider(settings=TypeSafeSettings())
-                        if fact_settings.engine == "jev"
-                        else None
+                    systemone_provider=self._jev_systemone_provider(
+                        fact_settings=fact_settings
                     ),
                 ),
                 profile_refresher=profile_refresher,
@@ -1836,17 +1926,15 @@ class SelfHostProfile:
                 chunker_version=chunk_generation,
             )
         if stage is PipelineStage.ADJUDICATE_OBSERVATIONS:
-            fact_settings = FactAdjudicationSettings()
+            fact_settings = self._checked_fact_settings()
             return AdjudicateObservationsHandler(
                 facts=facts,
                 observation_adjudicator=FactAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,
                     settings=fact_settings,
-                    systemone_provider=(
-                        build_systemone_provider(settings=TypeSafeSettings())
-                        if fact_settings.engine == "jev"
-                        else None
+                    systemone_provider=self._jev_systemone_provider(
+                        fact_settings=fact_settings
                     ),
                 ),
                 profile_refresher=profile_refresher,
@@ -2154,14 +2242,56 @@ def _build_revision() -> str:
     return BuildProvenanceSettings().build_revision
 
 
-def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str, str]:
+def _jev_openrouter_settings(
+    *,
+    model_provider: ModelProviderPort,
+    model_provider_settings: OpenRouterSettings | None,
+) -> OpenRouterSettings:
+    """The deployment's OpenRouter settings that govern Jev's key and ZDR.
+
+    An injected ``OpenRouterModelProvider`` is the source of truth: explicit
+    settings that differ from it are refused, because Jev would otherwise
+    use another key, base URL or retention policy than the deployment's chat
+    and embedding calls. Without either, the policy is unknown and Jev is
+    refused.
+    """
+    injected = (
+        model_provider._settings  # noqa: SLF001
+        if isinstance(model_provider, OpenRouterModelProvider)
+        else None
+    )
+    if (
+        injected is not None
+        and model_provider_settings is not None
+        and model_provider_settings != injected
+    ):
+        raise ConfigurationError(
+            "model_provider_settings differ from the injected OpenRouter"
+            " provider's settings; Jev must use the deployment's own key and"
+            " zero-data-retention policy"
+        )
+    settings = injected or model_provider_settings
+    if settings is None:
+        raise ConfigurationError(
+            "Jev fact adjudication needs the deployment's OpenRouter settings"
+            " (model_provider_settings) so its zero-data-retention policy is known"
+        )
+    return settings
+
+
+def _model_bindings(
+    *,
+    openrouter: OpenRouterSettings | None = None,
+    systemone: TypeSafeSettings | None = None,
+    facts: FactAdjudicationSettings | None = None,
+) -> dict[str, str]:
     """Non-secret provider model identities used by the composed pipeline.
 
-    ``openrouter`` is the deployment's provider settings; without them they
-    are read from the environment.
+    ``openrouter`` is the deployment's provider settings, and ``systemone``
+    and ``facts`` the profile's checked System One and fact-adjudication
+    settings; without them each is read from the environment.
     """
     from rememberstack.spine import ObservationSettings
-    from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
     from rememberstack.workers import E2Settings
     from rememberstack.workers import E3Settings
     from rememberstack.workers import P1Settings
@@ -2177,12 +2307,14 @@ def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
     observations = ObservationSettings.model_validate({})
-    facts = FactAdjudicationSettings.model_validate({})
+    if facts is None:
+        facts = FactAdjudicationSettings.model_validate({})
     p1 = P1Settings.model_validate({})
     if openrouter is None:
         openrouter = OpenRouterSettings.model_validate({})
     if facts.engine == "jev":
-        fact_adjudication_model = TypeSafeSettings.model_validate({}).model
+        systemone = systemone or TypeSafeSettings.model_validate({})
+        fact_adjudication_model = systemone.model
     else:
         fact_adjudication_model = facts.model
     bindings = {
@@ -2236,9 +2368,13 @@ def _model_bindings(*, openrouter: OpenRouterSettings | None = None) -> dict[str
         bindings["openrouter_embedding_provider_only"] = ",".join(
             openrouter.embedding_provider_only
         )
-    if facts.engine == "jev":
-        settings = TypeSafeSettings.model_validate({})
+    if facts.engine == "jev" and systemone is not None:
+        settings = systemone
         bindings["systemone_backup"] = settings.backup
+        if settings.route != "typesafe":
+            # Present only when opted in, so direct-TypeSafe bindings and
+            # benchmark fingerprints stay byte-identical.
+            bindings["systemone_route"] = settings.route
         if settings.backup == "openai_decisions":
             from rememberstack.adapters.openai_decisions import OpenAIDecisionsSettings
 

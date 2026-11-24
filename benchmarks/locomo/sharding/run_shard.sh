@@ -63,6 +63,11 @@ profile_environment=$("$python_bin" -m benchmarks.locomo.profile_environment "$p
 while IFS= read -r binding; do
   export "$binding"
 done <<<"$profile_environment"
+# A profile without a System One route measures the direct TypeSafe route.
+# Pin it so an ambient REMEMBERSTACK_TYPESAFE_ROUTE cannot change what runs.
+if ! grep -q '^REMEMBERSTACK_TYPESAFE_ROUTE=' <<<"$profile_environment"; then
+  export REMEMBERSTACK_TYPESAFE_ROUTE=typesafe
+fi
 export REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR=/var/lib/rememberstack/invalid-completions
 
 [[ -f "$dataset_path" ]] || die "dataset does not exist: $dataset_path"
@@ -139,6 +144,7 @@ attest_worker_environment() {
       REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT
       REMEMBERSTACK_TYPESAFE_MODEL
       REMEMBERSTACK_TYPESAFE_BACKUP
+      REMEMBERSTACK_TYPESAFE_ROUTE
       REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL
       REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT
       REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY

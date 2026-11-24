@@ -971,6 +971,24 @@ def test_runtime_validation_uses_the_image_revision_stamp(
     )
 
 
+def test_shard_runner_pins_and_attests_the_systemone_route() -> None:
+    """An ambient route cannot change the measured Jev route or escape attestation.
+
+    The serialized profile carries no route (fingerprints unchanged), so the
+    runner pins the direct route unless the profile names one, and every
+    running app container must match it.
+    """
+    script = Path("benchmarks/locomo/sharding/run_shard.sh").read_text(encoding="utf-8")
+    pin = script.index("export REMEMBERSTACK_TYPESAFE_ROUTE=typesafe")
+    assert script.index('export "$binding"') < pin
+    assert "grep -q '^REMEMBERSTACK_TYPESAFE_ROUTE=' <<<\"$profile_environment\"" in (
+        script
+    )
+    attestation = script[script.index("attest_worker_environment() {") :]
+    attestation = attestation[: attestation.index("\n}\n")]
+    assert "      REMEMBERSTACK_TYPESAFE_ROUTE\n" in attestation
+
+
 def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     """The runner verifies ingestion off-host before any scoring can begin."""
 
@@ -1101,6 +1119,58 @@ def test_prefeature_backup_restores_with_optional_provider_disabled(
     assert environment["REMEMBERSTACK_TYPESAFE_BACKUP"] == "none"
     assert "REMEMBERSTACK_OPENAI_DECISIONS_MODEL" not in environment
     assert state_path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("saved", "restored"), [(None, "typesafe"), ("openrouter", "openrouter")]
+)
+def test_restore_replays_the_saved_systemone_route(
+    tmp_path: Path, saved: str | None, restored: str
+) -> None:
+    """The route comes from saved readiness; absent means the direct route.
+
+    An exported parent ``REMEMBERSTACK_TYPESAFE_ROUTE`` is unset for Compose,
+    so it cannot override the route the run was measured with.
+    """
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+    }
+    if saved is not None:
+        bindings["systemone_route"] = saved
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+
+    environment = store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
+    command = store_backup._compose_runtime_command(
+        compose_project="exact-project",
+        compose_base_env=tmp_path / "base.env",
+        runtime_environment=tmp_path / "runtime.env",
+        arguments=("up", "api"),
+    )
+
+    assert environment["REMEMBERSTACK_TYPESAFE_ROUTE"] == restored
+    assert "REMEMBERSTACK_TYPESAFE_ROUTE" in command
+
+
+def test_restore_refuses_an_unknown_systemone_route(tmp_path: Path) -> None:
+    """A tampered or future route never restores as something else."""
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+    }
+    bindings["systemone_route"] = "elsewhere"
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+
+    with pytest.raises(store_backup.StoreBackupError, match="System One route"):
+        store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
 
 
 @pytest.mark.parametrize("selector", [None, "openai_decisions"])
@@ -1245,3 +1315,30 @@ def test_active_backup_restore_keeps_every_price_and_provider_binding(
     for name, value in bindings.items():
         if name.startswith("systemone_backup_"):
             assert environment[store_backup.MODEL_BINDING_ENVIRONMENT[name]] == value
+
+
+@pytest.mark.parametrize(
+    ("saved", "rendered", "matches"),
+    [
+        ("typesafe", None, True),
+        ("typesafe", "typesafe", True),
+        ("typesafe", "openrouter", False),
+        ("openrouter", None, False),
+        ("openrouter", "openrouter", True),
+    ],
+)
+def test_restore_accepts_older_compose_without_a_route_only_for_typesafe(
+    saved: str, rendered: str | None, matches: bool
+) -> None:
+    """A Compose file predating the route renders none and runs direct Jev."""
+    environment = {} if rendered is None else {"REMEMBERSTACK_TYPESAFE_ROUTE": rendered}
+
+    assert (
+        store_backup._rendered_matches(
+            name="REMEMBERSTACK_TYPESAFE_ROUTE", expected=saved, rendered=environment
+        )
+        is matches
+    )
+    assert not store_backup._rendered_matches(
+        name="REMEMBERSTACK_TYPESAFE_BACKUP", expected="none", rendered={}
+    )

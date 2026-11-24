@@ -25,6 +25,8 @@ from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import IngestedVersion
 from rememberstack.model import ProviderCallError
+from rememberstack.surfaces.graph_queries import GraphBusyError
+from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.http_api import build_api
 
 _DEPLOYMENT_ID = UUID("27270000-0000-0000-0000-000000000001")
@@ -226,17 +228,34 @@ def test_lookup_browse_limit_is_bounded(route: str, limit: int) -> None:
     ],
 )
 def test_embedding_failure_is_model_provider_unavailable(
-    method: str, route: str, payload: dict[str, str]
+    method: str, route: str, payload: dict[str, str], caplog: pytest.LogCaptureFixture
 ) -> None:
-    """G27: a provider outage is a retryable 503, as on the operation routes."""
+    """G27: a provider outage is a retryable 503, as on the operation routes.
+
+    D158: the conversion to a 503 logs one coded ERROR.
+    """
     client = _client()
-    response = (
-        client.get(route, params=payload)
-        if method == "GET"
-        else client.post(route, json=payload)
-    )
+    with caplog.at_level("WARNING", logger="rememberstack"):
+        response = (
+            client.get(route, params=payload)
+            if method == "GET"
+            else client.post(route, json=payload)
+        )
     assert response.status_code == 503
     assert response.json() == {"detail": "model provider unavailable"}
+    assert _coded(caplog) == [("ERROR", "provider_call_failed")]
+    # Rule 4: provider text can echo the query, so only its type is logged.
+    record = next(r for r in caplog.records if r.levelname == "ERROR")
+    assert record.exc_info is None and record.__dict__["exception_type"]
+
+
+def _coded(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
+    """(level, error_code) of every engine WARNING+ record; uncoded is ``"-"``."""
+    return [
+        (record.levelname, record.__dict__.get("error_code", "-"))
+        for record in caplog.records
+        if record.name.startswith("rememberstack") and record.levelno >= 30
+    ]
 
 
 @pytest.mark.parametrize("clock", ["2026-01-01T00:00:00", "2026-01-01T00:00:00-05:00"])
@@ -275,12 +294,53 @@ def test_graph_refuses_a_naive_or_non_utc_clock(clock: str) -> None:
     ],
 )
 def test_graph_timeout_is_503(
-    error: BaseException, route: str, body: dict[str, str]
+    error: BaseException,
+    route: str,
+    body: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """G27: a traversal that runs out of time is retryable, not a server bug."""
-    response = _client(graph=_Graph(error)).post(route, json=body)
+    """G27: a traversal that runs out of time is retryable, not a server bug.
+
+    D158: the quiet 503 still logs one coded ERROR.
+    """
+    with caplog.at_level("WARNING", logger="rememberstack"):
+        response = _client(graph=_Graph(error)).post(route, json=body)
     assert response.status_code == 503
     assert response.json() == {"detail": "live graph timed out"}
+    assert _coded(caplog) == [("ERROR", "graph_query_failed")]
+    record = next(r for r in caplog.records if r.levelname == "ERROR")
+    assert record.exc_info is None and record.__dict__["exception_type"]
+
+
+@pytest.mark.parametrize(
+    ("error", "detail", "coded"),
+    [
+        (
+            GraphBusyError("no slot"),
+            "live graph is busy",
+            ("WARNING", "graph_capacity_exhausted"),
+        ),
+        (
+            GraphHydrationError("row moved"),
+            "live graph result unavailable",
+            ("ERROR", "graph_hydration_mismatch"),
+        ),
+    ],
+)
+def test_graph_busy_and_hydration_are_503_with_their_codes(
+    error: BaseException,
+    detail: str,
+    coded: tuple[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """D158 §2.1: capacity is an expected WARNING, a hydration mismatch an ERROR."""
+    with caplog.at_level("WARNING", logger="rememberstack"):
+        response = _client(graph=_Graph(error)).post(
+            "/graph/neighborhood", json={"entity_id": str(_ENTITY)}
+        )
+    assert response.status_code == 503
+    assert response.json() == {"detail": detail}
+    assert _coded(caplog) == [coded]
 
 
 def test_saved_query_listing_refuses_an_unknown_status() -> None:
@@ -316,10 +376,13 @@ def test_reingesting_forgotten_content_is_a_conflict(lineage: dict[str, str]) ->
     }
 
 
-def test_other_internal_graph_errors_stay_500() -> None:
+def test_other_internal_graph_errors_stay_500(caplog: pytest.LogCaptureFixture) -> None:
     """Only transaction_timeout (25P04) is mapped; a real defect is not hidden."""
     error = InternalError("SELECT 1", {}, _DriverError("XX000"))
-    response = _client(graph=_Graph(error)).post(
-        "/graph/neighborhood", json={"entity_id": str(_ENTITY)}
-    )
+    with caplog.at_level("WARNING", logger="rememberstack"):
+        response = _client(graph=_Graph(error)).post(
+            "/graph/neighborhood", json={"entity_id": str(_ENTITY)}
+        )
     assert response.status_code == 500
+    # Handed to the host as an exception (D158 Rule 1): the engine logs nothing.
+    assert _coded(caplog) == []
