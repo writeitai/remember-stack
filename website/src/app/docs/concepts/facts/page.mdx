@@ -124,7 +124,9 @@ Self-hosted deployments choose how this decision is made with
   answer.
 - `jev` answers the same questions with a decision model (TypeSafe AI's
   System One) that picks from fixed choices (match, stance, window action)
-  instead of writing free text. It needs a TypeSafe API key.
+  instead of writing free text. It uses a TypeSafe API key, or your
+  OpenRouter key when it is served through OpenRouter
+  (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`).
 
 Both engines go through the same validation, the same confidence floor and
 the same writer. See [Models and providers](/docs/self-hosting/models).

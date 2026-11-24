@@ -1314,7 +1314,9 @@ Self-hosted deployments choose how this decision is made with
   answer.
 - `jev` answers the same questions with a decision model (TypeSafe AI's
   System One) that picks from fixed choices (match, stance, window action)
-  instead of writing free text. It needs a TypeSafe API key.
+  instead of writing free text. It uses a TypeSafe API key, or your
+  OpenRouter key when it is served through OpenRouter
+  (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`).
 
 Both engines go through the same validation, the same confidence floor and
 the same writer. See [Models and providers](https://remember.dev/docs/self-hosting/models).
@@ -7282,7 +7284,7 @@ objects are absent. This does not verify immediate erasure of unfinished parts.
 | OpenRouter API key (`REMEMBERSTACK_OPENROUTER_API_KEY`) | Yes | Every model call: structure, claim extraction, entity resolution, fact adjudication, and all embeddings, including query embeddings for search |
 | Mistral API key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`) | Required to read PDFs, or images routed to OCR | The `mistral_ocr` and `image_ocr_description` converters |
 | A second OpenRouter key (`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`) | Only if you route images to `image_ocr_description` | The vision-model description of an image |
-| TypeSafe AI key (`REMEMBERSTACK_TYPESAFE_API_KEY`) | Only with `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev` | The alternative fact adjudicator |
+| TypeSafe AI key (`REMEMBERSTACK_TYPESAFE_API_KEY`) | Only with `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev` on the default `typesafe` route; not needed with `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`, which uses the OpenRouter key | The alternative fact adjudicator |
 
 The engine starts with the placeholder OpenRouter key from `.env.example`,
 but the first document or search fails at the first model call. The model
@@ -7719,11 +7721,69 @@ The `jev` engine needs its own key and settings:
 
 | Variable | Default |
 |---|---|
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev`; the fact workers refuse to start without it) |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe`. Set `openrouter` to call Jev through OpenRouter instead (see below). |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev` on the `typesafe` route; the fact workers refuse to start without it) |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` |
 | `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false`. When `true`, a failed TypeSafe call falls back to the `prompt` engine instead of failing the work item. |
+
+### Jev through OpenRouter
+
+OpenRouter serves a TypeSafe-compatible System One endpoint
+(`POST /api/v1/systemone`). With `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`,
+the `jev` engine calls it with `REMEMBERSTACK_OPENROUTER_API_KEY` and
+`REMEMBERSTACK_OPENROUTER_BASE_URL`, so Jev spend lands on your OpenRouter
+account and no TypeSafe key is needed. `REMEMBERSTACK_TYPESAFE_BASE_URL` and
+`REMEMBERSTACK_TYPESAFE_API_KEY` are ignored on this route. The recorded cost
+is the `usage.cost` OpenRouter reports; a response without it fails as an
+accounting error.
+
+With `REMEMBERSTACK_OPENROUTER_ZDR=true`, every Jev call also sends
+`"provider": {"zdr": true, "data_collection": "deny"}`, so OpenRouter routes
+it only to endpoints your account or key policy counts as zero data retention:
+TypeSafe's ZDR endpoint, plus Safety Retention endpoints if that policy allows
+them (see below). With ZDR on, the engine
+refuses to start on the default `typesafe` route, because TypeSafe's own API
+cannot be held to zero data retention, refuses a
+`REMEMBERSTACK_OPENROUTER_BASE_URL` outside the `https://openrouter.ai` origin
+(the default, `https://openrouter.ai/api/v1`, is fine; `provider.zdr` binds
+only OpenRouter), and refuses the OpenAI Decisions backup
+below, because it would send the same content outside OpenRouter; keep
+`REMEMBERSTACK_TYPESAFE_BACKUP=none`.
+
+The request flag alone does not guarantee strict zero retention. OpenRouter
+combines `zdr: true` with your account's policy (or the policy of the
+guardrail on the API key), and that policy decides whether Safety Retention
+endpoints also count. A Safety Retention endpoint may keep any request,
+flagged or not, to detect and prevent abuse. OpenRouter sets this choice
+separately for **Google models** and **All other models**; Jev is in **All
+other models**. Self-serve accounts allow Safety Retention by default, and no
+request field turns it off. For strict zero retention, set your OpenRouter
+account, or the guardrail on every key the engine uses, to ZDR only with
+Safety Retention excluded for that group, and confirm it before you send
+customer content. Also keep OpenRouter's own input and output logging turned
+off for the account, since that is a separate setting from provider routing.
+OpenRouter also screens requests for child sexual abuse material, ZDR
+traffic included: flagged content may be retained for OpenRouter's human
+review, and material reported where the law requires it is preserved for the
+legal period. No setting removes that, so check that OpenRouter's terms meet
+your retention requirement.
+See OpenRouter's
+[ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
+The response names `TypeSafe` as the provider for both Jev endpoints, so it
+does not show which one served a call.
+
+```bash
+REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev
+REMEMBERSTACK_TYPESAFE_ROUTE=openrouter
+REMEMBERSTACK_OPENROUTER_ZDR=true
+```
+
+With Docker Compose, put these in the project `.env`. The services read
+`REMEMBERSTACK_OPENROUTER_ZDR` and `REMEMBERSTACK_OPENROUTER_BASE_URL` only
+from there (`env_file`), so a value exported in your shell does not reach the
+engine, and an alternate `--env-file` cannot override or clear them.
 
 ## Change a model
 
@@ -7819,7 +7879,7 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. Other providers remain a fallback unless the same set is also supplied as the embedding allowlist. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed for embeddings, for example `nebius,deepinfra`. With two or more slugs, OpenRouter falls back only within the list; with one, fallback is off, also when an order is set. An embedding order used with it must name exactly the same unique slugs. Cannot be combined with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. A blank entry (including a trailing comma) stops startup. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls to zero-data-retention endpoints. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat and embedding calls, and Jev calls on the `openrouter` route, to endpoints your OpenRouter account or key policy counts as zero data retention (see the Safety Retention note above). |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |
@@ -20804,13 +20864,14 @@ transports. Run a small live API check before enabling this default-off backup.
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these embedding providers. Two or more allow fallback within the set; one disables fallback. An embedding order used with it must name the same unique slugs. Not combinable with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat and embeddings (`zdr: true`, `data_collection: deny`). Strict zero retention also needs the OpenRouter account or key guardrail to enforce ZDR for each model group used, with Safety Retention excluded; see [models](https://remember.dev/docs/self-hosting/models). |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat and embeddings, and for Jev on `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter` (which it then requires when Jev is the adjudication engine) (`zdr: true`, `data_collection: deny`). What counts as ZDR follows the OpenRouter account or key policy: strict zero retention needs it to enforce ZDR for each model group used, with Safety Retention excluded; see [models](https://remember.dev/docs/self-hosting/models). |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Reasoning effort for every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | Reasoning effort per model id; wins over the global value. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | Longest wait before retrying an overloaded provider. |
 | `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | Debug only: keep schema-invalid model answers as files. |
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe` | `typesafe`, `openrouter` | Who serves the `jev` fact engine. `openrouter` calls OpenRouter's System One endpoint with the deployment's OpenRouter key, base URL and ZDR setting, and ignores the TypeSafe key and base URL. |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine on the `typesafe` route. Also read as `TYPESAFE_AI_API_KEY`. |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | TypeSafe model. |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | TypeSafe API address. |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | TypeSafe request timeout. |
