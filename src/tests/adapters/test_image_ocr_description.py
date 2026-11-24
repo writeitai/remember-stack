@@ -986,6 +986,43 @@ def test_description_reasoning_and_provider_only_are_explicit_and_keyed() -> Non
     assert first.version != changed.version
 
 
+@pytest.mark.parametrize(
+    ("provider_only", "expected"),
+    [
+        (None, {"data_collection": "deny", "zdr": True}),
+        (
+            ("azure",),
+            {
+                "only": ["azure"],
+                "allow_fallbacks": False,
+                "data_collection": "deny",
+                "zdr": True,
+            },
+        ),
+    ],
+)
+def test_zdr_restricts_the_description_to_zero_retention_endpoints(
+    provider_only: tuple[str, ...] | None, expected: dict[str, object]
+) -> None:
+    """``zdr`` sends ``zdr: true`` with or without a provider allowlist; it is keyed."""
+    payloads: list[dict[str, object]] = []
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Capture the description request."""
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json=_description_body())
+
+    converter = _converter(
+        description_transport=httpx.MockTransport(description),
+        provider_only=provider_only,
+        zdr=True,
+    )
+    converter.convert(content=_PNG, mime="image/png")
+    assert payloads[0]["provider"] == expected
+    assert converter.version.endswith(":zdr")
+    assert converter.version != _converter(provider_only=provider_only).version
+
+
 def test_description_detail_is_explicit_and_preserves_paid_ocr() -> None:
     """Changing visual resolution refreshes vision only, using original bytes."""
     calls: list[str] = []
