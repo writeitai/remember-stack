@@ -440,6 +440,8 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ("data.csv", "text/csv", b"name,value\na,1\n", "text/csv"),
         ("data.csv", "text/csv", _UTF16_CSV, "text/csv"),
         ("data.csv", "application/octet-stream", _UTF16_CSV, "text/csv"),
+        ("data.csv", "text/plain", _UTF16_CSV, "text/csv"),
+        ("data.tsv", "text/csv", _UTF16_TSV, "text/tab-separated-values"),
         ("long.csv", "application/octet-stream", _LONG_UTF16_CSV, "text/csv"),
         (
             "data.tsv",
@@ -449,6 +451,7 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ),
         ("note.eml", "message/rfc822", _LATIN1_EMAIL, "message/rfc822"),
         ("note.eml", "application/octet-stream", _LATIN1_EMAIL, "message/rfc822"),
+        ("note.eml", "text/plain", _LATIN1_EMAIL, "message/rfc822"),
         ("fold.eml", "application/octet-stream", _FOLDED_EMAIL, "message/rfc822"),
         (
             "mixed.eml",
@@ -590,6 +593,16 @@ def test_a_mail_header_the_parser_cannot_read_is_not_a_message(
     assert detect_content_mime(content=_LATIN1_EMAIL, declared_mime="") == (
         "application/octet-stream"
     )
+
+
+@pytest.mark.parametrize(
+    "content", [_ooxml(part="word/document.xml"), _XLS_BYTES], ids=["docx", "xls"]
+)
+def test_office_bytes_declared_as_rtf_are_refused(content: bytes) -> None:
+    """RTF is not an Office package spelling: the declaration contradicts the bytes."""
+    with pytest.raises(ContentDetectionError) as raised:
+        detect_content_mime(content=content, declared_mime="application/rtf")
+    assert raised.value.code == "content_type_mismatch"
 
 
 def test_an_embedded_object_does_not_decide_the_office_subtype() -> None:

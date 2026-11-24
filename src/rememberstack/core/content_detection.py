@@ -710,6 +710,18 @@ def _detected_mime(*, content: Content) -> str:
     return "text/plain"
 
 
+def _is_office_package_declaration(*, declared: str) -> bool:
+    """A declared spelling of a Word, presentation or spreadsheet package.
+
+    Templates, slideshows and macro-enabled documents count; RTF, a text
+    format the word family also reads, does not.
+    """
+    return (
+        declared != "application/rtf"
+        and family_for_mime(mime=declared).name in _OFFICE_FAMILIES
+    )
+
+
 def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     """Return byte-authoritative MIME, refusing a contradictory declaration."""
     detected = _detected_mime(content=content)
@@ -717,13 +729,16 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     declared = _IMAGE_MIME_ALIASES.get(declared, declared)
     declared = _AUDIO_MIME_ALIASES.get(declared, declared)
     if detected == "application/octet-stream":
-        if declared in sniffed_text_mimes(content=content):
-            return declared
+        sniffed = sniffed_text_mimes(content=content)
+        if sniffed and (declared in sniffed or declared == "text/plain"):
+            # Text the bytes allow for these families: E0's registry routing
+            # picks the family (name first, then declaration), as for UTF-8.
+            return detected
         if (
             declared.startswith(("text/", "image/", "audio/", "video/"))
             or declared == "application/pdf"
             or declared in _OFFICE_MIMES
-            or family_for_mime(mime=declared).name in _OFFICE_FAMILIES
+            or _is_office_package_declaration(declared=declared)
         ):
             raise ContentDetectionError(code="content_type_mismatch")
         return detected
@@ -751,7 +766,7 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     declared_class = (
         "office"
         if declared in _OFFICE_MIMES
-        or family_for_mime(mime=declared).name in _OFFICE_FAMILIES
+        or _is_office_package_declaration(declared=declared)
         else declared.split("/", 1)[0]
     )
     if (
