@@ -351,7 +351,7 @@
               },
               "documents": {
                 "additionalProperties": false,
-                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
                 "properties": {
                   "authors": {
                     "description": "Any of these authors.",
@@ -386,6 +386,11 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "include_archived": {
+                    "default": false,
+                    "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                    "type": "boolean"
                   },
                   "language": {
                     "minLength": 1,
@@ -775,6 +780,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -1163,6 +1180,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -2626,7 +2655,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 5
+          "version": 6
         },
         {
           "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2. documents applies to both; call list_tags before filtering by tag.",
@@ -2643,7 +2672,7 @@
               },
               "documents": {
                 "additionalProperties": false,
-                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
                 "properties": {
                   "authors": {
                     "description": "Any of these authors.",
@@ -2678,6 +2707,11 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "include_archived": {
+                    "default": false,
+                    "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                    "type": "boolean"
                   },
                   "language": {
                     "minLength": 1,
@@ -3078,6 +3112,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -3683,6 +3729,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -4953,7 +5011,7 @@
             "title": "ContextBundleV2",
             "type": "object"
           },
-          "version": 6
+          "version": 7
         },
         {
           "channels": {
@@ -4984,7 +5042,7 @@
               },
               "documents": {
                 "additionalProperties": false,
-                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
                 "properties": {
                   "authors": {
                     "description": "Any of these authors.",
@@ -5019,6 +5077,11 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "include_archived": {
+                    "default": false,
+                    "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                    "type": "boolean"
                   },
                   "language": {
                     "minLength": 1,
@@ -5425,6 +5488,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -5813,6 +5888,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -7276,7 +7363,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 5
+          "version": 6
         },
         {
           "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
@@ -7518,6 +7605,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -7906,6 +8005,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -32561,6 +32672,27 @@
                       "#": "NullTestType",
                       "name": "IS_NOT_NULL"
                     }
+                  },
+                  {
+                    "@": "NullTest",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "target"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "archived_at"
+                        }
+                      ]
+                    },
+                    "argisrow": false,
+                    "nulltesttype": {
+                      "#": "NullTestType",
+                      "name": "IS_NULL"
+                    }
                   }
                 ],
                 "boolop": {
@@ -32569,7 +32701,7 @@
                 }
               }
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -49523,5 +49655,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "503fba6731e84ce09ca093cb6ec321e66df9acb93310b267717e870bcfd63cdb"
+  "surface_manifest_hash": "432e82db9d0bf55427df98879fec9324a75c9a938b2cd1e42476ad7103477291"
 }

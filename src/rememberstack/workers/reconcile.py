@@ -42,7 +42,6 @@ from rememberstack.model import ForgetInProgressError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
-from rememberstack.model import ProcessingTarget
 from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
@@ -53,7 +52,6 @@ from rememberstack.spine.lifecycle import archive_reconciliation_id
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.processing_layers import take_layer_fence_on
 from rememberstack.spine.review import ReviewQueue
-from rememberstack.spine.work_ledger import enqueue_on
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.p1 import label_relation_component_version
@@ -118,26 +116,21 @@ class ReconcileHandler:
             return self._retire_deleted_testimony(
                 work=work, context=context, version_id=version_id, meter=meter
             )
-        archived_at = context.get("lineage_archived_at")
-        if isinstance(archived_at, datetime):
+        if context.get("lineage_archived_at") is not None:
             retired = self._retire_archived_testimony(
-                work=work, context=context, archived_at=archived_at, meter=meter
+                work=work, context=context, meter=meter
             )
             if retired is not None:
                 return retired
             # The lineage came back before this run could write: reconcile it
             # as the live lineage it is again (D159 §2.1).
 
-        regained: tuple[CurrencyTransition, ...] = ()
-        if (
-            context["versioning_mode"] != "living"
-            or context["current_version_id"] == version_id
-        ):
-            # D159 §2.3: a changed version of an archived document reuses its
-            # claims (D56); a reused claim is current testimony again.
-            regained = self._catalog.regained_after_archive(
-                deployment_id=deployment_id, version_id=version_id
-            )
+        regained = self._regain_after_archive(
+            context=context,
+            deployment_id=deployment_id,
+            version_id=version_id,
+            reconciliation_id=reconciliation_id,
+        )
         source_acted: tuple[CurrencyTransition, ...] = ()
         if (
             context["versioning_mode"] == "living"
@@ -288,7 +281,7 @@ class ReconcileHandler:
             raise NonRetryableHandlerError(
                 f"version {version_id} reconciliation context has no doc_id"
             )
-        if work.component_version.startswith(RECONCILE_CLAIMS_VERSION):
+        if work.component_version == RECONCILE_CLAIMS_VERSION:
             # D143 §4.2: the claims mode opens no fact label and no review.
             return HandlerOutcome()
         return HandlerOutcome(
@@ -407,7 +400,7 @@ class ReconcileHandler:
         # D140 §8.2: late testimony retired from a deleted version changes
         # the lineage's evidence; review its facts (only if it had periods).
         # The claims mode opens no review (D143 §4.2).
-        if work.component_version.startswith(RECONCILE_CLAIMS_VERSION):
+        if work.component_version == RECONCILE_CLAIMS_VERSION:
             return HandlerOutcome()
         return HandlerOutcome(
             follow_up=_window_review(
@@ -422,23 +415,54 @@ class ReconcileHandler:
             )
         )
 
-    def _retire_archived_testimony(
+    def _regain_after_archive(
         self,
         *,
-        work: ClaimedWork,
         context: dict[str, object],
-        archived_at: datetime,
-        meter: CostMeterPort,
+        deployment_id: UUID,
+        version_id: UUID,
+        reconciliation_id: UUID,
+    ) -> tuple[CurrencyTransition, ...]:
+        """Make current the archived claims a returning version carries (§2.3).
+
+        A changed version of an archived document reuses its claims (D56).
+        Applied in one transaction under the lineage row lock that checks the
+        lineage is live, so a concurrent archive either retires the regained
+        claims after this commits or makes this regain nothing. A living
+        lineage regains only through its current version.
+        """
+        doc_id = context["doc_id"]
+        if not isinstance(doc_id, UUID) or (
+            context["versioning_mode"] == "living"
+            and context["current_version_id"] != version_id
+        ):
+            return ()
+        with self._catalog.transaction() as catalog:
+            catalog.lock_lineage(doc_id=doc_id)
+            if catalog.lineage_archived_at(doc_id=doc_id) is not None:
+                return ()
+            regained = catalog.regained_after_archive(
+                deployment_id=deployment_id, version_id=version_id
+            )
+            catalog.apply_transitions(
+                deployment_id=deployment_id,
+                reconciliation_id=reconciliation_id,
+                transitions=regained,
+            )
+        return regained
+
+    def _retire_archived_testimony(
+        self, *, work: ClaimedWork, context: dict[str, object], meter: CostMeterPort
     ) -> HandlerOutcome | None:
         """Retire what work in flight left current after an archive (D159 §2.1).
 
-        Runs in one transaction under the lineage row lock and writes only if
-        the lineage is still archived under the same episode; every transition
-        and closure is recorded under that archive's reconciliation id, so
-        unarchive restores it. Returns ``None`` (nothing written) when the
-        lineage came back in the meantime. Ends the chain otherwise: nothing
-        downstream is worth paying for while the document is archived, and
-        unarchive repeats this reconcile.
+        Runs in one transaction under the lineage row lock and writes only
+        while the lineage is archived, under the archive episode it is in at
+        that moment; every transition and closure is recorded under that
+        archive's reconciliation id, so unarchive restores it. Returns ``None``
+        (nothing written) when the lineage came back in the meantime. Ends the
+        chain otherwise: nothing downstream is worth paying for while the
+        document is archived, and unarchive repeats this reconcile.
         """
         deployment_id = work.deployment_id
         doc_id = context["doc_id"]
@@ -446,13 +470,14 @@ class ReconcileHandler:
             raise NonRetryableHandlerError(
                 f"version {context['version_id']} reconciliation context has no doc_id"
             )
-        reconciliation_id = archive_reconciliation_id(
-            doc_id=doc_id, archived_at=archived_at
-        )
         with self._catalog.transaction() as catalog:
             catalog.lock_lineage(doc_id=doc_id)
-            if catalog.lineage_archived_at(doc_id=doc_id) != archived_at:
+            archived_at = catalog.lineage_archived_at(doc_id=doc_id)
+            if archived_at is None:
                 return None
+            reconciliation_id = archive_reconciliation_id(
+                doc_id=doc_id, archived_at=archived_at
+            )
             # Archived evidence never anchors identity (D102).
             catalog.clear_document_bindings(deployment_id=deployment_id, doc_id=doc_id)
             delta = _archive_cascade(
@@ -475,7 +500,7 @@ class ReconcileHandler:
                 "stale cache remains empty",
                 reconciliation_id,
             )
-        if work.component_version.startswith(RECONCILE_CLAIMS_VERSION):
+        if work.component_version == RECONCILE_CLAIMS_VERSION:
             return HandlerOutcome()
         return HandlerOutcome(
             follow_up=_window_review(
@@ -1018,29 +1043,7 @@ def _unarchive_on(
             recounted_observations=observation_ids,
         ),
     )
-    repeated: set[tuple[UUID, bool]] = set()
-    for run in catalog.reconcile_runs_to_repeat(doc_id=doc_id, archived_at=archived_at):
-        version_id: UUID = run["version_id"]  # type: ignore[assignment]
-        claims_mode = str(run["component_version"]).startswith(RECONCILE_CLAIMS_VERSION)
-        if (version_id, claims_mode) in repeated:
-            continue
-        repeated.add((version_id, claims_mode))
-        base = RECONCILE_CLAIMS_VERSION if claims_mode else RECONCILE_VERSION
-        lane = run["lane"]
-        payload = run["payload"]
-        enqueue_on(
-            connection=connection,
-            work=EnqueueWork(
-                deployment_id=deployment_id,
-                target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                target_id=version_id,
-                stage=PipelineStage.RECONCILE,
-                component_version=f"{base}:unarchive:{run_id}",
-                content_hash=str(run["content_hash"]),
-                lane=None if lane is None else ProcessingLane(str(lane)),
-                payload=dict(payload) if isinstance(payload, dict) else None,
-            ),
-        )
+    catalog.reopen_reconcile_runs(doc_id=doc_id, archived_at=archived_at)
     return (
         restored,
         relation_ids,
@@ -1150,6 +1153,12 @@ def _cascade_run(
     relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
     observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)
     catalog.recount(relation_ids=relation_ids, observation_ids=observation_ids)
+    if not archive:
+        # A removal answers a support_withdrawn review on a claim no live
+        # version carries; an archive leaves it, moot while archived (D159).
+        catalog.resolve_deleted_support_reviews(
+            deployment_id=deployment_id, claim_ids=claim_ids
+        )
     closed_relations = catalog.close_relations(
         deployment_id=deployment_id,
         relation_ids=catalog.open_zero_support_relations(

@@ -65,14 +65,15 @@ class SyncCatalog:
         return {source_ref: revision or "" for source_ref, revision in rows}
 
     def observe_deletion(
-        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str, cycle_id: UUID
     ) -> UUID | None:
         """Archive a source-deleted lineage (``archived_by = source``, D159).
 
         The file existed and said what it said, so a source deletion is
         history, not a mistake. The lineage stops being listed at once; its
         testimony cascade is the cycle finalizer's job (the retract-timing
-        barrier), under the archive's reconciliation id. A lineage already
+        barrier, stamped with ``cycle_id``), under the archive's
+        reconciliation id. A lineage already
         archived (by the caller or an earlier observation) is left as it is.
         The source undoes it by showing the file again.
         """
@@ -92,7 +93,7 @@ class SyncCatalog:
             ).scalar_one_or_none()
             if doc_id is not None:
                 LifecycleCatalog.on_connection(connection=connection).set_archived(
-                    doc_id=doc_id, archived_by="source"
+                    doc_id=doc_id, archived_by="source", cycle_id=cycle_id
                 )
             return doc_id
 

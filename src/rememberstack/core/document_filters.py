@@ -395,14 +395,12 @@ def people_terms(values: Sequence[str]) -> tuple[str, ...]:
 
 
 def is_empty(filters: DocumentSearchFilters) -> bool:
-    """Whether the filter restricts nothing (every field at its default).
+    """Whether the filter changes nothing (every field at its default).
 
-    ``include_archived`` widens rather than restricts, so it does not count:
-    archive visibility is applied on its own (:func:`archived_hidden`).
+    ``include_archived`` counts: it widens the read to archived documents, so a
+    filter carrying only it still goes through the matching-document path.
     """
-    return filters.model_copy(update={"include_archived": False}) == (
-        DocumentSearchFilters()
-    )
+    return filters == DocumentSearchFilters()
 
 
 def archived_hidden(*, filters: DocumentSearchFilters | None, document: str) -> str:

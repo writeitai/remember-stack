@@ -27,6 +27,7 @@ from rememberstack.spine.clustering import apply_merge
 from rememberstack.spine.fact_applications import application_block
 from rememberstack.spine.fact_applications import application_fence
 from rememberstack.spine.lifecycle import LIVE_CARRIAGE_SQL
+from rememberstack.spine.lifecycle import REVIEW_MOOT_SQL
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000000")
@@ -67,7 +68,9 @@ class ReviewQueue:
         """Whether an undecided support_withdrawn flag already marks the fact.
 
         The reconcile stage's retry guard: a replayed run must not stack a
-        second flag on a fact the first attempt already queued.
+        second flag on a fact the first attempt already queued. A flag on a
+        claim no live version carries (its document is archived) does not
+        count (D159).
         """
         with self._engine.connect() as connection:
             return (
@@ -696,13 +699,16 @@ _SELECT_ITEM_LOCKED = text(
 )
 
 _SELECT_OPEN_FLAG = text(
-    """
-    SELECT review_id FROM review_queue
-    WHERE deployment_id = :deployment_id
-      AND item_kind = 'support_withdrawn'
-      AND status IN ('pending', 'deferred')
-      AND candidate ->> 'fact_kind' = :fact_kind
-      AND candidate ->> 'fact_id' = :fact_id
+    f"""
+    SELECT q.review_id FROM review_queue q
+    WHERE q.deployment_id = :deployment_id
+      AND q.item_kind = 'support_withdrawn'
+      AND q.status IN ('pending', 'deferred')
+      AND q.candidate ->> 'fact_kind' = :fact_kind
+      AND q.candidate ->> 'fact_id' = :fact_id
+      -- D159: a review on an archived document's claim is moot while it is
+      -- archived; it neither holds the fact nor blocks a live review
+      AND NOT {REVIEW_MOOT_SQL}
     LIMIT 1
     """
 )

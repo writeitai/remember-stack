@@ -149,6 +149,7 @@ class SyncCycleRunner:
                 deployment_id=deployment_id,
                 source_kind=source_kind,
                 source_ref=item.source_ref,
+                cycle_id=cycle_id,
             )
             return ("deleted", lineage)
         if known.get(item.source_ref) == item.revision:

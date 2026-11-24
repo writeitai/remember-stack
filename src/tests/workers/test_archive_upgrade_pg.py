@@ -37,6 +37,7 @@ from tests.workers.test_lifecycle_reconciliation import _DEPLOYMENT_ID
 from tests.workers.test_lifecycle_reconciliation import _FACT_SENTENCE
 from tests.workers.test_lifecycle_reconciliation import _LifecycleRig
 from tests.workers.test_lifecycle_reconciliation import _TABLES
+from tests.workers.test_lifecycle_reconciliation import _withdraw_support
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PREVIOUS = "p9_53_0074"
@@ -198,6 +199,75 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     )
 
 
+def test_a_closure_without_a_currency_event_and_older_tombstones(
+    migration_config: tuple[Config, Engine], tmp_path: Path
+) -> None:
+    """A deletion that closed a fact without retiring a claim (the claim had
+    already lost currency to a re-extraction) is still found by its run id
+    and relabelled; a version tombstone from before the lineage's deletion
+    survives the upgrade."""
+    config, engine = migration_config
+    reset_database(config=config)
+    command.upgrade(config=config, revision="head")
+    _bootstrap(engine)
+    rig = _LifecycleRig(engine=engine, root=tmp_path)
+    first = rig.observe(
+        source_ref="reviewed.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    older = rig.observe(
+        source_ref="reviewed.md",
+        content="Acme opened an office.\n",
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    rig.deletion.delete_version(version_id=older.version_id)
+    _withdraw_support(rig, first.doc_id)
+    rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
+    assert rig.relation()["invalidated_at"] is not None
+
+    command.downgrade(config=config, revision=_PREVIOUS)
+    command.upgrade(config=config, revision="head")
+
+    assert (
+        _scalar(
+            engine,
+            "SELECT count(*) FROM relation_adjudications"
+            " WHERE outcome = 'retracted_source_removal'"
+            " AND (features ->> 'archive')::boolean",
+        )
+        == 1
+    )
+    assert (
+        _scalar(
+            engine,
+            "SELECT deleted_at IS NOT NULL FROM document_versions WHERE version_id = :v",
+            v=older.version_id,
+        )
+        is True
+    )
+    assert (
+        _scalar(
+            engine,
+            "SELECT deleted_at IS NULL FROM document_versions WHERE version_id = :v",
+            v=first.version_id,
+        )
+        is True
+    )
+
+    reopened = DocumentArchiver(
+        engine=engine, profile_refresher=rig.profile_refresher
+    ).unarchive_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
+
+    # the claim lost currency to the re-extraction, not to the archive, and
+    # the deletion had answered its review: nothing supports the fact, which
+    # stays closed — the relabelled closure is simply not reopened
+    assert (reopened.claims_restored, reopened.facts_reopened) == (0, 0)
+    assert rig.relation()["invalidated_at"] is not None
+
+
 def test_the_upgrade_leaves_documents_live_inert_below_it(
     migration_config: tuple[Config, Engine],
 ) -> None:
@@ -226,5 +296,5 @@ def test_the_upgrade_leaves_documents_live_inert_below_it(
     assert _scalar(
         engine,
         "SELECT to_regprocedure("
-        "'public.fact_believed_at(text, uuid, timestamptz, timestamptz)') IS NOT NULL",
+        "'rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz)') IS NOT NULL",
     )

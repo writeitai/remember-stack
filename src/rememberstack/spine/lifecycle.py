@@ -779,12 +779,16 @@ class LifecycleCatalog:
             for row in rows
         )
 
-    def set_archived(self, *, doc_id: UUID, archived_by: str) -> datetime:
+    def set_archived(
+        self, *, doc_id: UUID, archived_by: str, cycle_id: UUID | None = None
+    ) -> datetime:
         """Record the lineage archived (D159 §2.1); returns its archive instant.
 
         A repeat keeps the first instant (so the episode's reconciliation id
         does not move); a caller archiving a source-archived lineage takes it
-        over, so identical bytes from the source no longer undo it. The T4
+        over, so identical bytes from the source no longer undo it, and its
+        cascade no longer waits for the observing sync cycle (``cycle_id``,
+        stamped on a source archive for the finalization barrier). The T4
         anchors go, and a new archive queues the D140 window review, the D143
         layer advance and the D155 corpus removal in the same transaction.
         """
@@ -794,7 +798,12 @@ class LifecycleCatalog:
         with self._engine.begin() as connection:
             row = (
                 connection.execute(
-                    _SET_ARCHIVED, {"doc_id": doc_id, "archived_by": archived_by}
+                    _SET_ARCHIVED,
+                    {
+                        "doc_id": doc_id,
+                        "archived_by": archived_by,
+                        "cycle_id": cycle_id,
+                    },
                 )
                 .mappings()
                 .one()
@@ -883,7 +892,8 @@ class LifecycleCatalog:
 
         A changed version of an archived document reuses the archived
         versions' claims (D56); a reused claim becomes current again here
-        (D159 §2.3), only while the lineage is live.
+        (D159 §2.3) — only for a version that arrived after the archive, and
+        only while the lineage is live.
         """
         with self._engine.connect() as connection:
             rows = (
@@ -949,23 +959,49 @@ class LifecycleCatalog:
                     reopened[kind].append(fact_id)
         return tuple(reopened["relation"]), tuple(reopened["observation"])
 
-    def reconcile_runs_to_repeat(
-        self, *, doc_id: UUID, archived_at: datetime
-    ) -> tuple[dict[str, object], ...]:
-        """Reconcile rows of live versions that may have run while archived.
+    def reopen_reconcile_runs(self, *, doc_id: UUID, archived_at: datetime) -> int:
+        """Run again every reconcile of a live version the archive may have cut short.
 
-        Any reconcile that started could have found the lineage archived and
-        ended the chain; only one that finished before the archive surely ran
-        normally. Timing-independent by construction: repeating a reconcile
-        that ran normally changes nothing.
+        Any reconcile that ran (or is running) while the lineage was archived
+        may have retired late work and ended the chain; only one that finished
+        before the archive surely ran normally. Those rows go back to pending
+        and run again in normal mode — the same rows, so layer frontiers and
+        readiness see their completion. Timing-independent: a run reopened
+        while it is still running cannot complete, and repeating a normal
+        reconcile changes nothing. Returns how many rows were reopened.
         """
-        with self._engine.connect() as connection:
-            return tuple(
-                dict(row)
-                for row in connection.execute(
-                    _SELECT_RECONCILE_RUNS,
+        with self._engine.begin() as connection:
+            return len(
+                connection.execute(
+                    _REOPEN_RECONCILE_RUNS,
                     {"doc_id": doc_id, "archived_at": archived_at},
-                ).mappings()
+                ).all()
+            )
+
+    def resolve_deleted_support_reviews(
+        self, *, deployment_id: UUID, claim_ids: tuple[UUID, ...]
+    ) -> tuple[UUID, ...]:
+        """Auto-resolve support_withdrawn reviews whose claim was removed.
+
+        A support_withdrawn review asks whether an extractor was right to
+        stop deriving a claim from an unchanged file. Once a removal leaves no
+        live version carrying the claim (an internal version removal, or the
+        operator forget), the source itself has acted and the question is
+        moot: the review closes as ``auto_resolved`` (no verdict, history
+        appended). An archive never calls this: it leaves reviews as they are,
+        moot only while the document is archived (D159 §2.1).
+        """
+        if not claim_ids:
+            return ()
+        with self._engine.begin() as connection:
+            return tuple(
+                connection.execute(
+                    _AUTO_RESOLVE_DELETED_REVIEWS,
+                    {
+                        "deployment_id": deployment_id,
+                        "claim_ids": [str(claim_id) for claim_id in claim_ids],
+                    },
+                ).scalars()
             )
 
     def rebuild_live_document_bindings(
@@ -1091,8 +1127,9 @@ class LifecycleCatalog:
     ) -> tuple[tuple[UUID, datetime], ...]:
         """Archived lineages whose cascade still has work left (D159).
 
-        A source archive defers its cascade to finalization, and work still in
-        flight can attach support after any archive: a lineage is pending while
+        A source archive defers its cascade until its observing cycle is
+        finalized, and work still in flight can attach support after any
+        archive: a lineage is pending while
         one of its claims is current, or evidences an open fact that has no
         current support and no live review holding it open. Each row is
         ``(doc_id, archived_at)``, which names the archive episode.
@@ -1207,25 +1244,34 @@ LIVE_CARRIAGE_SQL = _live_carriage(claim="cl")
 """SQL predicate: claim ``cl`` is carried by a live version of a live lineage."""
 
 
-def _review_holds(*, kind: str, fact: str, deployment: str) -> str:
-    """SQL predicate: an open support_withdrawn review on a live claim holds the fact.
+REVIEW_MOOT_SQL = """EXISTS (
+            SELECT 1 FROM claims mc
+            JOIN documents md
+              ON md.deployment_id = mc.deployment_id AND md.doc_id = mc.doc_id
+            WHERE mc.deployment_id = q.deployment_id
+              AND mc.claim_id = CAST(q.candidate ->> 'claim_id' AS uuid)
+              AND md.archived_at IS NOT NULL
+        )"""
+"""SQL predicate: review ``q``'s claim belongs to an archived document (D159).
 
-    The review asks whether an extractor was right to stop deriving a claim
-    from an unchanged file. While no live version carries that claim (its
-    document is archived) the question is moot and holds nothing open; it is
-    left as it is and applies again if the document comes back (D159 §2.1).
-    """
+A support_withdrawn review asks whether an extractor was right to stop
+deriving a claim from an unchanged file. While the document is archived the
+question is moot: the review neither holds its fact open nor blocks a review
+of live material. It is left as it is and applies again if the document comes
+back (§2.1).
+"""
+
+
+def _review_holds(*, kind: str, fact: str, deployment: str) -> str:
+    """SQL predicate: an open support_withdrawn review that is not moot holds the fact."""
     return f"""EXISTS (
           SELECT 1 FROM review_queue q
-          JOIN claims rc
-            ON rc.deployment_id = q.deployment_id
-           AND rc.claim_id = CAST(q.candidate ->> 'claim_id' AS uuid)
           WHERE q.deployment_id = {deployment}
             AND q.item_kind = 'support_withdrawn'
             AND q.status IN ('pending', 'deferred')
             AND q.candidate ->> 'fact_kind' = '{kind}'
             AND q.candidate ->> 'fact_id' = {fact}::text
-            AND {_live_carriage(claim="rc")}
+            AND NOT {REVIEW_MOOT_SQL}
       )"""
 
 
@@ -1360,12 +1406,16 @@ _INSERT_CURRENCY_EVENTS = text(
     ), inserted AS (
         INSERT INTO testimony_currency_events (
             event_id, deployment_id, claim_id, doc_id, reconciliation_id,
-            became_current, reason, from_extractor_version, from_version_id
+            became_current, reason, from_extractor_version, from_version_id,
+            occurred_at
         )
+        -- the clock, not the transaction start: currency writes take the
+        -- claims' row locks first, so event order follows lock order
         SELECT input.event_id, :deployment_id, input.claim_id, input.doc_id,
                :reconciliation_id, input.became_current,
                CAST(input.reason AS currency_reason),
-               input.from_extractor_version, input.from_version_id
+               input.from_extractor_version, input.from_version_id,
+               clock_timestamp()
         FROM input
         WHERE NOT EXISTS (
             SELECT 1 FROM testimony_currency_events existing
@@ -1499,7 +1549,7 @@ _SELECT_ZERO_OBSERVATIONS = text(
 _INVALIDATE_RELATION = text(
     """
     UPDATE relations
-    SET invalidated_at = now(), updated_at=now()
+    SET invalidated_at = clock_timestamp(), updated_at=now()
     WHERE deployment_id=:deployment_id AND relation_id = :relation_id
       AND evidence_count=0 AND invalidated_at IS NULL
     RETURNING relation_id
@@ -1509,7 +1559,7 @@ _INVALIDATE_RELATION = text(
 _INVALIDATE_OBSERVATION = text(
     """
     UPDATE observations
-    SET invalidated_at = now()
+    SET invalidated_at = clock_timestamp()
     WHERE observation_id = :observation_id AND evidence_count=0 AND invalidated_at IS NULL
     RETURNING observation_id
     """
@@ -1519,10 +1569,11 @@ _INSERT_RELATION_RETRACTION = text(
     """
     INSERT INTO relation_adjudications (
         adjudication_id, deployment_id, relation_id, outcome, method,
-        features, adjudicator_version
+        features, adjudicator_version, decided_at
     )
     SELECT :adjudication_id, :deployment_id, :fact_id,
-           'retracted_source_removal', 'exact', :features, 'reconcile-2026.07'
+           'retracted_source_removal', 'exact', :features, 'reconcile-2026.07',
+           clock_timestamp()
     WHERE NOT EXISTS (
         SELECT 1 FROM relation_adjudications a
         WHERE a.relation_id = :fact_id
@@ -1536,10 +1587,11 @@ _INSERT_OBSERVATION_RETRACTION = text(
     """
     INSERT INTO observation_adjudications (
         adjudication_id, deployment_id, observation_id, outcome, method,
-        features, adjudicator_version
+        features, adjudicator_version, decided_at
     )
     SELECT :adjudication_id, :deployment_id, :fact_id,
-           'retracted_source_removal', 'exact', :features, 'reconcile-2026.07'
+           'retracted_source_removal', 'exact', :features, 'reconcile-2026.07',
+           clock_timestamp()
     WHERE NOT EXISTS (
         SELECT 1 FROM observation_adjudications a
         WHERE a.observation_id = :fact_id
@@ -1624,26 +1676,67 @@ _SELECT_STALE_UNCARRIED = text(
     """
 )
 
+_AUTO_RESOLVE_DELETED_REVIEWS = text(
+    f"""
+    UPDATE review_queue q
+    SET status = 'auto_resolved',
+        verdict_note = 'the source material was removed',
+        resolved_at = now(),
+        candidate = jsonb_set(
+            q.candidate,
+            '{{verdict_history}}',
+            coalesce(q.candidate -> 'verdict_history', '[]'::jsonb)
+                || jsonb_build_array(jsonb_build_object(
+                    'verdict', NULL, 'reviewer', 'deletion',
+                    'note', 'the source material was removed')),
+            true
+        )
+    FROM claims cl
+    WHERE q.deployment_id = :deployment_id
+      AND q.item_kind = 'support_withdrawn'
+      AND q.status IN ('pending', 'deferred')
+      AND q.candidate ->> 'claim_id' = ANY(CAST(:claim_ids AS text[]))
+      AND cl.deployment_id = q.deployment_id
+      AND cl.claim_id = CAST(q.candidate ->> 'claim_id' AS uuid)
+      AND NOT {LIVE_CARRIAGE_SQL}
+    RETURNING q.review_id
+    """
+)
+
 _SET_ARCHIVED = text(
     """
-    UPDATE documents
-    SET archived_at = coalesce(archived_at, now()),
+    WITH prior AS (
+        SELECT archived_at AS was FROM documents WHERE doc_id = :doc_id FOR UPDATE
+    )
+    UPDATE documents d
+    -- the clock, not the transaction start: taken under the lineage lock, it
+    -- orders this archive after an unarchive that held the lock first
+    SET archived_at = coalesce(d.archived_at, clock_timestamp()),
         archived_by = CASE
-            WHEN archived_at IS NULL OR :archived_by = 'caller' THEN :archived_by
-            ELSE archived_by
+            WHEN d.archived_at IS NULL OR :archived_by = 'caller' THEN :archived_by
+            ELSE d.archived_by
+        END,
+        archived_cycle_id = CASE
+            WHEN :archived_by = 'caller' THEN NULL
+            WHEN d.archived_at IS NULL THEN CAST(:cycle_id AS uuid)
+            ELSE d.archived_cycle_id
         END
-    WHERE doc_id = :doc_id
-    RETURNING deployment_id, archived_at, archived_at = now() AS newly_archived
+    FROM prior
+    WHERE d.doc_id = :doc_id
+    RETURNING d.deployment_id, d.archived_at, prior.was IS NULL AS newly_archived
     """
 )
 
 _CLEAR_ARCHIVED = text(
-    "UPDATE documents SET archived_at = NULL, archived_by = NULL WHERE doc_id = :doc_id"
+    """
+    UPDATE documents SET archived_at = NULL, archived_by = NULL, archived_cycle_id = NULL
+    WHERE doc_id = :doc_id
+    """
 )
 
 _LATEST_EVENT = """
     JOIN LATERAL (
-        SELECT e.reconciliation_id, e.reason, e.became_current
+        SELECT e.reconciliation_id, e.reason, e.became_current, e.occurred_at
         FROM testimony_currency_events e
         WHERE e.claim_id = cl.claim_id
         ORDER BY e.occurred_at DESC, e.event_id DESC
@@ -1682,11 +1775,15 @@ _SELECT_REGAINED_AFTER_ARCHIVE = text(
     SELECT cl.claim_id, cl.doc_id
     FROM carried
     JOIN claims cl ON cl.claim_id = carried.claim_id
+    JOIN document_versions arrived ON arrived.version_id = :version_id
     {_LATEST_EVENT}
     WHERE cl.deployment_id = :deployment_id
       AND NOT cl.is_current_testimony
       AND last.reason = 'version_archived'
       AND NOT last.became_current
+      -- only a version that arrived after the archive brings testimony back;
+      -- an archived version's own late reconcile never does
+      AND arrived.ingested_at > last.occurred_at
       AND {LIVE_CARRIAGE_SQL}
     """
 )
@@ -1728,10 +1825,10 @@ def _reopen_sql(
         f"""
         INSERT INTO {adjudications} (
             adjudication_id, deployment_id, {kind}_id, outcome, method,
-            features, adjudicator_version
+            features, adjudicator_version, decided_at
         ) VALUES (
             :adjudication_id, :deployment_id, :fact_id, 'reopened_unarchive',
-            'exact', :features, 'reconcile-2026.07'
+            'exact', :features, 'reconcile-2026.07', clock_timestamp()
         )
         """
     ).bindparams(bindparam("features", type_=JSON))
@@ -1749,20 +1846,29 @@ _REOPEN_SQL = {
     ),
 }
 
-_SELECT_RECONCILE_RUNS = text(
+_REOPEN_RECONCILE_RUNS = text(
     """
-    SELECT p.target_id AS version_id, p.component_version, p.content_hash,
-           p.lane::text AS lane, p.payload
-    FROM processing_state p
-    JOIN document_versions v
-      ON v.deployment_id = p.deployment_id AND v.version_id = p.target_id
-    WHERE v.doc_id = :doc_id
-      AND v.deleted_at IS NULL
-      AND p.target_kind = 'document_version'
-      AND p.stage = 'reconcile'
-      AND p.status <> 'pending'
-      AND NOT (p.status = 'succeeded' AND p.finished_at < :archived_at)
-    ORDER BY p.target_id, p.component_version
+    WITH reopened AS (
+        UPDATE processing_state p
+        SET status = 'pending',
+            defer_reason = NULL,
+            not_before = now(),
+            max_attempts = greatest(p.max_attempts, p.attempts + 3),
+            finished_at = NULL
+        FROM document_versions v
+        WHERE v.doc_id = :doc_id
+          AND v.deleted_at IS NULL
+          AND p.deployment_id = v.deployment_id
+          AND p.target_kind = 'document_version'
+          AND p.target_id = v.version_id
+          AND p.stage = 'reconcile'
+          AND (
+              p.status IN ('running', 'dead_letter')
+              OR (p.status = 'succeeded' AND p.finished_at >= :archived_at)
+          )
+        RETURNING p.processing_id
+    )
+    SELECT pg_notify('queue_wake', CAST(processing_id AS text)) FROM reopened
     """
 )
 
@@ -1942,6 +2048,12 @@ _SELECT_PENDING_ARCHIVES = text(
     WHERE d.deployment_id = :deployment_id
       AND d.archived_at IS NOT NULL
       AND d.deleted_at IS NULL
+      -- a source archive waits for its observing cycle's finalization (the
+      -- retract-timing barrier): a move resolves as a support swap
+      AND NOT EXISTS (
+          SELECT 1 FROM connector_sync_cycles y
+          WHERE y.cycle_id = d.archived_cycle_id AND y.finalized_at IS NULL
+      )
       AND EXISTS (
           SELECT 1 FROM claims cl
           WHERE cl.deployment_id = d.deployment_id

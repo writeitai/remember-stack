@@ -344,7 +344,7 @@ class ClaimCatalog:
             archive = (
                 connection.execute(_LOCK_LINEAGE_ARCHIVE, {"chunk_id": owner.chunk_id})
                 .mappings()
-                .one()
+                .one_or_none()
             )
             for claim in claims:
                 payload = claim.model_dump(mode="json")
@@ -368,7 +368,7 @@ class ClaimCatalog:
                         ),
                     ),
                 )
-            if archive["archived_at"] is not None and claims:
+            if archive is not None and archive["archived_at"] is not None and claims:
                 LifecycleCatalog.on_connection(connection=connection).apply_transitions(
                     deployment_id=owner.deployment_id,
                     reconciliation_id=archive_reconciliation_id(

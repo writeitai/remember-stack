@@ -1180,7 +1180,14 @@ class PostgresP1Index:
             target = "chunks"
             policy = policy_generation or self._chunk_input_policy
             model = embedder_generation or self._embedding_model
-            chunk_match = ""
+            # D159: an archived document's passages only on request (the
+            # documents filter decides when there is one).
+            chunk_match = (
+                " AND NOT EXISTS (SELECT 1 FROM documents AS archived"
+                " WHERE archived.deployment_id = candidate.deployment_id"
+                " AND archived.doc_id = candidate.doc_id"
+                " AND archived.archived_at IS NOT NULL)"
+            )
             if documents is not None:
                 chunk_version_sql, document_parameters = live_version_matches(
                     filters=documents,

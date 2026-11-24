@@ -936,7 +936,25 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
         monkeypatch.setattr(
             MarkdownPassthroughConverter, "convert", convert_with_origins
         )
+    control: dict[str, Any] | None = None
+    if archived:
+        # The same edit to a live document first: the archived run must cost
+        # exactly what it cost, call for call.
+        control = _edit_trace(rig, dated=dated)
+        _fresh_deployment(engine=rig.engine)
     trace = _edit_trace(rig, dated=dated, archived=archived)
+    if control is not None:
+
+        def positions(run: dict[str, Any], key: str) -> list[int]:
+            return sorted(run["position"][chunk] for chunk in run[key])
+
+        assert trace["selection_v2"] == control["selection_v2"]
+        assert trace["embeds_v2"] == control["embeds_v2"]
+        for key in ("extracted", "embedded", "claimify_changed", "minted"):
+            assert positions(trace, key) == positions(control, key), key
+        assert [len(targets) for targets in trace["claimify_called"]] == [
+            len(targets) for targets in control["claimify_called"]
+        ]
     if archived:
         with rig.engine.connect() as connection:
             assert (

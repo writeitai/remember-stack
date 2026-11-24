@@ -107,10 +107,10 @@ def test_time_is_on_the_wire_contracts() -> None:
     assert SearchRequest(query="x").time is None
     definition = tool("claims_and_sources_context")
     assert "time" in definition.input_schema["properties"]  # type: ignore[operator]
-    assert definition.tool_version == 5  # D156 added the documents filter
+    assert definition.tool_version == 6  # D159 added documents.include_archived
     documents = tool("search_documents")
     assert "time" in documents.input_schema["properties"]  # type: ignore[operator]
-    assert documents.tool_version == 4  # D156 added the tags filter
+    assert documents.tool_version == 5  # D159 added include_archived
     request = parse_search_documents_arguments(
         arguments={"time": {"mode": "at", "at": "2026-02-01T00:00:00Z"}}
     )

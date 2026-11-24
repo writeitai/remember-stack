@@ -1895,6 +1895,7 @@ def _delete_at_source(rig: _LifecycleRig, source_ref: str) -> None:
         deployment_id=_DEPLOYMENT_ID,
         source_kind="watched_directory",
         source_ref=source_ref,
+        cycle_id=cycle,
     )
     _complete(rig, cycle)
 

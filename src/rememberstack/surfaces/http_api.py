@@ -945,17 +945,12 @@ def build_api(
         in force for the scope, and returns those occurrences.
         """
         try:
-            # D159: archived documents only with documents.include_archived,
-            # each returned item marked archived.
-            return deployment.engine.mark_archived(
+            return deployment.engine.search_claims(
                 deployment_id=deployment.deployment_id,
-                envelope=deployment.engine.search_claims(
-                    deployment_id=deployment.deployment_id,
-                    query=body.query,
-                    k=body.k,
-                    channel=body.channel,
-                    **_documents_scope(body),
-                ),
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
             )
         except UnknownTagError as error:
             raise _tag_errors(error) from error
@@ -970,17 +965,12 @@ def build_api(
         ``time`` keeps chunks of versions in force for the scope (D140).
         """
         try:
-            # D159: archived documents only with documents.include_archived,
-            # each returned item marked archived.
-            return deployment.engine.mark_archived(
+            return deployment.engine.search_chunks(
                 deployment_id=deployment.deployment_id,
-                envelope=deployment.engine.search_chunks(
-                    deployment_id=deployment.deployment_id,
-                    query=body.query,
-                    k=body.k,
-                    channel=body.channel,
-                    **_documents_scope(body),
-                ),
+                query=body.query,
+                k=body.k,
+                channel=body.channel,
+                **_documents_scope(body),
             )
         except UnknownTagError as error:
             raise _tag_errors(error) from error

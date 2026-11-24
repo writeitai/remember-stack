@@ -139,6 +139,7 @@ from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.effective_time import belief_watermark
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.lifecycle import REVIEW_MOOT_SQL
 from rememberstack.spine.processing_layers import admit_layers_on
 from rememberstack.spine.retrieval_eligibility import candidate_mention_coverage_ctes
 from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
@@ -2476,6 +2477,29 @@ class QueryEngine:
         documents: DocumentSearchFilters | None = None,
         time: ReadTime | None = None,
     ) -> Envelope:
+        """Claim search; archived documents only on request, marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._search_claims(
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                documents=documents,
+                time=time,
+            ),
+        )
+
+    def _search_claims(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
+    ) -> Envelope:
         """Claim search — EVIDENCE grain, never a current-fact answer.
 
         The claims channel nominates (current-testimony-only by default);
@@ -2599,6 +2623,29 @@ class QueryEngine:
 
     @_with_surface(SurfaceCostKind.SEARCH)
     def search_chunks(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
+    ) -> Envelope:
+        """Chunk search; archived documents only on request, marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._search_chunks(
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                documents=documents,
+                time=time,
+            ),
+        )
+
+    def _search_chunks(
         self,
         *,
         deployment_id: UUID,
@@ -4458,12 +4505,18 @@ class QueryEngine:
             return (), 0, {}
         statement = _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS
         extra: dict[str, Any] = {}
-        predicates: list[str] = []
+        # D159: an archived document's passage confirms only on request (the
+        # documents filter decides when there is one).
+        predicates: list[str] = [
+            "NOT EXISTS (SELECT 1 FROM documents AS archived"
+            " WHERE archived.deployment_id = ch.deployment_id"
+            " AND archived.doc_id = ch.doc_id AND archived.archived_at IS NOT NULL)"
+        ]
         if documents is not None:
             version_sql, document_parameters = live_version_matches(
                 filters=documents, version="ch.version_id", prefix="documents_"
             )
-            predicates.append(version_sql)
+            predicates = [version_sql]
             extra.update(document_parameters)
         if scope is not None:
             predicates.append(version_selected(version="ch.version_id"))
@@ -5904,16 +5957,20 @@ _ARCHIVED_DOCUMENTS = text(
 )
 
 
-_LOOKUP_BELIEF_PREDICATE = (
-    "ingested_at <= :evaluated_at"
-    " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
-)
-"""One as-of belief/ingest predicate for every browse-lookup page (D154).
+def _lookup_belief_predicate(*, fact_kind: str, fact_id: str) -> str:
+    """One as-of belief/ingest predicate for every browse-lookup page (D154).
 
-Page one pins ``evaluated_at`` from the database clock; later pages reuse the
-cursor. Rows ingested after that instant stay out; rows invalidated after it
-stay in. There is no first-page-only ``invalidated_at IS NULL`` branch.
-"""
+    Page one pins ``evaluated_at`` from the database clock; later pages reuse
+    the cursor. Rows ingested after that instant stay out; rows closed after it
+    stay in. Belief at the instant comes from the fact's close and reopen
+    events (D159), so a reopen after page one cannot move a fact into a later
+    page. There is no first-page-only ``invalidated_at IS NULL`` branch.
+    """
+    return (
+        "ingested_at <= :evaluated_at"
+        " AND rememberstack_graph_internal.fact_believed_at("
+        f"'{fact_kind}', {fact_id}, invalidated_at, :evaluated_at)"
+    )
 
 
 def _lookup_relations_sql() -> TextClause:
@@ -5926,7 +5983,7 @@ def _lookup_relations_sql() -> TextClause:
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
-      AND {_LOOKUP_BELIEF_PREDICATE}
+      AND {_lookup_belief_predicate(fact_kind="relation", fact_id="relation_id")}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (CAST(:subject_entity_id AS uuid) IS NULL
@@ -5956,7 +6013,7 @@ def _lookup_observations_sql() -> TextClause:
     FROM observations
     WHERE deployment_id = :deployment_id
       AND subject_entity_id = :entity_id
-      AND {_LOOKUP_BELIEF_PREDICATE}
+      AND {_lookup_belief_predicate(fact_kind="observation", fact_id="observation_id")}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (
@@ -7206,18 +7263,20 @@ _CURRENT_FACT_LABELS = text(
 )
 
 _OPEN_SUPPORT_FLAGS = text(
-    """
+    f"""
     -- a fact under an OPEN support_withdrawn review carries support=withdrawn
     -- in the envelope (D54: flagged, not vanished). "Open" is pending OR
     -- deferred — an 'uncertain' verdict defers but leaves the flag standing,
-    -- matching review._SELECT_OPEN_FLAG and the lifecycle reconciler.
-    SELECT (candidate ->> 'fact_id')::uuid AS fact_id
-    FROM review_queue
-    WHERE deployment_id = :deployment_id
-      AND item_kind = 'support_withdrawn'
-      AND status IN ('pending', 'deferred')
-      AND candidate ->> 'fact_kind' = :fact_kind
-      AND (candidate ->> 'fact_id') = ANY(:fact_ids)
+    -- matching review._SELECT_OPEN_FLAG and the lifecycle reconciler; a
+    -- review on an archived document's claim is moot (D159).
+    SELECT (q.candidate ->> 'fact_id')::uuid AS fact_id
+    FROM review_queue q
+    WHERE q.deployment_id = :deployment_id
+      AND q.item_kind = 'support_withdrawn'
+      AND q.status IN ('pending', 'deferred')
+      AND q.candidate ->> 'fact_kind' = :fact_kind
+      AND (q.candidate ->> 'fact_id') = ANY(:fact_ids)
+      AND NOT {REVIEW_MOOT_SQL}
     """
 )
 

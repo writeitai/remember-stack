@@ -476,7 +476,15 @@ def test_archive_keeps_assignments_shown_only_with_archived_documents(
     } == {(kept.doc_id, ("project:a",), False), (gone.doc_id, ("project:a",), True)}
 
     returned = rig.observe(body="Goes.", source_ref="docs/b.md")
-    assert returned.created, "re-ingest after deletion versions as without tags"
+    assert not returned.created, "identical bytes leave an archived document as is"
+    assert returned.version_id == gone.version_id
+    assert (
+        rig.count(
+            "SELECT count(*) FROM documents WHERE doc_id = :d AND archived_at IS NOT NULL",
+            d=gone.doc_id,
+        )
+        == 1
+    )
 
 
 def test_search_documents_returns_each_documents_tags(rig: _Rig) -> None:

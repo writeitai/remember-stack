@@ -1031,14 +1031,17 @@ _INSERT_VERSION = text(
     INSERT INTO document_versions (
         version_id, deployment_id, doc_id, content_hash, version_no, status,
         source_modified_at, source_version_ref, sync_cycle_id,
-        ingested_by_principal_id, version_key
+        ingested_by_principal_id, version_key, ingested_at
     ) VALUES (
         :version_id, :deployment_id, :doc_id, :content_hash,
         (SELECT coalesce(max(version_no), 0) + 1 FROM document_versions
          WHERE deployment_id = :deployment_id AND doc_id = :doc_id),
         CAST(:status AS document_status),
         :source_modified_at, :source_version_ref, :sync_cycle_id,
-        :ingested_by_principal_id, :version_key
+        :ingested_by_principal_id, :version_key,
+        -- the clock under the lineage lock, so a version that arrives after
+        -- an archive is stamped after the archive's retirements (D159)
+        clock_timestamp()
     )
     """
 )

@@ -18,7 +18,7 @@ the lineage's) are cleared. An earlier deletion the lineage already came back
 from is left alone, and so are internal version tombstones.
 
 Belief intervals: once a fact can be reopened, ``invalidated_at`` holds only
-its current state. ``public.fact_believed_at`` answers "was this fact believed
+its current state. ``rememberstack_graph_internal.fact_believed_at`` answers "was this fact believed
 at instant b?" from its close and reopen adjudications (a fact never reopened
 keeps the old single-column test), and ``memory_v1.facts_as_of`` and the graph
 traversal helpers' belief clocks use it, so a read inside an archive interval
@@ -154,12 +154,50 @@ LEFT JOIN memory_v1.document_versions_visible AS fv
 reason in the currency-event view's documentation."""
 
 
-FACT_BELIEVED_AT_SIGNATURE = (
-    "public.fact_believed_at(text, uuid, timestamptz, timestamptz)"
-)
+def _crossrefs_view(*, archived_target_hidden: bool) -> str:
+    """``document_crossrefs_live`` as D140 authored it, or without archived targets."""
+    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+        MEMORY_V1_D140_VIEW_DDL,
+    )
+
+    start = MEMORY_V1_D140_VIEW_DDL.index(
+        "CREATE VIEW memory_v1.document_crossrefs_live ("
+    )
+    end = MEMORY_V1_D140_VIEW_DDL.index("COMMENT ON VIEW", start)
+    view = MEMORY_V1_D140_VIEW_DDL[start:end].replace(
+        "CREATE VIEW", "CREATE OR REPLACE VIEW", 1
+    )
+    if not archived_target_hidden:
+        return view
+    old = "WHERE x.resolved AND x.to_doc_id IS NOT NULL;"
+    if view.count(old) != 1:
+        raise RuntimeError("unexpected document_crossrefs_live shape")
+    return view.replace(
+        old,
+        "WHERE x.resolved AND x.to_doc_id IS NOT NULL\n"
+        "  -- D159: an archived target is target_unavailable until it comes back\n"
+        "  AND target.archived_at IS NULL;",
+    )
+
+
+CROSSREFS_ARCHIVE_DDL = _crossrefs_view(archived_target_hidden=True)
+"""References to an archived target leave the SQL reference view (D159 §2.2)."""
+
+
+def archived_target_projection(*, sql: str) -> str:
+    """The graph's citation projection without archived targets (D159)."""
+    old = " AND target.deleted_at IS NULL\nWHERE"
+    if sql.count(old) != 1:
+        raise RuntimeError("unexpected citation projection shape")
+    return sql.replace(
+        old, " AND target.deleted_at IS NULL\n AND target.archived_at IS NULL\nWHERE"
+    )
+
+
+FACT_BELIEVED_AT_SIGNATURE = "rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz)"
 
 FACT_BELIEVED_AT_DDL = r"""
-CREATE FUNCTION public.fact_believed_at(
+CREATE FUNCTION rememberstack_graph_internal.fact_believed_at(
   fact_kind text,
   fact_id uuid,
   invalidated_at timestamptz,
@@ -200,13 +238,16 @@ AS $$
     ELSE $3 IS NULL OR $3 > $4
   END
 $$;
-COMMENT ON FUNCTION public.fact_believed_at(text, uuid, timestamptz, timestamptz) IS
-  'D159 belief at an instant: true when the fact''s latest close or reopen adjudication at or before believed_at is not a close. invalidated_at holds only the current state once an unarchive has reopened a fact; a fact never reopened answers from invalidated_at alone. SECURITY DEFINER over the adjudication transcripts; EXECUTE for the graph and query roles.';
-REVOKE ALL ON FUNCTION public.fact_believed_at(text, uuid, timestamptz, timestamptz) FROM PUBLIC;
+COMMENT ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz) IS
+  'D159 belief at an instant: true when the fact''s latest close or reopen adjudication at or before believed_at is not a close. invalidated_at holds only the current state once an unarchive has reopened a fact; a fact never reopened answers from invalidated_at alone. SECURITY DEFINER over the adjudication transcripts; EXECUTE for the graph and query roles. Recreated with the graph schema by every graph rebuild.';
+"""
+
+FACT_BELIEVED_AT_GRANTS = r"""
+REVOKE ALL ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz) FROM PUBLIC;
 DO $do$
 BEGIN
   EXECUTE format(
-    'GRANT EXECUTE ON FUNCTION public.fact_believed_at(text, uuid, timestamptz, timestamptz) TO %I, %I',
+    'GRANT EXECUTE ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz) TO %I, %I',
     'rememberstack_graph_' || current_database(),
     'rememberstack_query_' || current_database()
   );
@@ -216,7 +257,7 @@ $do$;
 
 _HELPER_BELIEF = (
     "(h.invalidated_at IS NULL\n                    OR h.invalidated_at > clock_believed)",
-    "public.fact_believed_at('relation', h.relation_id, h.invalidated_at,"
+    "rememberstack_graph_internal.fact_believed_at('relation', h.relation_id, h.invalidated_at,"
     " clock_believed)",
 )
 
@@ -238,7 +279,7 @@ def facts_as_of_ddl() -> str:
 
     old = "AND (f.invalidated_at IS NULL OR f.invalidated_at > facts_as_of.believed_at)"
     new = (
-        "AND public.fact_believed_at(f.fact_kind, f.fact_id, f.invalidated_at,"
+        "AND rememberstack_graph_internal.fact_believed_at(f.fact_kind, f.fact_id, f.invalidated_at,"
         " facts_as_of.believed_at)"
     )
     if FACTS_AS_OF_DDL.count(old) != 1:
@@ -253,6 +294,10 @@ _SCHEMA = (
     "ALTER TABLE documents ADD COLUMN archived_at timestamptz",
     "ALTER TABLE documents ADD COLUMN archived_by text"
     " CHECK (archived_by IN ('caller', 'source'))",
+    "ALTER TABLE documents ADD COLUMN archived_cycle_id uuid",
+    "COMMENT ON COLUMN documents.archived_cycle_id IS"
+    " 'D159 the sync cycle that observed a source archive; its cascade waits for"
+    " that cycle''s finalization (the retract-timing barrier). NULL otherwise.'",
     "ALTER TABLE documents ADD CONSTRAINT documents_archived_pair"
     " CHECK ((archived_at IS NULL) = (archived_by IS NULL))",
     "COMMENT ON COLUMN documents.archived_at IS"
@@ -268,7 +313,7 @@ _SCHEMA = (
 
 _DELETED_LINEAGES = text(
     """
-    SELECT d.doc_id, d.deleted_at,
+    SELECT d.doc_id, d.deleted_at, d.deleted_sync_cycle_id,
            CASE WHEN d.deleted_sync_cycle_id IS NULL THEN 'caller' ELSE 'source' END
              AS archived_by
     FROM documents d
@@ -333,10 +378,31 @@ _CLEAR_EPISODE_TOMBSTONES = text(
 _ARCHIVE_LINEAGE = text(
     """
     UPDATE documents
-    SET archived_at = deleted_at, archived_by = :archived_by, deleted_at = NULL
+    SET archived_at = deleted_at, archived_by = :archived_by,
+        archived_cycle_id = :cycle_id, deleted_at = NULL
     WHERE doc_id = :doc_id
     """
 )
+
+
+def _d135_run_ids(*, doc_id: UUID, at: datetime) -> tuple[UUID, ...]:
+    """The run ids D135 derived for a lineage's deletion episode.
+
+    A run that closed a fact without retiring a claim (its claim was already
+    non-current) left no currency event to find it by: the caller's delete,
+    the connector finalization, and the operator grain. D135 rendered the
+    instant with ``isoformat()`` in the session time zone; deployments run in
+    UTC, so the UTC rendering is the one to match.
+    """
+    instant = at.astimezone(UTC).isoformat()
+    return tuple(
+        uuid5(NAMESPACE_URL, f"rememberstack:{kind}:{suffix}")
+        for kind, suffix in (
+            ("delete-lineage", f"{doc_id}:{instant}"),
+            ("finalize-delete", f"{doc_id}:{instant}"),
+            ("delete-lineage", f"{doc_id}"),
+        )
+    )
 
 
 def upgrade() -> None:
@@ -380,7 +446,7 @@ def upgrade() -> None:
         run_ids = [
             str(run_id)
             for run_id in connection.execute(_EPISODE_RUN_IDS, params).scalars()
-        ]
+        ] + [str(run_id) for run_id in _d135_run_ids(doc_id=doc_id, at=deleted_at)]
         connection.execute(_RELABEL_EVENTS, {**params, "rid": rid})
         for statement in _RELABEL_CLOSURES:
             connection.execute(
@@ -388,27 +454,29 @@ def upgrade() -> None:
             )
         connection.execute(_CLEAR_EPISODE_TOMBSTONES, params)
         connection.execute(
-            _ARCHIVE_LINEAGE, {"doc_id": doc_id, "archived_by": row["archived_by"]}
+            _ARCHIVE_LINEAGE,
+            {
+                "doc_id": doc_id,
+                "archived_by": row["archived_by"],
+                "cycle_id": row["deleted_sync_cycle_id"],
+            },
         )
     apply_view_ddl(sql=DOCUMENTS_INVENTORY_DDL)
+    op.execute(CROSSREFS_ARCHIVE_DDL)
     _install_belief_intervals()
 
 
 def _install_belief_intervals() -> None:
-    """The belief predicate, then facts_as_of and the traversal helpers on it."""
-    from rememberstack.spine.migrations._helpers import apply_ddl
-    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
-        _gated_graph_helpers,
-    )
-    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
-        _restore_helper_settings,
-    )
+    """facts_as_of, then the graph rebuild that installs the belief predicate.
 
-    apply_ddl(sql=FACT_BELIEVED_AT_DDL)
+    The predicate lives in the graph's internal schema (the query and graph
+    roles already use it), so the graph rebuild — also the catalog repair
+    path — recreates it with the traversal helpers that call it.
+    """
+    from rememberstack.spine.fact_graph_contract import rebuild_fact_graphs
+
+    rebuild_fact_graphs(connection=op.get_bind())
     op.execute(facts_as_of_ddl())
-    for _, gated in _gated_graph_helpers():
-        op.execute(belief_interval_helper(sql=gated))
-    _restore_helper_settings()
 
 
 def downgrade() -> None:
@@ -434,14 +502,9 @@ def downgrade() -> None:
         )
     ).scalar_one():
         raise RuntimeError("D159 downgrade refuses a store with reopened facts")
+    from rememberstack.spine.fact_graph_contract import rebuild_fact_graphs
     from rememberstack.spine.migrations.versions.p9_30_0051_mutable_fact_windows import (
         FACTS_AS_OF_DDL,
-    )
-    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
-        _gated_graph_helpers,
-    )
-    from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
-        _restore_helper_settings,
     )
 
     op.execute(
@@ -450,10 +513,10 @@ def downgrade() -> None:
             "CREATE OR REPLACE FUNCTION memory_v1.facts_as_of(",
         )
     )
-    for _, gated in _gated_graph_helpers():
-        op.execute(gated)
-    _restore_helper_settings()
-    op.execute(f"DROP FUNCTION {FACT_BELIEVED_AT_SIGNATURE}")
+    op.execute(_crossrefs_view(archived_target_hidden=False))
+    # The prior graph shape first: its projection must stop reading the
+    # archive column before the column goes.
+    rebuild_fact_graphs(connection=connection, archive=False)
     inert = DOCUMENTS_INVENTORY_DDL.split("COMMENT ON VIEW memory_v1.documents_live")[0]
     if inert.count("  d.archived_at\n") != 1:
         raise RuntimeError("unexpected documents_live inventory shape")
@@ -463,5 +526,6 @@ def downgrade() -> None:
         "ALTER TYPE currency_reason RENAME VALUE 'version_archived' TO 'version_deleted'"
     )
     op.execute("ALTER TABLE documents DROP CONSTRAINT documents_archived_pair")
+    op.execute("ALTER TABLE documents DROP COLUMN archived_cycle_id")
     op.execute("ALTER TABLE documents DROP COLUMN archived_by")
     op.execute("ALTER TABLE documents DROP COLUMN archived_at")

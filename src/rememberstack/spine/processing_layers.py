@@ -700,11 +700,18 @@ class _Lineage:
     doc_id: UUID
     living: bool
     lineage_deleted: bool
+    archived: bool
     current_version_id: UUID | None
     versions: tuple[_VersionState, ...]
 
     def target(self, *, layer: ProcessingLayer) -> _VersionState | None:
-        """The version advance would enter next, if any (step 3)."""
+        """The version advance would enter next, if any (step 3).
+
+        An archived lineage enters nothing (D159): its gaps wait, and
+        unarchive advances the lineage again.
+        """
+        if self.archived:
+            return None
         candidates = [
             version
             for version in self.versions
@@ -808,6 +815,7 @@ def _read_lineage(
         doc_id=doc_id,
         living=str(head["versioning_mode"]) == "living",
         lineage_deleted=head["deleted_at"] is not None,
+        archived=head["archived_at"] is not None,
         current_version_id=head["current_version_id"],
         versions=tuple(versions),
     )
@@ -1250,7 +1258,8 @@ _SELECT_DELETED_VERSIONS = text(
 
 _SELECT_LINEAGE = text(
     """
-    SELECT versioning_mode::text AS versioning_mode, current_version_id, deleted_at
+    SELECT versioning_mode::text AS versioning_mode, current_version_id, deleted_at,
+           archived_at
     FROM documents
     WHERE doc_id = :doc_id
     """
@@ -1400,6 +1409,7 @@ _OPEN_GAP_EXISTS = text(
       WHERE g.deployment_id = :deployment_id AND g.layer = :layer
         AND g.discharged_at IS NULL
         AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+        AND d.archived_at IS NULL
     )
     """
 )

@@ -1257,17 +1257,22 @@ def test_archiving_a_document_while_facts_are_off_closes_its_facts(
         )
         == 0
     )
+    # D159: the archived lineage keeps its gaps (unarchive resumes them) but
+    # enters nothing, even once facts are switched on
     assert (
         rig.scalar(
             "SELECT count(*) FROM processing_layer_gaps WHERE doc_id = :d",
             d=first.doc_id,
         )
-        == 0
+        == gaps
     )
     configuration = rig.layers.configuration(deployment_id=_DEPLOYMENT_ID)
     assert configuration.claims_enabled and not configuration.facts_enabled
     assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).facts == "disabled"
     assert rig.stage_rows(stages=_E3_STAGES) == e3_rows  # no fact work opened
+    rig.configure(claims=True, facts=True)
+    rig.drain()
+    assert rig.stage_rows(stages=_E3_STAGES) == e3_rows
 
 
 def test_deleting_the_current_living_version_reopens_and_processes_its_predecessor(
@@ -2116,7 +2121,7 @@ def test_deleting_a_lineage_removes_its_gaps_in_the_tombstone_commit(
     def died(**_: object) -> object:
         raise RuntimeError("the worker died right after the tombstone committed")
 
-    monkeypatch.setattr("rememberstack.workers.reconcile.cascade_lineage_removal", died)
+    monkeypatch.setattr("rememberstack.workers.reconcile._cascade_run", died)
     with pytest.raises(RuntimeError, match="died right after the tombstone"):
         rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=doc_id)
     monkeypatch.undo()
