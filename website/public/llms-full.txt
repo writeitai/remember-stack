@@ -9621,17 +9621,17 @@ logged at WARNING. Every such record carries a stable code in `error_code`,
 for example `worker_item_failed` or `graph_query_failed`. A code starts with
 a lowercase letter, then lowercase letters, digits and underscores, 3 to 64
 characters in all, and stays the same across releases; a renamed or removed
-code is listed in the changelog. The message is a fixed sentence.
-Identifiers such as `processing_id`, `stage`, `attempt` or `sqlstate` are
-separate fields on the record, not part of the message. Other parts of the
+code is listed in the changelog. Worker, live graph and metering records
+use a fixed message, with identifiers such as `processing_id`, `stage`,
+`attempt` or `sqlstate` as separate fields on the record. Other parts of the
 engine, such as the query sandbox, are being brought under the same rules.
 
 A worker item's failure, a model provider failure on a request and a live
 graph query failure can carry your content in their text: a provider's error
 can quote the request, and a database error can quote a query's values.
 Those records hold only the exception's type, in `exception_type`, and no
-traceback. Other ERROR records, such as an MCP tool failure, keep the
-exception and its traceback.
+traceback; so do a failed worker finalizer and a failed usage write. An MCP
+tool failure keeps the exception and its traceback.
 
 The main places the engine logs:
 
@@ -9642,14 +9642,17 @@ The main places the engine logs:
 | An expired lease is requeued / dead-lettered | `worker_lease_expired_retry` / `worker_lease_expired` | WARNING / ERROR |
 | A run finishes after losing its lease | `worker_lease_lost` | WARNING |
 | A model provider call fails on a request (503) | `provider_call_failed` | ERROR |
-| A live graph query hits a database error or times out (503) | `graph_query_failed` | ERROR |
+| A live graph query times out or loses its connection (503) | `graph_query_failed` | ERROR |
 | A live graph result no longer matches its rows (503) | `graph_hydration_mismatch` | ERROR |
 | The live graph has no free slot (503) | `graph_capacity_exhausted` | WARNING |
 | An MCP tool fails unexpectedly | `mcp_tool_failed` | ERROR |
-| A managed meter receipt is refused / the control plane is unavailable | `meter_receipt_unauthorized` / `meter_receipt_retry` | ERROR / WARNING |
+| The control plane rejects the meter's producer credential | `meter_receipt_unauthorized` | ERROR |
+| The control plane is unavailable; the receipt is retried | `meter_receipt_retry` | WARNING |
+| A receipt conflicts with the recorded one | `meter_measurement_quarantined` / `meter_receipt_conflict` | ERROR |
 
-The engine sends nothing anywhere itself. To collect these records, attach a
-handler to the `rememberstack` logger, as below.
+Forwarding is off by default: the engine sends nothing anywhere itself. To
+collect these records, attach a handler to the `rememberstack` logger, as
+below.
 
 ### Sentry, GlitchTip or Bugsink
 
@@ -9672,9 +9675,11 @@ exception type and stack trace stay; the exception message is replaced by
 extras are removed. Because extras are removed, the `error_code` is not on
 the event. A failed worker item is reported once, with the tags `stage`,
 `lane` and `processing_id`, which you can look up with
-`remember ops inspect`. The adapter does not forward the worker's other log
-records, such as a dead-lettered expired lease or a failed finalizer; collect
-those with a logging handler as below. Performance tracing is off.
+`remember ops inspect`. The adapter forwards no log records from the worker
+loop itself (`rememberstack.workers.base`): an expired lease, a failed
+finalizer, or an item that failed after its worker lost the lease. ERROR
+records from other engine loggers reach it. Collect the worker loop's records
+with a logging handler as below. Performance tracing is off.
 
 To keep the codes, leave `REMEMBERSTACK_SENTRY_DSN` unset and initialise the
 SDK yourself in a bootstrap module (see [Where the setup runs](#where-the-setup-runs)):
@@ -9737,11 +9742,12 @@ with these settings (the image's exporter speaks HTTP, while the agent
 defaults to gRPC):
 
 ```bash
-OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://collector.example:4318/v1/logs
-OTEL_TRACES_EXPORTER=none
-OTEL_METRICS_EXPORTER=none
+export OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://collector.example:4318/v1/logs
+export OTEL_TRACES_EXPORTER=none
+export OTEL_METRICS_EXPORTER=none
+opentelemetry-instrument python -m rememberstack.profiles.selfhost api
 ```
 
 Or attach the SDK's handler in a bootstrap module:
