@@ -256,18 +256,24 @@ class _LeaseRenewal:
                 )
             except Exception:  # noqa: BLE001 — retry at the next interval
                 _logger.exception(
-                    "lease renewal failed for %s attempt %s",
-                    self._work.processing_id,
-                    self._work.attempt,
-                    extra={"error_code": "worker_lease_renewal_failed"},
+                    "lease renewal failed",
+                    extra={
+                        "error_code": "worker_lease_renewal_failed",
+                        "processing_id": str(self._work.processing_id),
+                        "stage": self._work.stage.value,
+                        "attempt": self._work.attempt,
+                    },
                 )
                 continue
             if not renewed:
                 _logger.warning(
-                    "lease lost for %s attempt %s in stage %s",
-                    self._work.processing_id,
-                    self._work.attempt,
-                    self._work.stage,
+                    "lease renewal refused; the claim was taken back",
+                    extra={
+                        "error_code": "worker_lease_renewal_refused",
+                        "processing_id": str(self._work.processing_id),
+                        "stage": self._work.stage.value,
+                        "attempt": self._work.attempt,
+                    },
                 )
                 return
 
@@ -450,12 +456,6 @@ class Worker:
                 outcome=RunResultOutcome.NO_ROUTE_PARKED,
             )
         except (NonRetryableHandlerError, ProviderAccountingError) as exception:
-            _logger.exception(
-                "non-retryable failure in stage %s for %s",
-                claimed.stage,
-                claimed.processing_id,
-                extra={"error_code": "worker_item_failed"},
-            )
             try:
                 self._ledger.fail(
                     processing_id=claimed.processing_id,
@@ -464,7 +464,22 @@ class Worker:
                     retryable=False,
                 )
             except WorkNotRunningError:
-                return self._lease_lost(claimed=claimed, started_ns=started_ns)
+                # The reaper owns the outcome (it logs its own ERROR if it
+                # dead-letters); the lease-lost record keeps the failure.
+                return self._lease_lost(
+                    claimed=claimed, started_ns=started_ns, failure=exception
+                )
+            # Logged once the ledger accepted the terminal transition.
+            _logger.error(
+                "non-retryable worker item failure",
+                extra={
+                    "error_code": "worker_item_failed",
+                    "exception_type": type(exception).__name__,
+                    "processing_id": str(claimed.processing_id),
+                    "stage": claimed.stage.value,
+                    "attempt": claimed.attempt,
+                },
+            )
             self._finalize_terminal_failure(
                 handler=handler, claimed=claimed, exception=exception
             )
@@ -486,12 +501,6 @@ class Worker:
             )
         except Exception as exception:
             self._record_failed_provider_usage(meter=meter, exception=exception)
-            _logger.exception(
-                "retryable failure in stage %s for %s",
-                claimed.stage,
-                claimed.processing_id,
-                extra={"error_code": "worker_item_retry"},
-            )
             try:
                 retry_at = self._ledger.fail(
                     processing_id=claimed.processing_id,
@@ -500,7 +509,38 @@ class Worker:
                     retryable=True,
                 )
             except WorkNotRunningError:
-                return self._lease_lost(claimed=claimed, started_ns=started_ns)
+                # The reaper took the claim back: it requeues the item or
+                # dead-letters it with its own ERROR.
+                return self._lease_lost(
+                    claimed=claimed, started_ns=started_ns, failure=exception
+                )
+            # D158: a retry that will run again is expected (WARNING); the
+            # last attempt failing is the item's one ERROR. Item records carry
+            # the exception type, never its text or traceback: converter and
+            # provider errors can quote the document (Rule 4). The ledger row
+            # keeps the full traceback for `remember ops inspect`.
+            if retry_at is not None:
+                _logger.warning(
+                    "retryable worker item failure",
+                    extra={
+                        "error_code": "worker_item_retry",
+                        "exception_type": type(exception).__name__,
+                        "processing_id": str(claimed.processing_id),
+                        "stage": claimed.stage.value,
+                        "attempt": claimed.attempt,
+                    },
+                )
+            else:
+                _logger.error(
+                    "worker item failed with no retry left",
+                    extra={
+                        "error_code": "worker_item_failed",
+                        "exception_type": type(exception).__name__,
+                        "processing_id": str(claimed.processing_id),
+                        "stage": claimed.stage.value,
+                        "attempt": claimed.attempt,
+                    },
+                )
             result_outcome = (
                 RunResultOutcome.RETRY_SCHEDULED
                 if retry_at is not None
@@ -614,20 +654,34 @@ class Worker:
         )
         for lease in expired:
             work = lease.work
-            _logger.warning(
-                "lease expired for %s attempt %s in stage %s; %s",
-                work.processing_id,
-                work.attempt,
-                work.stage,
-                "requeued" if lease.requeued else "dead-lettered",
-            )
             if not lease.requeued:
+                _logger.error(
+                    "expired lease dead-lettered",
+                    extra={
+                        "error_code": "worker_lease_expired",
+                        "processing_id": str(work.processing_id),
+                        "stage": work.stage.value,
+                        "attempt": work.attempt,
+                    },
+                )
                 self._finalize_terminal_failure(
                     handler=self._registry.handler_for(stage=work.stage),
                     claimed=work,
                     exception=TimeoutError("lease expired on the last attempt"),
                 )
-            elif self._queue is not None:
+                continue
+            _logger.warning(
+                "expired lease requeued",
+                extra={
+                    "error_code": "worker_lease_expired_retry",
+                    "processing_id": str(work.processing_id),
+                    "stage": work.stage.value,
+                    "attempt": work.attempt,
+                },
+            )
+            if self._queue is None:
+                continue
+            try:
                 self._queue.announce(
                     processing_id=work.processing_id,
                     route_snapshot=QueueRoute(
@@ -637,16 +691,34 @@ class Worker:
                     ),
                     not_before_snapshot=datetime.now(UTC),
                 )
+            except Exception:  # noqa: BLE001 — one failed wake must not stop the sweep
+                _logger.exception(
+                    "requeue wake failed",
+                    extra={
+                        "error_code": "worker_requeue_announce_failed",
+                        "processing_id": str(work.processing_id),
+                        "stage": work.stage.value,
+                    },
+                )
         return expired
 
-    def _lease_lost(self, *, claimed: ClaimedWork, started_ns: int) -> RunResult:
-        """The attempt's claim was taken back while it ran; record nothing."""
+    def _lease_lost(
+        self, *, claimed: ClaimedWork, started_ns: int, failure: Exception | None = None
+    ) -> RunResult:
+        """The attempt's claim was taken back while it ran; record nothing.
+
+        ``failure`` is the handler's exception when the attempt failed: the
+        reaper owns the item's outcome, so it stays a WARNING here.
+        """
         _logger.warning(
-            "attempt %s of %s in stage %s finished after losing its lease;"
-            " its result is discarded",
-            claimed.attempt,
-            claimed.processing_id,
-            claimed.stage,
+            "attempt finished after losing its lease; its result is discarded",
+            extra={
+                "error_code": "worker_lease_lost",
+                "exception_type": None if failure is None else type(failure).__name__,
+                "processing_id": str(claimed.processing_id),
+                "stage": claimed.stage.value,
+                "attempt": claimed.attempt,
+            },
         )
         self._export_event(
             event=_worker_event(
@@ -671,12 +743,17 @@ class Worker:
             return
         try:
             handler.finalize_terminal_failure(work=claimed, error=str(exception))
-        except Exception:  # noqa: BLE001 — finalization must not mask the DLQ
-            _logger.exception(
-                "terminal-failure finalizer failed in stage %s for %s",
-                claimed.stage,
-                claimed.processing_id,
-                extra={"error_code": "worker_finalizer_failed"},
+        except Exception as error:  # noqa: BLE001 — finalization must not mask the DLQ
+            # No traceback: it would chain the item's failure, whose text
+            # can quote the document (Rule 4).
+            _logger.error(
+                "terminal-failure finalizer failed",
+                extra={
+                    "error_code": "worker_finalizer_failed",
+                    "exception_type": type(error).__name__,
+                    "processing_id": str(claimed.processing_id),
+                    "stage": claimed.stage.value,
+                },
             )
 
     @staticmethod
@@ -698,9 +775,13 @@ class Worker:
                 "failed to persist usage from the failed provider response:"
                 f" {accounting_exception}"
             )
-            _logger.exception(
+            # No traceback: it would chain the provider's error text (Rule 4).
+            _logger.error(
                 "failed to meter a usage-bearing provider exception",
-                extra={"error_code": "provider_usage_unrecorded"},
+                extra={
+                    "error_code": "provider_usage_unrecorded",
+                    "exception_type": type(accounting_exception).__name__,
+                },
             )
 
     def _export_event(self, *, event: TelemetryEvent) -> None:
