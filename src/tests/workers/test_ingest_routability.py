@@ -81,7 +81,11 @@ _END, _FREE, _FAT_SECTOR, _NO_ENTRY = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD, 0xFFFF
 
 
 def _cfb_entries(
-    *, streams: list[str], embedded: tuple[str, ...], last_right: int
+    *,
+    streams: list[str],
+    embedded: tuple[str, ...],
+    last_right: int,
+    storage_child: int | None,
 ) -> list[bytes]:
     """Directory entries: the root, its streams, and an embedded storage."""
 
@@ -104,6 +108,8 @@ def _cfb_entries(
     for index, (name, kind) in enumerate(names, start=1):
         right = last_right if index == len(names) else index + 1
         child = len(names) + 1 if kind == 1 else _NO_ENTRY
+        if kind == 1 and storage_child is not None:
+            child = storage_child
         entries.append(entry(name=name, kind=kind, right=right, child=child))
     for index, name in enumerate(embedded):
         right = len(names) + 2 + index if index + 1 < len(embedded) else _NO_ENTRY
@@ -120,6 +126,8 @@ def _cfb(
     terminator: int = _END,
     far: bool = False,
     difat_loop: bool = False,
+    storage_child: int | None = None,
+    stray_fat: bool = False,
 ) -> bytes:
     """A small OLE compound file (MS-CFB) with these root streams.
 
@@ -128,7 +136,9 @@ def _cfb(
     gives a version 4 file with 4096-byte sectors; ``terminator`` ends the
     directory chain in the FAT; ``far`` places the directory past the 109
     FAT sectors the header lists, so finding it needs a DIFAT sector, and
-    ``difat_loop`` makes that DIFAT sector name itself as the next one.
+    ``difat_loop`` makes that DIFAT sector name itself as the next one;
+    ``storage_child`` overrides the embedded storage's child link;
+    ``stray_fat`` declares a second FAT sector past the end of the file.
     """
     size = 1 << shift
     per_sector = size // 4
@@ -136,7 +146,12 @@ def _cfb(
     def u32s(values: list[int]) -> bytes:
         return b"".join(value.to_bytes(4, "little") for value in values)
 
-    entries = _cfb_entries(streams=streams, embedded=embedded, last_right=last_right)
+    entries = _cfb_entries(
+        streams=streams,
+        embedded=embedded,
+        last_right=last_right,
+        storage_child=storage_child,
+    )
     while len(entries) % (size // 128):
         entries.append(bytes(128))
     directory = b"".join(entries)
@@ -164,8 +179,8 @@ def _cfb(
         )
     else:
         directory_sid = 1
-        header_difat = [0] + [_FREE] * 108
-        fat_count, first_difat, difat_count = 1, _END, 0
+        header_difat = [0, 500 if stray_fat else _FREE] + [_FREE] * 107
+        fat_count, first_difat, difat_count = (2 if stray_fat else 1), _END, 0
         chain = [
             index + 2 if index + 1 < directory_sectors else terminator
             for index in range(directory_sectors)
@@ -435,6 +450,12 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         ("note.eml", "message/rfc822", _LATIN1_EMAIL, "message/rfc822"),
         ("note.eml", "application/octet-stream", _LATIN1_EMAIL, "message/rfc822"),
         ("fold.eml", "application/octet-stream", _FOLDED_EMAIL, "message/rfc822"),
+        (
+            "literal.eml",
+            "application/octet-stream",
+            b"From: ann@[IPv6:2001:db8::1]\r\nTo: b@example.org\r\n\r\nCaf\xe9\r\n",
+            "message/rfc822",
+        ),
         ("budget.xls", "application/octet-stream", _XLS_BYTES, _XLS),
         ("budget.xls", "application/msword", _XLS_BYTES, _XLS),
         ("deck.ppt", "application/octet-stream", _PPT_BYTES, _PPT),
@@ -508,6 +529,16 @@ def test_registry_family_survives_compatible_byte_class(
         ),
         ("ann.eml", b"From: Ann (ask @dev)\r\nSubject:\r\n\r\nCaf\xe9\r\n"),
         ("late.eml", _LATIN1_EMAIL + b"x" * 70000 + b"\x00"),
+        (
+            "nul.csv",
+            "a,b\n".encode("utf-16") + b"\x00\x00" + "1,2\n".encode("utf-16-le"),
+        ),
+        ("cut.csv", 'a,b\nc,"truncated'.encode("utf-16")),
+        ("ctl.eml", b"From: a@example.org\r\nSubject: \x01\x02\r\n\r\nCaf\xe9\r\n"),
+        (
+            "orphan.eml",
+            b" orphan\r\nFrom: a@example.org\r\nTo: b@x.org\r\n\r\n\xe9\r\n",
+        ),
         ("short.csv", "a,b\n".encode("utf-16") + b"\x00"),
         ("note.eml", b"From: Ann\r\nX-Note: hi\r\n\r\nCaf\xe9\r\n"),
         ("note.eml", b"From: a@example.org\r\nTo: b@example.org\r\n\r\n\xe9\x00\x01"),
@@ -576,6 +607,8 @@ def test_a_compound_file_is_read_from_bytes_and_from_a_map(
         (_cfb(streams=["WordDocument"], far=True, difat_loop=True), ""),
         (_cfb(streams=["Current User", "WordDocument"], last_right=2), ""),
         (_cfb(streams=["WordDocument"], last_right=40), ""),
+        (_cfb(streams=["WordDocument"], stray_fat=True), ""),
+        (_cfb(streams=["Workbook"], embedded=("Ole",), storage_child=2), ""),
     ],
     ids=[
         "broken-chain",
@@ -585,6 +618,8 @@ def test_a_compound_file_is_read_from_bytes_and_from_a_map(
         "difat-cycle",
         "sibling-cycle",
         "sibling-out-of-range",
+        "fat-past-end",
+        "storage-cycle",
     ],
 )
 def test_a_declaration_never_decides_an_unreadable_compound_file(

@@ -6657,8 +6657,9 @@ for the families whose readers decode them: UTF-16 with a byte-order mark,
 clean to the end of the file and with consistent multi-field records, for
 delimited files; and an Internet message (a `From` mailbox and another
 non-empty mail field, a body without binary controls to the end) for email
-with an 8-bit body. UTF-16 text is never taken for MPEG audio, whose frame
-sync its byte-order mark resembles. A declaration spelled as a registry alias of the detected
+with an 8-bit body. Bytes starting with the UTF-16 little-endian
+byte-order mark (FF FE, also an MPEG-1 Layer I frame sync) are never taken
+for audio. A declaration spelled as a registry alias of the detected
 family (Office templates and slideshows, SVG, XHTML) is compatible. The file
 name still never decides a class the bytes do not establish.
 
