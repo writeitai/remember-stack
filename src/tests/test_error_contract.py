@@ -156,13 +156,23 @@ def _failure_classes(modules: list[tuple[str, str, ast.Module]]) -> set[str]:
 
 
 def _aliases(tree: ast.Module) -> dict[str, str]:
-    """Local name to ``module.Name`` for every ``from module import Name [as X]``."""
-    return {
-        alias.asname or alias.name: f"{node.module}.{alias.name}"
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module
-        for alias in node.names
-    }
+    """Local name to its full dotted origin, for every import in the module."""
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    names[alias.asname] = alias.name
+    return names
+
+
+def _resolve(local: str, aliases: dict[str, str]) -> str:
+    """``errors.LockNotAvailable`` → ``psycopg.errors.LockNotAvailable``."""
+    head, dot, rest = local.partition(".")
+    return aliases[head] + dot + rest if head in aliases else local
 
 
 def _catches_failure(
@@ -174,7 +184,7 @@ def _catches_failure(
     nodes = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
     for node in nodes:
         local = ast.unparse(node)
-        for name in (local, aliases.get(local, local)):
+        for name in (local, _resolve(local, aliases)):
             if (
                 name in failures
                 or name.rsplit(".", 1)[-1] in failures
@@ -499,6 +509,10 @@ def test_rule_rejects_the_known_bypasses() -> None:
         "unaliased psycopg class": (
             "from psycopg import OperationalError\n"
             "try:\n    f()\nexcept OperationalError:\n    pass\n"
+        ),
+        "psycopg namespace import": (
+            "from psycopg import errors\n"
+            "try:\n    f()\nexcept errors.LockNotAvailable:\n    pass\n"
         ),
         "qualified HTTPException": (
             "import fastapi as fa\ntry:\n    f()\n"
