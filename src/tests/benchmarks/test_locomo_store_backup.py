@@ -1317,3 +1317,30 @@ def test_active_backup_restore_keeps_every_price_and_provider_binding(
     for name, value in bindings.items():
         if name.startswith("systemone_backup_"):
             assert environment[store_backup.MODEL_BINDING_ENVIRONMENT[name]] == value
+
+
+@pytest.mark.parametrize(
+    ("saved", "rendered", "matches"),
+    [
+        ("typesafe", None, True),
+        ("typesafe", "typesafe", True),
+        ("typesafe", "openrouter", False),
+        ("openrouter", None, False),
+        ("openrouter", "openrouter", True),
+    ],
+)
+def test_restore_accepts_older_compose_without_a_route_only_for_typesafe(
+    saved: str, rendered: str | None, matches: bool
+) -> None:
+    """A Compose file predating the route renders none and runs direct Jev."""
+    environment = {} if rendered is None else {"REMEMBERSTACK_TYPESAFE_ROUTE": rendered}
+
+    assert (
+        store_backup._rendered_matches(
+            name="REMEMBERSTACK_TYPESAFE_ROUTE", expected=saved, rendered=environment
+        )
+        is matches
+    )
+    assert not store_backup._rendered_matches(
+        name="REMEMBERSTACK_TYPESAFE_BACKUP", expected="none", rendered={}
+    )

@@ -106,3 +106,6 @@ The request flag is also not sufficient on its own: OpenRouter combines
 set separately for Google models and All other models (Jev is in the second
 group), and self-serve accounts allow Safety Retention by default. Strict zero
 retention needs that setting excluded and verified for every Project key.
+OpenRouter's own CSAM screening may still retain flagged content where the law
+requires, ZDR traffic included; that is a terms question for the owner, not a
+setting.

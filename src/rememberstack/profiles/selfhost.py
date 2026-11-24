@@ -50,6 +50,7 @@ from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.adapters.systemone import build_systemone_provider
 from rememberstack.adapters.systemone import validate_systemone_routing
+from rememberstack.adapters.typesafe import ConfigurationError
 from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
@@ -974,10 +975,13 @@ class SelfHostProfile:
         runs conversion elsewhere. ``forget_manifests`` replaces the local
         ``forget_manifest_root`` store.
 
-        When fact adjudication uses Jev, the System One settings are read and
-        checked here (route, ZDR and backup), so an unsafe combination stops
-        the profile before it serves readiness or takes a task; both Jev
-        stages and the readiness bindings reuse the same checked settings.
+        When ``model_provider`` is an ``OpenRouterModelProvider`` and
+        ``model_provider_settings`` is omitted, the provider's own settings are
+        used. When fact adjudication uses Jev, the System One settings are read
+        and checked here (route, ZDR and backup) against those deployment
+        settings, which Jev then requires, so an unsafe combination stops the
+        profile before it serves readiness or takes a task; both Jev stages
+        and the readiness bindings reuse the same checked settings.
         """
         self._settings = settings
         self._engine = engine
@@ -989,6 +993,12 @@ class SelfHostProfile:
         self._model_provider = model_provider
         self._error_telemetry = error_telemetry
         self._task_queue = task_queue
+        if model_provider_settings is None and isinstance(
+            model_provider, OpenRouterModelProvider
+        ):
+            # An injected OpenRouter provider carries the deployment's settings
+            # (key, base URL, ZDR); never treat them as absent.
+            model_provider_settings = model_provider._settings  # noqa: SLF001
         self._model_provider_settings = model_provider_settings
         self._work_ledger_settings = work_ledger_settings or WorkLedgerSettings()
         self._conversion_routes = conversion_routes
@@ -998,6 +1008,12 @@ class SelfHostProfile:
         self._knowledge_rebuilder = knowledge_rebuilder
         self._systemone_settings: TypeSafeSettings | None = None
         if FactAdjudicationSettings.model_validate({}).engine == "jev":
+            if self._model_provider_settings is None:
+                raise ConfigurationError(
+                    "Jev fact adjudication needs the deployment's OpenRouter"
+                    " settings (model_provider_settings) so its zero-data-retention"
+                    " policy is known"
+                )
             systemone_settings = TypeSafeSettings.model_validate({})
             validate_systemone_routing(
                 settings=systemone_settings, openrouter=self._model_provider_settings

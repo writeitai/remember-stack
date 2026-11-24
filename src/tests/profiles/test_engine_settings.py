@@ -204,3 +204,48 @@ def test_from_settings_reports_the_checked_systemone_route(
 
     assert bindings["systemone_route"] == "openrouter"
     assert bindings["systemone_backup"] == "none"
+
+
+def test_injected_openrouter_provider_supplies_the_retention_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ZDR provider injected without its settings still governs Jev.
+
+    Omitting ``model_provider_settings`` must not read as "ZDR off": the
+    profile takes the injected provider's own settings, so the direct
+    TypeSafe route is refused for a ZDR deployment, and a provider whose
+    settings cannot be known is refused for Jev altogether.
+    """
+    from unittest.mock import MagicMock
+
+    import sqlalchemy
+
+    from rememberstack.adapters import OpenRouterModelProvider
+    from rememberstack.adapters.typesafe import ConfigurationError
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "typesafe")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_API_KEY", "process-typesafe-key")
+    engine = sqlalchemy.create_engine("postgresql+psycopg://unused@127.0.0.1:1/none")
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="child-key", zdr=True)
+    )
+    common: dict[str, object] = {
+        "settings": SelfHostSettings(deployment_id=UUID(int=148)),
+        "engine": engine,
+        "raw_store": MagicMock(),
+        "artifact_store": MagicMock(),
+        "corpusfs_store": MagicMock(),
+    }
+    try:
+        with pytest.raises(ConfigurationError, match="ROUTE=openrouter"):
+            SelfHostProfile(model_provider=provider, **common)  # type: ignore[arg-type]
+        with pytest.raises(ConfigurationError, match="OpenRouter settings"):
+            SelfHostProfile(model_provider=MagicMock(), **common)  # type: ignore[arg-type]
+        monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+        profile = SelfHostProfile(model_provider=provider, **common)  # type: ignore[arg-type]
+        assert profile._model_bindings()["systemone_route"] == "openrouter"  # noqa: SLF001
+    finally:
+        provider._client.close()  # noqa: SLF001
+        engine.dispose()

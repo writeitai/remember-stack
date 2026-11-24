@@ -7761,6 +7761,10 @@ account, or the guardrail on every key the engine uses, to ZDR only with
 Safety Retention excluded for that group, and confirm it before you send
 customer content. Also keep OpenRouter's own input and output logging turned
 off for the account, since that is a separate setting from provider routing.
+OpenRouter's ZDR policy also screens requests for child sexual abuse material
+and may retain flagged content where the law requires, ZDR traffic included;
+no setting removes that, so check that OpenRouter's terms meet your retention
+requirement.
 See OpenRouter's
 [ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
 The response names `TypeSafe` as the provider for both Jev endpoints, so it

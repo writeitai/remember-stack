@@ -177,7 +177,15 @@ guardrail on every Project key, to ZDR only with Safety Retention excluded for
 that group, and verifies it before sending customer content. The response's
 `provider` field names TypeSafe for both Jev endpoints, so it cannot show
 which one served a call; a rollout check needs evidence that distinguishes the
-two endpoints. Readiness reports `systemone_route` only
+two endpoints.
+
+OpenRouter's ZDR policy also describes an exception of its own: it screens
+requests for child sexual abuse material, and flagged content may be retained
+where the law requires review, reporting or preservation, ZDR traffic
+included. No account or request setting removes this, so whether OpenRouter's
+terms for the Project keys meet a deployment's retention requirement is a
+contract question for the operator, checked before customer traffic is
+enabled. Readiness reports `systemone_route` only
 when it is not `typesafe`, so direct-TypeSafe bindings stay byte-identical;
 ZDR, like other OpenRouter transport settings (D127), is not a binding. The
 route changes no generation identity or paid reuse key. Rationale:
@@ -499,10 +507,14 @@ not collide with the Jev attempt key.
 The TypeSafe client constructs the real, canonical `ProviderCallUsage`:
 - If TypeSafe returns a response lacking `usage` or `input_tokens`, it raises
   `ProviderAccountingError("TypeSafe response carries no token usage")`.
-- `model_name` uses the reported serving model in the `typesafe/` namespace,
-  falling back to the requested model only when the provider omits its model name.
+- `model_name` uses the reported serving model in the `typesafe/` namespace.
+  On the direct `typesafe` route it falls back to the requested model only when
+  the provider omits its model name.
 - `tokens_in = int(usage["input_tokens"])`
-- `tokens_out = int(usage.get("output_tokens", 0))`
+- `tokens_out = int(usage.get("output_tokens", 0))` on the direct route. On the
+  `openrouter` route `output_tokens` and the serving `model` are required (its
+  schema always sends them); a response missing either raises
+  `ProviderAccountingError` instead of defaulting.
 - `cost_usd = Decimal(tokens_in) * Decimal("0.000000042")`, without
   pre-persistence rounding that could erase small calls. On the `openrouter`
   route, `cost_usd` is instead the billed `usage.cost` OpenRouter reports

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import contextmanager
 from contextlib import nullcontext
@@ -671,7 +672,8 @@ def _validate_runtime_identity(
     )
     expected["REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"] = manifest.deployment_id
     if not isinstance(api_environment, dict) or any(
-        api_environment.get(name) != value for name, value in expected.items()
+        not _rendered_matches(name=name, expected=value, rendered=api_environment)
+        for name, value in expected.items()
     ):
         raise StoreBackupError("Compose runtime differs from the saved backup identity")
     if not isinstance(image, str) or not image:
@@ -690,6 +692,22 @@ def _validate_runtime_identity(
         or revision_entry not in image_environment
     ):
         raise StoreBackupError("API image revision differs from the backup manifest")
+
+
+def _rendered_matches(
+    *, name: str, expected: str, rendered: Mapping[str, object]
+) -> bool:
+    """Compare one saved runtime value with the rendered API environment.
+
+    A Compose file from before the System One route existed does not forward
+    ``REMEMBERSTACK_TYPESAFE_ROUTE``, and the engine then runs the direct
+    route, so an absent rendered route matches a saved ``typesafe``. Any
+    explicit value, and a saved ``openrouter``, must match exactly.
+    """
+    actual = rendered.get(name)
+    if name == SYSTEMONE_ROUTE_VARIABLE and actual is None:
+        return expected == "typesafe"
+    return actual == expected
 
 
 def _volume_names(*, compose_project: str) -> dict[str, str]:
