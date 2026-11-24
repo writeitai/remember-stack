@@ -44,8 +44,6 @@ FORGET_COMPONENT_VERSION: Final = "forget-v1"
 MAX_SWEEP_ATTEMPTS: Final = 32_767
 """A sweep row's attempt ceiling: a crashed worker's sweep is simply retried."""
 
-UPLOAD_SOURCE_KIND: Final = "upload"
-"""A one-shot upload's lineage is its bytes; the content hash guards it."""
 
 _REPLACEMENT_LINEAGE: Final = uuid5(NAMESPACE_URL, "rememberstack:replacement-lineage")
 """The namespace of re-added lineages' IDs, disjoint from identity base IDs."""
@@ -184,10 +182,12 @@ class ForgetCatalog:
             .mappings()
             .one()
         )
+        # Every lineage's identity is guarded, a one-shot upload's (its bytes)
+        # included: a caller may name ``source_kind=upload`` with a ref of its
+        # own, and that identity must not come back unguarded (D159 §3.6).
         identity = (
             None
-            if document["source_kind"] == UPLOAD_SOURCE_KIND
-            or document["source_ref"] is None
+            if document["source_ref"] is None
             else source_identity_hash(
                 deployment_id=deployment_id,
                 source_kind=str(document["source_kind"]),
@@ -550,10 +550,8 @@ def _lineage_ids(
     return tuple(lineages)
 
 
-def _identity(*, deployment_id: UUID, source_kind: str, source_ref: str) -> str | None:
-    """The record's source-identity hash; an upload is guarded by its bytes."""
-    if source_kind == UPLOAD_SOURCE_KIND:
-        return None
+def _identity(*, deployment_id: UUID, source_kind: str, source_ref: str) -> str:
+    """The record's source-identity hash, for one-shot uploads too."""
     return source_identity_hash(
         deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
     )

@@ -57,7 +57,7 @@ their code in `code`. `wait_for_readiness` raises
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
 | `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
-| `404` | `document_not_found` | `DELETE /documents/{doc_id}`, `POST /documents/{doc_id}/forget`, or a period, reference or section route, for a document that does not exist, is deleted or is forgotten. | Do not retry; check the id with `GET /documents`. |
+| `404` | `document_not_found` | `DELETE /documents/{doc_id}`, or a period, reference or section route, for a document that does not exist, is deleted or is forgotten; `POST /documents/{doc_id}/forget` for a document that never existed (forgetting a forgotten document again answers `200` with its record). | Do not retry; check the id with `GET /documents`. |
 | `404` | `forget_not_found` | `GET /forgets/{forget_id}` for a forget record that does not exist. | Check the id with `GET /forgets`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |

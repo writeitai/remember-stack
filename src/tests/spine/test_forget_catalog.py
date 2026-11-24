@@ -158,7 +158,8 @@ def test_hide_is_one_transaction_and_a_repeat_returns_the_record(
     assert forget.status is ForgetStatus.ERASING
     assert forget.version_ids == (_TARGET_VERSION_ID,)
     assert forget.content_hashes == (_TARGET_CONTENT_HASH,)
-    assert forget.source_identity_hash is None  # an upload is guarded by its bytes
+    # Every identity is guarded, a one-shot upload's (its bytes) included.
+    assert forget.source_identity_hash is not None
     with seeded_engine.connect() as connection:
         hidden = connection.execute(
             text(

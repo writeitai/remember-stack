@@ -180,6 +180,20 @@ class _Rig:
     def originals(self, doc_id: UUID) -> list[str]:
         return sorted(key.root for key in self.raw.iter_keys(prefix=f"{doc_id}/"))
 
+    def backup(self, doc_id: UUID) -> dict[str, bytes]:
+        """The lineage's stored originals, as a backup would hold them."""
+        return {
+            key: self.raw.read_bytes(key=ObjectKey(key))
+            for key in self.originals(doc_id)
+        }
+
+    def restore(self, backup: dict[str, bytes]) -> None:
+        """Put originals back, as restoring the object store from a backup does."""
+        for key, content in backup.items():
+            self.raw.write_bytes(
+                key=ObjectKey(key), content=content, storage_class="hot"
+            )
+
     @staticmethod
     def _upload(*, content: bytes, allow: bool) -> DocumentUpload:
         return DocumentUpload(
@@ -218,6 +232,8 @@ def test_a_forgotten_lineage_comes_back_only_deliberately_and_only_once_erased(
     first_b = rig.watched(_B)
     old = first_a.doc_id
     assert first_b.doc_id == old and first_b.created
+    old_backup = rig.backup(old)
+    assert len(old_backup) == 2
     first = rig.forget(old)
 
     with pytest.raises(DocumentForgottenError):
@@ -247,10 +263,13 @@ def test_a_forgotten_lineage_comes_back_only_deliberately_and_only_once_erased(
     again = rig.watched(_A)
     assert (again.doc_id, again.created) == (readded.doc_id, False)
 
-    # A reapply of the first record while the replacement is live erases
-    # only the forgotten lineage's copy.
+    # After a restore of the object store, a reapply of the first record
+    # while the replacement is live erases only the forgotten lineage's copy.
     kept = rig.originals(readded.doc_id)
     assert kept and rig.rows(readded.doc_id) == 2
+    assert rig.originals(old) == []
+    rig.restore(old_backup)
+    assert rig.originals(old) == sorted(old_backup)
     assert rig.profile.forget()._service.reapply(  # noqa: SLF001
         deployment_id=_DEPLOYMENT_ID
     ) == (first,)
@@ -261,6 +280,7 @@ def test_a_forgotten_lineage_comes_back_only_deliberately_and_only_once_erased(
 
     # A second forget of the re-added lineage erases it and guards it anew;
     # the third copy gets yet another doc_id.
+    readded_backup = rig.backup(readded.doc_id)
     second = rig.forget(readded.doc_id)
     rig.settle()
     assert rig.rows(readded.doc_id) == 0 and rig.originals(readded.doc_id) == []
@@ -271,10 +291,14 @@ def test_a_forgotten_lineage_comes_back_only_deliberately_and_only_once_erased(
     assert third.doc_id not in {old, readded.doc_id}
     assert rig.release(second)["released_hashes"] == [_hash(_A)]
 
-    # Reapplying both records erases neither the other's copy nor the third.
+    # After another restore, reapplying both records erases each restored
+    # copy and keeps the third, live one.
     kept = rig.originals(third.doc_id)
+    rig.restore(old_backup)
+    rig.restore(readded_backup)
     rig.profile.forget()._service.reapply(deployment_id=_DEPLOYMENT_ID)  # noqa: SLF001
     rig.settle()
+    assert rig.originals(old) == [] and rig.originals(readded.doc_id) == []
     assert rig.originals(third.doc_id) == kept and rig.rows(third.doc_id) == 2
 
 
@@ -292,10 +316,46 @@ def test_a_forgotten_upload_comes_back_under_a_fresh_doc_id(rig: _Rig) -> None:
     assert readded.created and readded.doc_id != base
     released = rig.release(forget_id)
     assert released["released_hashes"] == [_hash(_A)]
-    # An upload carries no source identity, so none is released.
-    assert released["source_identity_hash"] is None
-    assert released["identity_released"] is False
+    assert released["identity_released"] is True
     assert rig.upload(_A).doc_id == readded.doc_id
+
+
+def test_a_caller_named_upload_identity_is_guarded_too(rig: _Rig) -> None:
+    """`source_kind=upload` with a ref of the caller's own cannot come back early."""
+    named = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="upload",
+        source_ref="plan.md",
+        upload=DocumentUpload(filename="plan.md", mime="text/markdown", content=_A),
+        versioning_mode="snapshot",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    forget_id = rig.forget(named.doc_id)
+    for allow, refusal in (
+        (False, DocumentForgottenError),
+        (True, ForgetNotCompleteError),
+    ):
+        with pytest.raises(refusal):
+            rig.ingestor.ingest_observed(
+                deployment_id=_DEPLOYMENT_ID,
+                source_kind="upload",
+                source_ref="plan.md",
+                upload=DocumentUpload(
+                    filename="plan.md",
+                    mime="text/markdown",
+                    content=_B,
+                    allow_forgotten=allow,
+                ),
+                versioning_mode="snapshot",
+                source_modified_at=None,
+                source_version_ref=None,
+                sync_cycle_id=None,
+            )
+    rig.settle()
+    assert rig.rows(named.doc_id) == 0
+    assert rig.release(forget_id)["identity_released"] is False
 
 
 def test_a_re_add_releases_only_its_own_lineage_and_ids_never_collide(
