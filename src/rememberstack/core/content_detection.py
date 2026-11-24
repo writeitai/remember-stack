@@ -38,6 +38,7 @@ _TEXT_APPLICATION_HINTS = {
     "application/toml",
     "application/x-sh",
     "application/rtf",
+    "application/x-spss-por",
     "application/x-ipynb+json",
     "message/rfc822",
 }

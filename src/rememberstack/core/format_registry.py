@@ -375,7 +375,7 @@ def detect_mime(
     a routed or registry-stored MIME is kept as declared, another registry
     spelling stores its family's canonical MIME.
     """
-    by_name = _mime_for_file_name(file_name=file_name)
+    by_name = mime_for_file_name(file_name=file_name)
     if by_name is not None:
         return by_name
     declared = _canonical(mime=declared_mime)
@@ -441,8 +441,11 @@ def exceeds_reading_limit(*, mime: str, byte_size: int) -> bool:
     return limit is not None and byte_size > limit
 
 
-def _mime_for_file_name(*, file_name: str) -> str | None:
-    """Step 1: named files, dotfiles, compound tar and the extension."""
+def mime_for_file_name(*, file_name: str) -> str | None:
+    """Step 1: named files, dotfiles, compound tar and the extension.
+
+    None when the name alone names no family.
+    """
     # a Windows path names its file after the last backslash
     name = PurePosixPath(file_name.replace("\\", "/")).name.lower()
     named = _NAMED_FILES.get(name)
