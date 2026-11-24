@@ -158,7 +158,7 @@ def test_hide_is_one_transaction_and_a_repeat_returns_the_record(
     assert forget.status is ForgetStatus.ERASING
     assert forget.version_ids == (_TARGET_VERSION_ID,)
     assert forget.content_hashes == (_TARGET_CONTENT_HASH,)
-    # Every identity is guarded, a one-shot upload's (its bytes) included.
+    # The fixture upload names an explicit, stable source_ref: an identity.
     assert forget.source_identity_hash is not None
     with seeded_engine.connect() as connection:
         hidden = connection.execute(
@@ -2043,3 +2043,33 @@ def test_readiness_answers_for_a_forgotten_version_as_for_an_unknown_one(
     assert answer(_TARGET_VERSION_ID) == answer(uuid4())
     ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
     assert answer(_TARGET_VERSION_ID) == answer(uuid4())
+
+
+def test_a_shared_entity_keeps_only_surviving_spellings(seeded_engine: Engine) -> None:
+    """§3.3: a display name spelled only by the forgotten document is replaced."""
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE entities SET canonical_name = :name WHERE entity_id = :e"),
+            {"name": f"{_TOKEN}-spelling", "e": _SHARED_ENTITY_ID},
+        )
+        connection.execute(
+            text("UPDATE mentions SET surface_form = :name WHERE mention_id = :m"),
+            {"name": f"{_TOKEN}-spelling", "m": _TARGET_SHARED_MENTION_ID},
+        )
+    forget = _hide(engine=seeded_engine)
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+    with seeded_engine.connect() as connection:
+        name = connection.execute(
+            text("SELECT canonical_name FROM entities WHERE entity_id = :e"),
+            {"e": _SHARED_ENTITY_ID},
+        ).scalar_one()
+        aliases = (
+            connection.execute(
+                text("SELECT alias_text FROM aliases WHERE entity_id = :e"),
+                {"e": _SHARED_ENTITY_ID},
+            )
+            .scalars()
+            .all()
+        )
+    assert _TOKEN not in name
+    assert all(_TOKEN not in alias for alias in aliases)

@@ -188,6 +188,17 @@ def _convert(*, connection, row) -> None:  # noqa: ANN001
         "k_artifact_ids": sorted(manifest.get("k_artifact_ids", ())),
         "object_keys": sorted(manifest.get("object_keys", ())),
     }
+    # D74 named every K artifact of the deployment; keep only compiled pages
+    # (authored pages are their owners' and never purged on the record's say).
+    collected["k_artifact_ids"] = sorted(
+        str(value)
+        for value in connection.execute(
+            text("""SELECT artifact_id FROM knowledge_artifacts
+            WHERE deployment_id = :d AND page_kind = 'compiled'
+              AND artifact_id = ANY(CAST(:ids AS uuid[]))"""),
+            {**params, "ids": collected["k_artifact_ids"]},
+        ).scalars()
+    )
     complete = row["status"] == "complete"
     if not complete:
         # D74 may have scrubbed the citations before it rebuilt the pages or

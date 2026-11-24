@@ -316,7 +316,9 @@ def test_a_forgotten_upload_comes_back_under_a_fresh_doc_id(rig: _Rig) -> None:
     assert readded.created and readded.doc_id != base
     released = rig.release(forget_id)
     assert released["released_hashes"] == [_hash(_A)]
-    assert released["identity_released"] is True
+    # A one-shot upload's identity is its bytes: no identity to release.
+    assert released["source_identity_hash"] is None
+    assert released["identity_released"] is False
     assert rig.upload(_A).doc_id == readded.doc_id
 
 
