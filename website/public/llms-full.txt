@@ -9630,8 +9630,9 @@ engine, such as the query sandbox, are being brought under the same rules.
 A worker item's failure, a model provider failure on a request and a live
 graph query failure can carry your content in their text: a provider's error
 can quote the request, and a database error can quote a query's values.
-Those records hold only the exception's type, in `exception_type`, and no
-traceback; so do the worker's `worker_finalizer_failed` and
+Those records (the worker item records, `provider_call_failed` and
+`graph_query_failed`) hold only the exception's type, in `exception_type`,
+and no traceback; so do the worker's `worker_finalizer_failed` and
 `provider_usage_unrecorded` records. An MCP tool failure keeps the exception
 and its traceback.
 
@@ -9675,8 +9676,9 @@ Events are stripped to metadata before they leave the process: the
 exception type and stack trace stay; the exception message is replaced by
 `[redacted]`; request bodies, breadcrumbs, local variables, user data and
 extras are removed. Because extras are removed, the `error_code` is not on
-the event. Each failed worker attempt, including one that will be retried,
-is reported with the tags `stage`, `lane` and `processing_id`;
+the event. A failed worker attempt that is recorded as a retry or a dead
+letter is reported (subject to the sample rate) with the tags `stage` and
+`processing_id`, and `lane` when the item has one;
 `remember ops inspect` lists a sample of dead-lettered items by
 `processing_id`. The adapter forwards no log records from the worker
 loop itself (`rememberstack.workers.base`): an expired lease, a failed
@@ -9740,7 +9742,9 @@ bearer token, which feeds PostHog Logs rather than Error Tracking; see
 ### OpenTelemetry
 
 For zero-code export, install `opentelemetry-distro` in an image built on
-the engine's and run the engine's command under `opentelemetry-instrument`
+the engine's, pinned to the release that matches the image's
+`opentelemetry-sdk` (for example `opentelemetry-distro==0.65b0` with SDK
+1.44.0; an unpinned install upgrades the SDK past the image's exporter), and run the engine's command under `opentelemetry-instrument`
 with these settings (the image's exporter speaks HTTP, while the agent
 defaults to gRPC):
 
