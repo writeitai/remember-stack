@@ -10,6 +10,7 @@ resuming really releases it — are proved against PostgreSQL in
 `test_e0_chain.py`.
 """
 
+from collections.abc import Callable
 from collections.abc import Collection
 from collections.abc import Iterator
 from pathlib import Path
@@ -43,7 +44,10 @@ def _por_bytes() -> bytes:
     """A real SPSS Portable file: a text encoding, so its bytes classify as text."""
     with tempfile.TemporaryDirectory() as work:
         path = Path(work) / "survey.por"
-        pyreadstat.write_por(pd.DataFrame({"name": ["a", "b"], "n": [1, 2]}), str(path))
+        # pyreadstat's frame type is not pandas-stubs'; the data profile
+        # tests pass their writers the same way.
+        write: Callable[..., None] = pyreadstat.write_por
+        write(pd.DataFrame({"name": ["a", "b"], "n": [1, 2]}), str(path))
         return path.read_bytes()
 
 
