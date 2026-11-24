@@ -314,6 +314,14 @@ class ImageOcrDescriptionConverter:
         return "image_ocr_description"
 
     @property
+    def provider_limit_bytes(self) -> int:
+        """The input byte ceiling both lanes accept, checked before metering (D150)."""
+        return min(
+            self._description_settings.max_image_bytes,
+            self._ocr_settings.max_document_bytes,
+        )
+
+    @property
     def version(self) -> str:
         """Assembly pin plus both lanes' output-affecting fingerprints (D38)."""
         return image_ocr_description_version(
@@ -413,10 +421,7 @@ class ImageOcrDescriptionConverter:
                 f"image_ocr_description does not accept mime {mime!r}; "
                 f"supported types: {sorted(SUPPORTED_IMAGE_MIMES)}"
             )
-        ceiling = min(
-            self._description_settings.max_image_bytes,
-            self._ocr_settings.max_document_bytes,
-        )
+        ceiling = self.provider_limit_bytes
         if len(content) > ceiling:
             raise ConversionError(
                 f"image of {len(content)} bytes exceeds the configured "

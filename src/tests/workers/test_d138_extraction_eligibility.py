@@ -590,6 +590,27 @@ def test_convert_fails_pdf_above_provider_limit_before_converter(
     assert "pre-OCR provider limit" in catalog.failed
 
 
+def test_convert_fails_an_image_above_its_provider_limit_before_metering(
+    tmp_path: Path,
+) -> None:
+    """An image over the OCR+description ceiling fails before any measurement or call."""
+
+    class _Image(_MixedConverter):
+        """The image route's identity and ceiling; converting is a test failure."""
+
+        name = "image_ocr_description"
+        provider_limit_bytes = 10_000_000
+
+    catalog = _ConvertCatalog(mime="image/png", byte_size=10_000_001)
+    with pytest.raises(NonRetryableHandlerError, match="provider limit"):
+        _convert(tmp_path=tmp_path, catalog=catalog, routes={"image/png": _Image()})
+    assert catalog.recorded is None
+    assert catalog.failed is not None
+    assert "image/png exceeds the image_ocr_description provider limit" in (
+        catalog.failed
+    )
+
+
 def test_file_hints_reach_only_routes_that_accept_them() -> None:
     """The card receives the version's name and path; FileHints stays optional."""
     result = CardConverter().convert(

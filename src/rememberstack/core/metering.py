@@ -11,6 +11,9 @@ conversion route decides the class:
   whitespace-normalized character count of the ``document.md`` it produced.
   These routes call no model provider, so counting their output still
   precedes every paid stage.
+- ``image_ocr_description`` — every PNG or JPEG through OCR and one vision
+  description call — is ``image``: one unit per still image, recorded before
+  either provider call.
 - ``card`` reads nothing and is free: it sends no measurement.
 
 Any other route has no managed cost class, so a metered deployment refuses
@@ -23,7 +26,7 @@ from typing import Final
 
 from rememberstack.model.metering import CostClass
 
-METERING_CLASSIFIER_VERSION: Final = "route-cost-class-v1"
+METERING_CLASSIFIER_VERSION: Final = "route-cost-class-v2"
 """Pins the route → cost-class table below."""
 
 DOC_TEXT_ALGORITHM_VERSION: Final = "document-md-unicode-whitespace-scalars-v1"
@@ -32,6 +35,9 @@ the route's ``document.md``."""
 
 DOC_SCAN_ALGORITHM_VERSION: Final = "pdf-page-tree-v1"
 """Pins how ``doc-scan`` is counted: the PDF's structural page count."""
+
+IMAGE_ALGORITHM_VERSION: Final = "one-still-image-v1"
+"""Pins how ``image`` is counted: one unit per still-image source version."""
 
 FREE_ROUTES: Final = frozenset({"card"})
 """Routes that read nothing; their storage is billed, their processing is not."""
@@ -47,6 +53,7 @@ _ROUTE_CLASSES: Final[dict[str, CostClass]] = {
     "spreadsheet": "doc-text",
     "table": "doc-text",
     "dataset": "doc-text",
+    "image_ocr_description": "image",
 }
 
 
