@@ -21,6 +21,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from remember.models import DocumentSearchFilters
 from rememberstack.adapters import p1_ranked
+from rememberstack.core.document_filters import archived_hidden
 from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.document_filters import is_empty
@@ -855,6 +856,8 @@ class PostgresP1Index:
             bm25_index = "ix_chunk_search_bm25"
             hnsw_index = "ix_chunk_search_embedding_hnsw"
             partial = ""
+        # D159: an archived document's passages and claims are history.
+        predicates.append(archived_hidden(filters=documents, document="document"))
         coverage_sql = None
         mentions_sql = None
         if entity_ids:

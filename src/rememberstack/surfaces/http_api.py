@@ -358,6 +358,7 @@ class DocumentInventoryPort(Protocol):
         limit: int = 50,
         cursor: str | None = None,
         status: DocumentStatusFilter | None = None,
+        include_archived: bool = False,
     ) -> DocumentPage: ...
 
 
@@ -944,12 +945,17 @@ def build_api(
         in force for the scope, and returns those occurrences.
         """
         try:
-            return deployment.engine.search_claims(
+            # D159: archived documents only with documents.include_archived,
+            # each returned item marked archived.
+            return deployment.engine.mark_archived(
                 deployment_id=deployment.deployment_id,
-                query=body.query,
-                k=body.k,
-                channel=body.channel,
-                **_documents_scope(body),
+                envelope=deployment.engine.search_claims(
+                    deployment_id=deployment.deployment_id,
+                    query=body.query,
+                    k=body.k,
+                    channel=body.channel,
+                    **_documents_scope(body),
+                ),
             )
         except UnknownTagError as error:
             raise _tag_errors(error) from error
@@ -964,12 +970,17 @@ def build_api(
         ``time`` keeps chunks of versions in force for the scope (D140).
         """
         try:
-            return deployment.engine.search_chunks(
+            # D159: archived documents only with documents.include_archived,
+            # each returned item marked archived.
+            return deployment.engine.mark_archived(
                 deployment_id=deployment.deployment_id,
-                query=body.query,
-                k=body.k,
-                channel=body.channel,
-                **_documents_scope(body),
+                envelope=deployment.engine.search_chunks(
+                    deployment_id=deployment.deployment_id,
+                    query=body.query,
+                    k=body.k,
+                    channel=body.channel,
+                    **_documents_scope(body),
+                ),
             )
         except UnknownTagError as error:
             raise _tag_errors(error) from error
@@ -1661,6 +1672,7 @@ def _mount_document_inventory(*, app: FastAPI) -> None:
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
         cursor: Annotated[str | None, Query()] = None,
         status: Annotated[DocumentStatusFilter | None, Query()] = None,
+        include_archived: Annotated[bool, Query()] = False,
     ) -> DocumentPage:
         """One page of documents, newest lineage first.
 
@@ -1671,6 +1683,9 @@ def _mount_document_inventory(*, app: FastAPI) -> None:
         `status` filters on the *newest* version's state, which is what makes
         "show me what failed" answerable in one call rather than by paging the
         whole corpus and filtering client-side.
+
+        Archived documents (D159) are history: listed, with ``archived_at``,
+        only when ``include_archived`` is true.
         """
         try:
             return _served(deployment.documents).list_documents(
@@ -1678,6 +1693,7 @@ def _mount_document_inventory(*, app: FastAPI) -> None:
                 limit=limit,
                 cursor=cursor,
                 status=status,
+                include_archived=include_archived,
             )
         except ValueError as error:
             # A cursor that does not parse. 400 rather than a silent restart:

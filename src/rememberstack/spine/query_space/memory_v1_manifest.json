@@ -34399,9 +34399,16 @@
               "name": "language",
               "nullable": true,
               "type": "text"
+            },
+            {
+              "comment": "When the lineage was archived (D159): its testimony ended and it is kept as history; null while live. Search and the context operations leave an archived lineage out unless asked.",
+              "enum_values": null,
+              "name": "archived_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
             }
           ],
-          "comment": "One row per live document lineage, keyed by (deployment_id, doc_id). A tombstoned lineage is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name deleted state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.",
+          "comment": "One row per document lineage that has not been forgotten, keyed by (deployment_id, doc_id): the inventory. An archived lineage (D159) is listed with archived_at set; its claims are not current testimony, so every current-testimony relation leaves it out. A lineage hidden by forget is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name removed state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -34476,6 +34483,10 @@
               {
                 "@": "String",
                 "sval": "language"
+              },
+              {
+                "@": "String",
+                "sval": "archived_at"
               }
             ],
             "query": {
@@ -35247,6 +35258,22 @@
                       }
                     ]
                   }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "d"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "archived_at"
+                      }
+                    ]
+                  }
                 }
               ],
               "whereClause": {
@@ -35271,7 +35298,7 @@
                 }
               }
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -48752,11 +48779,11 @@
               "type": "boolean"
             },
             {
-              "comment": "Why currency changed, one of reextracted, version_superseded, version_deleted, or review_restored.",
+              "comment": "Why currency changed, one of reextracted, version_superseded, version_archived, or review_restored.",
               "enum_values": [
                 "reextracted",
                 "version_superseded",
-                "version_deleted",
+                "version_archived",
                 "review_restored"
               ],
               "name": "reason",
@@ -49496,5 +49523,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "1b5f518cf0cdaf69afc09c683d3c01bf9afd76631dcb21b45d7d53328ff1dd48"
+  "surface_manifest_hash": "503fba6731e84ce09ca093cb6ec321e66df9acb93310b267717e870bcfd63cdb"
 }

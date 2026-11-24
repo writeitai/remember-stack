@@ -176,6 +176,7 @@ def live_version_matches(
         " WHERE dm.deployment_id = :deployment_id"
         f"   AND dm.version_id = {version}"
         "   AND dv.deleted_at IS NULL AND dd.deleted_at IS NULL"
+        f"   AND {archived_hidden(filters=filters, document='dd')}"
         f"{where})"
     ), parameters
 
@@ -223,6 +224,7 @@ def _live_matching(
         "   ON dd.deployment_id = dv.deployment_id AND dd.doc_id = dv.doc_id"
         " WHERE dm.deployment_id = :deployment_id"
         "   AND dv.deleted_at IS NULL AND dd.deleted_at IS NULL"
+        f"   AND {archived_hidden(filters=filters, document='dd')}"
         f"{where}"
     ), parameters
 
@@ -393,5 +395,23 @@ def people_terms(values: Sequence[str]) -> tuple[str, ...]:
 
 
 def is_empty(filters: DocumentSearchFilters) -> bool:
-    """Whether the filter restricts nothing (every field at its default)."""
-    return filters == DocumentSearchFilters()
+    """Whether the filter restricts nothing (every field at its default).
+
+    ``include_archived`` widens rather than restricts, so it does not count:
+    archive visibility is applied on its own (:func:`archived_hidden`).
+    """
+    return filters.model_copy(update={"include_archived": False}) == (
+        DocumentSearchFilters()
+    )
+
+
+def archived_hidden(*, filters: DocumentSearchFilters | None, document: str) -> str:
+    """SQL predicate hiding archived lineages unless the filter includes them.
+
+    ``document`` names a relation with an ``archived_at`` column. An archived
+    document is history (D159): search and the context operations leave it
+    out unless ``include_archived`` is set.
+    """
+    if filters is not None and filters.include_archived:
+        return "TRUE"
+    return f"{document}.archived_at IS NULL"

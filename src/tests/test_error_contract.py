@@ -113,7 +113,7 @@ BASELINE: dict[str, int] = {
     "workers/e0_summary.py::SectionSummarizer._load_cache": 2,
     "workers/knowledge_driver.py::KnowledgeCommitDriver._collect_parallel_wave": 1,
     "workers/knowledge_driver.py::KnowledgeCommitDriver._record_aborted_wave": 1,
-    "workers/reconcile.py::DocumentDeleter.delete_document": 1,
+    "workers/reconcile.py::DocumentArchiver._refresh_profiles": 1,
     "workers/sync.py::SyncCycleRunner.run_cycle": 1,
 }
 

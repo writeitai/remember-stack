@@ -7,16 +7,16 @@
     },
     "tools": {
       "adjacent_chunks": 1,
-      "claims_and_sources_context": 5,
-      "combined_context": 6,
+      "archive_document": 1,
+      "claims_and_sources_context": 6,
+      "combined_context": 7,
       "create_tag": 1,
-      "delete_document": 1,
       "delete_tag": 1,
       "describe_query_space": 1,
       "describe_saved_query": 1,
       "document_references": 1,
       "explain_sql": 1,
-      "facts_context": 5,
+      "facts_context": 6,
       "ingest": 3,
       "list_saved_queries": 1,
       "list_tags": 1,
@@ -24,9 +24,10 @@
       "query_sql": 1,
       "resolve_entity": 1,
       "run_saved_query": 1,
-      "search_documents": 4,
+      "search_documents": 5,
       "search_query_space": 1,
       "section_history": 1,
+      "unarchive_document": 1,
       "update_document_tags": 1,
       "update_tag": 1
     }
@@ -219,10 +220,10 @@
       },
       {
         "annotations": {
-          "destructiveHint": true,
+          "destructiveHint": false,
           "readOnlyHint": false
         },
-        "description": "Remove one document from this deployment's memory. Use only when the user asks to delete or forget a specific document, or it is plainly wrong or unwanted — never to tidy up, and never to change a fact (ingest a correcting document instead). Takes the doc_id that ingest returned or that a claim or source cites. The effect is immediate: the document leaves search, facts and the document list; its claims stop counting as evidence; facts that no other document supports are closed. Facts other documents also support stay. The claims and stored original are kept as history, so this is not an erasure. Ingesting the same document again later adds it back as a new version. Returns claims_retired, relations_closed and observations_closed. A document_not_found error means the id is unknown or the document is already deleted: do not retry it.",
+        "description": "Archive one document: the memory stops believing it but keeps it readable as history. Use when the user says a document no longer holds (a dead plan, an outdated policy, a replaced price list) — never to tidy up, and never to change one fact (ingest a correcting document instead). Takes the doc_id that ingest returned or that a claim or source cites. The effect is immediate: its claims stop counting as evidence and facts that no other document supports are closed; facts other documents also support stay. The document leaves search, context and the document list unless a call sets include_archived; it is not erased. unarchive_document undoes it exactly, and a changed version of the document brings it back. Returns archived_at, claims_retired, relations_closed and observations_closed; a repeat returns the same archived_at with zero counts. A document_not_found error means the id is unknown: do not retry it.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -237,14 +238,36 @@
           ],
           "type": "object"
         },
-        "name": "delete_document"
+        "name": "archive_document"
+      },
+      {
+        "annotations": {
+          "destructiveHint": false,
+          "readOnlyHint": false
+        },
+        "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Makes no model call. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "doc_id": {
+              "description": "The document's UUID (doc_id), as ingest returned it.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "doc_id"
+          ],
+          "type": "object"
+        },
+        "name": "unarchive_document"
       },
       {
         "annotations": {
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -286,6 +309,11 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "include_archived": {
+              "default": false,
+              "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+              "type": "boolean"
             },
             "k": {
               "default": 20,
@@ -900,7 +928,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -935,6 +963,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -1120,7 +1153,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -1155,6 +1188,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -1357,7 +1395,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -1392,6 +1430,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -1849,7 +1892,7 @@
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -1891,6 +1934,11 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "include_archived": {
+              "default": false,
+              "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+              "type": "boolean"
             },
             "k": {
               "default": 20,
@@ -2364,7 +2412,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -2399,6 +2447,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -2584,7 +2637,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -2619,6 +2672,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -2821,7 +2879,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -2856,6 +2914,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -3475,10 +3538,10 @@
       },
       {
         "annotations": {
-          "destructiveHint": true,
+          "destructiveHint": false,
           "readOnlyHint": false
         },
-        "description": "Remove one document from this deployment's memory. Use only when the user asks to delete or forget a specific document, or it is plainly wrong or unwanted — never to tidy up, and never to change a fact (ingest a correcting document instead). Takes the doc_id that ingest returned or that a claim or source cites. The effect is immediate: the document leaves search, facts and the document list; its claims stop counting as evidence; facts that no other document supports are closed. Facts other documents also support stay. The claims and stored original are kept as history, so this is not an erasure. Ingesting the same document again later adds it back as a new version. Returns claims_retired, relations_closed and observations_closed. A document_not_found error means the id is unknown or the document is already deleted: do not retry it.",
+        "description": "Archive one document: the memory stops believing it but keeps it readable as history. Use when the user says a document no longer holds (a dead plan, an outdated policy, a replaced price list) — never to tidy up, and never to change one fact (ingest a correcting document instead). Takes the doc_id that ingest returned or that a claim or source cites. The effect is immediate: its claims stop counting as evidence and facts that no other document supports are closed; facts other documents also support stay. The document leaves search, context and the document list unless a call sets include_archived; it is not erased. unarchive_document undoes it exactly, and a changed version of the document brings it back. Returns archived_at, claims_retired, relations_closed and observations_closed; a repeat returns the same archived_at with zero counts. A document_not_found error means the id is unknown: do not retry it.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -3493,14 +3556,36 @@
           ],
           "type": "object"
         },
-        "name": "delete_document"
+        "name": "archive_document"
+      },
+      {
+        "annotations": {
+          "destructiveHint": false,
+          "readOnlyHint": false
+        },
+        "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Makes no model call. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "doc_id": {
+              "description": "The document's UUID (doc_id), as ingest returned it.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "doc_id"
+          ],
+          "type": "object"
+        },
+        "name": "unarchive_document"
       },
       {
         "annotations": {
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -3542,6 +3627,11 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "include_archived": {
+              "default": false,
+              "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+              "type": "boolean"
             },
             "k": {
               "default": 20,
@@ -4156,7 +4246,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -4191,6 +4281,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -4376,7 +4471,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -4411,6 +4506,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -4613,7 +4713,7 @@
             },
             "documents": {
               "additionalProperties": false,
-              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+              "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
               "properties": {
                 "authors": {
                   "description": "Any of these authors.",
@@ -4648,6 +4748,11 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "include_archived": {
+                  "default": false,
+                  "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                  "type": "boolean"
                 },
                 "language": {
                   "minLength": 1,
@@ -5234,10 +5339,10 @@
     },
     {
       "annotations": {
-        "destructiveHint": true,
+        "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Remove one document from this deployment's memory. Use only when the user asks to delete or forget a specific document, or it is plainly wrong or unwanted — never to tidy up, and never to change a fact (ingest a correcting document instead). Takes the doc_id that ingest returned or that a claim or source cites. The effect is immediate: the document leaves search, facts and the document list; its claims stop counting as evidence; facts that no other document supports are closed. Facts other documents also support stay. The claims and stored original are kept as history, so this is not an erasure. Ingesting the same document again later adds it back as a new version. Returns claims_retired, relations_closed and observations_closed. A document_not_found error means the id is unknown or the document is already deleted: do not retry it.",
+      "description": "Archive one document: the memory stops believing it but keeps it readable as history. Use when the user says a document no longer holds (a dead plan, an outdated policy, a replaced price list) — never to tidy up, and never to change one fact (ingest a correcting document instead). Takes the doc_id that ingest returned or that a claim or source cites. The effect is immediate: its claims stop counting as evidence and facts that no other document supports are closed; facts other documents also support stay. The document leaves search, context and the document list unless a call sets include_archived; it is not erased. unarchive_document undoes it exactly, and a changed version of the document brings it back. Returns archived_at, claims_retired, relations_closed and observations_closed; a repeat returns the same archived_at with zero counts. A document_not_found error means the id is unknown: do not retry it.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -5252,14 +5357,36 @@
         ],
         "type": "object"
       },
-      "name": "delete_document"
+      "name": "archive_document"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Makes no model call. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "description": "The document's UUID (doc_id), as ingest returned it.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id"
+        ],
+        "type": "object"
+      },
+      "name": "unarchive_document"
     },
     {
       "annotations": {
         "destructiveHint": false,
         "readOnlyHint": true
       },
-      "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+      "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -5301,6 +5428,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "include_archived": {
+            "default": false,
+            "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+            "type": "boolean"
           },
           "k": {
             "default": 20,
@@ -5915,7 +6047,7 @@
           },
           "documents": {
             "additionalProperties": false,
-            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
             "properties": {
               "authors": {
                 "description": "Any of these authors.",
@@ -5950,6 +6082,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "language": {
                 "minLength": 1,
@@ -6135,7 +6272,7 @@
           },
           "documents": {
             "additionalProperties": false,
-            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
             "properties": {
               "authors": {
                 "description": "Any of these authors.",
@@ -6170,6 +6307,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "language": {
                 "minLength": 1,
@@ -6372,7 +6514,7 @@
           },
           "documents": {
             "additionalProperties": false,
-            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
             "properties": {
               "authors": {
                 "description": "Any of these authors.",
@@ -6407,6 +6549,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "language": {
                 "minLength": 1,
@@ -7047,6 +7194,18 @@
             "additionalProperties": false,
             "description": "One live source chunk, distinct from an extracted claim or fact.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "char_end": {
                 "title": "Char End",
                 "type": "integer"
@@ -7435,6 +7594,18 @@
             "additionalProperties": false,
             "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "asserted_at": {
                 "anyOf": [
                   {
@@ -8915,7 +9086,7 @@
           },
           "documents": {
             "additionalProperties": false,
-            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
             "properties": {
               "authors": {
                 "description": "Any of these authors.",
@@ -8950,6 +9121,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "language": {
                 "minLength": 1,
@@ -9340,6 +9516,18 @@
             "additionalProperties": false,
             "description": "One live source chunk, distinct from an extracted claim or fact.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "char_end": {
                 "title": "Char End",
                 "type": "integer"
@@ -9728,6 +9916,18 @@
             "additionalProperties": false,
             "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "asserted_at": {
                 "anyOf": [
                   {
@@ -11191,7 +11391,7 @@
         "title": "Envelope",
         "type": "object"
       },
-      "version": 5
+      "version": 6
     },
     {
       "answer_intent": "facts",
@@ -11208,7 +11408,7 @@
           },
           "documents": {
             "additionalProperties": false,
-            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
             "properties": {
               "authors": {
                 "description": "Any of these authors.",
@@ -11243,6 +11443,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "language": {
                 "minLength": 1,
@@ -11650,6 +11855,18 @@
             "additionalProperties": false,
             "description": "One live source chunk, distinct from an extracted claim or fact.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "char_end": {
                 "title": "Char End",
                 "type": "integer"
@@ -12038,6 +12255,18 @@
             "additionalProperties": false,
             "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "asserted_at": {
                 "anyOf": [
                   {
@@ -13501,7 +13730,7 @@
         "title": "Envelope",
         "type": "object"
       },
-      "version": 5
+      "version": 6
     },
     {
       "answer_intent": "combined_context",
@@ -13518,7 +13747,7 @@
           },
           "documents": {
             "additionalProperties": false,
-            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
             "properties": {
               "authors": {
                 "description": "Any of these authors.",
@@ -13553,6 +13782,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "language": {
                 "minLength": 1,
@@ -13954,6 +14188,18 @@
             "additionalProperties": false,
             "description": "One live source chunk, distinct from an extracted claim or fact.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "char_end": {
                 "title": "Char End",
                 "type": "integer"
@@ -14559,6 +14805,18 @@
             "additionalProperties": false,
             "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
             "properties": {
+              "archived": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archived"
+              },
               "asserted_at": {
                 "anyOf": [
                   {
@@ -15829,13 +16087,13 @@
         "title": "ContextBundleV2",
         "type": "object"
       },
-      "version": 6
+      "version": 7
     }
   ],
   "query_surface_manifest": {
-    "built_manifest_sha256": "88753fc96476d16e8ecb1663a712c74d75a0811e56aa43f8e20af7e70b6664d7",
-    "checked_in_manifest_sha256": "88753fc96476d16e8ecb1663a712c74d75a0811e56aa43f8e20af7e70b6664d7",
-    "surface_manifest_hash": "1b5f518cf0cdaf69afc09c683d3c01bf9afd76631dcb21b45d7d53328ff1dd48"
+    "built_manifest_sha256": "b71c6cfad0f7241becab505372d32db45cbb6ee6e9a98a8e4e2a597cb8b50e7f",
+    "checked_in_manifest_sha256": "f42f40ff026dfc1e7a9d4fb7f1e0f0d745b7ad02d082efae519eb83dfbd8a90f",
+    "surface_manifest_hash": "756f8a4757f45e9573290e44bea93b5032428a6c5cf4e10f7cef8fe1fb2fe555"
   },
   "readiness_expected_components": [
     [

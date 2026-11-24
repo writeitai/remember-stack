@@ -65,6 +65,7 @@ class _Inventory:
         limit: int = 50,
         cursor: str | None = None,
         status: str | None = None,
+        include_archived: bool = False,
     ) -> DocumentPage:
         """Record the call and answer with one document."""
         self.calls.append(
@@ -73,6 +74,7 @@ class _Inventory:
                 "limit": limit,
                 "cursor": cursor,
                 "status": status,
+                **({"include_archived": True} if include_archived else {}),
             }
         )
         if self._fail:

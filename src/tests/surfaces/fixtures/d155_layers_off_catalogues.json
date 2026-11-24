@@ -8,10 +8,10 @@
       },
       "tools": {
         "adjacent_chunks": 1,
-        "claims_and_sources_context": 5,
-        "combined_context": 6,
+        "archive_document": 1,
+        "claims_and_sources_context": 6,
+        "combined_context": 7,
         "create_tag": 1,
-        "delete_document": 1,
         "delete_tag": 1,
         "describe_query_space": 1,
         "describe_saved_query": 1,
@@ -23,9 +23,10 @@
         "pipeline_readiness": 1,
         "query_sql": 1,
         "run_saved_query": 1,
-        "search_documents": 4,
+        "search_documents": 5,
         "search_query_space": 1,
         "section_history": 1,
+        "unarchive_document": 1,
         "update_document_tags": 1,
         "update_tag": 1
       }
@@ -39,14 +40,17 @@
           "name": "pipeline_readiness"
         },
         {
-          "name": "delete_document"
+          "name": "archive_document"
+        },
+        {
+          "name": "unarchive_document"
         },
         {
           "annotations": {
             "destructiveHint": false,
             "readOnlyHint": true
           },
-          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -88,6 +92,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "k": {
                 "default": 20,
@@ -318,7 +327,7 @@
             "destructiveHint": false,
             "readOnlyHint": true
           },
-          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -360,6 +369,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "k": {
                 "default": 20,
@@ -577,14 +591,17 @@
           "name": "pipeline_readiness"
         },
         {
-          "name": "delete_document"
+          "name": "archive_document"
+        },
+        {
+          "name": "unarchive_document"
         },
         {
           "annotations": {
             "destructiveHint": false,
             "readOnlyHint": true
           },
-          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -626,6 +643,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "k": {
                 "default": 20,
@@ -856,14 +878,17 @@
         "name": "pipeline_readiness"
       },
       {
-        "name": "delete_document"
+        "name": "archive_document"
+      },
+      {
+        "name": "unarchive_document"
       },
       {
         "annotations": {
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -905,6 +930,11 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "include_archived": {
+              "default": false,
+              "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+              "type": "boolean"
             },
             "k": {
               "default": 20,
@@ -1140,10 +1170,10 @@
       },
       "tools": {
         "adjacent_chunks": 1,
-        "claims_and_sources_context": 5,
-        "combined_context": 6,
+        "archive_document": 1,
+        "claims_and_sources_context": 6,
+        "combined_context": 7,
         "create_tag": 1,
-        "delete_document": 1,
         "delete_tag": 1,
         "describe_query_space": 1,
         "describe_saved_query": 1,
@@ -1155,9 +1185,10 @@
         "pipeline_readiness": 1,
         "query_sql": 1,
         "run_saved_query": 1,
-        "search_documents": 4,
+        "search_documents": 5,
         "search_query_space": 1,
         "section_history": 1,
+        "unarchive_document": 1,
         "update_document_tags": 1,
         "update_tag": 1
       }
@@ -1171,14 +1202,17 @@
           "name": "pipeline_readiness"
         },
         {
-          "name": "delete_document"
+          "name": "archive_document"
+        },
+        {
+          "name": "unarchive_document"
         },
         {
           "annotations": {
             "destructiveHint": false,
             "readOnlyHint": true
           },
-          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1220,6 +1254,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "k": {
                 "default": 20,
@@ -1450,7 +1489,7 @@
             "destructiveHint": false,
             "readOnlyHint": true
           },
-          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1492,6 +1531,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "k": {
                 "default": 20,
@@ -1709,14 +1753,17 @@
           "name": "pipeline_readiness"
         },
         {
-          "name": "delete_document"
+          "name": "archive_document"
+        },
+        {
+          "name": "unarchive_document"
         },
         {
           "annotations": {
             "destructiveHint": false,
             "readOnlyHint": true
           },
-          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+          "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1758,6 +1805,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
               },
               "k": {
                 "default": 20,
@@ -1988,14 +2040,17 @@
         "name": "pipeline_readiness"
       },
       {
-        "name": "delete_document"
+        "name": "archive_document"
+      },
+      {
+        "name": "unarchive_document"
       },
       {
         "annotations": {
           "destructiveHint": false,
           "readOnlyHint": true
         },
-        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
+        "description": "Find files: documents by name, metadata and content. Use it when the user names or describes a file (\"find Q3_sales_2025.xlsx\", \"the audit report from last spring\", \"emails from Alice\") rather than asking about its content. query matches every name a document was stored under (file name, title, source path; old names too after a rename; partial and misspelled names work) and its text. Filters narrow by family (text, markdown, html, pdf, image, audio, video, office, other), authors, recipients (a name or an address; \"alice\" matches \"Alice Novak\"), created/modified date ranges, language, thread_ref, doc_ids and tags (registered caller tags: {\"all\": [...], \"any\": [...], \"none\": [...]}; call list_tags to see which exist). Archived documents are left out unless include_archived is true; each one returned has archived_at. Each result is a document judged by its current version (versions=\"all\" searches every live version and returns the newest match); it carries doc_id, version_id, file_name, title, family, processing status, authors, recipients, dates and a short overview when one exists. p3_path is the relative corpus folder only when this version is served and its current export has a matching publication marker; otherwise null, including historical, raw-only, updating or failed publications. served_version describes authority currency independently of publication. Resolve with doc_ids again after type/topic/title moves. Offline, compute sha256(UUID(doc_id).bytes).hexdigest()[:24], then run find <root> -type d -name '*--<suffix>'; only the suffix is stable. Verify doc_id and displayed version in document.json. For historical or no-edition-in-force selections retain exact version_id/representation_id source handles; there is no public source_open RPC. A suffix match does not override temporal selection. When a people filter matches several different people, people_matched lists each with a document count: narrow the filter (for example by address) instead of guessing. Without query, results are newest first and limit/cursor page them (next_cursor continues; null ends). With query, k ranks and truncated discloses a cap.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -2037,6 +2092,11 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "include_archived": {
+              "default": false,
+              "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+              "type": "boolean"
             },
             "k": {
               "default": 20,

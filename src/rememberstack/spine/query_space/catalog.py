@@ -189,6 +189,7 @@ VIEW_CONTRACTS: Final = (
             "source_modified_at": "timestamp with time zone",
             "published_at": "timestamp with time zone",
             "language": "text",
+            "archived_at": "timestamp with time zone",
         },
         indexes_used=("documents_pkey", "ix_documents_live", "document_versions_pkey"),
         positive_fixture="documents_live.live_lineage_present",
@@ -790,7 +791,7 @@ VIEW_CONTRACTS: Final = (
             "reason": (
                 "reextracted",
                 "version_superseded",
-                "version_deleted",
+                "version_archived",
                 "review_restored",
             )
         },

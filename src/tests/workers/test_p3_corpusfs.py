@@ -101,7 +101,7 @@ def test_readiness_matches_only_current_document_digest(active, engine: Engine) 
 
 
 @pytest.mark.parametrize("claims,facts", [(True, True), (True, False), (False, False)])
-def test_profile_publication_and_synchronous_delete_in_every_layer(
+def test_profile_publication_and_synchronous_archive_in_every_layer(
     active, engine: Engine, claims: bool, facts: bool
 ) -> None:
     profile, source, store = active
@@ -113,10 +113,10 @@ def test_profile_publication_and_synchronous_delete_in_every_layer(
     assert results and all(row.outcome == RunResultOutcome.SUCCEEDED for row in results)
     assert _ready(engine, source).ready
     assert store.read_bytes(key=ObjectKey(source.path + "/original.pdf"))
-    result = profile.api_deployment().deletion
+    result = profile.api_deployment().archive
     assert result is not None
     assert (
-        result.delete_document(
+        result.archive_document(
             deployment_id=source.deployment_id, doc_id=source.doc_id
         ).doc_id
         == source.doc_id
@@ -132,7 +132,7 @@ def test_profile_publication_and_synchronous_delete_in_every_layer(
 
 
 @pytest.mark.parametrize("failure", ["delete", "index"])
-def test_delete_failure_reports_failure_and_retains_durable_retry(
+def test_archive_failure_reports_failure_and_retains_durable_retry(
     active, engine: Engine, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     profile, source, store = active
@@ -145,10 +145,10 @@ def test_delete_failure_reports_failure_and_retains_durable_retry(
         patch.setattr(
             store, "delete" if failure == "delete" else "replace_stream", fail
         )
-        deletion = profile.api_deployment().deletion
-        assert deletion is not None
+        archive = profile.api_deployment().archive
+        assert archive is not None
         with pytest.raises(RuntimeError, match="injected"):
-            deletion.delete_document(
+            archive.archive_document(
                 deployment_id=source.deployment_id, doc_id=source.doc_id
             )
     with engine.connect() as connection:
@@ -159,7 +159,7 @@ def test_delete_failure_reports_failure_and_retains_durable_retry(
         ).scalar_one()
         assert connection.execute(
             text(
-                "SELECT deleted_at IS NOT NULL AND corpus_published_revision IS NULL FROM documents WHERE doc_id=:doc"
+                "SELECT archived_at IS NOT NULL AND corpus_published_revision IS NULL FROM documents WHERE doc_id=:doc"
             ),
             {"doc": source.doc_id},
         ).scalar_one()

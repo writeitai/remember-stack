@@ -2685,6 +2685,43 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.SEARCH)
+    def mark_archived(self, *, deployment_id: UUID, envelope: Envelope) -> Envelope:
+        """Mark the claims and passages of archived documents (D159).
+
+        Only a ``documents.include_archived`` read returns them; one indexed
+        lookup over the answer's documents decides.
+        """
+        doc_ids = {item.doc_id for item in envelope.evidence} | {
+            item.doc_id for item in envelope.chunks
+        }
+        if not doc_ids:
+            return envelope
+        with self._engine.connect() as connection:
+            archived = set(
+                connection.execute(
+                    _ARCHIVED_DOCUMENTS,
+                    {"deployment_id": deployment_id, "doc_ids": sorted(doc_ids)},
+                ).scalars()
+            )
+        if not archived:
+            return envelope
+        return envelope.model_copy(
+            update={
+                "evidence": tuple(
+                    item.model_copy(update={"archived": True})
+                    if item.doc_id in archived
+                    else item
+                    for item in envelope.evidence
+                ),
+                "chunks": tuple(
+                    item.model_copy(update={"archived": True})
+                    if item.doc_id in archived
+                    else item
+                    for item in envelope.chunks
+                ),
+            }
+        )
+
     def adjacent_chunks(
         self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
     ) -> Envelope:
@@ -5487,6 +5524,7 @@ _DOCUMENTS_ABOUT = text(
           AND rd.entity_id = :entity_id
           AND rd.superseded_by IS NULL
           AND d.deleted_at IS NULL
+          AND d.archived_at IS NULL
         GROUP BY d.doc_id, d.title, d.source_kind, r.markdown_uri
     )
     SELECT mentioned.*, count(*) OVER () AS total_count
@@ -5852,6 +5890,16 @@ _RESOLVE_CONTEXT_HITS = text(
           AND edge.subject_entity_id = ANY(:context_entity_ids)
     ) adjacent
     GROUP BY candidate_id
+    """
+)
+
+
+_ARCHIVED_DOCUMENTS = text(
+    """
+    SELECT doc_id FROM documents
+    WHERE deployment_id = :deployment_id
+      AND doc_id = ANY(CAST(:doc_ids AS uuid[]))
+      AND archived_at IS NOT NULL
     """
 )
 

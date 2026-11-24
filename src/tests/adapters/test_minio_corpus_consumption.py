@@ -327,7 +327,7 @@ def test_periodised_history_and_no_edition_preserve_exact_source_handles(
         key=ObjectKey(current.raw_uri)
     )
     assert state.artifacts.read_bytes(key=ObjectKey(old.markdown_uri)) != markdown
-    client.delete_document(doc_id=old.doc_id)
+    client.archive_document(doc_id=old.doc_id)
     assert _result(client, state, versions="all", time={"mode": "history"}) == ()
     assert not _ready(client, current.version_id).ready
 

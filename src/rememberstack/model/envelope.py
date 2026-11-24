@@ -408,6 +408,9 @@ class EvidenceResult(BaseModel):
     representation_id: UUID | None = None
     effective: tuple[EffectiveInterval, ...] = ()
     occurrences: tuple[ClaimOccurrence, ...] = ()
+    archived: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    """True for a claim of an archived document (D159), which only
+    ``documents.include_archived`` returns; absent otherwise."""
 
 
 class FactEvidence(BaseModel):
@@ -475,6 +478,9 @@ class ChunkEvidenceResult(BaseModel):
     published_at: UTCDateTime | None = None
     effective: tuple[EffectiveInterval, ...] = ()  # D140 §3.7, periodised only
     served_version: bool = True  # whether version_id is the served version
+    archived: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    """True for a claim or passage of an archived document (D159), which only
+    ``documents.include_archived`` returns; absent otherwise."""
 
 
 class SourceRecord(BaseModel):

@@ -16,7 +16,10 @@ baseline moves (p9_42/p9_45/D153 views, D154 pagination, D156 document tags:
 the tag port and its five tools, ``ingest``'s ``tags`` argument at
 ``tool_version`` 3 and the two tag views; D156 step 2's ``search_documents``
 ``tags`` filter at ``tool_version`` 4; D156 step 3's ``documents`` filter on
-the three context operations at versions 5, 5 and 6); ``test_d143_defaults_unchanged.py``
+the three context operations at versions 5, 5 and 6; D159 archive: the
+``archive_document``/``unarchive_document`` tools replace ``delete_document``,
+and ``include_archived`` moves ``search_documents`` to 5 and the context
+operations to 6, 6 and 7); ``test_d143_defaults_unchanged.py``
 recomputes it.
 Run as a script to print the JSON.
 """
@@ -89,7 +92,7 @@ def _ports() -> dict[str, Any]:
         "open_query": open_query,
         "ingest": MagicMock(),
         "pipeline_readiness": MagicMock(),
-        "deletion": MagicMock(),
+        "archive": MagicMock(),
         "document_search": MagicMock(),
         "section_history": MagicMock(),
         "document_references": MagicMock(),

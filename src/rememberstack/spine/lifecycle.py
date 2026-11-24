@@ -685,7 +685,7 @@ class LifecycleCatalog:
                 connection=connection,
                 deployment_id=row["deployment_id"],
                 doc_id=row["doc_id"],
-                reason="version_archived",
+                reason="version_deleted",
             )
             # D143: a deleted head never blocks its successors; a repointed
             # living lineage processes its new current version.

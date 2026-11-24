@@ -358,7 +358,8 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     ' recipients (a name or an address; "alice" matches "Alice Novak"),'
     " created/modified date ranges, language, thread_ref, doc_ids and tags"
     ' (registered caller tags: {"all": [...], "any": [...], "none": [...]};'
-    " call list_tags to see which exist). Each"
+    " call list_tags to see which exist). Archived documents are left out"
+    " unless include_archived is true; each one returned has archived_at. Each"
     ' result is a document judged by its current version (versions="all"'
     " searches every live version and returns the newest match); it carries"
     " doc_id, version_id, file_name, title, family, processing status, authors,"
@@ -458,12 +459,21 @@ _DOCUMENTS_FILTER: Final[dict[str, object]] = {
             "description": "Only these documents (UUIDs).",
         },
         "tags": _TAGS_FILTER,
+        "include_archived": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Also consider archived documents (history, hidden by default);"
+                " each result from one is marked archived."
+            ),
+        },
     },
     "description": (
         "Only read what these documents say: the search_documents filters"
         " (family, authors, recipients, created/modified ranges, language,"
         " thread_ref, doc_ids) and tags. Call list_tags before filtering by"
-        " tag; an unknown tag is unknown_tag."
+        " tag; an unknown tag is unknown_tag. include_archived also reads"
+        " archived documents, whose claims never count as current support."
     ),
 }
 
@@ -531,6 +541,14 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "Only these documents (UUIDs).",
         },
         "tags": _TAGS_FILTER,
+        "include_archived": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Also consider archived documents (history, hidden by default);"
+                " each result from one is marked archived."
+            ),
+        },
         "versions": {
             "type": "string",
             "enum": ["current", "all"],
@@ -1052,7 +1070,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_SEARCH_DOCUMENTS_DESCRIPTION,
         input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
         permission="memory:read",
-        tool_version=4,
+        tool_version=5,
         http_route="POST /documents/search",
     ),
     ToolDefinition(
@@ -1143,7 +1161,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=5,
+        tool_version=6,
         http_route="POST /operations/claims_and_sources_context",
     ),
     ToolDefinition(
@@ -1176,7 +1194,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=5,
+        tool_version=6,
         http_route="POST /operations/facts_context",
     ),
     ToolDefinition(
@@ -1200,7 +1218,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=6,
+        tool_version=7,
         http_route="POST /operations/combined_context",
     ),
     ToolDefinition(

@@ -1078,18 +1078,22 @@ class MemoryClient:
         limit: int = 50,
         cursor: str | None = None,
         status: DocumentStatusFilter | None = None,
+        include_archived: bool = False,
     ) -> DocumentPage:
         """One page of the deployment's documents, newest lineage first.
 
         Pass the returned ``next_cursor`` back as ``cursor`` to read the next
         page; ``None`` means there are no more. ``status`` filters on each document's newest
-        version, for example ``"failed"``.
+        version, for example ``"failed"``. Archived documents are listed only
+        with ``include_archived=True``.
         """
         params: dict[str, str | int] = {"limit": limit}
         if cursor is not None:
             params["cursor"] = cursor
         if status is not None:
             params["status"] = status
+        if include_archived:
+            params["include_archived"] = "true"
         return _validated(
             DocumentPage,
             self._json("GET", "/documents", params=params),

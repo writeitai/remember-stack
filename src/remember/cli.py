@@ -690,7 +690,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 
 def _run_documents(args: argparse.Namespace) -> int:
-    """List, search, delete or tag the deployment's documents."""
+    """List, search, tag, archive or unarchive the deployment's documents."""
     if (
         args.documents_command == "search"
         and args.query is not None
@@ -730,6 +730,7 @@ def _run_documents(args: argparse.Namespace) -> int:
                     thread_ref=args.thread_ref,
                     doc_ids=tuple(args.doc_id),
                     tags=tag_filter,
+                    include_archived=args.include_archived,
                 ),
                 versions=args.versions,
                 **(
@@ -744,7 +745,10 @@ def _run_documents(args: argparse.Namespace) -> int:
             return 0
         if args.documents_command == "list":
             page = client.list_documents(
-                limit=args.limit, cursor=args.cursor, status=args.status
+                limit=args.limit,
+                cursor=args.cursor,
+                status=args.status,
+                include_archived=args.include_archived,
             )
             print(page.model_dump_json())
             if page.next_cursor is not None:
@@ -1384,6 +1388,11 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         choices=("ingesting", "converting", "structuring", "ready", "failed"),
         help="only documents whose newest version has this status",
     )
+    list_documents.add_argument(
+        "--include-archived",
+        action="store_true",
+        help="also list archived documents, with archived_at",
+    )
     search_documents = documents_commands.add_parser(
         "search",
         parents=[client_flags],
@@ -1408,6 +1417,11 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
             help="an ISO 8601 instant with a timezone, inclusive",
         )
     search_documents.add_argument("--language")
+    search_documents.add_argument(
+        "--include-archived",
+        action="store_true",
+        help="also search archived documents (history, hidden by default)",
+    )
     search_documents.add_argument("--thread-ref")
     search_documents.add_argument(
         "--doc-id", action="append", default=[], type=UUID, help="only this document"

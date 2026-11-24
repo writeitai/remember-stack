@@ -35,6 +35,8 @@ from uuid import uuid5
 from alembic import op
 from sqlalchemy import text
 
+from rememberstack.spine.migrations._helpers import apply_view_ddl
+
 revision: str = "p9_54_0075"
 down_revision: str | None = "p9_53_0074"
 branch_labels: str | Sequence[str] | None = None
@@ -53,6 +55,103 @@ def archive_reconciliation_id(*, doc_id: UUID, archived_at: datetime) -> UUID:
         NAMESPACE_URL,
         f"rememberstack:archive:{doc_id}:{archived_at.astimezone(UTC).isoformat()}",
     )
+
+
+DOCUMENTS_INVENTORY_DDL = r"""
+CREATE OR REPLACE VIEW memory_v1.documents_live (
+  deployment_id,               -- The deployment that owns this document lineage; every join to another memory_v1 relation carries it.
+  doc_id,                      -- Stable lineage identity, unique within the deployment and never reused.
+  source_kind,                 -- The connector family that produced the lineage, such as google_drive or upload.
+  source_ref,                  -- The connector-native stable identifier, null for one-shot sources that have none.
+  source_uri,                  -- The original location of the source, null when the source has no addressable location.
+  title,                       -- Best-effort human title of the lineage, which is orientation text rather than asserted evidence.
+  versioning_mode,             -- The D55 currency mode of the lineage, either snapshot or living.
+  origin,                      -- The D42 provenance stamp, either external or system_generated.
+  first_seen_at,               -- The instant this deployment first observed the lineage.
+  last_observed_at,            -- The instant the connector last observed the lineage, null when it has never been re-observed.
+  current_version_id,          -- The lineage's current snapshot, null when no non-tombstoned current version exists.
+  current_version_no,          -- The one-based ordinal of the current version within the lineage, null when there is no visible current version.
+  current_version_status,      -- Processing status of the current version, null when there is no visible current version.
+  current_representation_id,   -- The current ready reading of the current version, null when no ready representation exists.
+  has_current_ready_content,   -- True only when the lineage has a ready current version and a ready current representation, which is the precondition every current-content relation joins on.
+  source_modified_at,          -- When the source says the current snapshot was authored, which dates derived testimony.
+  published_at,                -- The document's own publication date on the current version, null when unknown.
+  language,                    -- Detected primary language of the current version, null when undetected.
+  archived_at                  -- When the lineage was archived (D159): its testimony ended and it is kept as history; null while live. Search and the context operations leave an archived lineage out unless asked.
+) AS
+SELECT
+  d.deployment_id,
+  d.doc_id,
+  d.source_kind,
+  d.source_ref,
+  d.source_uri,
+  d.title,
+  d.versioning_mode::text,
+  d.origin::text,
+  d.first_seen_at,
+  d.last_observed_at,
+  v.version_id,
+  v.version_no,
+  v.status::text,
+  r.representation_id,
+  (r.representation_id IS NOT NULL AND v.status = 'ready'),
+  v.source_modified_at,
+  v.published_at,
+  v.language,
+  d.archived_at
+FROM documents AS d
+LEFT JOIN document_versions AS v
+  ON v.deployment_id = d.deployment_id
+ AND v.doc_id = d.doc_id
+ AND v.version_id = d.current_version_id
+ AND v.deleted_at IS NULL
+LEFT JOIN document_representations AS r
+  ON r.deployment_id = v.deployment_id
+ AND r.version_id = v.version_id
+ AND r.representation_id = v.current_representation_id
+ AND r.status = 'ready'
+WHERE d.deleted_at IS NULL;
+COMMENT ON VIEW memory_v1.documents_live IS
+  'One row per document lineage that has not been forgotten, keyed by (deployment_id, doc_id): the inventory. An archived lineage (D159) is listed with archived_at set; its claims are not current testimony, so every current-testimony relation leaves it out. A lineage hidden by forget is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name removed state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.';
+
+CREATE OR REPLACE VIEW memory_v1.testimony_currency_events_visible (
+  deployment_id,
+  event_id,
+  claim_id,
+  doc_id,
+  reconciliation_id,
+  became_current,
+  reason,                  -- Why currency changed, one of reextracted, version_superseded, version_archived, or review_restored.
+  from_extractor_version,
+  from_version_id,
+  occurred_at
+) AS
+SELECT
+  e.deployment_id,
+  e.event_id,
+  e.claim_id,
+  e.doc_id,
+  e.reconciliation_id,
+  e.became_current,
+  e.reason::text,
+  e.from_extractor_version,
+  fv.version_id,
+  e.occurred_at
+FROM testimony_currency_events AS e
+JOIN memory_v1.documents_live AS dl
+  ON dl.deployment_id = e.deployment_id
+ AND dl.doc_id = e.doc_id
+JOIN memory_v1.claims_visible_history AS ch
+  ON ch.deployment_id = e.deployment_id
+ AND ch.claim_id = e.claim_id
+ AND ch.doc_id = e.doc_id
+LEFT JOIN memory_v1.document_versions_visible AS fv
+  ON fv.deployment_id = e.deployment_id
+ AND fv.version_id = e.from_version_id
+ AND fv.doc_id = e.doc_id;
+"""
+"""The D159 inventory column on ``documents_live`` and the renamed currency
+reason in the currency-event view's documentation."""
 
 
 FACT_BELIEVED_AT_SIGNATURE = (
@@ -289,6 +388,7 @@ def upgrade() -> None:
             _ARCHIVE_LINEAGE, {"doc_id": doc_id, "archived_by": row["archived_by"]}
         )
     op.execute("ALTER TABLE documents DROP COLUMN deleted_sync_cycle_id")
+    apply_view_ddl(sql=DOCUMENTS_INVENTORY_DDL)
     _install_belief_intervals()
 
 
