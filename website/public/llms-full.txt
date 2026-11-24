@@ -7870,9 +7870,12 @@ Google and All other models. Check that the endpoints you pin stay eligible,
 and confirm all of it before you send customer content. See OpenRouter's
 [ZDR guide](https://openrouter.ai/docs/guides/features/zdr#per-model-group-zdr-enforcement).
 
-With Docker Compose, put the whole policy in the project `.env`, or export
-all of it in the shell that runs Compose, and check the result with
-`docker compose config`.
+With Docker Compose, set `REMEMBERSTACK_OPENROUTER_ZDR`,
+`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` and
+`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` in the project `.env`. The services read
+them only from there (`env_file`): a value exported in your shell, or one in
+an alternate `--env-file`, does not reach the engine, so neither can override
+or clear what `.env` says. A blank value stops startup.
 
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither
@@ -8030,8 +8033,9 @@ response with choices or usage, or a generic ID-bearing error, never triggers
 that replay. Set `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to send every
 description call only to zero-data-retention endpoints (`zdr: true` and
 `data_collection: deny`), with or without an allowlist; it is separate from
-`REMEMBERSTACK_OPENROUTER_ZDR` and does not re-convert existing images. As
-with the engine-wide flag, strict zero retention also needs the OpenRouter
+`REMEMBERSTACK_OPENROUTER_ZDR`. The flag is part of the route version, so
+turning it on refreshes the vision lane once and reuses a successful OCR
+lane. As with the engine-wide flag, strict zero retention also needs the OpenRouter
 account or key guardrail set to enforce ZDR for the description model's
 group (**OpenAI** for the default model, **Google** for a Gemini model, with
 Safety Retention excluded for Google and All other models); see
@@ -8330,7 +8334,7 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | Approved endpoints in preference order; the LoCoMo Luna profile uses `["openai/flex","openai"]`. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | Zero-data-retention endpoints only for the description call. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | Ask OpenRouter for zero-data-retention endpoints only (`zdr: true`). For strict zero retention, also set your OpenRouter account to ZDR only: otherwise endpoints with safety retention can still be used. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |
@@ -20842,7 +20846,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL` | `high` | `auto`, `low`, `high`, `original` | Explicit provider observation resolution. High requests bounded preprocessing of the original image; exact sizing and supported values depend on the model. Changes refresh the description checkpoint while retaining matching OCR. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Approved endpoints in preference order. One entry disables fallback; multiple entries allow fallback only within the list. The LoCoMo profile uses `["openai/flex","openai"]`. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | bool | Only zero-data-retention endpoints for image descriptions (`zdr: true`, `data_collection: deny`). Does not change the converter version. Strict zero retention also needs the account-level Safety Retention exclusion described under `REMEMBERSTACK_OPENROUTER_ZDR`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | bool | Ask for zero-data-retention endpoints for the image description (`zdr: true`, `data_collection: deny`). Part of the route version: turning it on refreshes the vision lane once and reuses OCR. Strict zero retention also needs the account or key guardrail settings described under `REMEMBERSTACK_OPENROUTER_ZDR`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |

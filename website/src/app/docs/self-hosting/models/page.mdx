@@ -207,9 +207,12 @@ Google and All other models. Check that the endpoints you pin stay eligible,
 and confirm all of it before you send customer content. See OpenRouter's
 [ZDR guide](https://openrouter.ai/docs/guides/features/zdr#per-model-group-zdr-enforcement).
 
-With Docker Compose, put the whole policy in the project `.env`, or export
-all of it in the shell that runs Compose, and check the result with
-`docker compose config`.
+With Docker Compose, set `REMEMBERSTACK_OPENROUTER_ZDR`,
+`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` and
+`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` in the project `.env`. The services read
+them only from there (`env_file`): a value exported in your shell, or one in
+an alternate `--env-file`, does not reach the engine, so neither can override
+or clear what `.env` says. A blank value stops startup.
 
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither

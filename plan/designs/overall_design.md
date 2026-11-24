@@ -214,8 +214,8 @@ PG entity registry             (D98)                      → GCS bytes
   patterns such as `entity_timeline`, `explain`, and `claims_as_of` are
   non-tool `examples.*` saved queries. The four assured operations are the only
   MCP *intent* tools; MCP renders the full shared MCP catalogue `remember.mcp_tools` (D136, [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)), whose other entries are
-  infrastructure: `ingest`, `pipeline_readiness`, `delete_document`,
-  `source_open` and the seven open-query tools.
+  infrastructure: `ingest`, `pipeline_readiness`, `archive_document`, `unarchive_document`,
+  `forget_document`, `source_open` and the seven open-query tools.
 - Surfaces (D51/D155): HTTP API, CLI, MCP server, the **read-only corpus mount**
   (original copies and reader derivatives), and standalone K git repos;
   **filesystem-first** for agent harnesses
@@ -242,11 +242,11 @@ PG entity registry             (D98)                      → GCS bytes
   involved; budgets enforced, not advisory.
 - **Versioning**: prompt/model/embedding versions on every artifact; embedding migration is
   a planned batch path (re-embed by version filter).
-- **Deletion cascade**: normal input removal propagates through currency/counting and reaches K
-  mechanically via citations (D45/D46). D74 hard-forget additionally scrubs PostgreSQL, explicitly
-  purges object/P1/P3/local-serving copies, erases affected K history after owner redaction,
-  and re-honors one portable manifest before every serving readiness
-  (`hard_forget_design.md`).
+- **Archive and forget** (D159): archive ends a document's testimony through currency/counting,
+  reaches K mechanically via citations (D45/D46) and keeps the document readable as history;
+  forget hides it at once, then a background job sweeps everything derived from it from
+  PostgreSQL, object storage, P3 and K until a sweep finds nothing
+  ([`archive_and_forget_design.md`](archive_and_forget_design.md)).
 - **Maintenance**: PostgreSQL autovacuum/index telemetry and evidence-driven
   reindexing; P1 rebuild drills; semantic linter cadence; predicate-registry
   review. There is no P1 index-maintenance ticker (D94).
@@ -269,19 +269,20 @@ PG entity registry             (D98)                      → GCS bytes
 | `k3_beliefs_design.md` | *(withdrawn — D73; principles are authored K2 content)* | — |
 | `p2_graph_design.md` | PostgreSQL 18 live graph, one-hop join, bounded traversal, limits, recovery | **current** |
 | `retrieval_design.md` | the query machine: primitives, assured operations, envelope, mounts, skill (D48–D51, D87) | **current** |
-| `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, deletion cascade | **current** |
+| `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, archive and forget cascade | **current** |
 | `postgres_p1_search_projection_design.md` | PostgreSQL-native P1 storage, retrieval indexes, readiness, rebuild, and Lance removal (D94) | **current** |
 | `orchestration_design.md` | worker runtime: queue topology, lanes, backfill seeding, budget enforcement, DLQ operations (D52–D53) | **current** |
 | `evidence_lifecycle_design.md` | document versions, testimony currency, the counting rule, content-addressed reuse (D54–D56) | **current** |
 | `packaging_distribution_design.md` | delivery artifacts, delivery-only task execution, enforced code architecture (D62) | **current** |
 | `media_design.md` | media (images/audio/video): converter routes, source locators, derivation disclosure, media search (D65) | **current** |
 | `docs_site_design.md` | public docs site: in-repo Next.js/MDX static module + same-PR truthfulness contract (D66) | **current** |
-| `hard_forget_design.md` | lineage hard-forget, active-store purge, and restore non-resurrection (D74) | **current** |
+| `archive_and_forget_design.md` | archive and unarchive; forget: hide, sweep until clean, re-ingest guard, restore reapply (D159) | **current** |
+| `hard_forget_design.md` | D74 hard-forget; successor pointer to `archive_and_forget_design.md` | **superseded** |
 | `locomo_benchmark_design.md` | pinned `RS-LoCoMo-Full-v15` live-graph complete-retrieval benchmark adapter and guarded run protocol (D78/D85/D87/D89/D97/D98) | **current** |
 
 ## 10. Open questions
 
-Tracked in `questions.md` (root). Hard-delete obligations are resolved by D74; remaining open
-items do not alter the active-store purge contract. (The embedding model is
+Tracked in `questions.md` (root). Erasure obligations are resolved by D159; remaining open
+items do not alter the forget contract. (The embedding model is
 decided — D63: port config, default `qwen3-embedding-8b`; D94 pins the reference
 PostgreSQL profile to 1,536 dimensions.)

@@ -233,9 +233,10 @@ call that carries customer content can be held to both.
   settings, so it has its own flag, `ImageDescriptionSettings.zdr` (env
   `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`). When true, every description attempt,
   including endpoint-rotation retries, adds `zdr: true` and
-  `data_collection: deny`, with or without its `provider_only` list. The flag is
-  a privacy filter on the same model and prompt, so it stays out of the
-  converter's version fingerprint and never re-converts stored images (D56).
+  `data_collection: deny`, with or without its `provider_only` list. The flag
+  is part of the route version, so turning it on refreshes the vision lane
+  once and reuses a matching OCR lane; that reuse boundary is declared in the
+  [media design](media_design.md).
 - Providers outside OpenRouter (Mistral OCR, TypeSafe SystemOne, the OpenAI
   Decisions backup, Vertex) are not governed by these flags; their retention
   is an account or contract setting of the deployment. Rationale and the

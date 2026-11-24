@@ -1,5 +1,7 @@
 # Temporal fact writes, autonomous corrections, and cache lifecycle
 
+> **D159 (2026-11-24).** Hard-forget (D74) references below are historical; forget is now the [archive and forget design](archive_and_forget_design.md).
+
 > **D118 supersession (2026-09-07; effective when merged).** D110–D112 framework requirements and incorporated SQL are withdrawn. Safe application, provenance and erasure remain requirements under D118; the old stores, endpoint authority and cache framework are not mandatory.
 > The [mutable fact window design](mutable_fact_windows_design.md) is the current
 > authority. The text

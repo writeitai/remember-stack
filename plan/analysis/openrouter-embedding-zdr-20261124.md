@@ -97,10 +97,12 @@ set, but had no ZDR flag. A boolean `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`
 adds `zdr: true` and `data_collection: deny` to every description attempt,
 including the endpoint-rotation retries, and also when no allowlist is set.
 
-The flag stays out of the converter's version fingerprint. The fingerprint
-keys converted images for reuse (D56): putting a privacy filter into it would
-re-convert every image when a deployment turns ZDR on, with the same model and
-prompt producing the same kind of output.
+This flag shipped separately in #635, which also records it in the route
+version: turning it on refreshes the vision lane once and reuses a matching
+OCR lane (declared in [media design](../designs/media_design.md)). An earlier
+draft of this note proposed keeping the flag out of the fingerprint to avoid
+that one-time refresh; the merged design chose the explicit, declared
+refresh instead, and this PR follows it.
 
 ## Readiness bindings
 

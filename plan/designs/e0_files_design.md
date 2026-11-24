@@ -172,13 +172,13 @@ stability window; unchanged chunks of the new version **reuse** their prior extr
 embeddings via the content-addressed keys (D56), so the cost of a version is proportional to
 the edit, not the document — full design: `evidence_lifecycle_design.md` §2/§6.
 
-**Deletion / forget (cascade).** Normal removal tombstones the lineage, purges its unshared **raw +
-artifacts** objects, ends its testimony currency, and reaches K through the citation tombstone path
-(lifecycle §8; schema §13.1). Irreversible hard-forget is D74's separate fail-closed workflow: it
-also scrubs retained source payloads, explicitly purges P1, erases the document’s P3
-copies and controlled serving caches, regenerates navigation, erases affected K history,
-and records a portable restore
-barrier. A rebuild alone is not erasure (§6.7; `hard_forget_design.md`).
+**Archive / forget (D159).** Archive ends the lineage's testimony currency and reaches K
+through the citation path (lifecycle §8; schema §13.1); its stored original and artifacts stay,
+so it remains readable as history and can come back. Forget hides the document in one
+transaction, then a background job sweeps its raw and artifact objects (a raw original another
+surviving version shares stays), P1 rows, P3 folders and affected K history, and sweeps again
+until a sweep finds nothing (§6.7;
+[archive and forget design §3](archive_and_forget_design.md#3-forget)).
 
 ## 3. The conversion module (raw → Markdown) — D38
 
@@ -246,8 +246,8 @@ gates everything downstream:
   **Connector completeness:** a live observation parked with `no_route` keeps
   its sync cycle unfinalized, because unread content cannot justify source-absence
   retraction. The cycle remains completed but not finalized until processing
-  resumes and finishes, or the parked version/lineage is explicitly deleted.
-  Deleted parked observations no longer block the document-work barrier; other
+  resumes and finishes, or the parked version/lineage is explicitly archived or forgotten.
+  Archived or forgotten parked observations no longer block the document-work barrier; other
   unfinished work still does. Independent source-tombstone cascades continue.
   This can retain a cycle's absence-based closures indefinitely and is the
   deliberate cost of not deriving absence from unsupported content.
@@ -748,9 +748,9 @@ replacement and stores class bookkeeping outside reader paths. Provider access
 logging covers corpus-original reads as well as raw reads. API raw access keeps
 its existing audit path; a plain local filesystem cannot audit arbitrary file
 reads. No separate raw/artifact mount is required or advertised as the normal
-customer interface. Engine-controlled sessions and serving caches must participate
-in D74 purge acknowledgement (§6.7); changing bucket objects alone cannot flush a
-client's cached bytes.
+customer interface. Changing bucket objects alone cannot flush a client's cached
+bytes: forget tells engine-controlled sessions to drop the document's paths, best
+effort, and a client clears what it has cached when its cache expires (§6.7).
 
 ## 6. The corpus filesystem — a mutable P3 tree (D155)
 
@@ -952,8 +952,8 @@ edition or no edition is in force; it does not change those temporal rules.
 For MCP/API/SDK `p3_path`, derive the desired relative folder from current DB
 inputs, and return it **only** when the selected version is served and the nullable
 `documents.corpus_published_revision` matches the current desired export digest
-(§6.5). Otherwise return `null`, including raw-only, unpublished, updating, deleted,
-historical and failed publications. The digest covers selected version,
+(§6.5). Otherwise return `null`, including raw-only, unpublished, updating, archived,
+forgotten, historical and failed publications. The digest covers selected version,
 representation, active structure, reader inventory/hashes, title/type/topic,
 desired path and builder policy; it is computed from existing authority, not a
 new durable revision counter. `served_version` describes authority currency,
@@ -988,22 +988,13 @@ requirement, not a hosted scheduler or correctness authority. Inactive-policy wo
 cannot write; seed current-policy work instead.
 
 One deployment-scoped PostgreSQL advisory lock serializes publication, including
-index regeneration, normal removal, reconcile and forget's authorized internal
-calls. Reuse caller lock ownership for internal calls. Re-read authority after
+index regeneration, normal removal and reconcile. Forget's sweep does not take it
+(§6.7). Reuse caller lock ownership for internal calls. Re-read authority after
 taking the lock. Keep the claim alive while streaming. Before each object write
 or delete, confirm ownership of that advisory lock on the same PostgreSQL session
 and that the work claim is still live; abort further mutations on loss.
 
-Hold D74's existing shared admission/drain fence on an independent PostgreSQL session through all issued requests and own-upload cleanup, acquiring
-it before the publication lock. Check that original session's identity and lock
-ownership too. If the publication backend dies, the admission fence still makes
-forget wait for IO; if the admission backend dies, the publication lock still
-prevents P3 erasure from completing before IO returns. These are the existing
-D74/P3 locks, with no new coordination table or lock namespace. Losing all DB
-sessions still requires D74's external-write quiescence acknowledgement; database
-or lease state alone never proves that requests stopped.
-
-Check both locks and the live claim before each multipart request too, so one
+Check the lock and the live claim before each multipart request too, so one
 bounded part is the largest upload
 unit. Configure bounded S3 connect/read timeouts and disable automatic write
 retries that could issue a new request after lock loss. No detached uploads
@@ -1015,8 +1006,8 @@ window is one in-flight request, not fenced external IO. This rare race can leav
 stale complete bytes (or a missing object after a late delete) even after a newer
 publication set its marker. This is accepted for ordinary publication: prevent
 further requests cheaply and repair by digest, without a fence, journal or extra
-coordination tables. It does not weaken D74's separate drain/barrier requirement
-for erasure (§6.7). A lease expiry alone cannot prove IO stopped.
+coordination tables. Forget covers the same window by sweeping again after its
+quiet period (§6.7).
 
 For each publish:
 
@@ -1063,12 +1054,12 @@ For each publish:
    current state. No separate journal, publication-receipt table, path reservation
    or directory-membership table is kept.
 
-Normal delete uses the same recorded-path removal synchronously before D135
-reports success; an object/index failure reports failure and leaves ordinary
-durable work for retry. Deletion and forget cannot be disabled with claims/facts
-switches. Removal success is absence under every recorded path plus repaired
-indexes, with the existing work row recording completion; it needs no separate
-empty receipt. Full suffix discovery remains mandatory for forget/restore (§6.7)
+Archive uses the same recorded-path removal synchronously before it reports
+success; an object/index failure reports failure and leaves ordinary durable work
+for retry. Archive and forget cannot be disabled with claims/facts switches.
+Removal success is absence under every recorded path plus repaired indexes, with
+the existing work row recording completion; it needs no separate empty receipt.
+Full suffix discovery remains mandatory for forget and `forget-reapply` (§6.7)
 and available through reconcile to recover anything missing from the DB set.
 
 **What readers can observe.** Objects are replaced atomically, folders and trees
@@ -1113,13 +1104,13 @@ Readiness `p3` uses the same nullable-marker comparison as `p3_path`, per reques
 served lineage/version. A matching marker means its publish completed files,
 cleanup and affected-index regeneration for the current digest; a recent unrelated
 publish proves nothing. Reconcile can verify inventories and repair store damage;
-the marker does not certify an independently restored bucket, which must pass the
-restore gate (§6.7). A selected historical edition reports `p3_version_not_served`;
+the marker does not certify an independently restored bucket, which reconcile and,
+for forgotten documents, `remember ops forget-reapply` repair (§6.7). A selected historical edition reports `p3_version_not_served`;
 a raw-only/parked selection is not ready; a missing/mismatching marker reports
 `corpus_publication_incomplete`, with adapter/DLQ failures still visible in the
 ordinary ledger. Aggregate `p3` requires all requested selections to match.
-Deleted documents have no browse path; their removal is verified by the delete/
-forget operation, not an applied empty-publication record. `version` may expose the
+Archived and forgotten documents have no browse path; their removal is verified by
+the archive or forget operation, not an applied empty-publication record. `version` may expose the
 selected document's digest; unsupported global snapshot time/version fields are
 null, including an aggregate over multiple publications. No new publication-time
 columns are required. A missing local mount does not invalidate a remote publish.
@@ -1132,49 +1123,43 @@ converter, chunk, Selection, Claimify or embedding identity. Only the placement
 output/schema generation changes to accept successful `null`, reusing stored
 summaries and leaving unchanged text's paid-work identities intact (Rule 4).
 
-### 6.7 Hard forget and restore: erase the document, regenerate indexes
+<a id="67-hard-forget-and-restore-erase-the-document-regenerate-indexes"></a>
 
-D74's portable intent, admission/drain barrier, verification and restore replay
-remain the privacy authority. The existing `doc_id` in intent is sufficient for
-P3: its suffix is computable after source-metadata scrub, without historic titles,
-paths, suffix reservations or a corpus-wide purge scope.
+### 6.7 Forget: erase the document, regenerate indexes
 
-1. D74 stops ordinary claims and drains all publication/reconcile writes, including
-   in-flight uploads. Engine-controlled mount sessions stop serving and acknowledge
-   cache purge; a blocked API or expired lease alone does not stop external IO or
-   mounted reads. D147 retains separately durable manifest storage.
-2. After lifecycle/authority scrub, the authorized coordinator takes the publication
-   lock, pages through corpus keys and deletes **only** folders with the forgotten
-   document's suffix, including former moved folders and interrupted unindexed
-   copies. Handle abandoned multipart uploads under §5's provider rule. Clear that
-   document's publication marker and purge its controlled serving/cache copies.
-   Never empty the corpus store or recopy surviving documents' originals/derivatives.
-3. Regenerate affected navigation `_index.md` and root `llms.txt` from scrubbed DB
-   authority. Enumerate navigation-index keys too: rebuild/prune them against DB
-   membership to cover index-only remnants whose old folder was already deleted
-   before a crash. This conservative metadata pass may revisit all shared indexes;
-   it does not reset document folders or require a historic path list. Verify no
-   matching folder, forgotten title/summary/member entry or controlled serving
-   copy remains; report unfinished-upload coverage under §5's provider rule.
-   Clear `corpus_paths` after object cleanup and navigation repair; its friendly
-   paths must not survive a completed forget. Always do the full suffix scan even
-   when the recorded set is empty, including on restore replay.
-   Reopen only after every D74 store acknowledges erasure within that scope.
-   Any error leaves the barrier closed and retries the same idempotent procedure.
-4. Before a restore serves traffic or controlled mounts, re-honor **every** portable
-   manifest, even one locally marked complete. Scrub restored authority, repeat
-   suffix deletion in a separately restored bucket and regenerate indexes; verify
-   again. Batched manifests may share the paged scan and index regeneration. A local
-   clean marker never skips an independently restored store or cache.
+Forget's contract is the [archive and forget design §3](archive_and_forget_design.md#3-forget).
+The forget record's `doc_id` is sufficient for P3: the folder suffix is computable from it,
+without historic titles, paths, suffix reservations or a corpus-wide purge scope. Each sweep:
+
+1. Pages through corpus keys and deletes **only** folders with the forgotten document's
+   suffix, without a lock (nothing else writes those folders once the document is hidden), including former moved folders and interrupted unindexed
+   copies. Handle abandoned multipart uploads under §5's provider rule. Never empty the
+   corpus store or recopy surviving documents' originals/derivatives. Always do the full
+   suffix scan, even when `corpus_paths` is empty.
+2. Regenerates the navigation files that listed the document (`_index.md` up the tree, root
+   `llms.txt`) from DB authority, in which the document is already hidden, purges their
+   retained object versions, and checks that none still lists it. Enumerate navigation-index keys too: rebuild/prune
+   them against DB membership to cover index-only remnants whose old folder was already
+   deleted before a crash. This metadata pass may revisit all shared indexes; it does not
+   reset document folders or require a historic path list.
+3. Tells controlled mount sessions to drop the document's paths, best effort
+   ([design §3.7](archive_and_forget_design.md#37-mounts)).
+
+Missing objects count as success, so a sweep can be interrupted and run again. Nothing is
+stopped or drained: the hide revokes the document's running work leases, and a folder a late
+publication still wrote is removed by the next sweep, which the forget job runs after its
+quiet period until a sweep finds nothing.
 
 The corpus store must have object versioning off or enumerate, purge and verify
 all retained versions of matching document objects and rewritten/pruned indexes
 during erasure.
 
-Backups remain outside active stores under D74/D75 and cannot serve without replay.
-Managed session/cache acknowledgement is an adapter obligation, implemented by
-the cloud repo; operator-managed FUSE mounts must stop/remount for forget.
-Arbitrary downloaded client bytes remain outside the library-controlled boundary.
+After restoring the corpus bucket (or another store) from a backup, the operator runs
+`remember ops forget-reapply`, an ordinary command that re-runs the same sweep for every forget
+record in the database ([design §3.8](archive_and_forget_design.md#38-after-a-restore)). Operator-managed FUSE mounts
+stop showing the document when the tool's cache expires; a file already open in such a tool
+may keep serving what it read until it is closed. Arbitrary downloaded client bytes remain
+outside the library-controlled boundary.
 
 ## 7. End-to-end (one document)
 
@@ -1200,9 +1185,9 @@ Arbitrary downloaded client bytes remain outside the library-controlled boundary
    place. A newer stored upload leaves the completed folder intact until served
    and published. A type/topic/title change moves it; re-resolve `doc_id` via MCP
    or suffix search.
-6. Normal deletion removes that document's folders and regenerates indexes. Hard
-   forget uses the same per-document erasure under D74's barrier, with scrubbed DB
-   authority and all-store verification; independent restores replay before serving.
+6. Archive removes that document's folders and regenerates indexes. Forget runs the
+   same per-document erasure in each sweep until a sweep finds nothing; after a store is
+   restored from a backup, `remember ops forget-reapply` runs it again.
 
 ## 8. Decisions and measurements
 

@@ -400,7 +400,7 @@ both half-open windows to every edge:
 
 ```sql
 (ingested_at IS NULL OR ingested_at <= believed_at)
-AND (invalidated_at IS NULL OR invalidated_at > believed_at)
+AND NOT closed_at(edge, believed_at)  -- D159: close/reopen events, as for facts_as_of
 AND (valid_from IS NULL OR valid_from <= valid_at)
 AND (valid_until IS NULL OR valid_until > valid_at)
 ```
@@ -623,10 +623,10 @@ fresh restore/replay—not silently by a no-op Alembic invocation. There is no
 graph object-store inventory, download, validation, pointer reconciliation, or
 local cache recovery.
 
-### Hard forget
+### Forget
 
-The authority deletion/tombstone transaction and live source views remove
-forgotten material from later graph statements immediately. Backups follow the
+Forget's hide transaction (D159) and the live source views remove forgotten
+material from later graph statements immediately. Backups follow the
 single PostgreSQL retention/erasure contract. There are no Ladybug files or P2
 generations to enumerate or purge. In-flight statements may retain their MVCC
 snapshot only until the bounded transaction ends.

@@ -140,13 +140,12 @@ class ImageDescriptionSettings(BaseSettings):
     provider_only: tuple[str, ...] | None = None
     """Approved vision endpoints in preference order; fallback stays in this set."""
     zdr: bool = False
-    """Route description calls only to zero-data-retention endpoints when true.
+    """Restrict the description call to zero-data-retention endpoints when true.
 
-    Env: ``REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR``. Every description request's
-    ``provider`` object then carries ``zdr: true`` and
-    ``data_collection: deny``, with or without ``provider_only``. A privacy
-    filter on the same model, so it stays out of ``version_fingerprint`` and
-    never re-keys converted images.
+    Env: ``REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR``. Sends ``zdr: true`` with
+    ``data_collection: deny``, as the chat adapter's ``REMEMBERSTACK_OPENROUTER_ZDR``.
+    OpenRouter may still use endpoints with safety retention when the account
+    allows them; strict zero retention also needs the account set to ZDR only.
     """
 
     @field_validator("reasoning_effort", mode="before")
@@ -206,6 +205,8 @@ class ImageDescriptionSettings(BaseSettings):
             base += ":providers-" + json.dumps(
                 self.provider_only, separators=(",", ":")
             )
+        if self.zdr:
+            base += ":zdr"
         return base
 
 
@@ -654,8 +655,7 @@ class ImageOcrDescriptionConverter:
                 if len(approved) > 1:
                     routing["order"] = approved
             if zdr:
-                routing["data_collection"] = "deny"
-                routing["zdr"] = True
+                routing.update(data_collection="deny", zdr=True)
             if routing:
                 payload["provider"] = routing
             response = self._description_client.post("/chat/completions", json=payload)

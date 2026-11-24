@@ -73,13 +73,15 @@ flagged or not, for abuse prevention, self-serve accounts allow it by
 default, and no request field can turn it off. Verify the settings for each
 group and key before sending customer content.
 
-With Docker Compose, keep the whole policy in the project `.env` (Compose
-reads it both for its own substitution and as the services' `env_file`), or
-export all of it in the shell that runs Compose; `compose.yaml` passes the
-allowlist, the order, `REMEMBERSTACK_OPENROUTER_ZDR` and
-`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` through explicitly. Check the result
-with `docker compose config` before starting the services. Image
-descriptions need `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` separately.
+With Docker Compose, set the allowlist, `REMEMBERSTACK_OPENROUTER_ZDR` and
+`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` in the project `.env`. `compose.yaml`
+deliberately does not list them under `environment:`, so the services read
+them only from `.env` through `env_file`; a shell export or an alternate
+`--env-file` cannot override or clear them. (The embedding order and pin are
+still interpolated, so keep them empty in every env file you use.) Image
+descriptions need `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` separately; it is
+part of the image route's version, so turning it on refreshes the vision lane
+once.
 
 ## Policy (compose / smoke / local)
 
