@@ -403,6 +403,20 @@ def is_empty(filters: DocumentSearchFilters) -> bool:
     return filters == DocumentSearchFilters()
 
 
+def archived_lineage_hidden(*, filters: DocumentSearchFilters | None, doc: str) -> str:
+    """SQL predicate: lineage ``doc`` is not archived, unless the filter includes it.
+
+    The lineage-id form of :func:`archived_hidden`, for statements that do not
+    join a document relation (D159).
+    """
+    if filters is not None and filters.include_archived:
+        return "TRUE"
+    return (
+        "NOT EXISTS (SELECT 1 FROM documents AS archived"
+        f" WHERE archived.doc_id = {doc} AND archived.archived_at IS NOT NULL)"
+    )
+
+
 def archived_hidden(*, filters: DocumentSearchFilters | None, document: str) -> str:
     """SQL predicate hiding archived lineages unless the filter includes them.
 

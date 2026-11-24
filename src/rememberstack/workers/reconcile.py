@@ -158,12 +158,14 @@ class ReconcileHandler:
             chunker_version=self._chunker_version,
             extractor_version=self._extractor_version,
         )
-        transitions = (*regained, *source_acted, *transcription)
+        # The regain was written under the lineage lock already; writing it
+        # again here could overwrite a concurrent archive's retirement.
         applied = self._catalog.apply_transitions(
             deployment_id=deployment_id,
             reconciliation_id=reconciliation_id,
-            transitions=transitions,
+            transitions=(*source_acted, *transcription),
         )
+        transitions = (*regained, *source_acted, *transcription)
         # retry recovery (Codex review): a crash between the currency
         # transaction and the steps below must not orphan the run — union
         # what the ledger already holds under this reconciliation_id, since
@@ -475,6 +477,11 @@ class ReconcileHandler:
             archived_at = catalog.lineage_archived_at(doc_id=doc_id)
             if archived_at is None:
                 return None
+            if catalog.archive_waits_for_cycle(doc_id=doc_id):
+                # A source archive settles at its observing cycle's
+                # finalization (the retract-timing barrier); the finalizer
+                # retires this work then, and unarchive repeats this run.
+                return HandlerOutcome()
             reconciliation_id = archive_reconciliation_id(
                 doc_id=doc_id, archived_at=archived_at
             )
@@ -752,29 +759,37 @@ class DeletionService:
         deployment_id: UUID = info["deployment_id"]  # type: ignore[assignment]
         doc_id: UUID = info["doc_id"]  # type: ignore[assignment]
         context = self._catalog.reconciliation_context(version_id=version_id)
-        # ONLY the deleted version's exclusive testimony ends — a snapshot
-        # lineage's other versions keep their currency (Codex review)
-        transitions: tuple[CurrencyTransition, ...] = (
-            self._catalog.stale_for_version_deletion(
-                deployment_id=deployment_id, version_id=version_id
-            )
-        )
+        reconciliation_id = _derived_run_id(kind="delete-version", id_=version_id)
         if context["current_version_id"] is not None:
             # "the lineage continues": the repointed predecessor's testimony
-            # is the current basis again — its claims regain currency
-            transitions = (
-                *transitions,
-                *self._catalog.regained_by_current_version(
-                    deployment_id=deployment_id,
-                    doc_id=doc_id,
-                    current_version_id=context["current_version_id"],  # type: ignore[arg-type]
-                ),
-            )
+            # is the current basis again — its claims regain currency. Decided
+            # and written under the lineage lock, never while the lineage is
+            # archived: unarchive restores it then (D159).
+            with self._catalog.transaction() as catalog:
+                catalog.lock_lineage(doc_id=doc_id)
+                if catalog.lineage_archived_at(doc_id=doc_id) is None:
+                    catalog.apply_transitions(
+                        deployment_id=deployment_id,
+                        reconciliation_id=reconciliation_id,
+                        transitions=catalog.regained_by_current_version(
+                            deployment_id=deployment_id,
+                            doc_id=doc_id,
+                            current_version_id=context["current_version_id"],  # type: ignore[arg-type]
+                        ),
+                    )
         delta = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,
-            transitions=transitions,
-            reconciliation_id=_derived_run_id(kind="delete-version", id_=version_id),
+            # ONLY the deleted version's exclusive testimony ends — a snapshot
+            # lineage's other versions keep their currency (Codex review)
+            transitions=_with_recorded(
+                catalog=self._catalog,
+                transitions=self._catalog.stale_for_version_deletion(
+                    deployment_id=deployment_id, version_id=version_id
+                ),
+                reconciliation_id=reconciliation_id,
+            ),
+            reconciliation_id=reconciliation_id,
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
             scope_claim_ids=(),
             archive=False,
@@ -1023,6 +1038,21 @@ def _unarchive_on(
             ),
         ),
     )
+    # A version removed during the archive repointed the lineage without its
+    # predecessor's regain (never while archived); that regain happens now.
+    current_version_id = catalog.current_version_if_removed_since(
+        doc_id=doc_id, since=archived_at
+    )
+    if current_version_id is not None:
+        restored += catalog.apply_transitions(
+            deployment_id=deployment_id,
+            reconciliation_id=run_id,
+            transitions=catalog.regained_by_current_version(
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                current_version_id=current_version_id,
+            ),
+        )
     claim_ids = catalog.lineage_claim_ids(deployment_id=deployment_id, doc_id=doc_id)
     relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
     observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)

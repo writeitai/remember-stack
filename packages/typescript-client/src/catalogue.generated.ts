@@ -387,7 +387,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Makes no model call. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
+      "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Its only model call is a best-effort refresh of the entity profiles whose facts changed. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
       "destructive": false,
       "http_route": "POST /documents/{doc_id}/unarchive",
       "input_schema": {

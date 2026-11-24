@@ -463,11 +463,21 @@ class ReviewQueue:
         claim_id: UUID,
         review_id: UUID,
     ) -> None:
-        """The invalidate path: learned-wrong, recorded, out of the current layer."""
+        """The invalidate path: learned-wrong, recorded, out of the current layer.
+
+        The column and the event carry one instant, read at the write (not
+        the transaction start), so a belief read never sees them disagree and
+        a closure cannot be dated before a reopen that committed first (D159).
+        """
+        closed_at = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
         if fact_kind == "relation":
             connection.execute(
                 _INVALIDATE_RELATION,
-                {"deployment_id": deployment_id, "relation_id": fact_id},
+                {
+                    "deployment_id": deployment_id,
+                    "relation_id": fact_id,
+                    "at": closed_at,
+                },
             )
             connection.execute(
                 _INSERT_RELATION_ADJUDICATION,
@@ -480,12 +490,17 @@ class ReviewQueue:
                         "review_id": str(review_id),
                         "claim_id": str(claim_id),
                     },
+                    "at": closed_at,
                 },
             )
         else:
             connection.execute(
                 _INVALIDATE_OBSERVATION,
-                {"deployment_id": deployment_id, "observation_id": fact_id},
+                {
+                    "deployment_id": deployment_id,
+                    "observation_id": fact_id,
+                    "at": closed_at,
+                },
             )
             connection.execute(
                 _INSERT_OBSERVATION_ADJUDICATION,
@@ -498,6 +513,7 @@ class ReviewQueue:
                         "action": "invalidate_fact",
                         "review_id": str(review_id),
                     },
+                    "at": closed_at,
                 },
             )
 
@@ -859,7 +875,7 @@ _RESTORE_CLAIM_CURRENCY = text(
 
 _INVALIDATE_RELATION = text(
     """
-    UPDATE relations SET invalidated_at = now(), updated_at = now()
+    UPDATE relations SET invalidated_at = :at, updated_at = now()
     WHERE deployment_id = :deployment_id AND relation_id = :relation_id
       AND invalidated_at IS NULL
     """
@@ -867,7 +883,7 @@ _INVALIDATE_RELATION = text(
 
 _INVALIDATE_OBSERVATION = text(
     """
-    UPDATE observations SET invalidated_at = now(), updated_at = now()
+    UPDATE observations SET invalidated_at = :at, updated_at = now()
     WHERE deployment_id = :deployment_id AND observation_id = :observation_id
       AND invalidated_at IS NULL
     """
@@ -877,10 +893,10 @@ _INSERT_RELATION_ADJUDICATION = text(
     """
     INSERT INTO relation_adjudications (
         adjudication_id, deployment_id, relation_id, outcome, method,
-        confidence, features, adjudicator_version, decided_by
+        confidence, features, adjudicator_version, decided_by, decided_at
     ) VALUES (
         :adjudication_id, :deployment_id, :relation_id, 'invalidated', 'exact',
-        1.0, :features, 'review-2026.07', 'human'
+        1.0, :features, 'review-2026.07', 'human', :at
     )
     """
 ).bindparams(bindparam("features", type_=JSON))
@@ -890,10 +906,10 @@ _INSERT_OBSERVATION_ADJUDICATION = text(
     INSERT INTO observation_adjudications (
         adjudication_id, deployment_id, observation_id, outcome, method,
         confidence, triggering_claim_id, features, adjudicator_version,
-        decided_by
+        decided_by, decided_at
     ) VALUES (
         :adjudication_id, :deployment_id, :observation_id, 'invalidated', 'exact',
-        1.0, :triggering_claim_id, :features, 'review-2026.07', 'human'
+        1.0, :triggering_claim_id, :features, 'review-2026.07', 'human', :at
     )
     """
 ).bindparams(bindparam("features", type_=JSON))

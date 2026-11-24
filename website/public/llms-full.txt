@@ -20279,8 +20279,8 @@ scope. See
 ### `unarchive_document`
 
 Undoes an archive exactly: the document's claims count as evidence again, and
-the facts its archive closed reopen when they have support again. It makes no
-model call.
+the facts its archive closed reopen when they have support again. Its only
+model call is a best-effort refresh of the entity profiles whose facts changed.
 
 | Parameter | Type | Required | Limits |
 |---|---|---|---|

@@ -561,11 +561,11 @@ class LifecycleCatalog:
         closed: list[UUID] = []
         with self._engine.begin() as connection:
             for relation_id in sorted(relation_ids):
-                capped = connection.execute(
+                closed_at = connection.execute(
                     _INVALIDATE_RELATION,
                     {"relation_id": relation_id, "deployment_id": deployment_id},
                 ).scalar_one_or_none()
-                if capped is None:
+                if closed_at is None:
                     continue  # already closed by an earlier attempt
                 closed.append(relation_id)
                 _record_adjudication(
@@ -575,6 +575,7 @@ class LifecycleCatalog:
                     fact_id=relation_id,
                     reconciliation_id=reconciliation_id,
                     archive=archive,
+                    decided_at=closed_at,
                 )
         return tuple(closed)
 
@@ -596,10 +597,10 @@ class LifecycleCatalog:
         closed: list[UUID] = []
         with self._engine.begin() as connection:
             for observation_id in sorted(observation_ids):
-                marked = connection.execute(
+                closed_at = connection.execute(
                     _INVALIDATE_OBSERVATION, {"observation_id": observation_id}
                 ).scalar_one_or_none()
-                if marked is None:
+                if closed_at is None:
                     continue
                 closed.append(observation_id)
                 _record_adjudication(
@@ -609,6 +610,7 @@ class LifecycleCatalog:
                     fact_id=observation_id,
                     reconciliation_id=reconciliation_id,
                     archive=archive,
+                    decided_at=closed_at,
                 )
         return tuple(closed)
 
@@ -1102,6 +1104,37 @@ class LifecycleCatalog:
                 {"doc_id": doc_id},
             )
 
+    def current_version_if_removed_since(
+        self, *, doc_id: UUID, since: datetime
+    ) -> UUID | None:
+        """The lineage's current version when one of its versions was removed
+        at or after ``since``; ``None`` otherwise."""
+        with self._engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT d.current_version_id FROM documents d"
+                    " WHERE d.doc_id = :doc_id AND EXISTS ("
+                    "   SELECT 1 FROM document_versions v"
+                    "   WHERE v.doc_id = d.doc_id AND v.deleted_at >= :since)"
+                ),
+                {"doc_id": doc_id, "since": since},
+            ).scalar_one_or_none()
+
+    def archive_waits_for_cycle(self, *, doc_id: UUID) -> bool:
+        """Whether the lineage's source archive waits for its observing cycle."""
+        with self._engine.connect() as connection:
+            return bool(
+                connection.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM documents d"
+                        " JOIN connector_sync_cycles y"
+                        "   ON y.cycle_id = d.archived_cycle_id"
+                        " WHERE d.doc_id = :doc_id AND y.finalized_at IS NULL)"
+                    ),
+                    {"doc_id": doc_id},
+                ).scalar_one()
+            )
+
     def lineage_archived_at(self, *, doc_id: UUID) -> datetime | None:
         """When the lineage was archived; ``None`` while it is live."""
         with self._engine.connect() as connection:
@@ -1201,8 +1234,13 @@ def _record_adjudication(
     fact_id: UUID,
     reconciliation_id: UUID,
     archive: bool,
+    decided_at: datetime,
 ) -> None:
-    """Append one retraction adjudication, once per (fact, reconciliation)."""
+    """Append one retraction adjudication, once per (fact, reconciliation).
+
+    ``decided_at`` is the closure's own instant (the fact's ``invalidated_at``),
+    so the column and the event agree to the microsecond (D159).
+    """
     features: dict[str, object] = {"reconciliation_id": str(reconciliation_id)}
     if archive:
         features["archive"] = True
@@ -1214,6 +1252,7 @@ def _record_adjudication(
             "fact_id": fact_id,
             "features": features,
             "reconciliation_id": str(reconciliation_id),
+            "decided_at": decided_at,
         },
     )
 
@@ -1552,7 +1591,7 @@ _INVALIDATE_RELATION = text(
     SET invalidated_at = clock_timestamp(), updated_at=now()
     WHERE deployment_id=:deployment_id AND relation_id = :relation_id
       AND evidence_count=0 AND invalidated_at IS NULL
-    RETURNING relation_id
+    RETURNING invalidated_at
     """
 )
 
@@ -1561,7 +1600,7 @@ _INVALIDATE_OBSERVATION = text(
     UPDATE observations
     SET invalidated_at = clock_timestamp()
     WHERE observation_id = :observation_id AND evidence_count=0 AND invalidated_at IS NULL
-    RETURNING observation_id
+    RETURNING invalidated_at
     """
 )
 
@@ -1573,7 +1612,7 @@ _INSERT_RELATION_RETRACTION = text(
     )
     SELECT :adjudication_id, :deployment_id, :fact_id,
            'retracted_source_removal', 'exact', :features, 'reconcile-2026.07',
-           clock_timestamp()
+           :decided_at
     WHERE NOT EXISTS (
         SELECT 1 FROM relation_adjudications a
         WHERE a.relation_id = :fact_id
@@ -1591,7 +1630,7 @@ _INSERT_OBSERVATION_RETRACTION = text(
     )
     SELECT :adjudication_id, :deployment_id, :fact_id,
            'retracted_source_removal', 'exact', :features, 'reconcile-2026.07',
-           clock_timestamp()
+           :decided_at
     WHERE NOT EXISTS (
         SELECT 1 FROM observation_adjudications a
         WHERE a.observation_id = :fact_id

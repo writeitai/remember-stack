@@ -245,7 +245,7 @@
           "destructiveHint": false,
           "readOnlyHint": false
         },
-        "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Makes no model call. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
+        "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Its only model call is a best-effort refresh of the entity profiles whose facts changed. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -3563,7 +3563,7 @@
           "destructiveHint": false,
           "readOnlyHint": false
         },
-        "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Makes no model call. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
+        "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Its only model call is a best-effort refresh of the entity profiles whose facts changed. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
@@ -5364,7 +5364,7 @@
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Makes no model call. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
+      "description": "Undo an archive exactly: the document's claims count as evidence again and the facts its archive closed reopen when they have support again. Use only when the user says an archived document holds again. Takes the archived document's doc_id. Its only model call is a best-effort refresh of the entity profiles whose facts changed. Returns claims_restored and facts_reopened; a document that is not archived returns zero counts. A document_not_found error means the id is unknown: do not retry it.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -16091,9 +16091,9 @@
     }
   ],
   "query_surface_manifest": {
-    "built_manifest_sha256": "403bfc1ad7ae3d23516dbea4073705b03af051468cf3a955ce032cc9d5974e89",
-    "checked_in_manifest_sha256": "403bfc1ad7ae3d23516dbea4073705b03af051468cf3a955ce032cc9d5974e89",
-    "surface_manifest_hash": "432e82db9d0bf55427df98879fec9324a75c9a938b2cd1e42476ad7103477291"
+    "built_manifest_sha256": "a6d71e67693b24d20980c962e015c25555c48782de5489b174ec4a4d9a2cd82b",
+    "checked_in_manifest_sha256": "a6d71e67693b24d20980c962e015c25555c48782de5489b174ec4a4d9a2cd82b",
+    "surface_manifest_hash": "8e526b54aca2bbac954a0b008156ff1ccb7bf498a9e1b384bd450ccd81b6301d"
   },
   "readiness_expected_components": [
     [

@@ -8,8 +8,8 @@ forget's hide. The currency reason ``version_deleted`` is renamed
 returning claim) reopening a fact an archive closed, without erasing the close.
 
 Upgrade of D135 data: every lineage D135 deleted (and no D74 forget owns),
-recognised by its signature — the lineage and its versions tombstoned at one
-instant — becomes an archive — ``caller`` for an explicit delete, ``source`` for a
+recognised by its signature — the lineage tombstoned with no version left
+live — becomes an archive — ``caller`` for an explicit delete, ``source`` for a
 connector-observed deletion — with ``archived_at`` set to its deletion time.
 The currency events and closures of that lineage's current deletion episode
 (the delete or connector finalization, plus the late reconcile runs of the
@@ -182,6 +182,46 @@ def _crossrefs_view(*, archived_target_hidden: bool) -> str:
 
 
 CROSSREFS_ARCHIVE_DDL = _crossrefs_view(archived_target_hidden=True)
+
+
+def _fact_source_view(*, moot_reviews_hidden: bool) -> str:
+    """``v_memory_fact_source_qualified`` as D153 authored it, or with moot reviews."""
+    from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility import (
+        FACT_SOURCE_QUALIFIED_DDL,
+    )
+
+    view = FACT_SOURCE_QUALIFIED_DDL.replace(
+        "CREATE VIEW v_memory_fact_source_qualified",
+        "CREATE OR REPLACE VIEW v_memory_fact_source_qualified",
+        1,
+    )
+    if not moot_reviews_hidden:
+        return view
+    old = (
+        "      AND queue.candidate ->> 'fact_id' = fact.fact_id::text\n"
+        "  ) THEN 'withdrawn'"
+    )
+    if view.count(old) != 1:
+        raise RuntimeError("unexpected v_memory_fact_source_qualified shape")
+    return view.replace(
+        old,
+        "      AND queue.candidate ->> 'fact_id' = fact.fact_id::text\n"
+        "      -- D159: a review on an archived document's claim is moot\n"
+        "      AND NOT EXISTS (\n"
+        "        SELECT 1 FROM claims AS moot_claim\n"
+        "        JOIN documents AS moot_document\n"
+        "          ON moot_document.deployment_id = moot_claim.deployment_id\n"
+        "         AND moot_document.doc_id = moot_claim.doc_id\n"
+        "        WHERE moot_claim.deployment_id = queue.deployment_id\n"
+        "          AND moot_claim.claim_id = CAST(queue.candidate ->> 'claim_id' AS uuid)\n"
+        "          AND moot_document.archived_at IS NOT NULL\n"
+        "      )\n"
+        "  ) THEN 'withdrawn'",
+    )
+
+
+FACT_SOURCE_ARCHIVE_DDL = _fact_source_view(moot_reviews_hidden=True)
+"""A review on an archived document's claim no longer marks its fact withdrawn."""
 """References to an archived target leave the SQL reference view (D159 §2.2)."""
 
 
@@ -335,11 +375,18 @@ _DELETED_LINEAGES = text(
     WHERE d.deleted_at IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM {forget_table} f WHERE f.doc_id = d.doc_id)
       -- D135's delete (caller or connector) tombstoned the lineage and its
-      -- live versions in one statement each of one transaction, at one
-      -- instant; a lineage tombstone without that is not a D135 deletion
-      AND EXISTS (
-          SELECT 1 FROM document_versions v
-          WHERE v.doc_id = d.doc_id AND v.deleted_at = d.deleted_at
+      -- live versions at one instant (all of them, so none is left live; one
+      -- removed earlier keeps its own instant). A lineage tombstone that
+      -- left a live version behind is not a D135 deletion.
+      AND (
+          EXISTS (
+              SELECT 1 FROM document_versions v
+              WHERE v.doc_id = d.doc_id AND v.deleted_at = d.deleted_at
+          )
+          OR NOT EXISTS (
+              SELECT 1 FROM document_versions v
+              WHERE v.doc_id = d.doc_id AND v.deleted_at IS NULL
+          )
       )
     ORDER BY d.doc_id
     """
@@ -485,6 +532,7 @@ def upgrade() -> None:
         )
     apply_view_ddl(sql=DOCUMENTS_INVENTORY_DDL)
     op.execute(CROSSREFS_ARCHIVE_DDL)
+    apply_view_ddl(sql=FACT_SOURCE_ARCHIVE_DDL)
     _install_belief_intervals()
 
 
@@ -536,6 +584,7 @@ def downgrade() -> None:
         )
     )
     op.execute(_crossrefs_view(archived_target_hidden=False))
+    apply_view_ddl(sql=_fact_source_view(moot_reviews_hidden=False))
     # The prior graph shape first: its projection must stop reading the
     # archive column before the column goes.
     rebuild_fact_graphs(connection=connection, archive=False)

@@ -22,6 +22,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from remember.models import DocumentSearchFilters
 from rememberstack.adapters import p1_ranked
 from rememberstack.core.document_filters import archived_hidden
+from rememberstack.core.document_filters import archived_lineage_hidden
 from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.document_filters import is_empty
@@ -1174,7 +1175,14 @@ class PostgresP1Index:
                     f" AND {_PENDING_READABLE.format(version='pending_chunk.version_id')}"
                     f"{pending_match}))"
                 )
-            current_predicate = "AND indexed.is_current_testimony AND " + selected
+            # D159: a source archive's claims stay current until its cycle
+            # settles; they are still hidden unless asked for.
+            current_predicate = (
+                "AND indexed.is_current_testimony AND "
+                + selected
+                + " AND "
+                + archived_lineage_hidden(filters=documents, doc="indexed.doc_id")
+            )
         elif grain == "chunk":
             table = "chunk_search"
             target = "chunks"
@@ -1182,11 +1190,8 @@ class PostgresP1Index:
             model = embedder_generation or self._embedding_model
             # D159: an archived document's passages only on request (the
             # documents filter decides when there is one).
-            chunk_match = (
-                " AND NOT EXISTS (SELECT 1 FROM documents AS archived"
-                " WHERE archived.deployment_id = candidate.deployment_id"
-                " AND archived.doc_id = candidate.doc_id"
-                " AND archived.archived_at IS NOT NULL)"
+            chunk_match = " AND " + archived_lineage_hidden(
+                filters=None, doc="candidate.doc_id"
             )
             if documents is not None:
                 chunk_version_sql, document_parameters = live_version_matches(

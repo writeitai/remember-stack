@@ -1382,6 +1382,16 @@ def test_unarchive_is_the_exact_undo_and_belief_reads_see_both_sides(
     _archive(rig, added.doc_id)
     assert _bindings(rig, added.doc_id) == set()
     during = _now(rig)
+    closed_at = rig.relation()["invalidated_at"]
+    assert isinstance(closed_at, datetime)
+    assert (
+        rig.scalar(
+            "SELECT decided_at FROM relation_adjudications"
+            " WHERE outcome = 'retracted_source_removal'"
+        )
+        == closed_at
+    )  # the column and the close event carry one instant
+    assert _believed(rig, closed_at) == 0
     events_before = rig.scalar(
         "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
     )
@@ -1415,6 +1425,7 @@ def test_unarchive_is_the_exact_undo_and_belief_reads_see_both_sides(
         0,
         1,
     )
+    assert _believed(rig, closed_at) == 0  # the exact boundary keeps its answer
     assert (
         _unarchive(rig, added.doc_id).claims_restored,
         rig.relation()["evidence_count"],
@@ -2013,3 +2024,144 @@ def test_fact_work_that_outlived_a_source_archive_is_closed(rig: _LifecycleRig) 
 
     assert _open_works_for(rig) == 0
     assert all(archive for _outcome, archive in _outcomes(rig))
+
+
+def test_a_second_archive_between_a_regain_and_its_recount_stays_archived(
+    rig: _LifecycleRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The returning version's regain is written once, under the lineage lock:
+    an archive that lands after it retires the regained claim for good."""
+    first = rig.observe(source_ref="twice.md", content=_two_sections(_FILLER_SENTENCE))
+    rig.drain()
+    _archive(rig, first.doc_id)
+    second = rig.observe(
+        source_ref="twice.md", content=_two_sections("The kitchen was repainted.")
+    )
+    _drain_except_reconcile(rig)
+    original = rig.lifecycle.stale_for_reextraction
+    archived: list[DocumentArchive] = []
+
+    def archive_after_the_regain(**kwargs: object) -> object:
+        if not archived:
+            archived.append(_archive(rig, first.doc_id))
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        rig.lifecycle, "stale_for_reextraction", archive_after_the_regain
+    )
+
+    rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    )
+
+    assert archived and archived[0].claims_retired >= 1
+    assert _current_claims(rig, second.doc_id) == 0
+    assert _open_works_for(rig) == 0
+
+
+def test_a_pending_source_archive_waits_for_its_cycle_at_reconcile(
+    rig: _LifecycleRig,
+) -> None:
+    """A reconcile that runs while a source archive's observing cycle is open
+    writes nothing; the finalizer settles the archive, and the file coming
+    back repeats the reconcile."""
+    added = _watched(rig, source_ref="moving.md", content=f"{_FACT_SENTENCE}\n")
+    _drain_except_reconcile(rig)
+    cycle = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="moving.md",
+        cycle_id=cycle,
+    )
+
+    outcome = rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    ).outcome
+
+    assert outcome is RunResultOutcome.SUCCEEDED
+    assert _outcomes(rig) == []  # nothing closed before the cycle settles
+    _complete(rig, cycle)
+    _finalize(rig)
+    assert _current_claims(rig, added.doc_id) == 0
+
+    _watched(rig, source_ref="moving.md", content=f"{_FACT_SENTENCE}\n")
+    _archiver(rig).unarchive_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id, only_source=True
+    )
+    rig.drain()
+
+    assert _current_claims(rig, added.doc_id) == 1
+    assert _open_works_for(rig) == 1
+
+
+def test_a_version_removed_while_archived_leaves_the_predecessor_to_unarchive(
+    rig: _LifecycleRig,
+) -> None:
+    """Removing the newest version of an archived living lineage repoints it
+    without reviving the predecessor; unarchive makes the predecessor's
+    testimony current again."""
+    first = rig.observe(source_ref="pair.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    second = rig.observe(source_ref="pair.md", content="Acme opened an office.\n")
+    rig.drain()
+    assert _open_works_for(rig) == 0
+    _archive(rig, first.doc_id)
+
+    rig.deletion.delete_version(version_id=second.version_id)
+    assert (
+        rig.scalar(
+            "SELECT current_version_id FROM documents WHERE doc_id = :d", d=first.doc_id
+        )
+        == first.version_id
+    )
+
+    assert _current_claims(rig, first.doc_id) == 0
+    restored = _unarchive(rig, first.doc_id)
+    assert restored.claims_restored == 1
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+            " WHERE c.version_id = :v AND cl.is_current_testimony",
+            v=first.version_id,
+        )
+        == 1
+    )
+
+
+def test_a_moot_review_no_longer_marks_a_shared_fact_withdrawn(
+    rig: _LifecycleRig,
+) -> None:
+    """A support review on an archived document's claim stops marking a fact
+    another document still supports as withdrawn in the SQL views."""
+    rig.observe(source_ref="kept.md", content=f"{_FACT_SENTENCE}\n")
+    gone = rig.observe(source_ref="gone.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    fact_id = rig.relation()["relation_id"]
+    claim_id = rig.scalar(
+        "SELECT claim_id FROM claims WHERE doc_id = :d", d=gone.doc_id
+    )
+    assert isinstance(fact_id, UUID) and isinstance(claim_id, UUID)
+    rig.review.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=fact_id,
+        claim_id=claim_id,
+        diff={"reason": "reextracted"},
+    )
+    state = (
+        "SELECT support_state_current FROM v_memory_fact_source_qualified"
+        " WHERE fact_id = :f"
+    )
+    assert rig.scalar(state, f=fact_id) == "withdrawn"
+
+    _archive(rig, gone.doc_id)
+
+    assert rig.relation()["invalidated_at"] is None
+    assert rig.scalar(state, f=fact_id) == "current"
+    _unarchive(rig, gone.doc_id)
+    assert rig.scalar(state, f=fact_id) == "withdrawn"

@@ -17544,8 +17544,8 @@
                                       }
                                     }
                                   ],
-                                  "rexpr_list_end": 915,
-                                  "rexpr_list_start": 893
+                                  "rexpr_list_end": 926,
+                                  "rexpr_list_start": 904
                                 },
                                 {
                                   "@": "A_Expr",
@@ -17689,6 +17689,321 @@
                                   },
                                   "rexpr_list_end": 0,
                                   "rexpr_list_start": 0
+                                },
+                                {
+                                  "@": "BoolExpr",
+                                  "args": [
+                                    {
+                                      "@": "SubLink",
+                                      "subLinkId": 0,
+                                      "subLinkType": {
+                                        "#": "SubLinkType",
+                                        "name": "EXISTS_SUBLINK"
+                                      },
+                                      "subselect": {
+                                        "@": "SelectStmt",
+                                        "all": false,
+                                        "fromClause": [
+                                          {
+                                            "@": "JoinExpr",
+                                            "isNatural": false,
+                                            "jointype": {
+                                              "#": "JoinType",
+                                              "name": "JOIN_INNER"
+                                            },
+                                            "larg": {
+                                              "@": "RangeVar",
+                                              "alias": {
+                                                "@": "Alias",
+                                                "aliasname": "moot_claim"
+                                              },
+                                              "inh": true,
+                                              "relname": "claims",
+                                              "relpersistence": "p"
+                                            },
+                                            "quals": {
+                                              "@": "BoolExpr",
+                                              "args": [
+                                                {
+                                                  "@": "A_Expr",
+                                                  "kind": {
+                                                    "#": "A_Expr_Kind",
+                                                    "name": "AEXPR_OP"
+                                                  },
+                                                  "lexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_document"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "deployment_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "name": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "="
+                                                    }
+                                                  ],
+                                                  "rexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_claim"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "deployment_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "rexpr_list_end": 0,
+                                                  "rexpr_list_start": 0
+                                                },
+                                                {
+                                                  "@": "A_Expr",
+                                                  "kind": {
+                                                    "#": "A_Expr_Kind",
+                                                    "name": "AEXPR_OP"
+                                                  },
+                                                  "lexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_document"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "doc_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "name": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "="
+                                                    }
+                                                  ],
+                                                  "rexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_claim"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "doc_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "rexpr_list_end": 0,
+                                                  "rexpr_list_start": 0
+                                                }
+                                              ],
+                                              "boolop": {
+                                                "#": "BoolExprType",
+                                                "name": "AND_EXPR"
+                                              }
+                                            },
+                                            "rarg": {
+                                              "@": "RangeVar",
+                                              "alias": {
+                                                "@": "Alias",
+                                                "aliasname": "moot_document"
+                                              },
+                                              "inh": true,
+                                              "relname": "documents",
+                                              "relpersistence": "p"
+                                            },
+                                            "rtindex": 0
+                                          }
+                                        ],
+                                        "groupDistinct": false,
+                                        "limitOption": {
+                                          "#": "LimitOption",
+                                          "name": "LIMIT_OPTION_DEFAULT"
+                                        },
+                                        "op": {
+                                          "#": "SetOperation",
+                                          "name": "SETOP_NONE"
+                                        },
+                                        "targetList": [
+                                          {
+                                            "@": "ResTarget",
+                                            "val": {
+                                              "@": "A_Const",
+                                              "isnull": false,
+                                              "val": {
+                                                "@": "Integer",
+                                                "ival": 1
+                                              }
+                                            }
+                                          }
+                                        ],
+                                        "whereClause": {
+                                          "@": "BoolExpr",
+                                          "args": [
+                                            {
+                                              "@": "A_Expr",
+                                              "kind": {
+                                                "#": "A_Expr_Kind",
+                                                "name": "AEXPR_OP"
+                                              },
+                                              "lexpr": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "moot_claim"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "deployment_id"
+                                                  }
+                                                ]
+                                              },
+                                              "name": [
+                                                {
+                                                  "@": "String",
+                                                  "sval": "="
+                                                }
+                                              ],
+                                              "rexpr": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "queue"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "deployment_id"
+                                                  }
+                                                ]
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
+                                            },
+                                            {
+                                              "@": "A_Expr",
+                                              "kind": {
+                                                "#": "A_Expr_Kind",
+                                                "name": "AEXPR_OP"
+                                              },
+                                              "lexpr": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "moot_claim"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "claim_id"
+                                                  }
+                                                ]
+                                              },
+                                              "name": [
+                                                {
+                                                  "@": "String",
+                                                  "sval": "="
+                                                }
+                                              ],
+                                              "rexpr": {
+                                                "@": "TypeCast",
+                                                "arg": {
+                                                  "@": "A_Expr",
+                                                  "kind": {
+                                                    "#": "A_Expr_Kind",
+                                                    "name": "AEXPR_OP"
+                                                  },
+                                                  "lexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "queue"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "candidate"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "name": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "->>"
+                                                    }
+                                                  ],
+                                                  "rexpr": {
+                                                    "@": "A_Const",
+                                                    "isnull": false,
+                                                    "val": {
+                                                      "@": "String",
+                                                      "sval": "claim_id"
+                                                    }
+                                                  },
+                                                  "rexpr_list_end": 0,
+                                                  "rexpr_list_start": 0
+                                                },
+                                                "typeName": {
+                                                  "@": "TypeName",
+                                                  "names": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "uuid"
+                                                    }
+                                                  ],
+                                                  "pct_type": false,
+                                                  "setof": false,
+                                                  "typemod": -1
+                                                }
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
+                                            },
+                                            {
+                                              "@": "NullTest",
+                                              "arg": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "moot_document"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "archived_at"
+                                                  }
+                                                ]
+                                              },
+                                              "argisrow": false,
+                                              "nulltesttype": {
+                                                "#": "NullTestType",
+                                                "name": "IS_NOT_NULL"
+                                              }
+                                            }
+                                          ],
+                                          "boolop": {
+                                            "#": "BoolExprType",
+                                            "name": "AND_EXPR"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "boolop": {
+                                    "#": "BoolExprType",
+                                    "name": "NOT_EXPR"
+                                  }
                                 }
                               ],
                               "boolop": {
@@ -17736,7 +18051,7 @@
                 }
               ]
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -49655,5 +49970,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "432e82db9d0bf55427df98879fec9324a75c9a938b2cd1e42476ad7103477291"
+  "surface_manifest_hash": "8e526b54aca2bbac954a0b008156ff1ccb7bf498a9e1b384bd450ccd81b6301d"
 }

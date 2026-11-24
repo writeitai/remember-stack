@@ -123,6 +123,14 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
             ),
             {"cycle": uuid4(), "d": source.doc_id},
         )
+        # D135 could delete a lineage whose versions were all removed earlier
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = deleted_at - interval '1 hour'"
+                " WHERE doc_id = :d"
+            ),
+            {"d": source.doc_id},
+        )
         connection.execute(
             text(
                 "INSERT INTO forget_manifests (forget_id, deployment_id, doc_id,"
@@ -147,6 +155,15 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     assert rows[caller.doc_id]["archived_by"] == "caller"
     assert rows[caller.doc_id]["deleted_at"] is None
     assert rows[source.doc_id]["archived_by"] == "source"
+    assert (
+        _scalar(
+            engine,
+            "SELECT count(*) FROM document_versions"
+            " WHERE doc_id = :d AND deleted_at IS NULL",
+            d=source.doc_id,
+        )
+        == 0
+    )  # an earlier version tombstone is kept
     assert rows[forgotten.doc_id]["archived_at"] is None  # the forget slice's
     assert rows[forgotten.doc_id]["deleted_at"] is not None
     assert (

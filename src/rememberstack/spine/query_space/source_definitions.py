@@ -116,6 +116,9 @@ from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
 from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
     DOCUMENTS_INVENTORY_DDL,
 )
+from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+    FACT_SOURCE_ARCHIVE_DDL,
+)
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -233,6 +236,7 @@ def _authored_parts() -> tuple[
         MEMORY_V1_TAG_VIEW_DDL,
         DOCUMENTS_INVENTORY_DDL,
         CROSSREFS_ARCHIVE_DDL,
+        FACT_SOURCE_ARCHIVE_DDL,
     ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):

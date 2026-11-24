@@ -52,6 +52,7 @@ from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from rememberstack.core.cursor_scope import assert_cursor_scope
 from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.core.document_filters import any_live_document_matches
+from rememberstack.core.document_filters import archived_lineage_hidden
 from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.document_filters import is_empty
@@ -4488,6 +4489,11 @@ class QueryEngine:
                 )
                 extra.update(document_parameters)
                 statement = text(f"{statement.text}  AND {occurrence_sql}\n")
+            if current_only:
+                # D159: a source archive's claims stay current until its
+                # cycle settles; they are still hidden unless asked for.
+                hidden = archived_lineage_hidden(filters=documents, doc="c.doc_id")
+                statement = text(f"{statement.text}  AND {hidden}\n")
         rows: list[RowMapping] = []
         occurrences: dict[UUID, list[ClaimOccurrence]] = {}
         # Multiple chunks are one answer, so they must observe one database
@@ -4575,11 +4581,7 @@ class QueryEngine:
         extra: dict[str, Any] = {}
         # D159: an archived document's passage confirms only on request (the
         # documents filter decides when there is one).
-        predicates: list[str] = [
-            "NOT EXISTS (SELECT 1 FROM documents AS archived"
-            " WHERE archived.deployment_id = ch.deployment_id"
-            " AND archived.doc_id = ch.doc_id AND archived.archived_at IS NOT NULL)"
-        ]
+        predicates: list[str] = [archived_lineage_hidden(filters=None, doc="ch.doc_id")]
         if documents is not None:
             version_sql, document_parameters = live_version_matches(
                 filters=documents, version="ch.version_id", prefix="documents_"
@@ -6537,6 +6539,11 @@ def _confirm_claims_in_scope_statement(
             current_testimony=current_testimony,
             prefix="documents_",
         )
+    if current_only:
+        # D159: a source archive's claims stay current until its cycle
+        # settles; they are still hidden unless asked for.
+        hidden = archived_lineage_hidden(filters=documents, doc="c.doc_id")
+        selected = f"({selected}) AND {hidden}"
     coverage_column = ", scope.coverage" if entity_scoped else ""
     coverage_ctes = (
         "WITH RECURSIVE "
