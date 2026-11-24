@@ -56,10 +56,9 @@ class _Catalog:
     def record(self, *, deployment_id: UUID, forget_id: UUID) -> Forget:
         return self.record_value
 
-    reapplied: list[bool] = field(default_factory=list)
+    stale: list[tuple[UUID, ...]] = field(default_factory=list)
 
-    def sweep_postgres(self, *, forget: Forget, reapply: bool = False) -> SweepFindings:
-        self.reapplied.append(reapply)
+    def sweep_postgres(self, *, forget: Forget) -> SweepFindings:
         return SweepFindings(
             removed=self.removed.pop(0),
             object_keys=(
@@ -75,6 +74,12 @@ class _Catalog:
 
     def current_series(self, *, forget: Forget) -> str:
         return self.series
+
+    def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
+        return (_COMPILED_ID,)
+
+    def mark_stale(self, *, forget: Forget, artifact_ids: tuple[UUID, ...]) -> None:
+        self.stale.append(artifact_ids)
 
     def clear_k_pending(
         self, *, forget: Forget, artifact_ids: tuple[UUID, ...]
@@ -328,7 +333,8 @@ def test_a_reapply_marks_the_recorded_pages_on_its_first_sweep_only() -> None:
     second = _run(rig, {**_FIRST, "reapply": True})
     assert second is not None and second["reapply"] is True
     assert _run(rig, second) is None
-    assert rig.catalog.reapplied == [True, False]
+    assert rig.catalog.stale == [(_COMPILED_ID,)]
+    assert rig.knowledge.dropped == [(_COMPILED_ID,), ()]
 
 
 def test_authored_pages_make_the_forget_wait_for_the_k_sync() -> None:

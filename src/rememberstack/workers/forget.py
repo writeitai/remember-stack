@@ -312,6 +312,7 @@ class ForgetHandler:
                     self._retry(deployment_id=work.deployment_id, payload=payload),
                 )
             )
+        # Residue found, or the first sweep: look again after a quiet period.
         return HandlerOutcome(
             follow_up=(self._next(deployment_id=work.deployment_id, payload=payload),)
         )
@@ -327,9 +328,7 @@ class ForgetHandler:
         # A restored database, or an upgraded D74 forget, still holds the
         # lineage: hide it again (finish its cascade) before sweeping.
         self._service.rehide(forget=forget)
-        findings = self._catalog.sweep_postgres(
-            forget=forget, reapply=payload.reapply and payload.first
-        )
+        findings = self._catalog.sweep_postgres(forget=forget)
         found = findings.removed
         if findings.profile_entity_ids:
             try:
@@ -359,10 +358,19 @@ class ForgetHandler:
                 keep=live,
             )
             found |= removed > 0
+        if findings.fixture_keys:
+            # Deployment-wide K plan transcripts: purged, never counted.
+            for purger in self._object_purgers:
+                purger.purge_objects(keys=findings.fixture_keys, prefixes=())
         found |= self._projection_purger.erase_document(
             deployment_id=forget.deployment_id, doc_id=forget.doc_id
         )
         compiled = findings.compiled_artifact_ids
+        if payload.reapply and payload.first:
+            # A restored K repository may hold the pages the record names;
+            # they are deleted and rebuilt, never kept as owner edits.
+            compiled = self._catalog.collected_artifact_ids(forget=forget)
+            self._catalog.mark_stale(forget=forget, artifact_ids=compiled)
         erasure = self._knowledge.erase(forget=forget, drop_artifact_ids=compiled)
         if compiled:
             self._catalog.clear_k_pending(forget=forget, artifact_ids=compiled)

@@ -74,12 +74,11 @@ class _Catalog:
     def record(self, **_: object) -> Forget:
         return _FORGET
 
-    def sweep_postgres(self, *, forget: Forget, reapply: bool = False) -> SweepFindings:
-        # A reapply's first sweep marks the recorded compiled page again.
+    def sweep_postgres(self, *, forget: Forget) -> SweepFindings:
         return SweepFindings(
             removed=False,
             object_keys=(_UPLOAD_KEY, _OWN_KEY),
-            compiled_artifact_ids=(_ARTIFACT_ID,) if reapply else (),
+            compiled_artifact_ids=(),
             profile_entity_ids=(),
         )
 
@@ -88,6 +87,12 @@ class _Catalog:
 
     def current_series(self, **_: object) -> str:
         return ""
+
+    def collected_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
+        return (_ARTIFACT_ID,)
+
+    def mark_stale(self, **_: object) -> None:
+        return None
 
     def clear_k_pending(self, **_: object) -> None:
         return None

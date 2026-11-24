@@ -189,6 +189,10 @@ def _convert(*, connection, row) -> None:  # noqa: ANN001
         "object_keys": sorted(manifest.get("object_keys", ())),
     }
     complete = row["status"] == "complete"
+    if not complete:
+        # D74 may have scrubbed the citations before it rebuilt the pages or
+        # erased their history: the first sweeps rebuild every one it named.
+        collected["k_pending"] = collected["k_artifact_ids"]
     requested_at = manifest.get("requested_at") or row["prepared_at"]
     connection.execute(
         text("""
