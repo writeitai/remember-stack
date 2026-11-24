@@ -61,6 +61,7 @@ from rememberstack.model import PipelineStage
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.systemone import SystemOnePort
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
@@ -1005,7 +1006,8 @@ class SelfHostProfile:
         self._knowledge_rebuilder = knowledge_rebuilder
         self._systemone_settings: TypeSafeSettings | None = None
         self._systemone_openrouter: OpenRouterSettings | None = None
-        if FactAdjudicationSettings.model_validate({}).engine == "jev":
+        fact_settings = FactAdjudicationSettings.model_validate({})
+        if fact_settings.engine == "jev":
             openrouter = _jev_openrouter_settings(
                 model_provider=model_provider,
                 model_provider_settings=model_provider_settings,
@@ -1014,8 +1016,42 @@ class SelfHostProfile:
             validate_systemone_routing(
                 settings=systemone_settings, openrouter=openrouter
             )
+            if (
+                openrouter.zdr
+                and fact_settings.fallback_to_prompt
+                and not isinstance(model_provider, OpenRouterModelProvider)
+            ):
+                # The prompt fallback resends the same facts through the
+                # deployment's chat provider; only the OpenRouter provider
+                # built from these settings is known to carry ZDR.
+                raise ConfigurationError(
+                    "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT=true under"
+                    " REMEMBERSTACK_OPENROUTER_ZDR needs the deployment's"
+                    " OpenRouter model provider, so the fallback stays on"
+                    " zero-data-retention endpoints"
+                )
             self._systemone_settings = systemone_settings
             self._systemone_openrouter = openrouter
+
+    def _jev_systemone_provider(
+        self, *, fact_settings: FactAdjudicationSettings
+    ) -> SystemOnePort | None:
+        """Build Jev's System One client from the settings checked at construction.
+
+        A process whose engine setting changed to ``jev`` after the profile was
+        built is refused: its routing and retention were never checked.
+        """
+        if fact_settings.engine != "jev":
+            return None
+        if self._systemone_settings is None:
+            raise ConfigurationError(
+                "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE became jev after this"
+                " profile was built; build a new profile so the Jev routing and"
+                " zero-data-retention checks run"
+            )
+        return build_systemone_provider(
+            settings=self._systemone_settings, openrouter=self._systemone_openrouter
+        )
 
     @classmethod
     def from_settings(
@@ -1884,13 +1920,8 @@ class SelfHostProfile:
                     engine=self._engine,
                     model_provider=self._model_provider,
                     settings=fact_settings,
-                    systemone_provider=(
-                        build_systemone_provider(
-                            settings=self._systemone_settings or TypeSafeSettings(),
-                            openrouter=self._systemone_openrouter,
-                        )
-                        if fact_settings.engine == "jev"
-                        else None
+                    systemone_provider=self._jev_systemone_provider(
+                        fact_settings=fact_settings
                     ),
                 ),
                 profile_refresher=profile_refresher,
@@ -1906,13 +1937,8 @@ class SelfHostProfile:
                     engine=self._engine,
                     model_provider=self._model_provider,
                     settings=fact_settings,
-                    systemone_provider=(
-                        build_systemone_provider(
-                            settings=self._systemone_settings or TypeSafeSettings(),
-                            openrouter=self._systemone_openrouter,
-                        )
-                        if fact_settings.engine == "jev"
-                        else None
+                    systemone_provider=self._jev_systemone_provider(
+                        fact_settings=fact_settings
                     ),
                 ),
                 profile_refresher=profile_refresher,

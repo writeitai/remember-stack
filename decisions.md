@@ -6485,7 +6485,7 @@ to prevent cross-engine attempt contamination. All generation identity call site
 (`NormalizeRelationsHandler`/`AdjudicateObservationsHandler`, `FactAdjudicator.prepare` and `apply`,
 `selfhost._expected_components`, and `work_ledger` barrier/enqueue checks) read unified active version
 helpers (`active_adjudicator_versions`, `active_flush_version`). Metered on tier `fact_adjudication_jev`
-with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens).
+with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens on the direct `typesafe` route; the `openrouter` route records OpenRouter's billed `usage.cost`, see the 2026-11-24 clarification above).
 Replacing generative claim extraction or section summaries with System One was rejected
 because System One cannot generate freeform prose; placing the engine behind a Cloud
 proxy was rejected per the D60/D61 library boundary.

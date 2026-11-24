@@ -74,7 +74,8 @@ System One SDK README, and the Decisions API reference:
 - **No `only` allowlist.** Jev is served only by TypeSafe on OpenRouter, so
   `only: ["typesafe"]` would restrict nothing that `zdr: true` does not
   already restrict, since `zdr` selects `typesafe/zdr` among TypeSafe's two
-  endpoints. It would also make every call fail if OpenRouter renamed the
+  endpoints (as far as the account or key policy counts only true ZDR
+  endpoints; see Unverified below). It would also make every call fail if OpenRouter renamed the
   provider slug. Add an allowlist only if another host starts serving Jev.
 - **Cost.** On the OpenRouter route the billed `usage.cost` is required, the
   same contract as OpenRouter chat. A response without it raises

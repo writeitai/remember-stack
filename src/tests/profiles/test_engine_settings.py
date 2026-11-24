@@ -337,3 +337,74 @@ def test_readiness_keeps_its_settings_source_when_settings_are_omitted(
 
     assert bindings == _model_bindings()
     assert bindings["openrouter_max_completion_tokens"] == "32000"
+
+
+def test_jev_handlers_refuse_an_engine_switched_after_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile built in prompt mode never builds unchecked Jev clients."""
+    from unittest.mock import MagicMock
+
+    import sqlalchemy
+
+    from rememberstack.adapters import OpenRouterModelProvider
+    from rememberstack.adapters.typesafe import ConfigurationError
+    from rememberstack.model import PipelineStage
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "prompt")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_API_KEY", "process-typesafe-key")
+    engine = sqlalchemy.create_engine("postgresql+psycopg://unused@127.0.0.1:1/none")
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="child-key", zdr=True)
+    )
+    try:
+        profile = SelfHostProfile(
+            settings=SelfHostSettings(deployment_id=UUID(int=151)),
+            engine=engine,
+            raw_store=MagicMock(),
+            artifact_store=MagicMock(),
+            corpusfs_store=MagicMock(),
+            model_provider=provider,
+        )
+        monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+        for stage in (
+            PipelineStage.NORMALIZE_RELATIONS,
+            PipelineStage.ADJUDICATE_OBSERVATIONS,
+        ):
+            with pytest.raises(ConfigurationError, match="became jev"):
+                profile._handler(stage=stage)  # noqa: SLF001
+    finally:
+        provider._client.close()  # noqa: SLF001
+        engine.dispose()
+
+
+def test_zdr_prompt_fallback_needs_the_deployments_openrouter_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prompt fallback cannot resend Jev content through another provider."""
+    from unittest.mock import MagicMock
+
+    import sqlalchemy
+
+    from rememberstack.adapters.typesafe import ConfigurationError
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")
+    monkeypatch.setenv("REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT", "true")
+    engine = sqlalchemy.create_engine("postgresql+psycopg://unused@127.0.0.1:1/none")
+    try:
+        with pytest.raises(ConfigurationError, match="FALLBACK_TO_PROMPT"):
+            SelfHostProfile(
+                settings=SelfHostSettings(deployment_id=UUID(int=152)),
+                engine=engine,
+                raw_store=MagicMock(),
+                artifact_store=MagicMock(),
+                corpusfs_store=MagicMock(),
+                model_provider=MagicMock(),
+                model_provider_settings=OpenRouterSettings(
+                    api_key="child-key", zdr=True
+                ),
+            )
+    finally:
+        engine.dispose()

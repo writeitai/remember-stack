@@ -240,8 +240,12 @@ To preserve the strict architectural separation where `spine` never imports
    class ConfigurationError(ValueError):
        """Raised when required TypeSafe configuration is missing or invalid."""
    ```
-   If `TypeSafeSettings.api_key` is missing or blank at initialization,
-   `TypeSafeSystemOneClient.__init__` immediately raises `ConfigurationError`.
+   On the direct `typesafe` route, if `TypeSafeSettings.api_key` is missing or
+   blank, `TypeSafeSystemOneClient.__init__` raises `ConfigurationError`; on the
+   `openrouter` route the same check applies to the deployment's OpenRouter
+   key. The key check runs when a Jev handler builds its client, not when the
+   profile is built; the profile-time checks cover routing and retention
+   (`validate_systemone_routing`).
 3. **Spine (`src/rememberstack/spine/fact_adjudication.py`):**
    `FactAdjudicator.__init__` accepts:
    - `engine: Engine`
