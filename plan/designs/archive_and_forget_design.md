@@ -89,8 +89,8 @@ undo a caller's archive; a changed version does (§2.3).
   whose processing the archive interrupted are re-enqueued; completed work is reused (D56).
   Unarchive makes no model call except the profile refresh. Answer: `doc_id`,
   `claims_restored`, `facts_reopened`.
-- **Identical bytes re-sent** to an archived lineage are a no-op (whatever is a no-op for a
-  live document, D55); the document stays archived. A full resync never undoes an archive.
+- **Identical bytes re-sent** to a caller-archived lineage are a no-op (whatever is a no-op for
+  a live document, D55); the document stays archived. A full resync never undoes an archive.
 - **A changed version** of an archived document (caller or source archive alike) is ordinary
   ingest: the lineage is live again
   and the new version is processed with D56 reuse, which may draw on the archived versions. A
@@ -232,7 +232,9 @@ CREATE TABLE forgets (
   version_ids           uuid[] NOT NULL,        -- every version of the lineage at hide
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
+  k_artifact_ids        uuid[] NOT NULL DEFAULT '{}',  -- compiled pages to delete, recorded before the SQL step; emptied once the K step succeeds
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',  -- pending owner redaction; emptied on completion
+  last_error            text,                   -- content-free code of the last failed sweep, for visibility
   status                forget_status NOT NULL DEFAULT 'erasing',
   requested_at          timestamptz NOT NULL DEFAULT now(),
   completed_at          timestamptz,
@@ -257,7 +259,7 @@ at registration under the lineage row lock.
 - **Default:** a match is refused with 409 `document_forgotten` (`forget_id`, `forgotten_at`).
   Connectors and syncs log it and skip the item.
 - **`allow_forgotten=true` on that one request**, once the matching record is `complete`
-  (before that, 409 `forget_in_progress`): the content is ingested as an ordinary ingest
+  (before that, 409 `forget_not_complete`): the content is ingested as an ordinary ingest
   would, and in the same transaction the record releases only what this request matched: the
   content hash it carries (and the source identity, if the request carries it). The record is
   deleted when nothing is left. So adding back one forgotten version leaves the lineage's other
@@ -320,7 +322,7 @@ description telling the agent to confirm with the user first (omitted by `--read
 |---|---|
 | 404 `document_not_found` | unknown or forgotten `doc_id` on any document route |
 | 409 `document_forgotten` | ingest of forgotten content without `allow_forgotten` |
-| 409 `forget_in_progress` | `allow_forgotten` while the matching record is not yet `complete` |
+| 409 `forget_not_complete` | `allow_forgotten` while the matching record is not yet `complete` |
 
 ## 4. Removed
 

@@ -54,7 +54,7 @@ re-extracting or re-embedding anything. The Czech-legislation product that motiv
 | `reconcile` at `reconcile-2026.07:claims` | claims | The claims tail's reconcile (§4.2). |
 | `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `label_relation`, `review_fact_windows` | facts | |
 | `reconcile` at `reconcile-2026.07` | facts | The full reconcile, unchanged. |
-| `hard_forget` | — | Never gated. |
+| `forget` | — | Never gated. |
 
 Plane-K stages consume the facts layer and run only while facts are served (§7.6).
 

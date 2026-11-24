@@ -210,8 +210,8 @@ CREATE TYPE pipeline_component     AS ENUM (
   'extractor','grounder','resolver','normalizer','adjudicator','embedder','fact_labeler',
   'profile_summarizer','corpus_publisher','knowledge_planner',
   'knowledge_writer','knowledge_reflector','knowledge_linter','judge','forgetter');
-CREATE TYPE processing_target      AS ENUM ('document','document_section','chunk','claim','relation','observation','entity','knowledge_artifact','document_version','knowledge_dispatch','corpus_publication');
-CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','publish_corpus','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget','review_fact_windows');
+CREATE TYPE processing_target      AS ENUM ('forget','document','document_section','chunk','claim','relation','observation','entity','knowledge_artifact','document_version','knowledge_dispatch','corpus_publication');
+CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','publish_corpus','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','forget','review_fact_windows');
 CREATE TYPE processing_status      AS ENUM ('pending','running','succeeded','failed','dead_letter','skipped');
 -- D67: only plane-E routes use operational lanes. K/P (and other scheduled aggregate) jobs
 -- represent their single unlaned route with SQL NULL, never a synthetic third enum value.
@@ -452,7 +452,9 @@ CREATE TABLE forgets (
   version_ids           uuid[] NOT NULL,        -- every version of the lineage at hide
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
   source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
+  k_artifact_ids        uuid[] NOT NULL DEFAULT '{}',  -- compiled pages to delete, recorded before the SQL step; emptied once the K step succeeds
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',  -- pending owner redaction; emptied on completion
+  last_error            text,                   -- content-free code of the last failed sweep, for visibility
   status                forget_status NOT NULL DEFAULT 'erasing',
   requested_at          timestamptz NOT NULL DEFAULT now(),
   completed_at          timestamptz,

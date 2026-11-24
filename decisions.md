@@ -8563,7 +8563,9 @@ than the quiet period without its lease is outside the guarantee.
 **Supersedes.** D135 (public delete removed; its cascade, episode identity and late-work
 retirement survive as archive's cascade). D74 (manifest port and store, global barrier and
 drain, readiness replay, authored-page refusal, permanent guard; its S55 contract and erasure
-scope survive). D75's manifest-root transfer. D147's `forget_manifest_bucket_name`. D155's forget
+scope survive). D75's manifest-root transfer. D147's `forget_manifest_bucket_name`. D152's
+managed storage-capture binding (three role filesystems remain: raw, artifacts, corpus; the cloud
+capture adapter changes with it). D155's forget
 barrier, restore replay and stop-and-remount clauses.
 
 **Design.** [Archive and forget](plan/designs/archive_and_forget_design.md).
