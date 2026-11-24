@@ -1277,7 +1277,21 @@ def test_embedding_provider_only_parses_env_shapes(
 
 @pytest.mark.parametrize(
     "configured",
-    ('[" "]', '[""]', '["nebius", " "]', "[1]", '["nebius", null]', "[]", " , "),
+    (
+        '[" "]',
+        '[""]',
+        '["nebius", " "]',
+        "[1]",
+        '["nebius", null]',
+        "[]",
+        " , ",
+        "null",
+        '""',
+        '" "',
+        '"nebius"',
+        "1",
+        "true",
+    ),
 )
 def test_malformed_embedding_allowlist_is_refused_not_dropped(
     monkeypatch: pytest.MonkeyPatch, configured: str

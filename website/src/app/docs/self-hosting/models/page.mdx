@@ -188,14 +188,24 @@ serving the model. The image-description converter has its own switch,
 [converters](/docs/self-hosting/converters).
 
 The request flags alone do not guarantee strict zero retention. OpenRouter
-also applies your account's Safety Retention policy: endpoints that keep
-flagged content for safety review still count as zero-data-retention unless
-the account, or the guardrail on the API key, excludes them, and self-serve
-accounts allow them by default. No request field turns this off. If you need
-strict zero retention, set your OpenRouter account, or the guardrail on every
-key the engine uses, to ZDR only with Safety Retention excluded, and confirm
-the setting before you send customer content. See OpenRouter's
+combines `zdr: true` with your account's policy (or the policy of the
+guardrail on the API key), and that policy decides whether Safety Retention
+endpoints also count. A Safety Retention endpoint may keep the prompt and
+response of any request, flagged or not, to detect and prevent abuse.
+OpenRouter sets this choice separately for **Google models** and **All other
+models**. The default models (Qwen embeddings, the OpenAI and Z.ai chat
+models and the image-description model) are all in **All other models**; if
+you configure a Google model for any role, the Google group applies too. Self-serve accounts allow Safety Retention by
+default, and no request field turns it off. If you need strict zero
+retention, set your OpenRouter account, or the guardrail on every key the
+engine uses, to ZDR only with Safety Retention excluded for each group your
+models fall in, and confirm the setting before you send customer content.
+See OpenRouter's
 [ZDR guide](https://openrouter.ai/docs/guides/features/zdr#allowing-or-excluding-safety-retention).
+
+With Docker Compose, put the whole policy in the project `.env`, or export
+all of it in the shell that runs Compose, and check the result with
+`docker compose config`.
 
 An explicit Flex capacity rejection can arrive inside HTTP 200 and include
 an ID even though processing did not start. When that error carries neither

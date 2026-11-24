@@ -182,15 +182,24 @@ call that carries customer content can be held to both.
   retention guarantee does not depend on how OpenRouter treats `only` or
   `order` during failover.
 - The request flags are necessary but not sufficient for strict zero
-  retention. OpenRouter applies the account's (or the API key's guardrail's)
-  Safety Retention policy on top of a request's `zdr: true`: endpoints that
-  keep flagged content for safety review still count as ZDR unless the account
-  or guardrail opts out of Safety Retention, and self-serve accounts allow it by
-  default. A deployment that requires strict zero retention therefore also sets
-  the OpenRouter account, or the guardrail on every API key it uses, to ZDR only
-  with Safety Retention excluded, and verifies that setting before sending
-  customer content. No request field can turn it off, so the engine cannot
-  enforce it; it is an operator obligation, stated here and in the public docs.
+  retention. OpenRouter combines a request's `zdr: true` with the account's
+  (or the API key's guardrail's) policy, and that policy decides whether
+  Safety Retention endpoints also count. A Safety Retention endpoint may keep
+  the prompt and response of any request, flagged or not, to detect and
+  prevent abuse; it is not zero retention. The choice is made separately for
+  two model groups, **Google models** and **All other models** (guardrail
+  fields `allow_safety_retention_google` and `allow_safety_retention_other`).
+  Every default model this engine calls through OpenRouter (Qwen
+  embeddings, the OpenAI and Z.ai chat models, the image-description model)
+  is in **All other models**; a Google model in any role adds the Google
+  group. Self-serve
+  accounts allow Safety Retention in both groups by default. A deployment
+  that requires strict zero retention therefore sets the account, or the
+  guardrail on every API key it uses, to ZDR only with Safety Retention
+  excluded for each group its models fall in, and verifies that setting before
+  sending customer content. No request field can turn Safety Retention off, so
+  the engine cannot enforce it; it is an operator obligation, stated here and
+  in the public docs.
 - Embedding host allowlist, `embedding_provider_only: list[str] | None` (env
   `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`, comma-separated or JSON
   slugs, parsed like `chat_provider_only`). It bounds price and hosts the way

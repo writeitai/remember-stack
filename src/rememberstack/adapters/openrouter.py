@@ -10,6 +10,7 @@ from pathlib import Path
 import random
 import re
 import time
+from typing import Annotated
 from typing import Any
 from typing import cast
 from typing import Final
@@ -23,6 +24,7 @@ from pydantic import model_validator
 from pydantic import ValidationError
 from pydantic import ValidationInfo
 from pydantic_settings import BaseSettings
+from pydantic_settings import NoDecode
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.adapters.generation_recorder import GenerationOutcome
@@ -83,6 +85,16 @@ def _parse_provider_name_list(*, value: object, field_name: str) -> object:
                     f"{field_name} must be comma-separated names or a JSON list"
                 ) from error
         else:
+            try:
+                json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+            else:
+                # ``null``, ``""``, ``1``, ``true``: a JSON scalar is never a
+                # host list, and reading it as "unset" would drop an allowlist.
+                raise ValueError(
+                    f"{field_name} must be comma-separated names or a JSON list"
+                )
             value = [part.strip() for part in stripped.split(",") if part.strip()]
     if not isinstance(value, list) or not value:
         raise ValueError(f"{field_name} must be a non-empty list of strings")
@@ -138,11 +150,14 @@ class OpenRouterSettings(BaseSettings):
     Alone, fallback may leave this list; pair it with
     ``embedding_provider_only`` to keep fallback inside the approved hosts.
     """
-    embedding_provider_only: list[str] | None = None
+    embedding_provider_only: Annotated[list[str] | None, NoDecode] = None
     """Hard OpenRouter embedding provider allowlist (``provider.only``).
 
     Env: ``REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`` as a
-    comma-separated list of *provider slugs*, e.g. ``nebius,deepinfra``. No
+    comma-separated list of *provider slugs*, e.g. ``nebius,deepinfra``, or a
+    JSON list. Decoding is explicit (``NoDecode``): only an absent or blank
+    value means unset, and a JSON scalar such as ``null`` or ``""`` is
+    refused instead of silently dropping the allowlist. No
     request may reach a host outside the list. With two or more hosts,
     OpenRouter picks among them and falls back within them on failure; with
     one host, fallback is off. An ``embedding_provider_order`` paired with it

@@ -62,11 +62,21 @@ OpenRouter picks between the two hosts and fails over only between them, and
 `zdr`/`data_collection` filter every candidate, fallbacks included. SiliconFlow
 is excluded: an order-only shortlist let production traffic fail over to it.
 Confirm that each listed host is ZDR for this model on OpenRouter before
-changing the list, and keep the OpenRouter account (or the guardrail on every
-API key the deployment uses) set to ZDR only with Safety Retention excluded:
-the request flag follows the account's Safety Retention policy, self-serve
-accounts allow Safety Retention by default, and no request field can turn it
-off. Verify that setting before sending customer content. Image
+changing the list. Also set the OpenRouter account (or the guardrail on every
+API key the deployment uses) to ZDR only with Safety Retention excluded for
+**All other models**, the group `qwen/qwen3-embedding-8b` belongs to (and for
+**Google models** too if any role uses a Google model). The request flag
+follows that account policy: a Safety Retention endpoint may keep any
+request, flagged or not, for abuse prevention, self-serve accounts allow it
+by default, and no request field can turn it off. Verify the setting for each
+group and key before sending customer content.
+
+With Docker Compose, keep the whole policy in the project `.env` (Compose
+reads it both for its own substitution and as the services' `env_file`), or
+export all of it in the shell that runs Compose; `compose.yaml` passes the
+allowlist, the order, `REMEMBERSTACK_OPENROUTER_ZDR` and
+`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` through explicitly. Check the result
+with `docker compose config` before starting the services. Image
 descriptions need `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` separately.
 
 ## Policy (compose / smoke / local)

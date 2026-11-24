@@ -72,8 +72,13 @@ therefore also be set to ZDR-only; the request flag cannot turn that off.
    a silent behavior change.
 3. **Add a hard embedding allowlist mirroring `chat_provider_only`, plus extend
    `zdr` to embeddings (chosen).** Same parsing, same "an order must name the
-   same hosts exactly once" rule as chat. Existing settings keep their exact
-   payloads when the new ones are unset.
+   same hosts exactly once" rule as chat. A valid existing configuration with
+   ZDR off keeps its exact payloads when the new settings are unset. A
+   deployment that already sets `REMEMBERSTACK_OPENROUTER_ZDR=true` gets
+   `zdr: true` and `data_collection: deny` on its embedding requests too,
+   without setting anything new; that is the intended fix. A malformed
+   provider list (a blank or non-string entry, or a JSON scalar for the
+   allowlist) is now refused at startup instead of being read as unset.
 
 For the allowlist on its own, chat sends `allow_fallbacks: false`, which pins
 each request to the one host OpenRouter picks. For embeddings that would make
