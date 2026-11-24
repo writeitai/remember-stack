@@ -2,8 +2,10 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import hashlib
 from pathlib import Path
 import subprocess
+from uuid import UUID
 
 import pytest
 
@@ -14,7 +16,8 @@ from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import KGitRemotePort
 
 _TOKEN = "59100000-0000-0000-0000-00000000aaaa"
-_COMPILED = frozenset({"K1/compiled.md"})
+_ARTIFACT = UUID("59100000-0000-0000-0000-00000000bbbb")
+_COMPILED = {"K1/compiled.md": _ARTIFACT}
 
 
 class _Lease:
@@ -29,6 +32,11 @@ class _Lease:
         yield
 
 
+def _none(ids: frozenset[UUID]) -> dict[UUID, str | None]:
+    """No page has an accepted rebuild."""
+    return dict.fromkeys(ids)
+
+
 def _repository(*, root: Path) -> Path:
     """Renamed history citing the token, a clean current page and a control."""
     repository = root / "knowledge"
@@ -41,6 +49,7 @@ def _repository(*, root: Path) -> Path:
     legacy.parent.mkdir(parents=True)
     legacy.write_text(f"cites {_TOKEN} v1\n", encoding="utf-8")
     unrelated.write_text("unrelated v1\n", encoding="utf-8")
+    (repository / "K1/:colon.md").write_text("a legal name\n", encoding="utf-8")
     _commit(repository=repository, message="initial")
     legacy.write_text(f"cites {_TOKEN.upper()} v2\n", encoding="utf-8")
     unrelated.write_text("unrelated v2\n", encoding="utf-8")
@@ -50,6 +59,15 @@ def _repository(*, root: Path) -> Path:
     affected.write_text("redacted current page\n", encoding="utf-8")
     _commit(repository=repository, message="owner redacts")
     _git("-C", str(repository), "tag", "-a", "v1", "-m", "release", "HEAD~1")
+    # An ordinary clone's remote-tracking refs, including the symbolic HEAD.
+    _git("-C", str(repository), "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(
+        "-C",
+        str(repository),
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    )
     return repository
 
 
@@ -69,15 +87,23 @@ def test_erase_rewrites_only_history_that_names_the_document(tmp_path: Path) -> 
     (repository / "K1/unrelated.md").write_text("uncommitted edit\n", encoding="utf-8")
 
     first = purge.erase(
-        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
+        needles=(_TOKEN,),
+        compiled=_COMPILED,
+        drop=frozenset(),
+        accepted=_none,
+        lease=lease.hold(),
     )
     second = purge.erase(
-        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
+        needles=(_TOKEN,),
+        compiled=_COMPILED,
+        drop=frozenset(),
+        accepted=_none,
+        lease=lease.hold(),
     )
 
     assert (first.removed, first.blocking_paths) == (True, ())
     assert (second.removed, second.blocking_paths) == (False, ())
-    assert lease.entered == 1
+    assert lease.entered == 2  # every pass verifies and collects garbage
     assert _everything(repository).count(_TOKEN.encode()) == 0
     assert _everything(repository).lower().count(_TOKEN.encode()) == 0
     assert (repository / "K1/affected.md").read_text(encoding="utf-8") == (
@@ -110,15 +136,23 @@ def test_a_current_citation_blocks_and_keeps_its_history(tmp_path: Path) -> None
     lease = _Lease()
 
     first = _adapter(repository).erase(
-        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
+        needles=(_TOKEN,),
+        compiled=_COMPILED,
+        drop=frozenset(),
+        accepted=_none,
+        lease=lease.hold(),
     )
     second = _adapter(repository).erase(
-        needles=(_TOKEN,), compiled_paths=_COMPILED, drop_paths=(), lease=lease.hold()
+        needles=(_TOKEN,),
+        compiled=_COMPILED,
+        drop=frozenset(),
+        accepted=_none,
+        lease=lease.hold(),
     )
 
     assert (first.removed, first.blocking_paths) == (True, ("K1/affected.md",))
     assert (second.removed, second.blocking_paths) == (False, ("K1/affected.md",))
-    assert lease.entered == 1
+    assert lease.entered == 2  # every pass verifies and collects garbage
     assert _log(repository, "K1/legacy.md") == 0
     assert _log(repository, "K1/affected.md") == 3
     assert _output(
@@ -137,7 +171,7 @@ def test_compiled_pages_form_a_parentless_snapshot_and_drop_without_trace(
     (checkout / "K1/compiled.md").write_text(f"compiled {_TOKEN}\n", encoding="utf-8")
     (checkout / "K1/new.md").write_text("new authored page\n", encoding="utf-8")
 
-    after = adapter.publish(worktree=checkout, compiled_paths=_COMPILED)
+    after = adapter.publish(worktree=checkout, compiled=_COMPILED)
 
     assert before != after
     assert (repository / "K1/new.md").read_text(encoding="utf-8") == (
@@ -154,15 +188,15 @@ def test_compiled_pages_form_a_parentless_snapshot_and_drop_without_trace(
 
     erasure = _adapter(repository).erase(
         needles=(_TOKEN,),
-        compiled_paths=_COMPILED,
-        drop_paths=("K1/compiled.md",),
+        compiled=_COMPILED,
+        drop=frozenset({_ARTIFACT}),
+        accepted=_none,
         lease=_Lease().hold(),
     )
 
     assert erasure.removed
-    assert (
-        _output("-C", str(repository), "for-each-ref", "--format=%(refname)")
-        == "refs/heads/main\nrefs/tags/v1"
+    assert SNAPSHOT_REF not in _output(
+        "-C", str(repository), "for-each-ref", "--format=%(refname)"
     )
     assert _everything(repository).lower().count(_TOKEN.encode()) == 0
 
@@ -176,7 +210,7 @@ def test_a_compiled_page_committed_on_the_branch_wins_at_checkout(
     first = tmp_path / "first"
     adapter.checkout(destination=first)
     (first / "K1/compiled.md").write_text("machine text\n", encoding="utf-8")
-    adapter.publish(worktree=first, compiled_paths=_COMPILED)
+    adapter.publish(worktree=first, compiled=_COMPILED)
     (repository / "K1/compiled.md").write_text("human edit\n", encoding="utf-8")
     _commit(repository=repository, message="direct edit")
 
@@ -199,10 +233,94 @@ def test_publish_refuses_a_moved_branch_and_keeps_the_human_commit(
     _commit(repository=repository, message="human")
 
     with pytest.raises(KRepositoryMovedError):
-        adapter.publish(worktree=checkout, compiled_paths=_COMPILED)
+        adapter.publish(worktree=checkout, compiled=_COMPILED)
 
     assert _output("-C", str(repository), "log", "-1", "--format=%s") == "human"
     assert _output("-C", str(repository), "for-each-ref", "refs/rememberstack/") == ""
+
+
+def test_snapshot_only_publish_refuses_a_moved_branch(tmp_path: Path) -> None:
+    """The branch a publication read is verified even when only pages change."""
+    repository = _repository(root=tmp_path)
+    adapter = _adapter(repository)
+    checkout = tmp_path / "checkout"
+    adapter.checkout(destination=checkout)
+    (checkout / "K1/compiled.md").write_text("machine text\n", encoding="utf-8")
+    (repository / "K1/compiled.md.curation.md").write_text("owner\n", encoding="utf-8")
+    _commit(repository=repository, message="owner curates")
+
+    with pytest.raises(KRepositoryMovedError):
+        adapter.publish(worktree=checkout, compiled=_COMPILED)
+
+    assert _output("-C", str(repository), "for-each-ref", "refs/rememberstack/") == ""
+
+
+def test_an_accepted_rebuild_stays_and_replaced_snapshots_leave_no_object(
+    tmp_path: Path,
+) -> None:
+    """Only a pending body is dropped; any pass collects unreachable objects."""
+    repository = _repository(root=tmp_path)
+    adapter = _adapter(repository)
+    for body in (f"old {_TOKEN}\n", "clean rebuild\n"):
+        checkout = tmp_path / f"checkout-{len(body)}"
+        adapter.checkout(destination=checkout)
+        (checkout / "K1/compiled.md").write_text(body, encoding="utf-8")
+        adapter.publish(worktree=checkout, compiled=_COMPILED)
+    rebuilt = hashlib.sha256(b"clean rebuild\n").hexdigest()
+
+    erasure = adapter.erase(
+        needles=(_TOKEN,),
+        compiled=_COMPILED,
+        drop=frozenset({_ARTIFACT}),
+        accepted=lambda ids: dict.fromkeys(ids, rebuilt),
+        lease=_Lease().hold(),
+    )
+
+    assert (erasure.removed, erasure.blocking_paths) == (True, ())  # old history
+    assert _output("-C", str(repository), "show", f"{SNAPSHOT_REF}:K1/compiled.md") == (
+        "clean rebuild"
+    )
+    assert _everything(repository).lower().count(_TOKEN.encode()) == 0
+
+
+def test_the_pre_d159_branch_migrates_in_one_publication(tmp_path: Path) -> None:
+    """Machine-written page revisions leave history; a person's revision stays."""
+    repository = _repository(root=tmp_path)
+    page = repository / "K1/compiled.md"
+    for body in ("machine v1\n", "machine v2\n"):
+        page.write_text(body, encoding="utf-8")
+        _git("-C", str(repository), "add", "-A")
+        _git(
+            "-C",
+            str(repository),
+            "-c",
+            "user.name=RememberStack",
+            "-c",
+            "user.email=rememberstack@example.test",
+            "commit",
+            "--quiet",
+            "-m",
+            "rememberstack knowledge update",
+        )
+    page.write_text("a person's edit\n", encoding="utf-8")
+    _commit(repository=repository, message="direct edit")
+    adapter = _adapter(repository)
+    checkout = tmp_path / "checkout"
+    adapter.checkout(destination=checkout)
+
+    adapter.publish(worktree=checkout, compiled=_COMPILED)
+
+    bodies = _output(
+        "-C", str(repository), "log", "--branches", "-p", "--", "K1/compiled.md"
+    )
+    assert "machine v" not in bodies
+    assert "a person's edit" in bodies
+    assert not page.exists()
+    assert _output("-C", str(repository), "show", f"{SNAPSHOT_REF}:K1/compiled.md") == (
+        "a person's edit"
+    )
+    assert b"machine v" not in _everything(repository)
+    assert _output("-C", str(repository), "status", "--porcelain") == ""
 
 
 def test_erase_rejects_traversing_paths(tmp_path: Path) -> None:
@@ -212,8 +330,9 @@ def test_erase_rejects_traversing_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         _adapter(repository).erase(
             needles=(_TOKEN,),
-            compiled_paths=frozenset({"../outside.md"}),
-            drop_paths=(),
+            compiled={"../outside.md": _ARTIFACT},
+            drop=frozenset(),
+            accepted=_none,
             lease=_Lease().hold(),
         )
 

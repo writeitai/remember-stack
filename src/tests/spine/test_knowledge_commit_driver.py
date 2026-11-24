@@ -1,7 +1,7 @@
 """WP-6.2 acceptance: one locked K publish and crash-safe PG finalization."""
 
-from collections.abc import Collection
 from collections.abc import Iterator
+from collections.abc import Mapping
 from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
@@ -186,9 +186,9 @@ class _GitRemote:
             target.write_text(body, encoding="utf-8")
         return KRevision(self.head)
 
-    def publish(self, *, worktree: Path, compiled_paths: Collection[str]) -> KRevision:
+    def publish(self, *, worktree: Path, compiled: Mapping[str, UUID]) -> KRevision:
         """Capture all Markdown files as one new revision or fail before mutation."""
-        del compiled_paths
+        del compiled
         self.publish_calls += 1
         if self.fail_publish:
             raise RuntimeError("simulated git push failure")
@@ -1094,7 +1094,8 @@ def test_k_sync_finishes_the_authored_wait_after_the_owner_edits(
         root=tmp_path,
         files={
             **graph.old_files,
-            page: f"# Decision\n\nSee relation {str(fact_id).upper()}.\n",
+            # The compact spelling a citation may use.
+            page: f"# Decision\n\nSee relation {fact_id.hex.upper()}.\n",
             "notes/other.md": f"cites doc {doc_id} only in this old revision\n",
         },
     )
@@ -1125,13 +1126,20 @@ def test_k_sync_finishes_the_authored_wait_after_the_owner_edits(
         "waiting_for_redaction",
         [page],
     )
+    # The K sync keeps the listed page's redaction flag raised.
+    with graph.engine.connect() as connection:
+        page_id = connection.execute(
+            text("SELECT artifact_id FROM knowledge_artifacts WHERE git_path = :p"),
+            {"p": page},
+        ).scalar_one()
+    assert graph.control.authored_review_state(artifact_id=page_id).redaction_required
 
     (repository / page).write_text("# Decision\n\nRedacted.\n", encoding="utf-8")
     _commit(repository=repository, message="owner redacts")
     cycle()
 
     assert _forget_state(graph=graph, forget_id=forget_id) == ("complete", [])
-    for needle in (str(doc_id), str(fact_id).upper()):
+    for needle in (str(doc_id), fact_id.hex.upper()):
         assert (
             _output("-C", str(repository), "log", "--all", "-S", needle, "--format=%H")
             == ""
@@ -1140,3 +1148,49 @@ def test_k_sync_finishes_the_authored_wait_after_the_owner_edits(
         encoding="utf-8"
     ) == "# Decision\n\nRedacted.\n"
     assert _output("-C", str(repository), "status", "--porcelain") == ""
+
+
+def test_a_page_that_still_cites_does_not_hold_up_another_redaction(
+    graph: _CompileGraph, tmp_path: Path
+) -> None:
+    """The redaction check runs even when authored validation fails the cycle."""
+    doc_id, fact_id = uuid4(), uuid4()
+    first, second = "notes/first.md", "notes/second.md"
+    cites = f'---\ncites: ["doc:{doc_id}"]\n---\n# Page\n'
+    repository = _truth(
+        root=tmp_path, files={**graph.old_files, first: cites, second: cites}
+    )
+    forget_id = _waiting_forget(graph=graph, doc_id=doc_id, fact_id=fact_id, path=first)
+    with graph.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE forgets SET blocking_k_paths = CAST(:paths AS text[])"
+                " WHERE forget_id = :f"
+            ),
+            {"f": forget_id, "paths": [first, second]},
+        )
+    (repository / first).write_text("# Page\n\nRedacted.\n", encoding="utf-8")
+    _commit(repository=repository, message="owner redacts one page")
+
+    # The forgotten document no longer exists: the other page fails validation.
+    with pytest.raises(KnowledgeCompilationError):
+        _run(
+            graph=graph,
+            remote=_local(repository),
+            compiler=_Compiler(),
+            redactions=_redactions(graph, repository),
+        )
+
+    assert _forget_state(graph=graph, forget_id=forget_id) == (
+        "waiting_for_redaction",
+        [second],
+    )
+    assert _log_count(repository, first) == 1
+
+
+def _log_count(repository: Path, path: str) -> int:
+    return len(
+        _output(
+            "-C", str(repository), "log", "--all", "--format=%H", "--", path
+        ).splitlines()
+    )

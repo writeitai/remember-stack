@@ -86,6 +86,7 @@ _ARTIFACT_ID = UUID("75000000-0000-0000-0000-000000000020")
 _SUBSCRIPTION_ID = UUID("75000000-0000-0000-0000-000000000021")
 _PLAN_RUN_ID = UUID("75000000-0000-0000-0000-000000000022")
 _FORGET_ID = UUID("75000000-0000-0000-0000-000000000023")
+_PENDING_ARTIFACT_ID = UUID("75000000-0000-0000-0000-0000000000b7")
 _EXCLUSIVE_MENTION_ID = UUID("75000000-0000-0000-0000-000000000026")
 _TARGET_SHARED_MENTION_ID = UUID("75000000-0000-0000-0000-000000000027")
 _CONTROL_SHARED_MENTION_ID = UUID("75000000-0000-0000-0000-000000000028")
@@ -2081,7 +2082,10 @@ def _k_repository(*, root: Path) -> Path:
     (notes / "decision.md").write_text(
         f"{_TOKEN} per relation {_EXCLUSIVE_RELATION_ID}\n", encoding="utf-8"
     )
-    (notes / "open.md").write_text(f"Cites doc:{_TARGET_DOC_ID}\n", encoding="utf-8")
+    # The compact UUID spelling a citation may also use.
+    (notes / "open.md").write_text(
+        f"Cites doc:{_TARGET_DOC_ID.hex}\n", encoding="utf-8"
+    )
     _k_commit(repository=repository, message="authored")
     (notes / "decision.md").write_text("Redacted long ago.\n", encoding="utf-8")
     _k_commit(repository=repository, message="redacted")
@@ -2092,7 +2096,14 @@ def _k_repository(*, root: Path) -> Path:
     adapter.checkout(destination=checkout)
     (checkout / "k/proof").mkdir(parents=True)
     (checkout / "k/proof/page.md").write_text(f"# {_TOKEN}\n", encoding="utf-8")
-    adapter.publish(worktree=checkout, compiled_paths={"k/proof/page.md"})
+    (checkout / "k/proof/pending.md").write_text(f"## {_TOKEN}\n", encoding="utf-8")
+    adapter.publish(
+        worktree=checkout,
+        compiled={
+            "k/proof/page.md": _ARTIFACT_ID,
+            "k/proof/pending.md": _PENDING_ARTIFACT_ID,
+        },
+    )
     return repository
 
 
@@ -2153,6 +2164,41 @@ def test_knowledge_plane_erasure_and_the_authored_wait(
     open_page = "k/notes/open.md"
     authored_id = uuid4()
     with seeded_engine.begin() as connection:
+        # A cycle published this page and died before finalizing it: its
+        # citation of the document is only in the pending compilation.
+        connection.execute(
+            text(
+                "INSERT INTO knowledge_artifacts (artifact_id, deployment_id, layer,"
+                " page_kind, scope_id, git_path, writer_version, content_hash)"
+                " VALUES (:a, :d, 'K2', 'compiled', :scope, 'k/proof/pending.md',"
+                " 'writer-test', :hash)"
+            ),
+            {
+                "a": _PENDING_ARTIFACT_ID,
+                "d": _DEPLOYMENT_ID,
+                "scope": _SCOPE_ID,
+                "hash": "c" * 64,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO knowledge_compilations (compilation_id, deployment_id,"
+                " artifact_id, inputs_hash, candidate_count, cited_count,"
+                " uncited_count, writer_version, cycle_id, page_summary,"
+                " content_hash, citations) VALUES (:c, :d, :a, :h, 1, 1, 0,"
+                " 'writer-test', :cycle, 'summary', :h, CAST(:citations AS jsonb))"
+            ),
+            {
+                "c": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "a": _PENDING_ARTIFACT_ID,
+                "h": "d" * 64,
+                "cycle": uuid4(),
+                "citations": json.dumps(
+                    [{"role": "cites", "doc_id": str(_TARGET_DOC_ID)}]
+                ),
+            },
+        )
         connection.execute(
             text(
                 "INSERT INTO knowledge_artifacts (artifact_id, deployment_id, layer,"
@@ -2190,6 +2236,16 @@ def test_knowledge_plane_erasure_and_the_authored_wait(
     assert _TOKEN.encode() not in objects
     assert str(_EXCLUSIVE_RELATION_ID).encode() not in objects
     assert (repository / "k/notes/decision.md").read_text() == "Redacted long ago.\n"
+    # Both compiled pages (the finalized and the pending one) left the snapshot.
+    assert (
+        subprocess.run(
+            ("git", "-C", str(repository), "for-each-ref", "refs/rememberstack/"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
     with seeded_engine.connect() as connection:
         page = connection.execute(
             text(

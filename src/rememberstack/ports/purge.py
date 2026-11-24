@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from typing import Protocol
 from typing import runtime_checkable
@@ -87,18 +88,23 @@ class KGitPurgePort(Protocol):
         self,
         *,
         needles: tuple[str, ...],
-        compiled_paths: frozenset[str],
-        drop_paths: tuple[str, ...],
+        compiled: Mapping[str, UUID],
+        drop: frozenset[UUID],
+        accepted: Callable[[frozenset[UUID]], Mapping[UUID, str | None]],
         lease: AbstractContextManager[None],
     ) -> KnowledgeErasure:
         """Drop compiled pages and rewrite history that names a forgotten ID.
 
-        ``drop_paths`` leave the compiled snapshot. A current authored page or
-        sidecar that names a needle blocks: it is reported and its history is
-        kept until the owner edits it. Every other path whose history names a
-        needle has that history rewritten to its current file (or removed when
-        it no longer exists), and compiled paths are removed from the branch
-        history (the one-time legacy cleanup). The work is prepared outside
-        ``lease``, which is held only to publish. Absence succeeds.
+        ``compiled`` maps each live compiled path to its artifact. The pages of
+        the ``drop`` artifacts leave the compiled snapshot, unless the body
+        there is the one ``accepted`` (read under the lease) reports as the
+        artifact's accepted rebuild. A current authored page or sidecar that
+        names a needle blocks: it is reported and its history is kept until
+        the owner edits it. Every other path whose history names a needle has
+        that history rewritten to its current file (or removed when it no
+        longer exists), and machine-written revisions of compiled paths leave
+        the branch history (the pre-D159 cleanup). The work is prepared outside
+        ``lease``, which is held only to publish; every pass also verifies the
+        refs it read and collects unreachable objects.
         """
         ...

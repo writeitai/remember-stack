@@ -93,18 +93,14 @@ class ForgetKnowledgeEraser:
     ) -> KnowledgeErasure:
         """Drop the pending compiled pages and rewrite history that names the document."""
         deployment_id = forget.deployment_id
-        compiled = frozenset(
-            state.git_path
-            for state in self._control_plane.artifact_path_states(
-                deployment_id=deployment_id
-            )
-            if state.page_kind is KnowledgePageKind.COMPILED
-        )
         return self._repository.erase(
             needles=self._catalog.needles(forget=forget),
-            compiled_paths=compiled,
-            drop_paths=self._catalog.k_paths_for_artifacts(
-                deployment_id=deployment_id, artifact_ids=drop_artifact_ids
+            compiled=compiled_paths(
+                control_plane=self._control_plane, deployment_id=deployment_id
+            ),
+            drop=frozenset(drop_artifact_ids),
+            accepted=lambda ids: self._catalog.accepted_hashes(
+                deployment_id=deployment_id, artifact_ids=ids
             ),
             lease=self._control_plane.commit_lease(deployment_id=deployment_id),
         )
@@ -121,21 +117,44 @@ class ForgetKnowledgeEraser:
         ``worktree`` is the K sync's checkout. A waiting record is looked at
         again only when one of its listed files no longer names the document;
         then that path's history is rewritten and the record completes once
-        nothing cites the document.
+        nothing cites the document. While a page is still listed its
+        redaction flag stays raised, even if an edit kept the citation. A
+        failure is kept on the record and the next K sync looks again; it
+        never fails the K cycle.
         """
         for forget in self._catalog.waiting(deployment_id=deployment_id):
             needles = self._catalog.needles(forget=forget)
-            if all(
-                _cites(worktree=worktree, git_path=path, needles=needles)
-                for path in forget.blocking_k_paths
-            ):
-                continue
-            erasure = self.erase(forget=forget, drop_artifact_ids=())
-            status = self._catalog.redaction_progress(
-                forget=forget, blocking_k_paths=erasure.blocking_paths
-            )
-            if status is ForgetStatus.WAITING_FOR_REDACTION:
-                self.flag(forget=forget, paths=erasure.blocking_paths)
+            try:
+                if all(
+                    _cites(worktree=worktree, git_path=path, needles=needles)
+                    for path in forget.blocking_k_paths
+                ):
+                    self.flag(forget=forget, paths=forget.blocking_k_paths)
+                    continue
+                erasure = self.erase(forget=forget, drop_artifact_ids=())
+                status = self._catalog.redaction_progress(
+                    forget=forget, blocking_k_paths=erasure.blocking_paths
+                )
+                if status is ForgetStatus.WAITING_FOR_REDACTION:
+                    self.flag(forget=forget, paths=erasure.blocking_paths)
+            except Exception as error:  # noqa: BLE001 — the next K sync looks again
+                _logger.exception(
+                    "forget.redaction_sync_failed forget_id=%s",
+                    forget.forget_id,
+                    extra={"error_code": "forget_redaction_sync_failed"},
+                )
+                self._catalog.record_error(forget=forget, code=type(error).__name__)
+
+
+def compiled_paths(
+    *, control_plane: KnowledgeControlPlane, deployment_id: UUID
+) -> dict[str, UUID]:
+    """Each live compiled page's path and artifact: what the snapshot holds."""
+    return {
+        state.git_path: state.artifact_id
+        for state in control_plane.artifact_path_states(deployment_id=deployment_id)
+        if state.page_kind is KnowledgePageKind.COMPILED
+    }
 
 
 def _cites(*, worktree: Path, git_path: str, needles: tuple[str, ...]) -> bool:

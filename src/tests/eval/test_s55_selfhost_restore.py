@@ -43,7 +43,7 @@ _DOC_ID = UUID("55500000-0000-0000-0000-000000000002")
 _FORGET_ID = UUID("55500000-0000-0000-0000-000000000004")
 _ARTIFACT_ID = UUID("55500000-0000-0000-0000-000000000005")
 _HASH = "e" * 64
-_COMPILED_PATHS = frozenset({"K1/compiled.md"})
+_COMPILED_PATHS = {"K1/compiled.md": _ARTIFACT_ID}
 _TOKEN = "S55_REAL_UNIQUE_FORGOTTEN_TOKEN"
 _CONTROL = "S55_REAL_INDEPENDENT_CONTROL"
 # An ingest_stored original (D147 locator) and the document's own prefix.
@@ -128,8 +128,9 @@ class _Knowledge:
     ) -> KnowledgeErasure:
         return self.repository.erase(
             needles=(str(forget.doc_id),),
-            compiled_paths=_COMPILED_PATHS,
-            drop_paths=("K1/compiled.md",) if _ARTIFACT_ID in drop_artifact_ids else (),
+            compiled=_COMPILED_PATHS,
+            drop=frozenset(drop_artifact_ids),
+            accepted=lambda ids: dict.fromkeys(ids),
             lease=nullcontext(),
         )
 
@@ -172,7 +173,7 @@ def _seed_git(*, repository: Path) -> Path:
     checkout = repository.parent / "seed-checkout"
     adapter.checkout(destination=checkout)
     (checkout / "K1/compiled.md").write_text(f"# {_TOKEN}\n", encoding="utf-8")
-    adapter.publish(worktree=checkout, compiled_paths=_COMPILED_PATHS)
+    adapter.publish(worktree=checkout, compiled=_COMPILED_PATHS)
     backup = repository.parent / "knowledge-backup.git"
     _git("clone", "--quiet", "--mirror", str(repository), str(backup))
     return backup

@@ -38,6 +38,7 @@ from rememberstack.model import KnowledgeRetirePageProposal
 from rememberstack.model import KRevision
 from rememberstack.ports import KGitRemotePort
 from rememberstack.spine.knowledge import KnowledgeControlPlane
+from rememberstack.workers.forget import compiled_paths
 from rememberstack.workers.knowledge_authored import KnowledgeAuthoredSynchronizer
 
 KNOWLEDGE_DRIVER_VERSION: Final = "k-driver-2026.07"
@@ -151,15 +152,20 @@ class KnowledgeCommitDriver:
         """
         with TemporaryDirectory(prefix="rememberstack-k-cycle-") as temporary:
             worktree = Path(temporary)
-            result = self._cycle(
-                deployment_id=deployment_id,
-                worktree=worktree,
-                exclusions_by_artifact=exclusions_by_artifact,
-            )
-            self._redactions.sync_redactions(
-                deployment_id=deployment_id, worktree=worktree
-            )
-            return result
+            try:
+                return self._cycle(
+                    deployment_id=deployment_id,
+                    worktree=worktree,
+                    exclusions_by_artifact=exclusions_by_artifact,
+                )
+            finally:
+                # Part of the pull: it runs even when authored validation or
+                # compilation failed (a page that still cites a forgotten
+                # document fails validation until its owner redacts it).
+                if (worktree / ".git").is_dir():
+                    self._redactions.sync_redactions(
+                        deployment_id=deployment_id, worktree=worktree
+                    )
 
     def _cycle(
         self,
@@ -267,15 +273,11 @@ class KnowledgeCommitDriver:
 
     def _publish(self, *, deployment_id: UUID, worktree: Path) -> KRevision:
         """Publish the checkout: compiled pages as the snapshot, the rest as history."""
-        compiled_paths = frozenset(
-            state.git_path
-            for state in self._control_plane.artifact_path_states(
-                deployment_id=deployment_id
-            )
-            if state.page_kind is KnowledgePageKind.COMPILED
-        )
         return self._git_remote.publish(
-            worktree=worktree, compiled_paths=compiled_paths
+            worktree=worktree,
+            compiled=compiled_paths(
+                control_plane=self._control_plane, deployment_id=deployment_id
+            ),
         )
 
     def _quarantine_compiled_drift(

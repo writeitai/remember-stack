@@ -258,18 +258,20 @@ class ForgetCatalog:
         with self._engine.begin() as connection:
             return _Sweep(connection=connection, forget=forget).run()
 
-    def k_paths_for_artifacts(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> tuple[str, ...]:
-        """Exact body and curation paths of K artifacts, for history erasure."""
-        if not artifact_ids:
-            return ()
+    def accepted_hashes(
+        self, *, deployment_id: UUID, artifact_ids: frozenset[UUID]
+    ) -> dict[UUID, str | None]:
+        """Each compiled page's accepted body hash (None while it awaits a rebuild)."""
         with self._engine.connect() as connection:
-            values = connection.execute(
-                _K_PATHS_FOR_ARTIFACTS,
-                {"deployment_id": deployment_id, "artifact_ids": list(artifact_ids)},
-            ).scalars()
-            return tuple(sorted({str(value) for value in values if value is not None}))
+            return {
+                row.artifact_id: row.content_hash
+                for row in connection.execute(
+                    text("""SELECT artifact_id, content_hash FROM knowledge_artifacts
+                    WHERE deployment_id = :d
+                      AND artifact_id = ANY(CAST(:ids AS uuid[]))"""),
+                    {"d": deployment_id, "ids": sorted(artifact_ids, key=str)},
+                )
+            }
 
     def finish(
         self, *, forget: Forget, blocking_k_paths: tuple[str, ...], series: str
@@ -359,7 +361,8 @@ class ForgetCatalog:
         """The IDs whose presence in a K file means it still cites the document.
 
         The document, its versions and every collected fact: citations name
-        a document (claim citations carry its lineage) or a fact.
+        a document (claim citations carry its lineage) or a fact. Each ID in
+        both spellings a citation may use: hyphenated and 32 hex digits.
         """
         with self._engine.connect() as connection:
             collected = _collected(
@@ -367,15 +370,12 @@ class ForgetCatalog:
                 deployment_id=forget.deployment_id,
                 forget_id=forget.forget_id,
             )
-        return tuple(
-            sorted(
-                {
-                    str(forget.doc_id),
-                    *map(str, forget.version_ids),
-                    *collected["fact_ids"],
-                }
-            )
-        )
+        ids = {
+            forget.doc_id,
+            *forget.version_ids,
+            *(UUID(value) for value in collected["fact_ids"]),
+        }
+        return tuple(sorted({*map(str, ids), *(value.hex for value in ids)}))
 
     def waiting(self, *, deployment_id: UUID) -> tuple[Forget, ...]:
         """Records waiting for an owner to redact authored pages or sidecars."""
@@ -406,7 +406,7 @@ class ForgetCatalog:
         with self._engine.begin() as connection:
             connection.execute(
                 text("""UPDATE forgets SET status = CAST(:status AS forget_status),
-                blocking_k_paths = CAST(:paths AS text[]),
+                blocking_k_paths = CAST(:paths AS text[]), last_error = NULL,
                 completed_at = CASE WHEN :status = 'complete' THEN now() END
                 WHERE deployment_id = :d AND forget_id = :f
                   AND status = 'waiting_for_redaction'"""),
@@ -638,6 +638,9 @@ class _Sweep:
             + " AND a.page_kind = 'compiled'",
             p,
         )
+        # A cycle that published a page but has not finalized it yet holds
+        # the page's citations only in its pending compilation.
+        compiled = sorted(set(compiled) | set(self._ids(_PENDING_CITING, p)), key=str)
         if p["linked_fact_ids"]:
             # A fact sheet renders facts without recording citations; it is
             # deterministic and cheap to rebuild, so every one is rebuilt.
@@ -950,14 +953,16 @@ _FORGOTTEN_INGEST = text(
     """
 )
 
-# Page bodies only: a compiled page's curation sidecar is owner text, never
-# rewritten by a forget of the page it curates.
-_K_PATHS_FOR_ARTIFACTS = text(
-    """
-    SELECT git_path FROM knowledge_artifacts
-    WHERE deployment_id = :deployment_id AND artifact_id = ANY(:artifact_ids)
-    """
-)
+_PENDING_CITING = """
+    SELECT DISTINCT c.artifact_id FROM knowledge_compilations c
+    CROSS JOIN LATERAL jsonb_array_elements(c.citations) citation
+    WHERE c.deployment_id=:deployment_id AND c.git_commit IS NULL
+      AND c.failed_at IS NULL AND jsonb_typeof(c.citations) = 'array'
+      AND (citation->>'doc_id' = CAST(:doc_id AS text)
+           OR citation->>'claim_lineage_id' = CAST(:doc_id AS text)
+           OR citation->>'relation_id'
+              = ANY(CAST(CAST(:linked_fact_ids AS uuid[]) AS text[])))
+"""
 
 _FACT_SHEETS = """
     SELECT artifact_id FROM knowledge_artifacts
