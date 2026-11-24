@@ -254,8 +254,11 @@ ordinary work recomputes them.
 
 Compiled pages cite the evidence they use (D45/D50). The sweep deletes every compiled page,
 summary and transcript that cites forgotten evidence or a fact whose wording changed (ordinary
-K work rebuilds them), and purges the history of all compiled paths once, since compiled output
-is a disposable snapshot. Proving that no writer ever copied uncited text would need sandboxed writers with
+K work rebuilds them). Compiled pages are kept as a replaceable snapshot with no Git history at
+all (a one-time migration strips their legacy history): rewriting a whole repository's history
+on every forget was slow, could stall K commits, and erased clean rebuilds too, whereas a
+snapshot has nothing to rewrite. Only authored pages and sidecars keep history, and only those
+that cited the document have it rewritten. Proving that no writer ever copied uncited text would need sandboxed writers with
 recorded inputs and provenance through every cached summary (explored in review); the owner's
 simplicity rule puts that outside the guarantee as a stated limit instead.
 

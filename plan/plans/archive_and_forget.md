@@ -14,6 +14,8 @@ ships (D66), and is reviewed by GPT 6.2 sol before merge.
 - The re-ingest guard with its default refusal, 409 `document_forgotten` (§3.6), so the old
   permanent guard is never removed without its replacement.
 - `remember ops forget-reapply` (§3.8).
+- Compiled K pages committed as a history-free snapshot, with the one-time migration that strips
+  their legacy history (design §3.3 step 4).
 - The best-effort mount invalidation call and the S3 FUSE cache documentation (§3.7). The cloud
   repository implements the remember.dev session adapter.
 - Remove in the same change: `ForgetManifestPort` and its stores and settings, the startup
