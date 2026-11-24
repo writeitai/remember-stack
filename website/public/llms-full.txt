@@ -21661,8 +21661,8 @@ deployment refused the route with `rate_class_unavailable`.
 before it is downloaded, measured or sent to a provider, as an oversized PDF
 already did.
 
-**Error codes on log records.** Every ERROR log record from RememberStack now
-carries an `error_code` field, such as `worker_item_failed` or
+**Error codes on log records.** Every ERROR log record from the engine's
+`rememberstack.*` loggers now carries an `error_code` field, such as `worker_item_failed` or
 `mcp_tool_failed`. A log handler can export it to group failures without
 parsing messages; the default text format does not print it.
 
