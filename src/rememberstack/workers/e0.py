@@ -72,7 +72,6 @@ from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import FORMAT_MIMES
-from rememberstack.core.format_registry import mime_for_file_name
 from rememberstack.core.metering import cost_class_for_route
 from rememberstack.core.metering import DOC_SCAN_ALGORITHM_VERSION
 from rememberstack.core.metering import DOC_TEXT_ALGORITHM_VERSION
@@ -84,7 +83,6 @@ from rememberstack.core.metering import UnmeteredRouteError
 from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
-from rememberstack.model import ContentDetectionError
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterLaneError
@@ -189,12 +187,6 @@ representation without model calls (D138 §1)."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """The one-shot upload connector's source kind (D55 lineage identity)."""
-
-_OLE_MIMES: Final = frozenset(
-    FORMAT_MIMES[extension] for extension in ("doc", "xls", "ppt")
-)
-"""Legacy Office subtypes a ``.doc``, ``.xls`` or ``.ppt`` name selects for
-an OLE container declared as nothing more specific (D138 §3)."""
 
 _TEXT_DOCUMENT_MIMES: Final = frozenset({FORMAT_MIMES["rtf"], FORMAT_MIMES["por"]})
 """Text-class bytes whose registry type keeps its own reader: RTF, and SPSS
@@ -640,19 +632,8 @@ class UploadIngestor:
     def _detected_mime(
         self, *, content: bytes | mmap.mmap, filename: str, mime: str
     ) -> str:
-        """The MIME E0 stores: byte classes first, registry hints within families.
-
-        A legacy Office container (OLE) declared as nothing more specific takes
-        its Word, Excel or PowerPoint subtype from a ``.doc``, ``.xls`` or
-        ``.ppt`` name; without one it stays ``ambiguous_office_format``.
-        """
-        try:
-            detected = detect_content_mime(content=content, declared_mime=mime)
-        except ContentDetectionError as error:
-            named = mime_for_file_name(file_name=filename)
-            if error.code != "ambiguous_office_format" or named not in _OLE_MIMES:
-                raise
-            detected = detect_content_mime(content=content, declared_mime=named)
+        """The MIME E0 stores: byte classes first, registry hints within families."""
+        detected = detect_content_mime(content=content, declared_mime=mime)
         if detected in {"text/plain", "text/markdown", "application/octet-stream"}:
             routed = detect_mime(
                 file_name=filename,

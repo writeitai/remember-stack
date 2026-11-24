@@ -12,15 +12,18 @@ resuming really releases it — are proved against PostgreSQL in
 
 from collections.abc import Collection
 from collections.abc import Iterator
+from pathlib import Path
+import tempfile
 from typing import cast
 from uuid import UUID
 from uuid import uuid4
 
+import pandas as pd
 from pydantic import SecretStr
+import pyreadstat
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
-from rememberstack.model import ContentDetectionError
 from rememberstack.model import DeferReason
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
@@ -34,10 +37,17 @@ from rememberstack.workers.e0 import UploadIngestor
 
 _DEPLOYMENT_ID = UUID("106a0000-0000-0000-0000-000000000001")
 _ROUTES = {"text/markdown": "passthrough", "text/plain": "passthrough"}
-_POR_BYTES = b"ASCII SPSS PORT FILE" + b" " * 40 + b"\r\nSPSSPORT"
-"""SPSS Portable is a text encoding: its bytes classify as text."""
-_OLE_BYTES = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 504
-"""A legacy Office (OLE compound file) header; Word, Excel and PowerPoint share it."""
+
+
+def _por_bytes() -> bytes:
+    """A real SPSS Portable file: a text encoding, so its bytes classify as text."""
+    with tempfile.TemporaryDirectory() as work:
+        path = Path(work) / "survey.por"
+        pyreadstat.write_por(pd.DataFrame({"name": ["a", "b"], "n": [1, 2]}), str(path))
+        return path.read_bytes()
+
+
+_POR_BYTES = _por_bytes()
 _PARQUET_BYTES = b"PAR1meta" + (4).to_bytes(length=4, byteorder="little") + b"PAR1"
 _PSD_BYTES = (
     b"8BPS\x00\x01"
@@ -253,14 +263,6 @@ def test_unknown_archive_uses_registry_card_family() -> None:
             _POR_BYTES,
             "application/x-spss-por",
         ),
-        ("old.doc", "application/octet-stream", _OLE_BYTES, "application/msword"),
-        ("old.xls", "application/octet-stream", _OLE_BYTES, "application/vnd.ms-excel"),
-        (
-            "old.ppt",
-            "application/octet-stream",
-            _OLE_BYTES,
-            "application/vnd.ms-powerpoint",
-        ),
         ("data.csv", "text/csv", b"name,value\na,1\n", "text/csv"),
         (
             "book.epub",
@@ -305,24 +307,6 @@ def test_registry_family_survives_compatible_byte_class(
     )
     assert catalog.recorded_mime == expected
     assert store.classes == ["hot" if expected.startswith("image/") else "cold"]
-
-
-def test_an_unnamed_legacy_office_container_stays_ambiguous() -> None:
-    """Without a declared subtype or a .doc/.xls/.ppt name, OLE is refused."""
-    ingestor = UploadIngestor(
-        catalog=cast(DocumentCatalog, _RecordingCatalog()),
-        raw_store=_CountingStore(),
-        admission=_AllowingAdmission(),
-        routable_mimes=frozenset(_ROUTES),
-    )
-    with pytest.raises(ContentDetectionError) as raised:
-        ingestor.ingest(
-            deployment_id=_DEPLOYMENT_ID,
-            upload=DocumentUpload(
-                filename="old.bin", mime="application/octet-stream", content=_OLE_BYTES
-            ),
-        )
-    assert raised.value.code == "ambiguous_office_format"
 
 
 @pytest.mark.parametrize(
