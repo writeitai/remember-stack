@@ -298,9 +298,9 @@ skips the question. It prints the forget record, in the shape of
 The document is gone from every read at once; what was derived from it is
 erased in the background, which [`remember forget status`](#remember-forget)
 follows. There is no undo: the content can only be ingested again with
-`remember ingest --allow-forgotten`. A document that does not exist, or is
-already forgotten, prints `error: API 404: document_not_found` and exits
-with status 1. See
+`remember ingest --allow-forgotten`. Forgetting the same document again prints
+its existing record. A document that does not exist prints
+`error: API 404: document_not_found` and exits with status 1. See
 [`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-documentsdoc_idforget).
 
 ```bash

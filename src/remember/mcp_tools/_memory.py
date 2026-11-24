@@ -334,15 +334,11 @@ def handle_forget_document_tool(
                 ToolError(
                     code="document_not_found",
                     detail=(
-                        f"No document {arguments.get('doc_id')}: the id is unknown"
-                        " or the document is already forgotten."
+                        f"No document {arguments.get('doc_id')}: the id is unknown."
                     ),
                     status_code=404,
                     retryable=False,
-                    agent_action=(
-                        "Do not retry. Check the doc_id with the user; a forgotten"
-                        " document answers as unknown."
-                    ),
+                    agent_action="Do not retry. Check the doc_id with the user.",
                 )
             )
         mapped = map_error(error)

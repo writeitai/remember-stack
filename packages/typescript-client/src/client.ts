@@ -287,6 +287,7 @@ export class MemoryClient {
   /** Include local file loading in the ingest operation's cancellation and deadline. */
   async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,versionKey,effectiveFrom,effectiveUntil,tags,allowForgotten=false,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
     const tagParams=tagList({value:tags,field:'tags'}).map(tag=>['tags',tag] as const);
+    if(typeof allowForgotten!=='boolean')throw new InputValidationError({detail:'allowForgotten must be a boolean'});
     if((sourceKind==null)!==(sourceRef==null))throw new InputValidationError({detail:'sourceKind and sourceRef must be supplied together'});
     if(sourceKind==null&&(sourceModifiedAt!=null||sourceVersionRef!=null||versioningMode!=='snapshot'||versionKey!=null||effectiveFrom!=null||effectiveUntil!=null))throw new InputValidationError({detail:'source timestamps, revisions, and living mode require sourceKind/sourceRef'});
     if(effectiveUntil!=null&&effectiveFrom==null)throw new InputValidationError({detail:'effectiveUntil requires effectiveFrom'});

@@ -387,6 +387,11 @@ class UploadIngestor:
 
         A metered deployment measures the version in the convert stage, as
         for every other entry point; registration itself sends nothing.
+
+        ``allow_forgotten`` adds back a forgotten document's bytes for this
+        call only (D159 §3.6). While the matching forget is still erasing it
+        raises :class:`ForgetNotCompleteError` unchanged and keeps the
+        object, so the same registration can be retried later.
         """
         if _STORED_KEY.fullmatch(key.root) is None:
             raise ValueError(

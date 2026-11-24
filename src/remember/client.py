@@ -987,6 +987,8 @@ class MemoryClient:
         ``forget_not_complete`` until then); it returns under a new
         ``doc_id``.
         """
+        if not isinstance(allow_forgotten, bool):
+            raise ValueError("allow_forgotten must be a boolean")
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
         if source_kind is None and (

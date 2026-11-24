@@ -1521,6 +1521,8 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
                     "effective_from": STAMP,
                     "effective_until": STAMP,
                 },
+                # D159: a string is not the per-request flag; nothing is sent.
+                {"allow_forgotten": "false"},
             )
         ]
     )

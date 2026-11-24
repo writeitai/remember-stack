@@ -47,6 +47,9 @@ MAX_SWEEP_ATTEMPTS: Final = 32_767
 UPLOAD_SOURCE_KIND: Final = "upload"
 """A one-shot upload's lineage is its bytes; the content hash guards it."""
 
+_REPLACEMENT_LINEAGE: Final = uuid5(NAMESPACE_URL, "rememberstack:replacement-lineage")
+"""The namespace of re-added lineages' IDs, disjoint from identity base IDs."""
+
 
 @dataclass(frozen=True)
 class SweepFindings:
@@ -468,19 +471,31 @@ def release_forgotten_on(
     source_ref: str,
     content_hash: str,
 ) -> None:
-    """Note on each matched record only what this re-add matched (D159 §3.6).
+    """Note what this re-add matched on the records of its own lineage (D159 §3.6).
 
-    The content hash goes into ``released_hashes`` where the record holds
-    it, and ``identity_released`` is set where the identity matched. The
-    record's sweep keys (``version_ids``, ``content_hashes``, the identity)
-    never change, so a later sweep or ``forget-reapply`` works as before.
+    Of the matched records, only those of the lineage being added back (the
+    lineages E0 derived for this identity) are touched: the content hash goes
+    into ``released_hashes`` where the record holds it, and
+    ``identity_released`` is set where the identity matched. Another forget
+    that happens to share the bytes keeps its guard. The records' sweep keys
+    (``version_ids``, ``content_hashes``, the identity) never change, so a
+    later sweep or ``forget-reapply`` works as before.
     """
-    if forget_ids:
+    if not forget_ids:
+        return
+    forgotten = _lineage_ids(
+        connection=connection,
+        deployment_id=deployment_id,
+        source_kind=source_kind,
+        source_ref=source_ref,
+    )[:-1]
+    if forgotten:
         connection.execute(
             _RELEASE_FORGOTTEN,
             {
                 "d": deployment_id,
                 "ids": list(forget_ids),
+                "lineages": list(forgotten),
                 "identity": _identity(
                     deployment_id=deployment_id,
                     source_kind=source_kind,
@@ -496,31 +511,43 @@ def lineage_doc_id_on(
 ) -> UUID:
     """The ``doc_id`` E0 derives for an identity's lineage (D159 §3.6).
 
-    The ID is derived from the identity and, once lineages of that identity
-    have been forgotten, from the number of their forget records, so a
-    re-added lineage never shares an ID (rows, object prefix, corpus suffix,
-    K citations) with a forgotten one. Each such lineage was itself derived
-    this way, so the records are found by walking the derivation: the count
-    is the number of derived IDs that already have a record. Records are
-    never deleted, so the count, and the ID, are stable.
+    Until a lineage of the identity is forgotten it is the identity's base
+    ID. A replacement lineage's ID is derived from the base ID and the number
+    of forget records of the identity's lineages, in a namespace of its own
+    so it never equals another identity's base ID. It therefore shares
+    nothing keyed by the ID (rows, object prefix, corpus suffix, K
+    citations) with a forgotten lineage. Records are never deleted, so the
+    count, and the ID, are stable.
     """
-    base = f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
-    forgotten = 0
-    while True:
-        doc_id = uuid5(
-            NAMESPACE_URL, base if forgotten == 0 else f"{base}:forgotten:{forgotten}"
-        )
-        if (
-            connection.execute(
-                text(
-                    "SELECT 1 FROM forgets WHERE deployment_id = :d AND doc_id = :doc"
-                ),
-                {"d": deployment_id, "doc": doc_id},
-            ).first()
-            is None
-        ):
-            return doc_id
-        forgotten += 1
+    return _lineage_ids(
+        connection=connection,
+        deployment_id=deployment_id,
+        source_kind=source_kind,
+        source_ref=source_ref,
+    )[-1]
+
+
+def _lineage_ids(
+    *, connection: Connection, deployment_id: UUID, source_kind: str, source_ref: str
+) -> tuple[UUID, ...]:
+    """The identity's forgotten lineage IDs, oldest first, then its current one.
+
+    Each forgotten lineage was itself derived this way, so walking the
+    derivation finds exactly the identity's forget records.
+    """
+    base = uuid5(
+        NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
+    )
+    lineages = [base]
+    while (
+        connection.execute(
+            text("SELECT 1 FROM forgets WHERE deployment_id = :d AND doc_id = :doc"),
+            {"d": deployment_id, "doc": lineages[-1]},
+        ).first()
+        is not None
+    ):
+        lineages.append(uuid5(_REPLACEMENT_LINEAGE, f"{base}:{len(lineages)}"))
+    return tuple(lineages)
 
 
 def _identity(*, deployment_id: UUID, source_kind: str, source_ref: str) -> str | None:
@@ -1079,6 +1106,7 @@ _RELEASE_FORGOTTEN = text(
             OR (CAST(:identity AS text) IS NOT NULL
                 AND source_identity_hash IS NOT DISTINCT FROM :identity)
     WHERE deployment_id = :d AND forget_id = ANY(CAST(:ids AS uuid[]))
+      AND doc_id = ANY(CAST(:lineages AS uuid[]))
     """
 )
 

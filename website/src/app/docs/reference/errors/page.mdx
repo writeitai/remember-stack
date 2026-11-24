@@ -214,7 +214,7 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `confirmation_required` | `null` | no | Ask the user to confirm that this document is to be forgotten for good, then call again with confirm=true. (`forget_document` without `confirm: true`; nothing was forgotten.) |
-| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id. `forget_document`: Do not retry. Check the doc_id with the user; a forgotten document answers as unknown.) |
+| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id. `forget_document`: Do not retry. Check the doc_id with the user.) |
 | `document_forgotten`, `forget_not_complete` | 409 | no | Read the detail; fix the call. Do not retry it unchanged. (`ingest` of forgotten content; see [Adding forgotten content back](/docs/reference/http-api/ingest#adding-forgotten-content-back).) |
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |

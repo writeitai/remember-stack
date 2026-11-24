@@ -28,6 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters import OpenRouterSettings
+from rememberstack.adapters.selfhost import LocalDirectoryWatcher
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
@@ -36,13 +37,18 @@ from rememberstack.model import DocumentUpload
 from rememberstack.model import ForgetNotCompleteError
 from rememberstack.model import ForgetStatus
 from rememberstack.model import IngestedVersion
+from rememberstack.model import ObjectKey
 from rememberstack.model import RunResultOutcome
+from rememberstack.model import StoredObjectRefusedError
 from rememberstack.profiles import SelfHostProfile
 from rememberstack.profiles import SelfHostSettings
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine import SyncCatalog
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import SyncCycleRunner
+from rememberstack.workers import SyncSettings
 from rememberstack.workers import UploadIngestor
 from tests.database_reset import reset_database
 
@@ -102,11 +108,13 @@ class _Rig:
             routable_mimes=frozenset({"text/markdown"}),
         )
 
-    def watched(self, content: bytes, *, allow: bool = False) -> IngestedVersion:
+    def watched(
+        self, content: bytes, *, allow: bool = False, ref: str = _REF
+    ) -> IngestedVersion:
         return self.ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
             source_kind=_KIND,
-            source_ref=_REF,
+            source_ref=ref,
             upload=self._upload(content=content, allow=allow),
             versioning_mode="snapshot",
             source_modified_at=None,
@@ -288,3 +296,113 @@ def test_a_forgotten_upload_comes_back_under_a_fresh_doc_id(rig: _Rig) -> None:
     assert released["source_identity_hash"] is None
     assert released["identity_released"] is False
     assert rig.upload(_A).doc_id == readded.doc_id
+
+
+def test_a_re_add_releases_only_its_own_lineage_and_ids_never_collide(
+    rig: _Rig,
+) -> None:
+    """Another forgotten document with the same bytes keeps its guard."""
+    watched = rig.watched(_A)
+    uploaded = rig.upload(_A)
+    assert uploaded.doc_id != watched.doc_id
+    watched_forget = rig.forget(watched.doc_id)
+    upload_forget = rig.forget(uploaded.doc_id)
+    # A shared-byte match that is still erasing refuses the flagged re-add.
+    with pytest.raises(ForgetNotCompleteError):
+        rig.watched(_A, allow=True)
+    rig.settle()
+
+    readded = rig.watched(_A, allow=True)
+    assert rig.release(watched_forget)["released_hashes"] == [_hash(_A)]
+    assert rig.release(upload_forget)["released_hashes"] == []
+    with pytest.raises(DocumentForgottenError) as refused:
+        rig.upload(_A)
+    assert refused.value.forget_id == upload_forget
+
+    # A replacement ID never equals another identity's ID, whatever its ref.
+    neighbour = rig.watched(_B, ref=f"{_REF}:forgotten:1")
+    assert neighbour.created
+    assert neighbour.doc_id != readded.doc_id
+    assert rig.rows(neighbour.doc_id) == 2 and rig.rows(readded.doc_id) == 2
+
+
+def test_a_stored_object_waits_out_the_erasure_and_then_comes_back(rig: _Rig) -> None:
+    """`ingest_stored`: refused while erasing, kept, then added back by retry."""
+    uploaded = rig.upload(_A)
+    forget_id = rig.forget(uploaded.doc_id)
+    key = ObjectKey("uploads/stored-plan-0000000001")
+    rig.raw.write_bytes(key=key, content=_A, storage_class="hot")
+
+    def stored(*, allow: bool) -> IngestedVersion:
+        return rig.ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=key,
+            size=len(_A),
+            mime="text/markdown",
+            filename="plan.md",
+            allow_forgotten=allow,
+        )
+
+    with pytest.raises(ForgetNotCompleteError):
+        stored(allow=True)
+    assert rig.raw.read_bytes(key=key) == _A
+    rig.settle()
+    readded = stored(allow=True)
+    assert readded.created and readded.doc_id != uploaded.doc_id
+    assert rig.release(forget_id)["released_hashes"] == [_hash(_A)]
+    assert rig.raw.read_bytes(key=key) == _A
+
+    other = ObjectKey("uploads/stored-plan-0000000002")
+    rig.raw.write_bytes(key=other, content=_B, storage_class="hot")
+    rig.forget(rig.upload(_B).doc_id)
+    rig.settle()
+    with pytest.raises(StoredObjectRefusedError) as refused:
+        rig.ingestor.ingest_stored(
+            deployment_id=_DEPLOYMENT_ID,
+            key=other,
+            size=len(_B),
+            mime="text/markdown",
+            filename="plan.md",
+        )
+    assert isinstance(refused.value.refusal, DocumentForgottenError)
+
+
+def test_a_connector_resync_skips_the_forgotten_file(rig: _Rig, tmp_path: Path) -> None:
+    """The watched file still exists; the next cycle neither adds nor fails it."""
+    folder = tmp_path / "watched"
+    folder.mkdir()
+    (folder / "plan.md").write_bytes(_A)
+    runner = SyncCycleRunner(
+        catalog=SyncCatalog(engine=rig.engine),
+        ingestor=rig.ingestor,
+        settings=SyncSettings(debounce_quiet_seconds=0.0),
+    )
+
+    def cycle() -> Any:
+        return runner.run_cycle(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="watched_directory",
+            source=LocalDirectoryWatcher(root=folder),
+        )
+
+    first = cycle()
+    assert len(first.ingested) == 1
+    with rig.engine.connect() as connection:
+        doc_id = connection.execute(
+            text("SELECT doc_id FROM documents WHERE source_kind = 'watched_directory'")
+        ).scalar_one()
+    rig.forget(doc_id)
+    rig.settle()
+
+    again = cycle()
+    assert (again.ingested, again.failed) == ((), 0)
+    with rig.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM documents"
+                    " WHERE source_kind = 'watched_directory'"
+                )
+            ).scalar_one()
+            == 0
+        )

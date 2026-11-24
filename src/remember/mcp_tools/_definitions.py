@@ -349,8 +349,9 @@ _FORGET_DOCUMENT_DESCRIPTION: Final = (
     " documents also support stay, reworded from what survives. There is no"
     " undo. Returns the forget record: forget_id, doc_id, status (erasing,"
     " waiting_for_redaction while an authored knowledge page still cites it,"
-    " then complete) and requested_at. A document_not_found error means the"
-    " id is unknown or the document is already gone: do not retry it."
+    " then complete) and requested_at; forgetting the same document again"
+    " returns the same record. A document_not_found error means the id is"
+    " unknown: do not retry it."
 )
 
 _SEARCH_DOCUMENTS_DESCRIPTION: Final = (

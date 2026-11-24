@@ -10860,10 +10860,11 @@ forget is no longer `erasing` (until then `409` `forget_not_complete`), and is
 ingested like any new content: the document comes back under a new `doc_id`,
 never the forgotten one.
 
-The flag applies to that one request and releases only what the request
-matched: these bytes, and this `source_kind` and `source_ref` when you send
-them. Other forgotten versions of the same document stay refused. There is no
-setting that turns the refusal off.
+The flag applies to that one request and releases, on the forgotten document
+being added back, only what the request matched: these bytes, and this
+`source_kind` and `source_ref` when you send them. Other forgotten versions of
+the same document stay refused, and so do the same bytes of any other
+forgotten document. There is no setting that turns the refusal off.
 
 ### Attribution
 
@@ -11526,14 +11527,14 @@ pages) are recorded as ordinary work.
 }
 ```
 
-A repeat for the same document answers `200` with the same record, so
-retrying after a timeout is safe.
+A repeat for the same document answers `200` with the same record, also after
+the forget completed, so retrying after a timeout is safe.
 
 ### Errors
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or it is already forgotten (follow it with `GET /forgets`). Do not retry. |
+| `404` | `document_not_found` | No such document. Do not retry. (Forgetting a document again answers `200` with its record, also after the forget completed.) |
 | `422` | validation list | `doc_id` is not a UUID. |
 
 ### Example
@@ -18135,7 +18136,8 @@ See [`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http
 
 Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
 `MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
-when the document does not exist or is already forgotten.
+when the document does not exist. Forgetting the same document again returns
+its existing record, also after the forget completed.
 
 ```python
 forget = memory.forget_document(doc_id=version.doc_id)
@@ -19746,9 +19748,9 @@ skips the question. It prints the forget record, in the shape of
 The document is gone from every read at once; what was derived from it is
 erased in the background, which [`remember forget status`](#remember-forget)
 follows. There is no undo: the content can only be ingested again with
-`remember ingest --allow-forgotten`. A document that does not exist, or is
-already forgotten, prints `error: API 404: document_not_found` and exits
-with status 1. See
+`remember ingest --allow-forgotten`. Forgetting the same document again prints
+its existing record. A document that does not exist prints
+`error: API 404: document_not_found` and exits with status 1. See
 [`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget).
 
 ```bash
@@ -21468,7 +21470,7 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `confirmation_required` | `null` | no | Ask the user to confirm that this document is to be forgotten for good, then call again with confirm=true. (`forget_document` without `confirm: true`; nothing was forgotten.) |
-| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id. `forget_document`: Do not retry. Check the doc_id with the user; a forgotten document answers as unknown.) |
+| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id. `forget_document`: Do not retry. Check the doc_id with the user.) |
 | `document_forgotten`, `forget_not_complete` | 409 | no | Read the detail; fix the call. Do not retry it unchanged. (`ingest` of forgotten content; see [Adding forgotten content back](https://remember.dev/docs/reference/http-api/ingest#adding-forgotten-content-back).) |
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |

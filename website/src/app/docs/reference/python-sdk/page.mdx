@@ -720,7 +720,8 @@ See [`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-doc
 
 Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
 `MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
-when the document does not exist or is already forgotten.
+when the document does not exist. Forgetting the same document again returns
+its existing record, also after the forget completed.
 
 ```python
 forget = memory.forget_document(doc_id=version.doc_id)

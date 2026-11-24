@@ -13668,6 +13668,17 @@
       }
     },
     {
+      "method": "ingest",
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "allowForgotten": "false",
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "note.md"
+      }
+    },
+    {
       "method": "create_tag",
       "typescriptMethod": "createTag",
       "typescriptOptions": {
