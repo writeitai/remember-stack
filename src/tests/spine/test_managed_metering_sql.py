@@ -313,6 +313,40 @@ class FakePdf:
         )
 
 
+_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00"
+    b"\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+"""A valid 1x1 PNG, so content detection accepts the declared ``image/png``."""
+
+
+class FakeImage:
+    """An ``image_ocr_description`` route that counts its (provider) calls."""
+
+    def __init__(self) -> None:
+        """Start with no calls."""
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        """The OCR+description route name."""
+        return "image_ocr_description"
+
+    @property
+    def version(self) -> str:
+        """A fixed test version."""
+        return "fake-image-v1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """The 'OCR and description' reading; counted so a test can prove it waited."""
+        del content, mime
+        self.calls += 1
+        return MarkdownPassthroughConverter().convert(
+            content=b"## Visible text (OCR)\n\nhello", mime="text/markdown"
+        )
+
+
 class NamedConverter:
     """A passthrough reading under another route name."""
 
@@ -526,11 +560,33 @@ def test_a_pdf_is_counted_before_ocr_and_ocr_waits_for_approval(
     assert _structure_count(engine=database_engine, version_id=version_id) == 1
 
 
+def test_an_image_is_measured_before_its_provider_calls(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """An OCR+description image is one ``image`` unit, recorded before either lane."""
+    vision = FakeImage()
+    rig = _rig(engine=database_engine, tmp_path=tmp_path, routes={"image/png": vision})
+    version_id = rig.upload(name="photo.png", mime="image/png", content=_PNG)
+    assert rig.convert() is RunResultOutcome.ADMISSION_PARKED
+    assert vision.calls == 0
+    measured = _measurement(engine=database_engine, version_id=version_id)
+    assert measured is not None
+    assert (measured["cost_class"], measured["native_quantity"], measured["unit"]) == (
+        "image",
+        1,
+        "image",
+    )
+    assert measured["processing_profile_id"] == "image-standard-v1"
+    assert rig.meter.drain_once().measurements_accepted == 1
+    assert rig.convert() is RunResultOutcome.SUCCEEDED
+    assert vision.calls == 1
+
+
 def test_a_card_is_free_and_an_unmetered_route_is_refused(
     database_engine: Engine, tmp_path: Path
 ) -> None:
     """A card sends no measurement; a provider route without a class never runs."""
-    vision = NamedConverter(name="image_ocr_description")
+    vision = NamedConverter(name="mistral_ocr")
     rig = _rig(
         engine=database_engine,
         tmp_path=tmp_path,

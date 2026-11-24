@@ -75,6 +75,7 @@ from rememberstack.core.metering import cost_class_for_route
 from rememberstack.core.metering import DOC_SCAN_ALGORITHM_VERSION
 from rememberstack.core.metering import DOC_TEXT_ALGORITHM_VERSION
 from rememberstack.core.metering import FREE_ROUTES
+from rememberstack.core.metering import IMAGE_ALGORITHM_VERSION
 from rememberstack.core.metering import METERING_CLASSIFIER_VERSION
 from rememberstack.core.metering import normalized_character_count
 from rememberstack.core.metering import UnmeteredRouteError
@@ -754,14 +755,20 @@ class ConvertHandler:
             # The reading limit guards this process, which would read the PDF;
             # a route that fetches it by URL is not bound by it (D147).
             self._fail_oversized_pdf(source=source)
+        # A route's provider ceiling (the PDF route's, the image route's)
+        # fails the version before measurement, download or any provider call.
         provider_limit = getattr(converter, "provider_limit_bytes", None)
         if (
-            source.mime == "application/pdf"
-            and source.byte_size is not None
+            source.byte_size is not None
             and isinstance(provider_limit, int)
             and source.byte_size > provider_limit
         ):
-            error = f"PDF exceeds the pre-OCR provider limit of {provider_limit} bytes"
+            error = (
+                f"PDF exceeds the pre-OCR provider limit of {provider_limit} bytes"
+                if source.mime == "application/pdf"
+                else f"{source.mime} exceeds the {converter.name} provider limit "
+                f"of {provider_limit} bytes"
+            )
             self._catalog.mark_version_failed(version_id=source.version_id, error=error)
             raise NonRetryableHandlerError(error)
         cost_class = self._admission(work=work, source=source, converter=converter)
@@ -1012,8 +1019,9 @@ class ConvertHandler:
 
         Returns None when nothing is metered here: no meter, a free card, or
         an approved measurement. A recorded but unapproved measurement parks
-        the work again. A PDF is measured now, before its OCR call, and
-        parks. A reading route converts first and is measured after.
+        the work again. A PDF (its pages) and an image (one unit) are
+        measured now, before any provider call, and park. A reading route
+        converts first and is measured after.
         """
         if self._meter_scope is None or converter.name in FREE_ROUTES:
             return None
@@ -1031,6 +1039,15 @@ class ConvertHandler:
             raise AdmissionPendingError(f"measurement {state}")
         if cost_class == "doc-text":
             return cost_class
+        if cost_class == "image":
+            self._record_measurement(
+                work=work,
+                source=source,
+                cost_class=cost_class,
+                native_quantity=1,
+                algorithm_version=IMAGE_ALGORITHM_VERSION,
+            )
+            raise AdmissionPendingError("measured one image before provider calls")
         by_url = (
             isinstance(converter, UrlConverter)
             and isinstance(self._raw_store, PresignedReadPort)

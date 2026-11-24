@@ -17,14 +17,15 @@ def test_every_stock_route_is_billed_or_free() -> None:
         cost_class_for_route(route=route)
 
 
-def test_pdf_is_scan_and_local_readers_are_text() -> None:
-    """Every PDF bills pages; reading routes bill characters."""
+def test_pdf_is_scan_images_are_image_and_local_readers_are_text() -> None:
+    """Every PDF bills pages, every OCR+description image one image; readers characters."""
     assert cost_class_for_route(route="pdf") == "doc-scan"
+    assert cost_class_for_route(route="image_ocr_description") == "image"
     for route in ("text", "markitdown", "office", "spreadsheet", "email"):
         assert cost_class_for_route(route=route) == "doc-text"
 
 
-@pytest.mark.parametrize("route", ["image_ocr_description", "mistral_ocr", "x"])
+@pytest.mark.parametrize("route", ["mistral_ocr", "x"])
 def test_provider_routes_without_a_class_are_refused(route: str) -> None:
     """A route that would call a provider unbilled never runs under metering."""
     with pytest.raises(UnmeteredRouteError, match="rate_class_unavailable"):
