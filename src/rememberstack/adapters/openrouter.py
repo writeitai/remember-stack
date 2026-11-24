@@ -66,9 +66,10 @@ def _parse_provider_name_list(*, value: object, field_name: str) -> object:
     """Parse comma-separated or JSON list of OpenRouter provider slugs.
 
     An absent value or a blank string (Compose unset optionals) becomes
-    ``None``. Anything else must name at least one host: an explicit list
-    with a blank or non-string entry is refused rather than dropped, so a
-    malformed hard allowlist can never collapse into "no allowlist".
+    ``None``. Anything else must name at least one host: a list or
+    comma-separated value with a blank or non-string entry is refused rather
+    than dropped, so a malformed hard allowlist can never collapse into "no
+    allowlist" or silently lose a host.
     Used by the embedding and chat shortlists and allowlists.
     """
     if value is None:
@@ -95,7 +96,14 @@ def _parse_provider_name_list(*, value: object, field_name: str) -> object:
                 raise ValueError(
                     f"{field_name} must be comma-separated names or a JSON list"
                 )
-            value = [part.strip() for part in stripped.split(",") if part.strip()]
+            parts = [part.strip() for part in stripped.split(",")]
+            if not all(parts):
+                # ``nebius,`` or ``nebius,,deepinfra``: an empty entry is a
+                # typo, and dropping it would silently narrow the list.
+                raise ValueError(
+                    f"{field_name} must contain only non-blank provider names"
+                )
+            value = parts
     if not isinstance(value, list) or not value:
         raise ValueError(f"{field_name} must be a non-empty list of strings")
     names: list[str] = []

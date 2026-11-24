@@ -63,12 +63,14 @@ OpenRouter picks between the two hosts and fails over only between them, and
 is excluded: an order-only shortlist let production traffic fail over to it.
 Confirm that each listed host is ZDR for this model on OpenRouter before
 changing the list. Also set the OpenRouter account (or the guardrail on every
-API key the deployment uses) to ZDR only with Safety Retention excluded for
-**All other models**, the group `qwen/qwen3-embedding-8b` belongs to (and for
-**Google models** too if any role uses a Google model). The request flag
-follows that account policy: a Safety Retention endpoint may keep any
-request, flagged or not, for abuse prevention, self-serve accounts allow it
-by default, and no request field can turn it off. Verify the setting for each
+API key the deployment uses) to enforce ZDR, with Safety Retention excluded,
+for **All other models**, the group `qwen/qwen3-embedding-8b` belongs to.
+OpenRouter's ZDR settings are per model group (OpenAI, Anthropic, Google,
+SpaceXSI, All other models), so enforce ZDR for the groups of the other roles
+too (OpenAI for the default chat and image-description models). The request
+flag follows those settings: a Safety Retention endpoint may keep any request,
+flagged or not, for abuse prevention, self-serve accounts allow it by
+default, and no request field can turn it off. Verify the settings for each
 group and key before sending customer content.
 
 With Docker Compose, keep the whole policy in the project `.env` (Compose

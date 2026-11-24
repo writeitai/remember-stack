@@ -84,9 +84,9 @@ description call only to zero-data-retention endpoints (`zdr: true` and
 `data_collection: deny`), with or without an allowlist; it is separate from
 `REMEMBERSTACK_OPENROUTER_ZDR` and does not re-convert existing images. As
 with the engine-wide flag, strict zero retention also needs the OpenRouter
-account or key guardrail set to ZDR only with Safety Retention excluded for
-the model group the description model belongs to (**All other models** for
-the default OpenAI model, **Google models** for a Gemini model); see
+account or key guardrail set to enforce ZDR for the description model's
+group (**OpenAI** for the default model, **Google** for a Gemini model, with
+Safety Retention excluded for Google and All other models); see
 [models](/docs/self-hosting/models). OCR keeps its independent provider
 settings.
 

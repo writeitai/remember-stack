@@ -623,3 +623,36 @@ def test_query_engine_database_budget_does_not_leak_between_instances() -> None:
     )
     assert first.database_budget_seconds == 240
     assert second.database_budget_seconds == 75
+
+
+def test_compose_zdr_flags_never_turn_a_blank_override_into_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exported blank ZDR flag stops startup rather than disabling ZDR.
+
+    Compose's ``${VAR:-false}`` would turn an explicitly blank shell value
+    into ``false`` and override ``true`` from ``.env``; ``${VAR-false}`` keeps
+    the blank, which both settings classes refuse.
+    """
+    from pydantic import ValidationError
+
+    from rememberstack.adapters.converters.image_ocr_description import (
+        ImageDescriptionSettings,
+    )
+    from rememberstack.adapters.openrouter import OpenRouterSettings
+
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    for name in ("REMEMBERSTACK_OPENROUTER_ZDR", "REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR"):
+        assert f"    {name}: ${{{name}-false}}\n" in compose
+        assert f"${{{name}:-" not in compose
+
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY", "test-key")
+    assert OpenRouterSettings().zdr is False  # pyright: ignore[reportCallIssue]
+    assert ImageDescriptionSettings().zdr is False  # pyright: ignore[reportCallIssue]
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "")
+    with pytest.raises(ValidationError, match="zdr"):
+        OpenRouterSettings()  # pyright: ignore[reportCallIssue]
+    monkeypatch.setenv("REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR", "")
+    with pytest.raises(ValidationError, match="zdr"):
+        ImageDescriptionSettings()  # pyright: ignore[reportCallIssue]
