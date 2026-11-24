@@ -873,11 +873,12 @@ def test_refused_and_unavailable_receipts_are_coded_and_replay_continues(
         assert rig.convert() is RunResultOutcome.SUCCEEDED
         rig.readiness.stage_status[version] = "dead_letter"
         _due(engine=database_engine)
-        for error in (
+        injected: list[Exception] = [
             MeterReceiptUnauthorized("rejected"),
             MeterReceiptUnavailable("down"),
             MeterReceiptConflict("changed"),
-        ):
+        ]
+        for error in injected:
             rig.receipts.fail_outcome_next = error
             assert rig.meter.drain_once().outcomes_accepted == 0
             _due(engine=database_engine)
@@ -892,9 +893,10 @@ def test_refused_and_unavailable_receipts_are_coded_and_replay_continues(
     coded = [r for r in caplog.records if "error_code" in r.__dict__]
     assert all("measurement_id" in record.__dict__ for record in coded)
     # Each ERROR carries the original receipt exception.
-    assert all(
-        record.exc_info is not None
-        and type(record.exc_info[1]).__name__.startswith("MeterReceipt")
-        for record in coded
-        if record.levelname == "ERROR"
-    )
+    errors = [r for r in coded if r.levelname == "ERROR"]
+    assert [r.exc_info[1] if r.exc_info else None for r in errors[1:]] == [
+        injected[0],
+        injected[2],
+    ]
+    assert errors[0].exc_info is not None
+    assert isinstance(errors[0].exc_info[1], MeterReceiptUnauthorized)

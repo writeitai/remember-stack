@@ -20,6 +20,7 @@ from rememberstack.model import ExpiredLease
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import ProviderCallError
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import WorkNotRunningError
 from rememberstack.spine.work_ledger import WorkLedger
@@ -177,27 +178,37 @@ def test_item_failure_logs_retry_as_warning_and_last_attempt_as_error(
 
 
 @pytest.mark.parametrize(
-    "error", [RuntimeError("provider 502"), NonRetryableHandlerError("bad input")]
+    "error", [RuntimeError("timeout"), NonRetryableHandlerError("bad input")]
 )
-def test_a_failure_after_losing_the_lease_keeps_its_traceback(
+def test_a_failure_after_losing_the_lease_is_one_lease_lost_warning(
     caplog: pytest.LogCaptureFixture, error: Exception
 ) -> None:
-    """The reaper owns the outcome; the original failure is a coded retry record.
-
-    No ERROR: the attempt no longer owns the claim, so it cannot be terminal.
-    """
+    """The reaper owns the outcome: one WARNING keeps the failure, no ERROR."""
     ledger = _Ledger(retry_at=datetime.now(UTC))
     ledger.lost = True
     worker = _worker(ledger=ledger, handler=_Failing(error))
     with caplog.at_level("WARNING", logger="rememberstack"):
         result = worker.run_claimed(claimed=_work(), started_ns=0)
     assert result.outcome is RunResultOutcome.LEASE_LOST
-    assert _coded(caplog) == [
-        ("WARNING", "worker_item_retry"),
-        ("WARNING", "worker_lease_lost"),
-    ]
-    first = caplog.records[0]
-    assert first.exc_info is not None and first.exc_info[1] is error
+    assert _coded(caplog) == [("WARNING", "worker_lease_lost")]
+    record = caplog.records[0]
+    assert record.exc_info is not None and record.exc_info[1] is error
+    assert record.__dict__["exception_type"] == type(error).__name__
+
+
+def test_provider_failures_log_their_type_without_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Rule 4: provider text may echo the document, so no ``exc_info``."""
+    error = ProviderCallError("upstream echoed: SECRET DOCUMENT TEXT")
+    worker = _worker(ledger=_Ledger(retry_at=None), handler=_Failing(error))
+    with caplog.at_level("WARNING", logger="rememberstack"):
+        worker.run_claimed(claimed=_work(), started_ns=0)
+    assert _coded(caplog) == [("ERROR", "worker_item_failed")]
+    record = caplog.records[0]
+    assert record.exc_info is None
+    assert record.__dict__["exception_type"] == "ProviderCallError"
+    assert "SECRET" not in caplog.text
 
 
 def test_reaper_codes_each_lease_and_survives_a_failed_wake(

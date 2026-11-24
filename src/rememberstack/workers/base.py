@@ -189,6 +189,23 @@ class StageHandler(Protocol):
         ...
 
 
+def _loggable(exception: BaseException) -> BaseException | None:
+    """The exception to attach as ``exc_info``, or None when it may hold input.
+
+    Provider errors can carry the upstream response, which may echo document
+    text (D158 Rule 4); for those, and anything they caused, the record keeps
+    ``exception_type`` only.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exception
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ProviderCallError):
+            return None
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return exception
+
+
 class _LedgerCostMeter:
     """Bind provider accounting to one claimed processing attempt."""
 
@@ -465,23 +482,17 @@ class Worker:
                 )
             except WorkNotRunningError:
                 # The reaper owns the outcome (it logs its own ERROR if it
-                # dead-letters); keep the original failure's traceback.
-                _logger.warning(
-                    "worker item failed after losing its lease",
-                    exc_info=exception,
-                    extra={
-                        "error_code": "worker_item_retry",
-                        "processing_id": str(claimed.processing_id),
-                        "stage": claimed.stage.value,
-                        "attempt": claimed.attempt,
-                    },
+                # dead-letters); the lease-lost record keeps the failure.
+                return self._lease_lost(
+                    claimed=claimed, started_ns=started_ns, failure=exception
                 )
-                return self._lease_lost(claimed=claimed, started_ns=started_ns)
             # Logged once the ledger accepted the terminal transition.
-            _logger.exception(
+            _logger.error(
                 "non-retryable worker item failure",
+                exc_info=_loggable(exception),
                 extra={
                     "error_code": "worker_item_failed",
+                    "exception_type": type(exception).__name__,
                     "processing_id": str(claimed.processing_id),
                     "stage": claimed.stage.value,
                     "attempt": claimed.attempt,
@@ -516,38 +527,32 @@ class Worker:
                     retryable=True,
                 )
             except WorkNotRunningError:
-                # The reaper took the claim back: it requeues the item (a
-                # retry) or dead-letters it with its own ERROR. Keep the
-                # original failure's traceback as the retry record.
-                _logger.warning(
-                    "worker item failed after losing its lease",
-                    exc_info=exception,
-                    extra={
-                        "error_code": "worker_item_retry",
-                        "processing_id": str(claimed.processing_id),
-                        "stage": claimed.stage.value,
-                        "attempt": claimed.attempt,
-                    },
+                # The reaper took the claim back: it requeues the item or
+                # dead-letters it with its own ERROR.
+                return self._lease_lost(
+                    claimed=claimed, started_ns=started_ns, failure=exception
                 )
-                return self._lease_lost(claimed=claimed, started_ns=started_ns)
             # D158: a retry that will run again is expected (WARNING); the
             # last attempt failing is the item's one ERROR.
             if retry_at is not None:
                 _logger.warning(
                     "retryable worker item failure",
-                    exc_info=True,
+                    exc_info=_loggable(exception),
                     extra={
                         "error_code": "worker_item_retry",
+                        "exception_type": type(exception).__name__,
                         "processing_id": str(claimed.processing_id),
                         "stage": claimed.stage.value,
                         "attempt": claimed.attempt,
                     },
                 )
             else:
-                _logger.exception(
+                _logger.error(
                     "worker item failed with no retry left",
+                    exc_info=_loggable(exception),
                     extra={
                         "error_code": "worker_item_failed",
+                        "exception_type": type(exception).__name__,
                         "processing_id": str(claimed.processing_id),
                         "stage": claimed.stage.value,
                         "attempt": claimed.attempt,
@@ -714,12 +719,20 @@ class Worker:
                 )
         return expired
 
-    def _lease_lost(self, *, claimed: ClaimedWork, started_ns: int) -> RunResult:
-        """The attempt's claim was taken back while it ran; record nothing."""
+    def _lease_lost(
+        self, *, claimed: ClaimedWork, started_ns: int, failure: Exception | None = None
+    ) -> RunResult:
+        """The attempt's claim was taken back while it ran; record nothing.
+
+        ``failure`` is the handler's exception when the attempt failed: the
+        reaper owns the item's outcome, so it stays a WARNING here.
+        """
         _logger.warning(
             "attempt finished after losing its lease; its result is discarded",
+            exc_info=None if failure is None else _loggable(failure),
             extra={
                 "error_code": "worker_lease_lost",
+                "exception_type": None if failure is None else type(failure).__name__,
                 "processing_id": str(claimed.processing_id),
                 "stage": claimed.stage.value,
                 "attempt": claimed.attempt,
