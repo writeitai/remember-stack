@@ -33,8 +33,10 @@ def test_published_inventory_loop_consumes_next_cursor(path: str) -> None:
         compile(example, "published-inventory-loop", "exec"),
         {"memory": memory, "client": memory},
     )
-    assert memory.list_documents.call_args_list[0].kwargs == {"cursor": None}
-    assert memory.list_documents.call_args_list[1].kwargs == {"cursor": "next-position"}
+    # The guide's loop also asks for archived documents (D159); paging is
+    # what this checks.
+    assert memory.list_documents.call_args_list[0].kwargs["cursor"] is None
+    assert memory.list_documents.call_args_list[1].kwargs["cursor"] == "next-position"
 
 
 @pytest.mark.parametrize("page", ["mcp", "http-api/sections-and-references"])

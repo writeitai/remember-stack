@@ -107,6 +107,9 @@ def test_history_one_hop_has_both_half_open_clocks_on_each_edge_scan() -> None:
     for clock_column in ("ingested_at", "invalidated_at"):
         assert HISTORY_NEIGHBORHOOD_ONE_HOP.count(f"r.{clock_column}") == 4
         assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 4
+    # D159: the close/reopen refinement runs with the evidence gate
+    assert HISTORY_NEIGHBORHOOD_ONE_HOP.count("fact_believed_at('relation', edge.") == 1
+    assert HISTORY_NEIGHBORHOOD_GUARD.count("fact_believed_at('relation', gated.") == 1
     for clock_column in ("valid_from", "valid_until", "valid_precision"):
         assert HISTORY_NEIGHBORHOOD_ONE_HOP.count(f"r.{clock_column}") == 2
         assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 2

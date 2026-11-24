@@ -7,8 +7,9 @@ forget's hide. The currency reason ``version_deleted`` is renamed
 ``version_archived``, and ``reopened_unarchive`` records an unarchive (or a
 returning claim) reopening a fact an archive closed, without erasing the close.
 
-Upgrade of D135 data: every lineage D135 deleted (and no D74 forget owns)
-becomes an archive — ``caller`` for an explicit delete, ``source`` for a
+Upgrade of D135 data: every lineage D135 deleted (and no D74 forget owns),
+recognised by its signature — the lineage and its versions tombstoned at one
+instant — becomes an archive — ``caller`` for an explicit delete, ``source`` for a
 connector-observed deletion — with ``archived_at`` set to its deletion time.
 The currency events and closures of that lineage's current deletion episode
 (the delete or connector finalization, plus the late reconcile runs of the
@@ -18,11 +19,11 @@ the lineage's) are cleared. An earlier deletion the lineage already came back
 from is left alone, and so are internal version tombstones.
 
 Belief intervals: once a fact can be reopened, ``invalidated_at`` holds only
-its current state. ``rememberstack_graph_internal.fact_believed_at`` answers "was this fact believed
-at instant b?" from its close and reopen adjudications (a fact never reopened
-keeps the old single-column test), and ``memory_v1.facts_as_of`` and the graph
-traversal helpers' belief clocks use it, so a read inside an archive interval
-still sees the fact closed.
+its current state. ``rememberstack_graph_internal.fact_believed_at`` refines
+the single-column test from the fact's close and reopen adjudications, and
+``memory_v1.facts_as_of``, the graph traversal helpers and the Python graph
+reads apply it, so a read inside an archive interval still sees the fact
+closed.
 """
 
 from collections.abc import Sequence
@@ -194,13 +195,14 @@ def archived_target_projection(*, sql: str) -> str:
     )
 
 
-FACT_BELIEVED_AT_SIGNATURE = "rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz)"
+FACT_BELIEVED_AT_SIGNATURE = (
+    "rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz)"
+)
 
 FACT_BELIEVED_AT_DDL = r"""
 CREATE FUNCTION rememberstack_graph_internal.fact_believed_at(
   fact_kind text,
   fact_id uuid,
-  invalidated_at timestamptz,
   believed_at timestamptz
 )
 RETURNS boolean
@@ -210,44 +212,50 @@ PARALLEL SAFE
 SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp
 AS $$
-  SELECT CASE
-    WHEN $1 = 'relation' AND EXISTS (
-      SELECT 1 FROM public.relation_adjudications AS a
-      WHERE a.relation_id = $2 AND a.outcome = 'reopened_unarchive'
-    ) THEN coalesce((
-      SELECT a.outcome = 'reopened_unarchive'
-      FROM public.relation_adjudications AS a
-      WHERE a.relation_id = $2
-        AND a.outcome IN ('retracted_source_removal', 'invalidated', 'reopened_unarchive')
-        AND a.decided_at <= $4
-      ORDER BY a.decided_at DESC, a.adjudication_id DESC
-      LIMIT 1
-    ), true)
-    WHEN $1 = 'observation' AND EXISTS (
-      SELECT 1 FROM public.observation_adjudications AS a
-      WHERE a.observation_id = $2 AND a.outcome = 'reopened_unarchive'
-    ) THEN coalesce((
-      SELECT a.outcome = 'reopened_unarchive'
-      FROM public.observation_adjudications AS a
-      WHERE a.observation_id = $2
-        AND a.outcome IN ('retracted_source_removal', 'invalidated', 'reopened_unarchive')
-        AND a.decided_at <= $4
-      ORDER BY a.decided_at DESC, a.adjudication_id DESC
-      LIMIT 1
-    ), true)
-    ELSE $3 IS NULL OR $3 > $4
+  -- not believed only when the fact was reopened at some point and its
+  -- latest close or reopen event at or before the instant is a close
+  SELECT NOT CASE $1
+    WHEN 'relation' THEN
+      EXISTS (
+        SELECT 1 FROM public.relation_adjudications AS a
+        WHERE a.relation_id = $2 AND a.outcome = 'reopened_unarchive'
+      )
+      AND coalesce((
+        SELECT a.outcome <> 'reopened_unarchive'
+        FROM public.relation_adjudications AS a
+        WHERE a.relation_id = $2
+          AND a.outcome IN ('retracted_source_removal', 'invalidated', 'reopened_unarchive')
+          AND a.decided_at <= $3
+        ORDER BY a.decided_at DESC, a.adjudication_id DESC
+        LIMIT 1
+      ), false)
+    WHEN 'observation' THEN
+      EXISTS (
+        SELECT 1 FROM public.observation_adjudications AS a
+        WHERE a.observation_id = $2 AND a.outcome = 'reopened_unarchive'
+      )
+      AND coalesce((
+        SELECT a.outcome <> 'reopened_unarchive'
+        FROM public.observation_adjudications AS a
+        WHERE a.observation_id = $2
+          AND a.outcome IN ('retracted_source_removal', 'invalidated', 'reopened_unarchive')
+          AND a.decided_at <= $3
+        ORDER BY a.decided_at DESC, a.adjudication_id DESC
+        LIMIT 1
+      ), false)
+    ELSE false
   END
 $$;
-COMMENT ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz) IS
-  'D159 belief at an instant: true when the fact''s latest close or reopen adjudication at or before believed_at is not a close. invalidated_at holds only the current state once an unarchive has reopened a fact; a fact never reopened answers from invalidated_at alone. SECURITY DEFINER over the adjudication transcripts; EXECUTE for the graph and query roles. Recreated with the graph schema by every graph rebuild.';
+COMMENT ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz) IS
+  'D159 refinement of belief at an instant for a fact whose single-column test (invalidated_at IS NULL OR invalidated_at > believed_at) already holds: false only when the fact was ever reopened by unarchive and its latest close or reopen adjudication at or before believed_at is a close. invalidated_at holds only the current state once a fact can reopen. SECURITY DEFINER over the adjudication transcripts; EXECUTE for the graph and query roles. Recreated with the graph schema by every graph rebuild; callers apply it after the cheap test, over anchored candidates.';
 """
 
 FACT_BELIEVED_AT_GRANTS = r"""
-REVOKE ALL ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz) FROM PUBLIC;
 DO $do$
 BEGIN
   EXECUTE format(
-    'GRANT EXECUTE ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz) TO %I, %I',
+    'GRANT EXECUTE ON FUNCTION rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz) TO %I, %I',
     'rememberstack_graph_' || current_database(),
     'rememberstack_query_' || current_database()
   );
@@ -255,20 +263,27 @@ END
 $do$;
 """
 
-_HELPER_BELIEF = (
-    "(h.invalidated_at IS NULL\n                    OR h.invalidated_at > clock_believed)",
-    "rememberstack_graph_internal.fact_believed_at('relation', h.relation_id, h.invalidated_at,"
-    " clock_believed)",
+_HELPER_GATE = (
+    "      ) AS ordered\n"
+    "      WHERE rememberstack_graph_internal.relation_evidence_in_scope(\n"
 )
 
 
 def belief_interval_helper(*, sql: str) -> str:
-    """A traversal helper whose belief clock reads close/reopen events."""
-    old, new = _HELPER_BELIEF
-    old = old.replace("\\n", "\n")
-    if sql.count(old) != 2:
-        raise RuntimeError("unexpected traversal helper belief predicate")
-    return sql.replace(old, new)
+    """A traversal helper whose belief clock also reads close/reopen events.
+
+    The edge scan keeps its single-column test; the refinement runs with the
+    D140 evidence gate, lazily over each level's ordered candidates.
+    """
+    if sql.count(_HELPER_GATE) != 1:
+        raise RuntimeError("unexpected traversal helper gate")
+    return sql.replace(
+        _HELPER_GATE,
+        "      ) AS ordered\n"
+        "      WHERE (valid_at IS NULL OR rememberstack_graph_internal.fact_believed_at(\n"
+        "          'relation', ordered.relation_id, clock_believed))\n"
+        "        AND rememberstack_graph_internal.relation_evidence_in_scope(\n",
+    )
 
 
 def facts_as_of_ddl() -> str:
@@ -279,8 +294,8 @@ def facts_as_of_ddl() -> str:
 
     old = "AND (f.invalidated_at IS NULL OR f.invalidated_at > facts_as_of.believed_at)"
     new = (
-        "AND rememberstack_graph_internal.fact_believed_at(f.fact_kind, f.fact_id, f.invalidated_at,"
-        " facts_as_of.believed_at)"
+        old + "\n    AND rememberstack_graph_internal.fact_believed_at("
+        "f.fact_kind, f.fact_id, facts_as_of.believed_at)"
     )
     if FACTS_AS_OF_DDL.count(old) != 1:
         raise RuntimeError("unexpected facts_as_of belief predicate")
@@ -319,6 +334,13 @@ _DELETED_LINEAGES = text(
     FROM documents d
     WHERE d.deleted_at IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM {forget_table} f WHERE f.doc_id = d.doc_id)
+      -- D135's delete (caller or connector) tombstoned the lineage and its
+      -- live versions in one statement each of one transaction, at one
+      -- instant; a lineage tombstone without that is not a D135 deletion
+      AND EXISTS (
+          SELECT 1 FROM document_versions v
+          WHERE v.doc_id = d.doc_id AND v.deleted_at = d.deleted_at
+      )
     ORDER BY d.doc_id
     """
 )

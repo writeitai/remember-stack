@@ -296,5 +296,5 @@ def test_the_upgrade_leaves_documents_live_inert_below_it(
     assert _scalar(
         engine,
         "SELECT to_regprocedure("
-        "'rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz, timestamptz)') IS NOT NULL",
+        "'rememberstack_graph_internal.fact_believed_at(text, uuid, timestamptz)') IS NOT NULL",
     )

@@ -63,26 +63,13 @@ class OperationExecutor:
         read; it is a request option, not an operation argument.
         """
         with open_surface_scope(surface=SurfaceCostKind.OPERATION):
-            result = self._execute_named(
+            return self._execute_named(
                 deployment_id=deployment_id,
                 operation=operation,
                 arguments=arguments,
                 evaluated_at=evaluated_at,
                 layers=layers,
             )
-        # D159: each claim and passage of an archived document says so.
-        if isinstance(result, ContextBundleV2):
-            return result.model_copy(
-                update={
-                    "claims_and_sources": self._engine.mark_archived(
-                        deployment_id=deployment_id, envelope=result.claims_and_sources
-                    ),
-                    "facts": self._engine.mark_archived(
-                        deployment_id=deployment_id, envelope=result.facts
-                    ),
-                }
-            )
-        return self._engine.mark_archived(deployment_id=deployment_id, envelope=result)
 
     def adjacent_chunks(
         self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1

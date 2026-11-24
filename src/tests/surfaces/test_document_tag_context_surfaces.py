@@ -127,12 +127,12 @@ def _http() -> tuple[TestClient, _RecordingExecutor]:
 
 
 def test_the_three_context_tools_take_the_documents_filter() -> None:
-    """Versions 5/5/6, a closed documents object with tags, list_tags guidance."""
+    """Versions 6/6/7, a closed documents object with tags, list_tags guidance."""
     versions = {name: tool(name).tool_version for name in _CONTEXT}
     assert versions == {
-        "claims_and_sources_context": 5,
-        "facts_context": 5,
-        "combined_context": 6,
+        "claims_and_sources_context": 6,
+        "facts_context": 6,
+        "combined_context": 7,
     }
     for name in _CONTEXT:
         definition = tool(name)
@@ -153,6 +153,7 @@ def test_the_three_context_tools_take_the_documents_filter() -> None:
             "thread_ref",
             "doc_ids",
             "tags",
+            "include_archived",  # D159
         }
         assert "list_tags" in definition.description
     # the tags selector is the same object search_documents takes
@@ -163,7 +164,7 @@ def test_the_three_context_tools_take_the_documents_filter() -> None:
     resolve = cast("dict[str, dict[str, object]]", tool("resolve_entity").input_schema)
     assert "documents" not in resolve["properties"]
     operations = {op.name.value: op for op in CANONICAL_OPERATIONS}
-    assert [operations[name].version for name in _CONTEXT] == [5, 5, 6]
+    assert [operations[name].version for name in _CONTEXT] == [6, 6, 7]
 
 
 def test_the_operation_surface_validates_documents_before_running() -> None:

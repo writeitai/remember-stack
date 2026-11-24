@@ -1733,6 +1733,45 @@ class QueryEngine:
         _database_deadline: float | None = None,
         _snapshot_connection: Connection | None = None,
     ) -> Envelope:
+        """D97's facts context; evidence of an archived document is marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._default_facts_context(
+                deployment_id=deployment_id,
+                graph_queries=graph_queries,
+                query=query,
+                entity_ids=entity_ids,
+                k=k,
+                candidate_k=candidate_k,
+                evidence_per_fact=evidence_per_fact,
+                hops=hops,
+                predicate=predicate,
+                time=time,
+                evaluated_at=evaluated_at,
+                documents=documents,
+                _database_deadline=_database_deadline,
+                _snapshot_connection=_snapshot_connection,
+            ),
+        )
+
+    def _default_facts_context(
+        self,
+        *,
+        deployment_id: UUID,
+        graph_queries: "GraphQueries | None",
+        query: str,
+        entity_ids: tuple[UUID, ...] = (),
+        k: int = DEFAULT_CONTEXT_K,
+        candidate_k: int | None = None,
+        evidence_per_fact: int = 3,
+        hops: int = DEFAULT_FACTS_CONTEXT_HOPS,
+        predicate: str | None = None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
+        documents: DocumentSearchFilters | None = None,
+        _database_deadline: float | None = None,
+        _snapshot_connection: Connection | None = None,
+    ) -> Envelope:
         """Apply D97's default entity-neighborhood then fact-text recipe.
 
         Callers resolve names first and pass the complete candidate choice as
@@ -2019,6 +2058,35 @@ class QueryEngine:
 
     @_with_surface(SurfaceCostKind.OPERATION)
     def claims_and_sources_context(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        entity_ids: tuple[UUID, ...] = (),
+        k: int = DEFAULT_CONTEXT_K,
+        candidate_k: int | None = None,
+        evaluated_at: datetime | None = None,
+        time: ReadTime | FactTime | None = None,
+        layers: frozenset[ProcessingLayer] | None = None,
+        documents: DocumentSearchFilters | None = None,
+    ) -> Envelope:
+        """Claims and passages; an archived document's are marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._claims_and_sources_context(
+                deployment_id=deployment_id,
+                query=query,
+                entity_ids=entity_ids,
+                k=k,
+                candidate_k=candidate_k,
+                evaluated_at=evaluated_at,
+                time=time,
+                layers=layers,
+                documents=documents,
+            ),
+        )
+
+    def _claims_and_sources_context(
         self,
         *,
         deployment_id: UUID,
@@ -5968,8 +6036,9 @@ def _lookup_belief_predicate(*, fact_kind: str, fact_id: str) -> str:
     """
     return (
         "ingested_at <= :evaluated_at"
+        " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
         " AND rememberstack_graph_internal.fact_believed_at("
-        f"'{fact_kind}', {fact_id}, invalidated_at, :evaluated_at)"
+        f"'{fact_kind}', {fact_id}, :evaluated_at)"
     )
 
 

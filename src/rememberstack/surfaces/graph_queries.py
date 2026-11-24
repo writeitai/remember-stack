@@ -696,8 +696,9 @@ _EDGE_ROWS = text(
     WHERE deployment_id = :deployment_id
       AND relation_id IN :relation_ids
       AND (ingested_at IS NULL OR ingested_at <= :believed_at)
-      AND rememberstack_graph_internal.fact_believed_at('relation', relation_id, invalidated_at,
-                                  :believed_at)
+      AND (invalidated_at IS NULL OR invalidated_at > :believed_at)
+      AND rememberstack_graph_internal.fact_believed_at('relation', relation_id,
+                                                        :believed_at)
       AND (valid_from IS NULL OR valid_from <= :valid_at)
       AND (valid_until IS NULL OR valid_until > :valid_at)
     """
