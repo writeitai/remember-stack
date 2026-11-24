@@ -38,6 +38,13 @@ deployment refused the route with `rate_class_unavailable`.
 before it is downloaded, measured or sent to a provider, as an oversized PDF
 already did.
 
+**Zero-data-retention image descriptions.** Set
+`REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR=true` to send the image description only to
+zero-data-retention endpoints (`zdr: true`), like `REMEMBERSTACK_OPENROUTER_ZDR`
+for chat. Strict zero retention also needs your OpenRouter account set to ZDR
+only. Turning it on refreshes each image's description once at its next
+conversion; the OCR is reused.
+
 **Error codes on log records.** Every ERROR log record from the engine's
 `rememberstack.*` loggers now carries an `error_code` field, such as `worker_item_failed` or
 `mcp_tool_failed`. A log handler can export it to group failures without
