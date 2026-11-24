@@ -213,8 +213,9 @@ transports. Run a small live API check before enabling this default-off backup.
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred chat providers, with fallback. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers. Alone it disables fallback; combine with an order naming the same unique slugs to allow fallback within the set. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these embedding providers. Two or more allow fallback within the set; one disables fallback. An embedding order used with it must name the same unique slugs. Not combinable with `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat and embeddings (`zdr: true`, `data_collection: deny`). Strict zero retention also needs the OpenRouter account or key guardrail to enforce ZDR for each model group used, with Safety Retention excluded; see [models](/docs/self-hosting/models). |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Reasoning effort for every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | Reasoning effort per model id; wins over the global value. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
@@ -272,7 +273,7 @@ See [File formats and converters](/docs/self-hosting/converters).
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_DETAIL` | `high` | `auto`, `low`, `high`, `original` | Explicit provider observation resolution. High requests bounded preprocessing of the original image; exact sizing and supported values depend on the model. Changes refresh the description checkpoint while retaining matching OCR. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Approved endpoints in preference order. One entry disables fallback; multiple entries allow fallback only within the list. The LoCoMo profile uses `["openai/flex","openai"]`. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | bool | Ask for zero-data-retention endpoints for the image description (`zdr: true`); strict zero retention also needs the OpenRouter account set to ZDR only. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR` | `false` | bool | Ask for zero-data-retention endpoints for the image description (`zdr: true`, `data_collection: deny`). Part of the route version: turning it on refreshes the vision lane once and reuses OCR. Strict zero retention also needs the account or key guardrail settings described under `REMEMBERSTACK_OPENROUTER_ZDR`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |
