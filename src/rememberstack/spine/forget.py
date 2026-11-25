@@ -892,6 +892,15 @@ class _Sweep:
             key=str,
         )
         p["exclusive_entity_ids"] = self._ids(_EXCLUSIVE_ENTITIES, p)
+        # A surviving decision may cite an entity merged into one this
+        # document touched; the redirects are read before any entity is
+        # retired and kept on the record for later sweeps.
+        p["rationale_entity_ids"] = sorted(
+            set(self._ids(_REDIRECT_ANCESTORS, p))
+            | {UUID(value) for value in collected["redirect_entity_ids"]},
+            key=str,
+        )
+        collected["redirect_entity_ids"] = sorted(map(str, p["rationale_entity_ids"]))
         compiled = self._ids(
             _CITING_ARTIFACTS.format(facts="linked_fact_ids")
             + " AND a.page_kind = 'compiled'",
@@ -1178,6 +1187,7 @@ def _collected(
     for key in (
         "fact_ids",
         "entity_ids",
+        "redirect_entity_ids",
         "chunk_ids",
         "k_artifact_ids",
         "k_pending",
@@ -1422,6 +1432,17 @@ _FACT_ENDPOINTS = """
 # An entity is exclusive when it was resolved from this document's mentions
 # and from no mention of another, not forgotten document, and no surviving
 # fact uses it.
+_REDIRECT_ANCESTORS = """
+    WITH RECURSIVE closure(entity_id) AS (
+      SELECT CAST(value AS uuid) FROM unnest(CAST(:entity_ids AS uuid[])) value
+      UNION
+      SELECT x.entity_id FROM entities x JOIN closure c ON x.merged_into=c.entity_id
+      WHERE x.deployment_id=:deployment_id
+    )
+    SELECT entity_id FROM closure
+"""
+"""Every entity the document touched and every entity redirected into one."""
+
 _EXCLUSIVE_ENTITIES = """
     SELECT e.entity_id FROM entities e
     WHERE e.deployment_id=:deployment_id
@@ -1770,7 +1791,7 @@ _ENTITY_STATEMENTS = (
         WHERE d.deployment_id=:deployment_id
           AND (d.features ? 'rationale' OR d.features->'t4_selection' ? 'rationale')
           AND EXISTS (
-            SELECT 1 FROM unnest(CAST(:resolved_entity_ids AS uuid[])) ids(value)
+            SELECT 1 FROM unnest(CAST(:rationale_entity_ids AS uuid[])) ids(value)
             WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%')
         """
     ),

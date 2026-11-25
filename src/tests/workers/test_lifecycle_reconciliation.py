@@ -671,6 +671,45 @@ def test_intra_cycle_move_is_a_support_swap_never_a_retract(rig: _LifecycleRig) 
     )
 
 
+def test_a_settled_archive_leaves_a_later_support_swap_to_its_cycle(
+    rig: _LifecycleRig,
+) -> None:
+    """D159: document A is archived while B also supports the fact. In a later
+    cycle the fact moves from B to C; B's reconcile has dropped its support
+    while C's version is still queued. A's settled archive never closes the
+    fact under its own id: the swap stays the cycle's to resolve."""
+    archived = rig.observe(source_ref="archived.md", content=f"{_FACT_SENTENCE}\n")
+    cycle_1 = _cycle(rig)
+    rig.observe(
+        source_ref="move-b.md", content=f"{_FACT_SENTENCE}\n", sync_cycle_id=cycle_1
+    )
+    _complete(rig, cycle_1)
+    rig.drain()
+    _finalize(rig)
+    _archive(rig, archived.doc_id)
+    assert rig.relation()["evidence_count"] == 1  # B still supports it
+
+    cycle_2 = _cycle(rig)
+    rig.observe(  # the section LEAVES document B…
+        source_ref="move-b.md", content=f"{_FILLER_SENTENCE}\n", sync_cycle_id=cycle_2
+    )
+    rig.drain()
+    assert rig.relation()["evidence_count"] == 0
+    rig.observe(  # …and ARRIVES in document C, still queued
+        source_ref="move-c.md", content=f"{_FACT_SENTENCE}\n", sync_cycle_id=cycle_2
+    )
+    _finalize(rig)  # the archive sweep runs; the cycle is not complete yet
+
+    assert rig.relation()["invalidated_at"] is None
+    _complete(rig, cycle_2)
+    rig.drain()
+    _finalize(rig)
+    fact = rig.relation()
+    assert fact["invalidated_at"] is None
+    assert fact["evidence_count"] == 1  # C carries it now
+    assert _outcomes(rig) == []  # never retracted, under any id
+
+
 def test_cycle_finalization_closes_a_genuinely_removed_fact(rig: _LifecycleRig) -> None:
     """The barrier's other outcome: the content left the source and nothing
     re-asserted it — finalization closes the fact, recorded and loud."""

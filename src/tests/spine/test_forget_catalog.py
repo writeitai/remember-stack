@@ -2378,3 +2378,64 @@ def test_a_shared_entity_keeps_only_surviving_spellings(seeded_engine: Engine) -
         )
     assert _TOKEN not in name
     assert all(_TOKEN not in alias for alias in aliases)
+
+
+def test_a_rationale_citing_an_entity_merged_into_a_touched_one_is_cleared(
+    seeded_engine: Engine,
+) -> None:
+    """§3.3 through redirects: a surviving decision whose T4 rationale cites an
+    entity merged into one the document touched loses the prose (top level
+    and nested) and keeps its verdict."""
+    absorbed = UUID("75000000-0000-0000-0000-0000000000d1")
+    mention = UUID("75000000-0000-0000-0000-0000000000d2")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-rationale"
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name, status, merged_into) VALUES (:e, :d,"
+                " 'Absorbed', 'absorbed', 'merged', :survivor)"
+            ),
+            {"e": absorbed, "d": _DEPLOYMENT_ID, "survivor": _SHARED_ENTITY_ID},
+        )
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_CONTROL_ENTITY_ID,
+            surface="control redirect mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'candidates', jsonb_build_array(CAST(:absorbed AS text)),"
+                " 'rationale', CAST(:phrase AS text),"
+                " 't4_selection', jsonb_build_object('rationale', CAST(:phrase AS text),"
+                " 'choice', 'kept'))"
+                " WHERE decision_id = :decision"
+            ),
+            {"absorbed": str(absorbed), "phrase": phrase, "decision": decision},
+        )
+
+    forget = _hide(engine=seeded_engine)
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+
+    with seeded_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT entity_id, features FROM resolution_decisions"
+                    " WHERE decision_id = :decision"
+                ),
+                {"decision": decision},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["entity_id"] == _CONTROL_ENTITY_ID  # the verdict stays
+    assert "rationale" not in row["features"]
+    assert "rationale" not in row["features"]["t4_selection"]
+    assert row["features"]["t4_selection"]["choice"] == "kept"
+    assert phrase not in str(row["features"])

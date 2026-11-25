@@ -157,7 +157,9 @@ def _sandbox_executor(
     search: object | None = None,
 ) -> QuerySandboxExecutor:
     def connect() -> psycopg.Connection:
-        return psycopg.connect(_psycopg_url(registry_url))
+        # No JIT: its compile time on a loaded runner spends the sandbox
+        # statement timeout before the graph examples read a row.
+        return psycopg.connect(_psycopg_url(registry_url), options="-c jit=off")
 
     executor = QuerySandboxExecutor(
         deployment_id=deployment_id,
