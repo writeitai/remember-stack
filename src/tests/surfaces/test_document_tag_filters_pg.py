@@ -1090,3 +1090,101 @@ def test_a_few_facts_with_many_matching_supports_still_take_the_exact_tier(
     )
     assert {UUID(item) for item in _ids(facts)} == tagged_facts
     assert search_account(facts).termination is P1Termination.EXHAUSTED
+
+
+def test_a_pending_source_archive_is_hidden_unless_asked_for_on_every_path(
+    rig: _Rig,
+) -> None:
+    """D159 test 12 on PostgreSQL: a source archive's claims stay current until
+    its cycle settles, yet default retrieval (entity-scoped nomination, claim
+    and passage confirmation) hides them; ``include_archived`` as the only
+    filter returns them marked archived."""
+    corpus = _corpus(rig)
+    entity = uuid4()
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:e, :d, 'Rollout', 'rollout')"
+            ),
+            {"e": entity, "d": _DEPLOYMENT_ID},
+        )
+        for key, lineage in (("a", corpus.a), ("b", corpus.b)):
+            seed_entity_mention(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                entity_id=entity,
+                doc_id=lineage.doc_id,
+                chunk_id=lineage.chunk(),
+                claim_id=corpus.claims[key],
+                surface_form="rollout",
+                at=_PAST,
+                resolver_version="d159-test",
+            )
+        connection.execute(
+            text(
+                "UPDATE documents SET archived_at = now(), archived_by = 'source'"
+                " WHERE doc_id = :d"
+            ),
+            {"d": corpus.a.doc_id},
+        )
+    archived_claim = corpus.claims["a"]
+    assert (
+        rig.engine.connect()
+        .execute(
+            text("SELECT is_current_testimony FROM claims WHERE claim_id = :c"),
+            {"c": archived_claim},
+        )
+        .scalar_one()
+        is True
+    )
+    deployment = str(_DEPLOYMENT_ID)
+    scoped = rig.index.search_claims_lexical_scored(
+        deployment_id=deployment,
+        query="rollout plan",
+        k=10,
+        current_only=True,
+        entity_ids=(str(entity),),
+    )
+    assert _ids(scoped) == [str(corpus.claims["b"])]
+    included = DocumentSearchFilters(include_archived=True)
+    resolved = rig.query._resolve_documents(  # noqa: SLF001
+        deployment_id=_DEPLOYMENT_ID, documents=included
+    )
+    scoped_included = rig.index.search_claims_lexical_scored(
+        deployment_id=deployment,
+        query="rollout plan",
+        k=10,
+        current_only=True,
+        entity_ids=(str(entity),),
+        documents=resolved,
+    )
+    assert str(archived_claim) in _ids(scoped_included)
+
+    for documents, expected in ((None, False), (included, True)):
+        claims = rig.query.search_claims(
+            deployment_id=_DEPLOYMENT_ID,
+            query="rollout plan",
+            k=10,
+            channel="bm25",
+            documents=documents,
+        )
+        chunks = rig.query.search_chunks(
+            deployment_id=_DEPLOYMENT_ID,
+            query="rollout plan",
+            k=10,
+            channel="bm25",
+            documents=documents,
+        )
+        claim_marks = {item.claim_id: item.archived for item in claims.evidence}
+        chunk_marks = {item.doc_id: item.archived for item in chunks.chunks}
+        assert (archived_claim in claim_marks) is expected
+        assert (corpus.a.doc_id in chunk_marks) is expected
+        if expected:
+            assert claim_marks[archived_claim] is True
+            assert chunk_marks[corpus.a.doc_id] is True
+            assert claim_marks[corpus.claims["b"]] is not True
+    adjacent = rig.query.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=corpus.a.chunk()
+    )
+    assert [item.archived for item in adjacent.chunks] == [True]

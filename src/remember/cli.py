@@ -694,7 +694,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 
 def _run_documents(args: argparse.Namespace) -> int:
-    """List, search, delete or tag the deployment's documents."""
+    """List, search, tag, archive or unarchive the deployment's documents."""
     if (
         args.documents_command == "search"
         and args.query is not None
@@ -734,6 +734,7 @@ def _run_documents(args: argparse.Namespace) -> int:
                     thread_ref=args.thread_ref,
                     doc_ids=tuple(args.doc_id),
                     tags=tag_filter,
+                    include_archived=args.include_archived,
                 ),
                 versions=args.versions,
                 **(
@@ -748,7 +749,10 @@ def _run_documents(args: argparse.Namespace) -> int:
             return 0
         if args.documents_command == "list":
             page = client.list_documents(
-                limit=args.limit, cursor=args.cursor, status=args.status
+                limit=args.limit,
+                cursor=args.cursor,
+                status=args.status,
+                include_archived=args.include_archived,
             )
             print(page.model_dump_json())
             if page.next_cursor is not None:
@@ -766,8 +770,11 @@ def _run_documents(args: argparse.Namespace) -> int:
             )
             print(tags.model_dump_json())
             return 0
-        deletion = client.delete_document(doc_id=args.doc_id)
-    print(deletion.model_dump_json())
+        if args.documents_command == "archive":
+            result = client.archive_document(doc_id=args.doc_id)
+        else:
+            result = client.unarchive_document(doc_id=args.doc_id)
+    print(result.model_dump_json())
     return 0
 
 
@@ -1390,6 +1397,11 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         choices=("ingesting", "converting", "structuring", "ready", "failed"),
         help="only documents whose newest version has this status",
     )
+    list_documents.add_argument(
+        "--include-archived",
+        action="store_true",
+        help="also list archived documents, with archived_at",
+    )
     search_documents = documents_commands.add_parser(
         "search",
         parents=[client_flags],
@@ -1414,6 +1426,11 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
             help="an ISO 8601 instant with a timezone, inclusive",
         )
     search_documents.add_argument("--language")
+    search_documents.add_argument(
+        "--include-archived",
+        action="store_true",
+        help="also search archived documents (history, hidden by default)",
+    )
     search_documents.add_argument("--thread-ref")
     search_documents.add_argument(
         "--doc-id", action="append", default=[], type=UUID, help="only this document"
@@ -1437,15 +1454,24 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     search_documents.add_argument(
         "--cursor", help="pass a previous page's next_cursor (only without a query)"
     )
-    delete_document = documents_commands.add_parser(
-        "delete",
+    archive_document = documents_commands.add_parser(
+        "archive",
         parents=[client_flags],
         help=(
-            "remove a document from memory: its claims stop counting and facts"
-            " only it supported are closed"
+            "archive a document: its claims stop counting and facts only it"
+            " supported are closed; it stays readable as history"
         ),
     )
-    delete_document.add_argument("doc_id", type=UUID)
+    archive_document.add_argument("doc_id", type=UUID)
+    unarchive_document = documents_commands.add_parser(
+        "unarchive",
+        parents=[client_flags],
+        help=(
+            "undo an archive: the document's testimony is current again and the"
+            " facts it closed reopen when supported"
+        ),
+    )
+    unarchive_document.add_argument("doc_id", type=UUID)
     tag_document = documents_commands.add_parser(
         "tag",
         parents=[client_flags],

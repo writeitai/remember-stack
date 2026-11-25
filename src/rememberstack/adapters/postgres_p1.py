@@ -21,6 +21,8 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from remember.models import DocumentSearchFilters
 from rememberstack.adapters import p1_ranked
+from rememberstack.core.document_filters import archived_hidden
+from rememberstack.core.document_filters import archived_lineage_hidden
 from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.document_filters import is_empty
@@ -855,6 +857,8 @@ class PostgresP1Index:
             bm25_index = "ix_chunk_search_bm25"
             hnsw_index = "ix_chunk_search_embedding_hnsw"
             partial = ""
+        # D159: an archived document's passages and claims are history.
+        predicates.append(archived_hidden(filters=documents, document="document"))
         coverage_sql = None
         mentions_sql = None
         if entity_ids:
@@ -1171,13 +1175,24 @@ class PostgresP1Index:
                     f" AND {_PENDING_READABLE.format(version='pending_chunk.version_id')}"
                     f"{pending_match}))"
                 )
-            current_predicate = "AND indexed.is_current_testimony AND " + selected
+            # D159: a source archive's claims stay current until its cycle
+            # settles; they are still hidden unless asked for.
+            current_predicate = (
+                "AND indexed.is_current_testimony AND "
+                + selected
+                + " AND "
+                + archived_lineage_hidden(filters=documents, doc="indexed.doc_id")
+            )
         elif grain == "chunk":
             table = "chunk_search"
             target = "chunks"
             policy = policy_generation or self._chunk_input_policy
             model = embedder_generation or self._embedding_model
-            chunk_match = ""
+            # D159: an archived document's passages only on request (the
+            # documents filter decides when there is one).
+            chunk_match = " AND " + archived_lineage_hidden(
+                filters=None, doc="candidate.doc_id"
+            )
             if documents is not None:
                 chunk_version_sql, document_parameters = live_version_matches(
                     filters=documents,

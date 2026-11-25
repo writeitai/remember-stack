@@ -11,8 +11,8 @@ but D62 permits a browser to do only the first. The method tells you nothing
 about which is which.
 
 So the mapping is enumerated by hand, and the default for anything not
-enumerated is ``WRITE``. ``DELETE /documents/{doc_id}`` (D135) is deliberately
-left to that default: removing a document is a write, whatever the method.
+enumerated is ``WRITE``. ``POST /documents/{doc_id}/archive`` and ``/unarchive``
+(D159) are deliberately left to that default: they change what memory believes.
 
 ## The direction failure runs
 

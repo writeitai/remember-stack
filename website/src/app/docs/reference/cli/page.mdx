@@ -30,7 +30,7 @@ standalone tool; `uvx remember …` runs it without installing.
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
-| | [`documents`](#remember-documents) | List and search documents, delete one from the memory, or change its tags. |
+| | [`documents`](#remember-documents) | List and search documents, archive or unarchive one, or change its tags. |
 | | [`tags`](#remember-tags) | List, register, change and delete document tags. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
@@ -218,16 +218,19 @@ readiness command. See [Wait until a document is queryable](/docs/guides/wait-fo
 ```text
 remember documents list [--limit N] [--cursor CURSOR]
                         [--status {ingesting,converting,structuring,ready,failed}]
+                        [--include-archived]
                         [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS]...
                           [--recipient NAME_OR_ADDRESS]...
                           [--created-from T] [--created-to T]
                           [--modified-from T] [--modified-to T]
-                          [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--language LANG] [--include-archived]
+                          [--thread-ref REF] [--doc-id DOC_ID]...
                           [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
                           [--versions {current,all}] [--limit N] [--cursor CURSOR]
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
-remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents archive DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents unarchive DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID [--add TAG]... [--remove TAG]...
                               [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID --set TAG [--set TAG]...
@@ -238,7 +241,8 @@ remember documents tag DOC_ID --set TAG [--set TAG]...
 shape of [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
 page's `next_cursor` to `--cursor` to read the next page; `next_cursor` is `null` on
 the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
-documents whose newest version has that status.
+documents whose newest version has that status. `--include-archived` also
+lists archived documents, each with `archived_at`.
 
 ```bash
 remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
@@ -250,7 +254,8 @@ JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
 several; any listed value matches. `--tag` keeps documents that carry every
 listed tag, `--any-tag` those that carry at least one, and `--not-tag` those
 that carry none; each is repeatable, and a tag that is not registered is an
-error. Dates are ISO 8601 with a timezone, for
+error. `--include-archived` also returns archived documents, each with
+`archived_at`. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
 there is no next page; without one they are newest ingested first and
 `--cursor` reads the next page. `--limit` is 1 to 200 (default 50), used as
@@ -264,22 +269,31 @@ remember documents search --author alice@acme.com --created-from 2025-01-01T00:0
 remember documents search --tag kind:decision --any-tag project:billing --any-tag project:support
 ```
 
-`delete` removes one document, every version of it, from the memory and
-prints what changed:
+`archive` archives one document, every version of it: the memory stops
+believing it, and it stays readable as history. It prints what changed:
 
 ```json
-{"doc_id":"…","deleted_at":"2026-09-23T10:41:07.318000Z","claims_retired":12,"relations_closed":2,"observations_closed":1}
+{"doc_id":"…","archived_at":"2026-09-23T10:41:07.318000Z","claims_retired":12,"relations_closed":2,"observations_closed":1}
 ```
 
 Its claims stop counting as evidence, and facts that only it supported are
-closed with a recorded retraction. The claims and the stored original stay
-as history. Deleting needs a `write` credential. Deleting a document that
-does not exist, or is already deleted, prints
-`error: API 404: document_not_found` and exits with status 1. See
-[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+closed with a recorded retraction. `list` and `search` leave it out unless
+you pass `--include-archived`. Archiving an archived document prints the same
+`archived_at` with zero counts. See
+[`POST /documents/{doc_id}/archive`](/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
+
+`unarchive` undoes an archive exactly and prints
+`{"doc_id":"…","claims_restored":12,"facts_reopened":3}`: the claims the
+archive retired count again, and the facts it closed reopen when they have
+support again. A document that is not archived prints zero counts. See
+[`POST /documents/{doc_id}/unarchive`](/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
+
+Both need a `write` credential. For a document that does not exist, both
+print `error: API 404: document_not_found` and exit with status 1.
 
 ```bash
-remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+remember documents archive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+remember documents unarchive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
 ```
 
 `tag` changes the tags of one document in one step and prints its tags
@@ -467,8 +481,8 @@ and output and finds the deployment the same way as every other
 command<Cloud>, so after `remember login` it needs no flags</Cloud>.
 `--transport http` serves the same tools over HTTP at
 `http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
-`--read-only` removes the tools that change memory, `ingest` and
-`delete_document`. `--layers` narrows every read of the session to those
+`--read-only` removes the tools that change memory: `ingest`,
+`archive_document`, `unarchive_document` and the tag tools that change tags. `--layers` narrows every read of the session to those
 [processing layers](/docs/concepts/retrieval#narrowing-a-read-to-layers) and
 leaves out the tools that read only other layers.
 

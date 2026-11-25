@@ -49,9 +49,9 @@ async function moving({firstOutcome='421',successfulValue=fixtures.ingest}) {
     close:async()=>{await Promise.all([first.close(),next.close(),issuer.close()]);}};
 }
 
-for(const firstOutcome of ['421','404','network'])for(const kind of ['ingest','delete','connector','pause','assured','references','periods','clear-time'])test(`${kind} is never replayed after ${firstOutcome}; next call uses fresh mapping`,async()=>{
+for(const firstOutcome of ['421','404','network'])for(const kind of ['ingest','archive','unarchive','connector','pause','assured','references','periods','clear-time'])test(`${kind} is never replayed after ${firstOutcome}; next call uses fresh mapping`,async()=>{
   const setup=await moving({firstOutcome});const client=new Client({apiKey:setup.key});
-  const actions={references:()=>client.setReferences({docId:id,versionId:id,references:[]}),periods:()=>client.setEffectivePeriods({docId:id,versionId:id,periods:[]}),'clear-time':()=>client.clearEffectiveTime({docId:id}),ingest:()=>client.ingest({content:new Uint8Array([1]),filename:'note.md'}),delete:()=>client.deleteDocument({docId:id}),connector:()=>client.addConnector({connector:{kind:'custom',name:'fixture'}}),pause:()=>client.pauseConnector({connectorId:id}),assured:()=>client.runOperation({name:'facts_context',arguments:{query:'fixture'}})};
+  const actions={references:()=>client.setReferences({docId:id,versionId:id,references:[]}),periods:()=>client.setEffectivePeriods({docId:id,versionId:id,periods:[]}),'clear-time':()=>client.clearEffectiveTime({docId:id}),ingest:()=>client.ingest({content:new Uint8Array([1]),filename:'note.md'}),archive:()=>client.archiveDocument({docId:id}),unarchive:()=>client.unarchiveDocument({docId:id}),connector:()=>client.addConnector({connector:{kind:'custom',name:'fixture'}}),pause:()=>client.pauseConnector({connectorId:id}),assured:()=>client.runOperation({name:'facts_context',arguments:{query:'fixture'}})};
   try {
     await assert.rejects(actions[kind](),MemoryApiError);
     assert.equal(setup.first.requests.length,1);assert.equal(setup.next.requests.length,0);

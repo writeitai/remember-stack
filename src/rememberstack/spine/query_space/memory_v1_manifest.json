@@ -351,7 +351,7 @@
               },
               "documents": {
                 "additionalProperties": false,
-                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
                 "properties": {
                   "authors": {
                     "description": "Any of these authors.",
@@ -386,6 +386,11 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "include_archived": {
+                    "default": false,
+                    "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                    "type": "boolean"
                   },
                   "language": {
                     "minLength": 1,
@@ -775,6 +780,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -1163,6 +1180,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -2626,7 +2655,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 5
+          "version": 6
         },
         {
           "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2. documents applies to both; call list_tags before filtering by tag.",
@@ -2643,7 +2672,7 @@
               },
               "documents": {
                 "additionalProperties": false,
-                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
                 "properties": {
                   "authors": {
                     "description": "Any of these authors.",
@@ -2678,6 +2707,11 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "include_archived": {
+                    "default": false,
+                    "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                    "type": "boolean"
                   },
                   "language": {
                     "minLength": 1,
@@ -3078,6 +3112,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -3683,6 +3729,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -4953,7 +5011,7 @@
             "title": "ContextBundleV2",
             "type": "object"
           },
-          "version": 6
+          "version": 7
         },
         {
           "channels": {
@@ -4984,7 +5042,7 @@
               },
               "documents": {
                 "additionalProperties": false,
-                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag.",
+                "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
                 "properties": {
                   "authors": {
                     "description": "Any of these authors.",
@@ -5019,6 +5077,11 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "include_archived": {
+                    "default": false,
+                    "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                    "type": "boolean"
                   },
                   "language": {
                     "minLength": 1,
@@ -5425,6 +5488,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -5813,6 +5888,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -7276,7 +7363,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 5
+          "version": 6
         },
         {
           "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
@@ -7518,6 +7605,18 @@
                 "additionalProperties": false,
                 "description": "One live source chunk, distinct from an extracted claim or fact.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "char_end": {
                     "title": "Char End",
                     "type": "integer"
@@ -7906,6 +8005,18 @@
                 "additionalProperties": false,
                 "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
+                  "archived": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Archived"
+                  },
                   "asserted_at": {
                     "anyOf": [
                       {
@@ -17433,8 +17544,8 @@
                                       }
                                     }
                                   ],
-                                  "rexpr_list_end": 915,
-                                  "rexpr_list_start": 893
+                                  "rexpr_list_end": 926,
+                                  "rexpr_list_start": 904
                                 },
                                 {
                                   "@": "A_Expr",
@@ -17578,6 +17689,321 @@
                                   },
                                   "rexpr_list_end": 0,
                                   "rexpr_list_start": 0
+                                },
+                                {
+                                  "@": "BoolExpr",
+                                  "args": [
+                                    {
+                                      "@": "SubLink",
+                                      "subLinkId": 0,
+                                      "subLinkType": {
+                                        "#": "SubLinkType",
+                                        "name": "EXISTS_SUBLINK"
+                                      },
+                                      "subselect": {
+                                        "@": "SelectStmt",
+                                        "all": false,
+                                        "fromClause": [
+                                          {
+                                            "@": "JoinExpr",
+                                            "isNatural": false,
+                                            "jointype": {
+                                              "#": "JoinType",
+                                              "name": "JOIN_INNER"
+                                            },
+                                            "larg": {
+                                              "@": "RangeVar",
+                                              "alias": {
+                                                "@": "Alias",
+                                                "aliasname": "moot_claim"
+                                              },
+                                              "inh": true,
+                                              "relname": "claims",
+                                              "relpersistence": "p"
+                                            },
+                                            "quals": {
+                                              "@": "BoolExpr",
+                                              "args": [
+                                                {
+                                                  "@": "A_Expr",
+                                                  "kind": {
+                                                    "#": "A_Expr_Kind",
+                                                    "name": "AEXPR_OP"
+                                                  },
+                                                  "lexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_document"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "deployment_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "name": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "="
+                                                    }
+                                                  ],
+                                                  "rexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_claim"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "deployment_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "rexpr_list_end": 0,
+                                                  "rexpr_list_start": 0
+                                                },
+                                                {
+                                                  "@": "A_Expr",
+                                                  "kind": {
+                                                    "#": "A_Expr_Kind",
+                                                    "name": "AEXPR_OP"
+                                                  },
+                                                  "lexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_document"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "doc_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "name": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "="
+                                                    }
+                                                  ],
+                                                  "rexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "moot_claim"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "doc_id"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "rexpr_list_end": 0,
+                                                  "rexpr_list_start": 0
+                                                }
+                                              ],
+                                              "boolop": {
+                                                "#": "BoolExprType",
+                                                "name": "AND_EXPR"
+                                              }
+                                            },
+                                            "rarg": {
+                                              "@": "RangeVar",
+                                              "alias": {
+                                                "@": "Alias",
+                                                "aliasname": "moot_document"
+                                              },
+                                              "inh": true,
+                                              "relname": "documents",
+                                              "relpersistence": "p"
+                                            },
+                                            "rtindex": 0
+                                          }
+                                        ],
+                                        "groupDistinct": false,
+                                        "limitOption": {
+                                          "#": "LimitOption",
+                                          "name": "LIMIT_OPTION_DEFAULT"
+                                        },
+                                        "op": {
+                                          "#": "SetOperation",
+                                          "name": "SETOP_NONE"
+                                        },
+                                        "targetList": [
+                                          {
+                                            "@": "ResTarget",
+                                            "val": {
+                                              "@": "A_Const",
+                                              "isnull": false,
+                                              "val": {
+                                                "@": "Integer",
+                                                "ival": 1
+                                              }
+                                            }
+                                          }
+                                        ],
+                                        "whereClause": {
+                                          "@": "BoolExpr",
+                                          "args": [
+                                            {
+                                              "@": "A_Expr",
+                                              "kind": {
+                                                "#": "A_Expr_Kind",
+                                                "name": "AEXPR_OP"
+                                              },
+                                              "lexpr": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "moot_claim"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "deployment_id"
+                                                  }
+                                                ]
+                                              },
+                                              "name": [
+                                                {
+                                                  "@": "String",
+                                                  "sval": "="
+                                                }
+                                              ],
+                                              "rexpr": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "queue"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "deployment_id"
+                                                  }
+                                                ]
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
+                                            },
+                                            {
+                                              "@": "A_Expr",
+                                              "kind": {
+                                                "#": "A_Expr_Kind",
+                                                "name": "AEXPR_OP"
+                                              },
+                                              "lexpr": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "moot_claim"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "claim_id"
+                                                  }
+                                                ]
+                                              },
+                                              "name": [
+                                                {
+                                                  "@": "String",
+                                                  "sval": "="
+                                                }
+                                              ],
+                                              "rexpr": {
+                                                "@": "TypeCast",
+                                                "arg": {
+                                                  "@": "A_Expr",
+                                                  "kind": {
+                                                    "#": "A_Expr_Kind",
+                                                    "name": "AEXPR_OP"
+                                                  },
+                                                  "lexpr": {
+                                                    "@": "ColumnRef",
+                                                    "fields": [
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "queue"
+                                                      },
+                                                      {
+                                                        "@": "String",
+                                                        "sval": "candidate"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "name": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "->>"
+                                                    }
+                                                  ],
+                                                  "rexpr": {
+                                                    "@": "A_Const",
+                                                    "isnull": false,
+                                                    "val": {
+                                                      "@": "String",
+                                                      "sval": "claim_id"
+                                                    }
+                                                  },
+                                                  "rexpr_list_end": 0,
+                                                  "rexpr_list_start": 0
+                                                },
+                                                "typeName": {
+                                                  "@": "TypeName",
+                                                  "names": [
+                                                    {
+                                                      "@": "String",
+                                                      "sval": "uuid"
+                                                    }
+                                                  ],
+                                                  "pct_type": false,
+                                                  "setof": false,
+                                                  "typemod": -1
+                                                }
+                                              },
+                                              "rexpr_list_end": 0,
+                                              "rexpr_list_start": 0
+                                            },
+                                            {
+                                              "@": "NullTest",
+                                              "arg": {
+                                                "@": "ColumnRef",
+                                                "fields": [
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "moot_document"
+                                                  },
+                                                  {
+                                                    "@": "String",
+                                                    "sval": "archived_at"
+                                                  }
+                                                ]
+                                              },
+                                              "argisrow": false,
+                                              "nulltesttype": {
+                                                "#": "NullTestType",
+                                                "name": "IS_NOT_NULL"
+                                              }
+                                            }
+                                          ],
+                                          "boolop": {
+                                            "#": "BoolExprType",
+                                            "name": "AND_EXPR"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "boolop": {
+                                    "#": "BoolExprType",
+                                    "name": "NOT_EXPR"
+                                  }
                                 }
                               ],
                               "boolop": {
@@ -17625,7 +18051,7 @@
                 }
               ]
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -32561,6 +32987,27 @@
                       "#": "NullTestType",
                       "name": "IS_NOT_NULL"
                     }
+                  },
+                  {
+                    "@": "NullTest",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "target"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "archived_at"
+                        }
+                      ]
+                    },
+                    "argisrow": false,
+                    "nulltesttype": {
+                      "#": "NullTestType",
+                      "name": "IS_NULL"
+                    }
                   }
                 ],
                 "boolop": {
@@ -32569,7 +33016,7 @@
                 }
               }
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -34399,9 +34846,16 @@
               "name": "language",
               "nullable": true,
               "type": "text"
+            },
+            {
+              "comment": "When the lineage was archived (D159): its testimony ended and it is kept as history; null while live. Search and the context operations leave an archived lineage out unless asked.",
+              "enum_values": null,
+              "name": "archived_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
             }
           ],
-          "comment": "One row per live document lineage, keyed by (deployment_id, doc_id). A tombstoned lineage is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name deleted state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.",
+          "comment": "One row per document lineage that has not been forgotten, keyed by (deployment_id, doc_id): the inventory. An archived lineage (D159) is listed with archived_at set; its claims are not current testimony, so every current-testimony relation leaves it out. A lineage hidden by forget is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name removed state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -34476,6 +34930,10 @@
               {
                 "@": "String",
                 "sval": "language"
+              },
+              {
+                "@": "String",
+                "sval": "archived_at"
               }
             ],
             "query": {
@@ -35247,6 +35705,22 @@
                       }
                     ]
                   }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "d"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "archived_at"
+                      }
+                    ]
+                  }
                 }
               ],
               "whereClause": {
@@ -35271,7 +35745,7 @@
                 }
               }
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -48752,11 +49226,11 @@
               "type": "boolean"
             },
             {
-              "comment": "Why currency changed, one of reextracted, version_superseded, version_deleted, or review_restored.",
+              "comment": "Why currency changed, one of reextracted, version_superseded, version_archived, or review_restored.",
               "enum_values": [
                 "reextracted",
                 "version_superseded",
-                "version_deleted",
+                "version_archived",
                 "review_restored"
               ],
               "name": "reason",
@@ -49496,5 +49970,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "1b5f518cf0cdaf69afc09c683d3c01bf9afd76631dcb21b45d7d53328ff1dd48"
+  "surface_manifest_hash": "8e526b54aca2bbac954a0b008156ff1ccb7bf498a9e1b384bd450ccd81b6301d"
 }

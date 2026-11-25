@@ -323,8 +323,8 @@ REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.exa
   `http://localhost`, `http://127.0.0.1` and `http://[::1]`, with any port,
   are accepted, so `http://localhost:3000` works during development.
 - Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
-  headers are allowed. `DELETE` (deleting a document) still needs a token with
-  `write` scope. Cookies are not allowed; the browser must send a token.
+  headers are allowed. `DELETE` (removing a tag or a document's effective
+  periods) still needs a token with `write` scope. Cookies are not allowed; the browser must send a token.
 - Browsers may cache the permission for up to 600 seconds after you remove
   an origin. Revoking the token is what stops access immediately.
 

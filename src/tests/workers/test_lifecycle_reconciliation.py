@@ -42,8 +42,9 @@ from rememberstack.eval.harness import EvalHarness
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CurrencyTransition
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentArchive
 from rememberstack.model import DocumentNotFoundError
+from rememberstack.model import DocumentUnarchive
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EvalSuite
 from rememberstack.model import IngestedVersion
@@ -78,7 +79,7 @@ from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
 from rememberstack.workers import CycleFinalizer
 from rememberstack.workers import DeletionService
-from rememberstack.workers import DocumentDeleter
+from rememberstack.workers import DocumentArchiver
 from rememberstack.workers import E1Settings
 from rememberstack.workers import E2_EXTRACTOR_VERSION
 from rememberstack.workers import E2Settings
@@ -707,29 +708,27 @@ def test_cycle_finalization_closes_a_genuinely_removed_fact(rig: _LifecycleRig) 
     )
 
 
-def test_split_into_four_survives_the_original_deletion(rig: _LifecycleRig) -> None:
-    """§8: four successor documents re-assert the fact; deleting the
-    original leaves it standing on their support — and the deleted
-    lineage's claims are retained as history (forgotten ≠ deleted)."""
+def test_split_into_four_survives_the_original_archive(rig: _LifecycleRig) -> None:
+    """§8: four successor documents re-assert the fact; archiving the
+    original leaves it standing on their support — and the archived
+    lineage's claims are retained as history (archive is not erasure)."""
     original = rig.observe(source_ref="orig.md", content=f"{_FACT_SENTENCE}\n")
     for part in range(4):
         rig.observe(source_ref=f"part-{part}.md", content=f"{_FACT_SENTENCE}\n")
     rig.drain()
     assert rig.relation()["evidence_count"] == 5  # five distinct lineages
 
-    delta = rig.deletion.delete_lineage(
-        deployment_id=_DEPLOYMENT_ID, doc_id=original.doc_id
-    )
+    archive = _archive(rig, original.doc_id)
     fact = rig.relation()
     assert fact["evidence_count"] == 4  # one supporter gone, fact stands
     assert fact["valid_until"] is None
-    assert delta.relations_closed == ()
-    # forgotten ≠ deleted: the lineage is tombstoned, its claims retained
+    assert archive.relations_closed == 0
+    # archive is not erasure: the lineage is marked, its claims retained
     assert (
         rig.scalar(
-            "SELECT deleted_at FROM documents WHERE doc_id = :d", d=original.doc_id
+            "SELECT archived_at FROM documents WHERE doc_id = :d", d=original.doc_id
         )
-        is not None
+        == archive.archived_at
     )
     retained = rig.scalar(
         "SELECT count(*) FROM claims WHERE doc_id = :d", d=original.doc_id
@@ -737,7 +736,7 @@ def test_split_into_four_survives_the_original_deletion(rig: _LifecycleRig) -> N
     assert retained == 1  # history survives normal deletion
     audit = rig.scalar(
         "SELECT count(*) FROM testimony_currency_events"
-        " WHERE doc_id = :d AND reason = 'version_deleted'",
+        " WHERE doc_id = :d AND reason = 'version_archived'",
         d=original.doc_id,
     )
     assert audit == 1  # the removal is a recorded event, not an erasure
@@ -1084,7 +1083,7 @@ def test_restore_support_plants_a_canary_the_pack_rechecks(rig: _LifecycleRig) -
 
 
 @pytest.mark.parametrize("reason", ["no_route", "admission"])
-@pytest.mark.parametrize("deletion", ["version", "lineage"])
+@pytest.mark.parametrize("deletion", ["version", "archive"])
 def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
     rig: _LifecycleRig, deletion: str, reason: str
 ) -> None:
@@ -1145,14 +1144,14 @@ def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
     if deletion == "version":
         rig.lifecycle.delete_version(version_id=parked.version_id)
     else:
-        rig.lifecycle.delete_lineage(doc_id=parked.doc_id)
+        _archive(rig, parked.doc_id)
     assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (cycle,)
     assert rig.relation()["valid_until"] is None
     assert rig.relation()["invalidated_at"] is not None
 
 
 # ---------------------------------------------------------------------------
-# D135: the public document delete, end to end on the real chain
+# D159: archive and unarchive, end to end on the real chain
 # ---------------------------------------------------------------------------
 
 
@@ -1169,9 +1168,19 @@ class _UnavailableProfiles:
         raise RuntimeError("provider unavailable")
 
 
-def _deleter(rig: _LifecycleRig) -> DocumentDeleter:
-    """The public delete over the rig's catalog and profile projection."""
-    return DocumentDeleter(engine=rig.engine, profile_refresher=rig.profile_refresher)
+def _archiver(rig: _LifecycleRig) -> DocumentArchiver:
+    """Archive and unarchive over the rig's catalog and profile projection."""
+    return DocumentArchiver(engine=rig.engine, profile_refresher=rig.profile_refresher)
+
+
+def _archive(rig: _LifecycleRig, doc_id: UUID) -> DocumentArchive:
+    return _archiver(rig).archive_document(deployment_id=_DEPLOYMENT_ID, doc_id=doc_id)
+
+
+def _unarchive(rig: _LifecycleRig, doc_id: UUID) -> DocumentUnarchive:
+    return _archiver(rig).unarchive_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=doc_id
+    )
 
 
 def _open_works_for(rig: _LifecycleRig) -> object:
@@ -1190,209 +1199,24 @@ def _current_claims(rig: _LifecycleRig, doc_id: UUID) -> object:
     )
 
 
-def test_public_delete_removes_the_contribution_and_keeps_history(
-    rig: _LifecycleRig,
-) -> None:
-    """D135: the sole supporter goes, so the fact closes with a recorded
-    retraction; the claims stay as history; a repeat is "not found"."""
-    added = rig.ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="staffing.md",
-            mime="text/markdown",
-            content=f"{_FACT_SENTENCE}\n".encode(),
-        ),
-    )
-    rig.drain()
-    assert rig.relation()["evidence_count"] == 1
-
-    result = _deleter(rig).delete_document(
-        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
-    )
-
-    assert result.doc_id == added.doc_id
-    assert result.claims_retired == 1
-    assert result.relations_closed == 1
-    assert result.observations_closed == 0
-    fact = rig.relation()
-    assert fact["evidence_count"] == 0
-    assert fact["invalidated_at"] is not None
-    assert (
-        rig.scalar(
-            "SELECT count(*) FROM relation_adjudications"
-            " WHERE outcome = 'retracted_source_removal'"
-        )
-        == 1
-    )
-    assert _current_claims(rig, added.doc_id) == 0
-    assert rig.scalar("SELECT count(*) FROM claims WHERE doc_id = :d", d=added.doc_id)
-    assert (
-        rig.scalar(
-            "SELECT count(*) FROM document_versions"
-            " WHERE doc_id = :d AND deleted_at IS NULL",
-            d=added.doc_id,
-        )
-        == 0
-    )
-    with pytest.raises(DocumentNotFoundError):
-        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
-    with pytest.raises(DocumentNotFoundError):
-        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=uuid4())
-
-
-def test_an_interrupted_delete_is_finished_by_the_next_call(rig: _LifecycleRig) -> None:
-    """A tombstone whose cascade never ran is finished, not refused."""
-    added = rig.observe(
-        source_ref="half.md", content=f"{_FACT_SENTENCE}\n", versioning_mode="snapshot"
-    )
-    rig.drain()
-    # the crashed first attempt: the tombstone committed, nothing after it
-    rig.lifecycle.delete_lineage(doc_id=added.doc_id)
-    assert _current_claims(rig, added.doc_id) == 1
-
-    result = _deleter(rig).delete_document(
-        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
-    )
-
-    assert result.claims_retired == 1
-    assert result.relations_closed == 1
-    assert rig.relation()["invalidated_at"] is not None
-    with pytest.raises(DocumentNotFoundError):
-        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
-
-
-def test_a_provider_outage_does_not_fail_a_committed_delete(rig: _LifecycleRig) -> None:
-    """Profiles are disposable projections; the deletion still answers."""
-    added = rig.observe(
-        source_ref="outage.md",
-        content=f"{_FACT_SENTENCE}\n",
-        versioning_mode="snapshot",
-    )
-    rig.drain()
-
-    result = DocumentDeleter(
-        engine=rig.engine,
-        profile_refresher=_UnavailableProfiles(),  # type: ignore[arg-type]
-    ).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
-
-    assert result.relations_closed == 1
-    assert rig.relation()["invalidated_at"] is not None
-
-
-def test_re_adding_deleted_bytes_processes_them_again(rig: _LifecycleRig) -> None:
-    """The same file uploaded after its deletion is a new version that is
-    extracted afresh — never a no-op that brings back a document which
-    contributes nothing, and never a reuse of the deleted testimony."""
-    upload = DocumentUpload(
-        filename="staffing.md",
-        mime="text/markdown",
-        content=f"{_FACT_SENTENCE}\n".encode(),
-    )
-    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
-    rig.drain()
-    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
-    assert _open_works_for(rig) == 0
-
-    again = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
-    rig.drain()
-
-    assert again.doc_id == first.doc_id  # uploads are content-addressed
-    assert again.created is True
-    assert again.version_id != first.version_id
-    assert (
-        rig.scalar("SELECT deleted_at FROM documents WHERE doc_id = :d", d=first.doc_id)
-        is None
-    )
-    assert (
-        rig.scalar(
-            "SELECT deleted_at FROM document_versions WHERE version_id = :v",
-            v=first.version_id,
-        )
-        is not None
-    )
-    assert _current_claims(rig, first.doc_id) == 1
-    fresh = rig.scalar(
-        "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
-        " WHERE c.version_id = :v AND cl.is_current_testimony",
-        v=again.version_id,
-    )
-    assert fresh == 1  # extracted from the new version, not re-attached
-    assert _open_works_for(rig) == 1
-
-
-def test_a_document_deleted_before_processing_never_testifies(
-    rig: _LifecycleRig,
-) -> None:
-    """Deleting a document whose pipeline has not run yet: the pipeline may
-    keep going, but nothing it produces is ever current or believed."""
-    added = rig.observe(
-        source_ref="inflight.md",
-        content=f"{_FACT_SENTENCE}\n",
-        versioning_mode="snapshot",
-    )
-    result = _deleter(rig).delete_document(
-        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
-    )
-    assert result.claims_retired == 0  # nothing had been extracted yet
-
-    rig.drain()
-
-    assert _current_claims(rig, added.doc_id) == 0
-    assert _open_works_for(rig) == 0
-    assert (
-        rig.scalar(
-            "SELECT count(*) FROM document_entity_bindings WHERE doc_id = :d",
-            d=added.doc_id,
-        )
-        == 0
-    )
-
-
-def test_reconcile_retires_testimony_of_a_deleted_lineage(rig: _LifecycleRig) -> None:
-    """The reconcile stage is the backstop for work that outran a deletion:
-    reaching it for a tombstoned lineage retires what is still current,
-    closes what only that testimony supported, and ends the chain."""
-    added = rig.observe(
-        source_ref="late.md", content=f"{_FACT_SENTENCE}\n", versioning_mode="snapshot"
-    )
-    # run the whole chain except reconcile, so its work row sits queued
-    while True:
-        progressed = False
-        for stage in (
-            stage for stage in _STAGES if stage is not PipelineStage.RECONCILE
-        ):
-            outcome = rig.worker.run_one(
-                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
-            ).outcome
-            if outcome is not RunResultOutcome.NO_WORK:
-                progressed = True
-        if not progressed:
-            break
-    assert _current_claims(rig, added.doc_id) == 1
-    assert _open_works_for(rig) == 1
-    # the tombstone lands, but no cascade runs (the work outran it)
-    rig.lifecycle.delete_lineage(doc_id=added.doc_id)
-
-    outcome = rig.worker.run_one(
-        deployment_id=_DEPLOYMENT_ID,
-        stage=PipelineStage.RECONCILE,
-        lane=ProcessingLane.STEADY,
-    ).outcome
-
-    assert outcome is RunResultOutcome.SUCCEEDED
-    assert _current_claims(rig, added.doc_id) == 0
-    assert _open_works_for(rig) == 0
-    assert (
-        rig.scalar(
-            "SELECT count(*) FROM processing_state"
-            " WHERE stage = 'label_relation' AND target_id = :v",
-            v=added.version_id,
-        )
-        == 0
-    )
-    # nothing was left for the public delete to finish
-    with pytest.raises(DocumentNotFoundError):
-        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+def _outcomes(rig: _LifecycleRig) -> list[tuple[str, bool]]:
+    """The works_for relation's close/reopen events, oldest first."""
+    with rig.engine.connect() as connection:
+        return [
+            (str(row[0]), bool(row[1]))
+            for row in connection.execute(
+                text(
+                    "SELECT a.outcome::text,"
+                    " coalesce((a.features ->> 'archive')::boolean, false)"
+                    " FROM relation_adjudications a"
+                    " JOIN relations r ON r.relation_id = a.relation_id"
+                    " WHERE r.predicate = 'works_for'"
+                    " AND a.outcome IN ('retracted_source_removal',"
+                    " 'reopened_unarchive', 'invalidated')"
+                    " ORDER BY a.decided_at"
+                )
+            )
+        ]
 
 
 _STAFFING = DocumentUpload(
@@ -1407,6 +1231,20 @@ def _drain_except_reconcile(rig: _LifecycleRig) -> None:
         for stage in (
             stage for stage in _STAGES if stage is not PipelineStage.RECONCILE
         ):
+            outcome = rig.worker.run_one(
+                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
+            ).outcome
+            if outcome is not RunResultOutcome.NO_WORK:
+                progressed = True
+        if not progressed:
+            return
+
+
+def _drain_only(rig: _LifecycleRig, stages: tuple[PipelineStage, ...]) -> None:
+    """Run only the named stages until they are idle."""
+    while True:
+        progressed = False
+        for stage in stages:
             outcome = rig.worker.run_one(
                 deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
             ).outcome
@@ -1442,57 +1280,316 @@ def _bindings(rig: _LifecycleRig, doc_id: UUID) -> set[tuple[object, ...]]:
         }
 
 
-def test_a_re_ingest_racing_a_delete_keeps_its_new_testimony(
-    rig: _LifecycleRig,
-) -> None:
-    """Blocker: the delete holds its tombstone and cascade in one transaction,
-    so a re-ingest that arrives mid-delete waits, then lands as a new live
-    version whose testimony the finished delete never touches."""
-    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
-    rig.drain()
-
-    blocker = rig.engine.connect()
-    blocker.begin()
-    blocker.execute(
-        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
-        {"d": first.doc_id},
+def _believed(rig: _LifecycleRig, at: datetime) -> int:
+    """How many works_for facts ``facts_as_of`` believed at ``at``."""
+    value = rig.scalar(
+        "SELECT count(*) FROM memory_v1.facts_as_of(:at, :at, 1000)"
+        " WHERE predicate = 'works_for'",
+        at=at,
     )
-    outcomes: dict[str, object] = {}
+    assert isinstance(value, int)
+    return value
 
-    def delete() -> None:
-        outcomes["deleted"] = _deleter(rig).delete_document(
-            deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id
-        )
 
-    def re_ingest() -> None:
-        outcomes["again"] = rig.ingestor.ingest(
-            deployment_id=_DEPLOYMENT_ID, upload=_STAFFING
-        )
+def _now(rig: _LifecycleRig) -> datetime:
+    value = rig.scalar("SELECT clock_timestamp()")
+    assert isinstance(value, datetime)
+    return value
 
-    deleting = threading.Thread(target=delete)
-    deleting.start()
-    _wait_for_blocked(rig, count=1)  # paused after its tombstone
-    adding = threading.Thread(target=re_ingest)
-    adding.start()
-    _wait_for_blocked(rig, count=2)  # the re-ingest waits for the delete
-    blocker.rollback()
-    blocker.close()
-    deleting.join(timeout=60)
-    adding.join(timeout=60)
 
-    again = outcomes["again"]
-    assert isinstance(again, IngestedVersion)
-    assert again.created is True
+def test_archive_ends_the_contribution_and_keeps_history(rig: _LifecycleRig) -> None:
+    """§2.1: the sole supporter goes, so the fact closes by belief only, as an
+    archive closure; the document, its versions and claims stay; a repeat
+    answers the same archive with zero counts."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
     rig.drain()
-    assert _current_claims(rig, first.doc_id) == 1
-    assert _open_works_for(rig) == 1
+    assert rig.relation()["evidence_count"] == 1
+
+    result = _archive(rig, added.doc_id)
+
+    assert result.doc_id == added.doc_id
+    assert (result.claims_retired, result.relations_closed) == (1, 1)
+    assert result.observations_closed == 0
+    fact = rig.relation()
+    assert fact["evidence_count"] == 0
+    assert fact["invalidated_at"] is not None
+    assert fact["valid_until"] is None  # world time is left as stated
+    assert _outcomes(rig) == [("retracted_source_removal", True)]
+    assert _current_claims(rig, added.doc_id) == 0
+    assert rig.scalar("SELECT count(*) FROM claims WHERE doc_id = :d", d=added.doc_id)
     assert (
         rig.scalar(
-            "SELECT deleted_at FROM document_versions WHERE version_id = :v",
-            v=first.version_id,
+            "SELECT archived_by FROM documents WHERE doc_id = :d AND deleted_at IS NULL",
+            d=added.doc_id,
         )
-        is not None
+        == "caller"
     )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM document_versions"
+            " WHERE doc_id = :d AND deleted_at IS NOT NULL",
+            d=added.doc_id,
+        )
+        == 0
+    )  # archive tombstones nothing
+
+    repeat = _archive(rig, added.doc_id)
+    assert repeat.archived_at == result.archived_at
+    assert (repeat.claims_retired, repeat.relations_closed) == (0, 0)
+    with pytest.raises(DocumentNotFoundError):
+        _archive(rig, uuid4())
+    with pytest.raises(DocumentNotFoundError):
+        _unarchive(rig, uuid4())
+
+
+def test_archive_keeps_a_fact_another_document_supports(rig: _LifecycleRig) -> None:
+    """A fact also supported by another document just loses one supporter."""
+    kept = rig.observe(source_ref="kept.md", content=f"{_FACT_SENTENCE}\n")
+    gone = rig.observe(source_ref="gone.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    assert rig.relation()["evidence_count"] == 2
+
+    result = _archive(rig, gone.doc_id)
+
+    assert (result.claims_retired, result.relations_closed) == (1, 0)
+    assert rig.relation()["evidence_count"] == 1
+    assert rig.relation()["invalidated_at"] is None
+    assert _current_claims(rig, kept.doc_id) == 1
+
+
+def test_unarchive_is_the_exact_undo_and_belief_reads_see_both_sides(
+    rig: _LifecycleRig,
+) -> None:
+    """§2.3: unarchive restores the testimony the archive ended and reopens the
+    fact it closed as a new event; belief-as-of reads before, inside and after
+    the archive interval answer as the memory believed then."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    anchors = _bindings(rig, added.doc_id)
+    assert anchors
+    with rig.engine.begin() as connection:
+        # an ongoing dated fact, so the as-of read can select it at all
+        connection.execute(
+            text(
+                "UPDATE relations SET valid_from = '2000-01-01', valid_until = NULL,"
+                " valid_precision = 'open',"
+                " window_claim_ids = ARRAY(SELECT claim_id FROM relation_evidence"
+                " WHERE relation_evidence.relation_id = relations.relation_id)"
+                " WHERE predicate = 'works_for'"
+            )
+        )
+    before = _now(rig)
+    _archive(rig, added.doc_id)
+    assert _bindings(rig, added.doc_id) == set()
+    during = _now(rig)
+    closed_at = rig.relation()["invalidated_at"]
+    assert isinstance(closed_at, datetime)
+    assert (
+        rig.scalar(
+            "SELECT decided_at FROM relation_adjudications"
+            " WHERE outcome = 'retracted_source_removal'"
+        )
+        == closed_at
+    )  # the column and the close event carry one instant
+    assert _believed(rig, closed_at) == 0
+    events_before = rig.scalar(
+        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
+    )
+
+    result = _unarchive(rig, added.doc_id)
+
+    after = _now(rig)
+    assert (result.claims_restored, result.facts_reopened) == (1, 1)
+    assert _current_claims(rig, added.doc_id) == 1
+    fact = rig.relation()
+    assert fact["evidence_count"] == 1
+    assert fact["invalidated_at"] is None
+    assert _outcomes(rig) == [
+        ("retracted_source_removal", True),
+        ("reopened_unarchive", False),
+    ]  # the close is never erased
+    assert _bindings(rig, added.doc_id) == anchors
+    assert (
+        rig.scalar(
+            "SELECT archived_at FROM documents WHERE doc_id = :d", d=added.doc_id
+        )
+        is None
+    )
+    events_after = rig.scalar(
+        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
+    )
+    assert isinstance(events_before, int) and isinstance(events_after, int)
+    assert events_after == events_before + 1
+    assert (_believed(rig, before), _believed(rig, during), _believed(rig, after)) == (
+        1,
+        0,
+        1,
+    )
+    assert _believed(rig, closed_at) == 0  # the exact boundary keeps its answer
+    assert (
+        _unarchive(rig, added.doc_id).claims_restored,
+        rig.relation()["evidence_count"],
+    ) == (0, 1)
+
+
+def test_identical_bytes_leave_a_caller_archive_archived(rig: _LifecycleRig) -> None:
+    """§2.3: whatever is a no-op for a live document is a no-op for an
+    archived one; a connector's undo applies only to a source archive."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    archived = _archive(rig, added.doc_id)
+
+    again = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    undo = _archiver(rig).unarchive_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id, only_source=True
+    )
+    rig.drain()
+
+    assert again.created is False
+    assert again.version_id == added.version_id
+    assert (undo.claims_restored, undo.facts_reopened) == (0, 0)
+    assert (
+        rig.scalar(
+            "SELECT archived_at FROM documents WHERE doc_id = :d", d=added.doc_id
+        )
+        == archived.archived_at
+    )
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+
+
+def _two_sections(other: str) -> str:
+    """A document whose fact section is packed apart from the other section.
+
+    Each section's heading is its first line, which the canned extractor
+    turns into that section's one claim.
+    """
+    return f"# {_FACT_SENTENCE}\n\nThe staff list.\n\n# {other}\n\nNothing else.\n"
+
+
+def test_a_changed_version_of_an_archived_document_reuses_and_reopens(
+    rig: _LifecycleRig,
+) -> None:
+    """§2.3: a changed version is ordinary ingest — the lineage is live again,
+    the unchanged section's claim is reused (no extraction call for it) and,
+    current again, reopens the fact the archive closed for it."""
+    first = rig.observe(source_ref="plan.md", content=_two_sections(_FILLER_SENTENCE))
+    rig.drain()
+    _archive(rig, first.doc_id)
+    assert _open_works_for(rig) == 0
+    claim_id = rig.scalar(
+        "SELECT cl.claim_id FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v AND cl.claim_text = :t",
+        v=first.version_id,
+        t=f"# {_FACT_SENTENCE}",
+    )
+    prompts_before = len(rig.provider.generated_prompts)
+
+    second = rig.observe(
+        source_ref="plan.md", content=_two_sections("The kitchen was repainted.")
+    )
+    rig.drain()
+
+    assert second.created is True
+    assert (
+        rig.scalar(
+            "SELECT archived_at FROM documents WHERE doc_id = :d", d=first.doc_id
+        )
+        is None
+    )
+    assert (
+        rig.scalar(
+            "SELECT is_current_testimony FROM claims WHERE claim_id = :c", c=claim_id
+        )
+        is True
+    )
+    assert _open_works_for(rig) == 1
+    assert _outcomes(rig) == [
+        ("retracted_source_removal", True),
+        ("reopened_unarchive", False),
+    ]
+    targets = [
+        match.group(1)
+        for prompt in rig.provider.generated_prompts[prompts_before:]
+        if (match := _TARGET_PATTERN.search(prompt)) is not None
+    ]
+    assert targets  # the changed section was extracted
+    assert not any(_FACT_SENTENCE in target for target in targets)  # reused
+
+
+def test_reconcile_retires_late_work_and_unarchive_repeats_it(
+    rig: _LifecycleRig,
+) -> None:
+    """Work that outran the archive is retired at reconcile under the archive's
+    id and ends the chain; unarchive restores it and repeats that reconcile,
+    which then continues the chain."""
+    added = rig.observe(
+        source_ref="late.md", content=f"{_FACT_SENTENCE}\n", versioning_mode="snapshot"
+    )
+    _drain_except_reconcile(rig)
+    archived = _archive(rig, added.doc_id)
+    assert archived.claims_retired == 1
+
+    outcome = rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    ).outcome
+
+    assert outcome is RunResultOutcome.SUCCEEDED
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    label = (
+        "SELECT count(*) FROM processing_state"
+        " WHERE stage = 'label_relation' AND target_id = :v"
+    )
+    assert rig.scalar(label, v=added.version_id) == 0
+
+    _unarchive(rig, added.doc_id)
+    rig.drain()
+
+    assert _current_claims(rig, added.doc_id) == 1
+    assert _open_works_for(rig) == 1
+    assert rig.scalar(label, v=added.version_id) == 1
+
+
+def test_claims_published_while_archived_never_testify_until_unarchive(
+    rig: _LifecycleRig,
+) -> None:
+    """Claim publication treats an archived lineage as removed: its new claims
+    are never current testimony, but they are retired under the archive's id,
+    so unarchive brings them back without extracting anything again."""
+    added = rig.observe(
+        source_ref="inflight.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+    )
+    result = _archive(rig, added.doc_id)
+    assert result.claims_retired == 0  # nothing had been extracted yet
+
+    rig.drain()
+
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM document_entity_bindings WHERE doc_id = :d",
+            d=added.doc_id,
+        )
+        == 0
+    )
+    prompts_before = len(rig.provider.generated_prompts)
+
+    restored = _unarchive(rig, added.doc_id)
+    rig.drain()
+
+    assert restored.claims_restored == 1
+    assert _current_claims(rig, added.doc_id) == 1
+    assert _open_works_for(rig) == 1
+    assert not any(
+        "TARGET CHUNK" in prompt
+        for prompt in rig.provider.generated_prompts[prompts_before:]
+    )  # nothing was extracted again
 
 
 def _withdraw_support(rig: _LifecycleRig, doc_id: UUID) -> tuple[UUID, UUID]:
@@ -1527,42 +1624,42 @@ def _withdraw_support(rig: _LifecycleRig, doc_id: UUID) -> tuple[UUID, UUID]:
     return review_id, claim_id
 
 
-def test_deleting_a_document_under_support_review_closes_the_fact(
+def test_archive_leaves_a_support_review_that_applies_again_after_unarchive(
     rig: _LifecycleRig,
 ) -> None:
-    """Blocker: review -> delete. The pending review no longer holds the
-    deleted document's fact open, and a later restore verdict is refused."""
+    """§2.1: an open support_withdrawn review is moot while the document is
+    archived (the fact closes, the review stays open, a restore verdict is
+    refused); after unarchive it holds the fact open again."""
     added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
     rig.drain()
     review_id, _claim = _withdraw_support(rig, added.doc_id)
 
-    result = _deleter(rig).delete_document(
-        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
-    )
+    result = _archive(rig, added.doc_id)
 
     assert result.relations_closed == 1
     assert rig.relation()["invalidated_at"] is not None
-    assert (
-        rig.scalar(
-            "SELECT status::text FROM review_queue WHERE review_id = :r", r=review_id
-        )
-        == "auto_resolved"
-    )
-    with pytest.raises(ReviewDecisionError):
+    status = "SELECT status::text FROM review_queue WHERE review_id = :r"
+    assert rig.scalar(status, r=review_id) == "pending"
+    with pytest.raises(ReviewDecisionError, match="archived"):
         rig.review.decide_support_withdrawn(
             deployment_id=_DEPLOYMENT_ID,
             review_id=review_id,
             verdict="restore_support",
             reviewer="ravi",
         )
-    assert _current_claims(rig, added.doc_id) == 0
+
+    reopened = _unarchive(rig, added.doc_id)
+
+    assert (reopened.claims_restored, reopened.facts_reopened) == (0, 1)
+    assert rig.relation()["invalidated_at"] is None
+    assert rig.scalar(status, r=review_id) == "pending"
 
 
-def test_a_restore_verdict_before_a_delete_is_then_deleted_normally(
+def test_a_restore_verdict_before_an_archive_is_then_archived_normally(
     rig: _LifecycleRig,
 ) -> None:
-    """review -> verdict -> delete: the restored claim is ordinary current
-    testimony, so the delete retires it and closes the fact."""
+    """review -> verdict -> archive: the restored claim is ordinary current
+    testimony, so the archive retires it and closes the fact."""
     added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
     rig.drain()
     review_id, _claim = _withdraw_support(rig, added.doc_id)
@@ -1574,56 +1671,48 @@ def test_a_restore_verdict_before_a_delete_is_then_deleted_normally(
     )
     assert _current_claims(rig, added.doc_id) == 1
 
-    result = _deleter(rig).delete_document(
-        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+    result = _archive(rig, added.doc_id)
+
+    assert (result.claims_retired, result.relations_closed) == (1, 1)
+    assert _current_claims(rig, added.doc_id) == 0
+
+
+def test_a_provider_outage_does_not_fail_a_committed_archive(
+    rig: _LifecycleRig,
+) -> None:
+    """Profiles are disposable projections; the archive still answers."""
+    added = rig.observe(
+        source_ref="outage.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
     )
-
-    assert result.claims_retired == 1
-    assert result.relations_closed == 1
-    assert _current_claims(rig, added.doc_id) == 0
-
-
-def test_restoring_support_from_a_deleted_version_is_refused(
-    rig: _LifecycleRig,
-) -> None:
-    """delete -> verdict, when the review survived (it predates D135 or raced):
-    restore_support never makes a deleted claim current again."""
-    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
     rig.drain()
-    review_id, _claim = _withdraw_support(rig, added.doc_id)
-    rig.lifecycle.delete_lineage(doc_id=added.doc_id)  # tombstone, review open
 
-    with pytest.raises(ReviewDecisionError, match="deleted"):
-        rig.review.decide_support_withdrawn(
-            deployment_id=_DEPLOYMENT_ID,
-            review_id=review_id,
-            verdict="restore_support",
-            reviewer="ravi",
-        )
-    assert _current_claims(rig, added.doc_id) == 0
+    result = DocumentArchiver(
+        engine=rig.engine,
+        profile_refresher=_UnavailableProfiles(),  # type: ignore[arg-type]
+    ).archive_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+
+    assert result.relations_closed == 1
+    assert rig.relation()["invalidated_at"] is not None
 
 
-def test_each_deletion_episode_emits_its_own_evidence_change(
-    rig: _LifecycleRig,
-) -> None:
-    """Major: delete -> re-add -> delete. The second episode has its own run
-    id, so its evidence_changed event is not swallowed by the first's."""
+def test_each_archive_episode_emits_its_own_evidence_change(rig: _LifecycleRig) -> None:
+    """archive -> unarchive -> archive: the second archive has its own id, so
+    its evidence_changed event is not swallowed by the first's."""
     first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
     rig.drain()
-    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
-    rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
-    rig.drain()
+    one = _archive(rig, first.doc_id)
+    _unarchive(rig, first.doc_id)
     assert _open_works_for(rig) == 1
     before = rig.scalar(
         "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
     )
 
-    second = _deleter(rig).delete_document(
-        deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id
-    )
+    two = _archive(rig, first.doc_id)
 
-    assert second.claims_retired == 1
-    assert second.relations_closed == 1
+    assert two.archived_at > one.archived_at
+    assert (two.claims_retired, two.relations_closed) == (1, 1)
     after = rig.scalar(
         "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
     )
@@ -1631,29 +1720,96 @@ def test_each_deletion_episode_emits_its_own_evidence_change(
     assert after == before + 1
 
 
-def test_old_reconcile_work_keeps_the_re_added_documents_anchors(
+def test_a_changed_version_racing_an_archive_is_live_afterwards(
     rig: _LifecycleRig,
 ) -> None:
-    """Major: the deleted version's queued reconcile runs after the document
-    was re-added. It rebuilds anchors from live testimony instead of
-    dropping the live version's anchors."""
-    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
-    _drain_except_reconcile(rig)  # v1's reconcile stays queued
-    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
-    again = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    """The archive holds its marks and cascade in one transaction, so a changed
+    version arriving mid-archive waits, then brings the lineage back with its
+    own testimony, which the finished archive never touches."""
+    first = rig.observe(source_ref="race.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+
+    blocker = rig.engine.connect()
+    blocker.begin()
+    blocker.execute(
+        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
+        {"d": first.doc_id},
+    )
+    outcomes: dict[str, object] = {}
+
+    def archive() -> None:
+        outcomes["archived"] = _archive(rig, first.doc_id)
+
+    def change() -> None:
+        outcomes["again"] = rig.observe(
+            source_ref="race.md", content=f"{_FACT_SENTENCE}\n{_FILLER_SENTENCE}\n"
+        )
+
+    archiving = threading.Thread(target=archive)
+    archiving.start()
+    _wait_for_blocked(rig, count=1)
+    changing = threading.Thread(target=change)
+    changing.start()
+    _wait_for_blocked(rig, count=2)
+    blocker.rollback()
+    blocker.close()
+    archiving.join(timeout=60)
+    changing.join(timeout=60)
+
+    again = outcomes["again"]
+    assert isinstance(again, IngestedVersion)
     assert again.created is True
-    _drain_except_reconcile(rig)
-    live_anchors = _bindings(rig, first.doc_id)
-    assert live_anchors  # v2's resolution created document-local anchors
-
-    rig.drain()  # both reconcile rows run, v1's included
-
-    assert _bindings(rig, first.doc_id) == live_anchors
-    assert _current_claims(rig, first.doc_id) == 1
+    assert (
+        rig.scalar(
+            "SELECT archived_at FROM documents WHERE doc_id = :d", d=first.doc_id
+        )
+        is None
+    )
+    rig.drain()
     assert _open_works_for(rig) == 1
 
 
-def test_a_forget_of_another_document_does_not_stop_a_delete(
+def test_two_concurrent_archives_answer_the_same_archive(rig: _LifecycleRig) -> None:
+    """The second archive waits on the lineage lock, then answers the same
+    archive with zero counts."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    blocker = rig.engine.connect()
+    blocker.begin()
+    blocker.execute(
+        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
+        {"d": added.doc_id},
+    )
+    results: list[object] = []
+    guard = threading.Lock()
+
+    def archive() -> None:
+        try:
+            outcome: object = _archive(rig, added.doc_id)
+        except Exception as error:  # noqa: BLE001 — asserted below
+            outcome = error
+        with guard:
+            results.append(outcome)
+
+    first = threading.Thread(target=archive)
+    first.start()
+    _wait_for_blocked(rig, count=1)
+    second = threading.Thread(target=archive)
+    second.start()
+    _wait_for_blocked(rig, count=2)
+    blocker.rollback()
+    blocker.close()
+    first.join(timeout=60)
+    second.join(timeout=60)
+
+    assert len(results) == 2
+    assert all(isinstance(item, DocumentArchive) for item in results)
+    archives = [item for item in results if isinstance(item, DocumentArchive)]
+    assert archives[0].archived_at == archives[1].archived_at
+    assert sorted(item.claims_retired for item in archives) == [0, 1]
+
+
+def test_a_forget_of_another_document_does_not_stop_an_archive(
     rig: _LifecycleRig,
 ) -> None:
     """D159: a forget hides one lineage; nothing else waits for it."""
@@ -1664,150 +1820,17 @@ def test_a_forget_of_another_document_does_not_stop_a_delete(
         deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id
     )
 
-    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+    _archive(rig, added.doc_id)
 
     assert _current_claims(rig, added.doc_id) == 0
     assert rig.relation()["invalidated_at"] is not None
 
 
-def _cycle(rig: _LifecycleRig) -> UUID:
-    """Open one watched-directory sync cycle."""
-    return rig.sync.open_cycle(
-        deployment_id=_DEPLOYMENT_ID, source_kind="watched_directory"
-    )
-
-
-def _complete(rig: _LifecycleRig, cycle: UUID) -> None:
-    rig.sync.complete_cycle(cycle_id=cycle, observed=1, failed=0)
-
-
-def _finalize(rig: _LifecycleRig) -> None:
-    rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID)
-
-
-def _version_current_claims(rig: _LifecycleRig, version_id: UUID) -> object:
-    """Current claims whose origin chunk belongs to this version."""
-    return rig.scalar(
-        "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
-        " WHERE c.version_id = :v AND cl.is_current_testimony",
-        v=version_id,
-    )
-
-
-def _watched_file_deleted_then_recreated(
-    rig: _LifecycleRig,
-) -> tuple[IngestedVersion, IngestedVersion]:
-    """A watched file is ingested, deleted at its source, then recreated with
-    the same bytes in a later cycle — all before finalization runs."""
-    first_cycle = _cycle(rig)
-    first = rig.observe(
-        source_ref="watched.md",
-        content=f"{_FACT_SENTENCE}\n",
-        versioning_mode="snapshot",
-        sync_cycle_id=first_cycle,
-    )
-    _complete(rig, first_cycle)
-    rig.drain()
-    _finalize(rig)
-    assert _open_works_for(rig) == 1
-    deleting = _cycle(rig)
-    rig.sync.observe_deletion(
-        deployment_id=_DEPLOYMENT_ID,
-        source_kind="watched_directory",
-        source_ref="watched.md",
-        cycle_id=deleting,
-    )
-    _complete(rig, deleting)
-    recreating = _cycle(rig)
-    again = rig.observe(
-        source_ref="watched.md",
-        content=f"{_FACT_SENTENCE}\n",
-        versioning_mode="snapshot",
-        sync_cycle_id=recreating,
-    )
-    _complete(rig, recreating)
-    assert again.created is True
-    assert again.version_id != first.version_id
-    assert (
-        rig.scalar("SELECT deleted_at FROM documents WHERE doc_id = :d", d=first.doc_id)
-        is None
-    )  # the recreate revived the lineage before finalization
-    return first, again
-
-
-def test_recreating_a_watched_file_never_strands_its_deleted_testimony(
+def test_a_restore_verdict_racing_an_archive_cannot_revive_archived_testimony(
     rig: _LifecycleRig,
 ) -> None:
-    """Round 2 blocker: the source deletion is finalized against its deleted
-    versions even after the recreate cleared the lineage tombstone — here the
-    new version has not reached reconcile (it never might)."""
-    first, again = _watched_file_deleted_then_recreated(rig)
-
-    _finalize(rig)  # the new version is still unprocessed
-
-    assert _version_current_claims(rig, first.version_id) == 0
-    assert _open_works_for(rig) == 0
-    rig.drain()
-    _finalize(rig)
-    assert _version_current_claims(rig, again.version_id) == 1
-    assert _current_claims(rig, first.doc_id) == 1
-    assert _open_works_for(rig) == 1
-
-
-def test_finalizing_a_source_deletion_spares_the_recreated_version(
-    rig: _LifecycleRig,
-) -> None:
-    """Round 2 blocker: when the recreated version is processed before
-    finalization, the deletion episode retires only the deleted version."""
-    first, again = _watched_file_deleted_then_recreated(rig)
-    rig.drain()
-    assert _current_claims(rig, first.doc_id) == 2  # snapshot: both current
-
-    _finalize(rig)
-
-    assert _version_current_claims(rig, first.version_id) == 0
-    assert _version_current_claims(rig, again.version_id) == 1
-    assert _open_works_for(rig) == 1
-
-
-def test_each_source_deletion_episode_emits_its_own_evidence_change(
-    rig: _LifecycleRig,
-) -> None:
-    """Round 2 major: delete -> recreate -> delete at the source. The second
-    finalization has its own run id, so its evidence_changed is kept."""
-    first, _again = _watched_file_deleted_then_recreated(rig)
-    rig.drain()
-    _finalize(rig)
-    assert _open_works_for(rig) == 1
-    before = rig.scalar(
-        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
-    )
-    deleting_again = _cycle(rig)
-    rig.sync.observe_deletion(
-        deployment_id=_DEPLOYMENT_ID,
-        source_kind="watched_directory",
-        source_ref="watched.md",
-        cycle_id=deleting_again,
-    )
-    _complete(rig, deleting_again)
-
-    _finalize(rig)
-
-    after = rig.scalar(
-        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
-    )
-    assert _current_claims(rig, first.doc_id) == 0
-    assert _open_works_for(rig) == 0
-    assert isinstance(before, int) and isinstance(after, int)
-    assert after == before + 1
-
-
-def test_a_restore_verdict_racing_a_delete_cannot_revive_deleted_testimony(
-    rig: _LifecycleRig,
-) -> None:
-    """Round 2 blocker: restoration is paused AFTER its deletion check (on the
-    canary it plants after writing currency). The delete must wait for it and
-    then retire what it restored, never commit alongside it."""
+    """Restoration paused after its archive check: the archive waits for it and
+    then retires what it restored, never commits alongside it."""
     added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
     rig.drain()
     review_id, claim_id = _withdraw_support(rig, added.doc_id)
@@ -1829,27 +1852,25 @@ def test_a_restore_verdict_racing_a_delete_cannot_revive_deleted_testimony(
         except Exception as error:  # noqa: BLE001 — asserted below
             outcomes["restore_error"] = error
 
-    def delete() -> None:
+    def archive() -> None:
         try:
-            outcomes["deleted"] = _deleter(rig).delete_document(
-                deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
-            )
+            outcomes["archived"] = _archive(rig, added.doc_id)
         except Exception as error:  # noqa: BLE001 — asserted below
-            outcomes["delete_error"] = error
+            outcomes["archive_error"] = error
 
     restoring = threading.Thread(target=restore)
     restoring.start()
-    _wait_for_blocked(rig, count=1)  # past its deletion check, on the canary
-    deleting = threading.Thread(target=delete)
-    deleting.start()
-    _wait_for_blocked(rig, count=2)  # the delete waits for the verdict
+    _wait_for_blocked(rig, count=1)
+    archiving = threading.Thread(target=archive)
+    archiving.start()
+    _wait_for_blocked(rig, count=2)
     blocker.rollback()
     blocker.close()
     restoring.join(timeout=60)
-    deleting.join(timeout=60)
+    archiving.join(timeout=60)
 
     assert outcomes.get("restored") is True, outcomes.get("restore_error")
-    assert "delete_error" not in outcomes, outcomes.get("delete_error")
+    assert "archive_error" not in outcomes, outcomes.get("archive_error")
     assert (
         rig.scalar(
             "SELECT is_current_testimony FROM claims WHERE claim_id = :c", c=claim_id
@@ -1859,18 +1880,19 @@ def test_a_restore_verdict_racing_a_delete_cannot_revive_deleted_testimony(
     assert rig.relation()["invalidated_at"] is not None
 
 
-def _drain_only(rig: _LifecycleRig, stages: tuple[PipelineStage, ...]) -> None:
-    """Run only the named stages until they are idle."""
-    while True:
-        progressed = False
-        for stage in stages:
-            outcome = rig.worker.run_one(
-                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
-            ).outcome
-            if outcome is not RunResultOutcome.NO_WORK:
-                progressed = True
-        if not progressed:
-            return
+def _cycle(rig: _LifecycleRig) -> UUID:
+    """Open one watched-directory sync cycle."""
+    return rig.sync.open_cycle(
+        deployment_id=_DEPLOYMENT_ID, source_kind="watched_directory"
+    )
+
+
+def _complete(rig: _LifecycleRig, cycle: UUID) -> None:
+    rig.sync.complete_cycle(cycle_id=cycle, observed=1, failed=0)
+
+
+def _finalize(rig: _LifecycleRig) -> None:
+    rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID)
 
 
 def _delete_at_source(rig: _LifecycleRig, source_ref: str) -> None:
@@ -1898,124 +1920,394 @@ def _watched(rig: _LifecycleRig, *, source_ref: str, content: str) -> IngestedVe
     return version
 
 
-def test_a_source_deletion_under_a_pending_support_review_still_finalizes(
+def test_a_source_deletion_archives_and_the_finalizer_settles_it(
     rig: _LifecycleRig,
 ) -> None:
-    """Round 3 blocker: the deleted claim is already non-current (a support
-    review withdrew it) and its fact is held open for that review. The
-    deletion episode is still pending: finalization resolves the review and
-    closes the fact."""
-    added = _watched(rig, source_ref="reviewed.md", content=f"{_FACT_SENTENCE}\n")
+    """§2.3: a connector-observed deletion is a source archive; its cascade
+    runs at finalization under the archive's id, and the same bytes seen again
+    undo it exactly."""
+    added = _watched(rig, source_ref="watched.md", content=f"{_FACT_SENTENCE}\n")
     rig.drain()
     _finalize(rig)
-    review_id, _claim = _withdraw_support(rig, added.doc_id)
-    assert _current_claims(rig, added.doc_id) == 0
+    anchors = _bindings(rig, added.doc_id)
+    assert anchors
 
-    _delete_at_source(rig, "reviewed.md")
-    _finalize(rig)
+    _delete_at_source(rig, "watched.md")
 
     assert (
         rig.scalar(
-            "SELECT status::text FROM review_queue WHERE review_id = :r", r=review_id
+            "SELECT archived_by FROM documents WHERE doc_id = :d", d=added.doc_id
         )
-        == "auto_resolved"
+        == "source"
     )
-    assert rig.relation()["invalidated_at"] is not None
-    assert rig.lifecycle.stranded_deletion_episodes(deployment_id=_DEPLOYMENT_ID) == ()
+    assert _bindings(rig, added.doc_id) == set()
+    assert _current_claims(rig, added.doc_id) == 1  # the cascade waits
+    _finalize(rig)
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    assert rig.lifecycle.pending_archives(deployment_id=_DEPLOYMENT_ID) == ()
+
+    back = _watched(rig, source_ref="watched.md", content=f"{_FACT_SENTENCE}\n")
+    undo = _archiver(rig).unarchive_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id, only_source=True
+    )
+
+    assert back.created is False
+    assert (undo.claims_restored, undo.facts_reopened) == (1, 1)
+    assert _open_works_for(rig) == 1
+    assert _bindings(rig, added.doc_id) == anchors
 
 
-def test_fact_work_that_outlived_a_finalized_deletion_is_closed_at_reconcile(
+def test_a_source_deletion_undone_within_the_cycle_never_archives_anything(
     rig: _LifecycleRig,
 ) -> None:
-    """Round 3 blocker: the file is deleted and finalized between claim
-    extraction and fact application, then recreated (without the fact) before
-    the old version's reconcile runs. Fact application attaches the already
-    retired claim; the old version's reconcile must still close that
-    zero-support fact although the lineage is live again."""
-    first = _watched(rig, source_ref="late.md", content=f"{_FACT_SENTENCE}\n")
-    _drain_only(rig, _STAGES[:6])  # through extraction and grounding only
-    assert _version_current_claims(rig, first.version_id) == 1
-    _delete_at_source(rig, "late.md")
-    _finalize(rig)  # retires the extracted claim; no fact exists yet
-    assert _version_current_claims(rig, first.version_id) == 0
-    again = _watched(rig, source_ref="late.md", content=f"{_FILLER_SENTENCE}\n")
-    assert again.created is True
+    """The file comes back before finalization: nothing is retired or closed."""
+    added = _watched(rig, source_ref="moved.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    _finalize(rig)
+    _delete_at_source(rig, "moved.md")
+    _watched(rig, source_ref="moved.md", content=f"{_FACT_SENTENCE}\n")
+    _archiver(rig).unarchive_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id, only_source=True
+    )
 
-    _drain_except_reconcile(rig)  # the old version's fact work lands now
+    _finalize(rig)
+
+    assert _current_claims(rig, added.doc_id) == 1
+    assert _open_works_for(rig) == 1
+    assert _outcomes(rig) == []
+
+
+def test_a_caller_archive_takes_over_a_source_archive(rig: _LifecycleRig) -> None:
+    """A caller archiving a source-archived document keeps its instant and
+    finishes its cascade; the source can no longer undo it."""
+    added = _watched(rig, source_ref="kept.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    _finalize(rig)
+    _delete_at_source(rig, "kept.md")
+    source_at = rig.scalar(
+        "SELECT archived_at FROM documents WHERE doc_id = :d", d=added.doc_id
+    )
+
+    result = _archive(rig, added.doc_id)
+
+    assert result.archived_at == source_at
+    assert (result.claims_retired, result.relations_closed) == (1, 1)
+    undo = _archiver(rig).unarchive_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id, only_source=True
+    )
+    assert undo.claims_restored == 0
     assert (
         rig.scalar(
-            "SELECT count(*) FROM relations WHERE predicate = 'works_for'"
-            " AND invalidated_at IS NULL AND evidence_count = 0"
+            "SELECT archived_by FROM documents WHERE doc_id = :d", d=added.doc_id
         )
-        == 1
+        == "caller"
     )
-    rig.drain()  # the old version's reconcile runs on a live lineage
 
+
+def test_fact_work_that_outlived_a_source_archive_is_closed(rig: _LifecycleRig) -> None:
+    """The file is archived at its source between claim extraction and fact
+    application; the late fact work attaches the retired claim, and its
+    zero-support fact is closed under the archive's id."""
+    first = _watched(rig, source_ref="late.md", content=f"{_FACT_SENTENCE}\n")
+    _drain_only(rig, _STAGES[:6])  # through extraction and grounding only
+    _delete_at_source(rig, "late.md")
+    _finalize(rig)
+    assert _current_claims(rig, first.doc_id) == 0
+
+    rig.drain()
+    _finalize(rig)
+
+    assert _open_works_for(rig) == 0
+    assert all(archive for _outcome, archive in _outcomes(rig))
+
+
+def test_a_second_archive_between_a_regain_and_its_recount_stays_archived(
+    rig: _LifecycleRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The returning version's regain is written once, under the lineage lock:
+    an archive that lands after it retires the regained claim for good."""
+    first = rig.observe(source_ref="twice.md", content=_two_sections(_FILLER_SENTENCE))
+    rig.drain()
+    _archive(rig, first.doc_id)
+    second = rig.observe(
+        source_ref="twice.md", content=_two_sections("The kitchen was repainted.")
+    )
+    _drain_except_reconcile(rig)
+    original = rig.lifecycle.stale_for_reextraction
+    archived: list[DocumentArchive] = []
+
+    def archive_after_the_regain(**kwargs: object) -> object:
+        if not archived:
+            archived.append(_archive(rig, first.doc_id))
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        rig.lifecycle, "stale_for_reextraction", archive_after_the_regain
+    )
+
+    rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    )
+
+    assert archived and archived[0].claims_retired >= 1
+    assert _current_claims(rig, second.doc_id) == 0
     assert _open_works_for(rig) == 0
 
 
-def test_two_concurrent_deletes_answer_once(rig: _LifecycleRig) -> None:
-    """Round 3 major: the second delete waits on the lineage lock, then reads
-    the committed tombstone and is refused instead of answering 200."""
-    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
-    rig.drain()
-    blocker = rig.engine.connect()
-    blocker.begin()
-    blocker.execute(
-        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
-        {"d": added.doc_id},
-    )
-    results: list[object] = []
-    guard = threading.Lock()
-
-    def delete() -> None:
-        try:
-            outcome: object = _deleter(rig).delete_document(
-                deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
-            )
-        except Exception as error:  # noqa: BLE001 — asserted below
-            outcome = error
-        with guard:
-            results.append(outcome)
-
-    first = threading.Thread(target=delete)
-    first.start()
-    _wait_for_blocked(rig, count=1)
-    second = threading.Thread(target=delete)
-    second.start()
-    _wait_for_blocked(rig, count=2)
-    blocker.rollback()
-    blocker.close()
-    first.join(timeout=60)
-    second.join(timeout=60)
-
-    assert len(results) == 2
-    assert sum(isinstance(item, DocumentDeletion) for item in results) == 1
-    assert sum(isinstance(item, DocumentNotFoundError) for item in results) == 1
-
-
-def test_a_source_deletion_clears_anchors_and_a_recreate_earns_fresh_ones(
+def test_a_pending_source_archive_waits_for_its_cycle_at_reconcile(
     rig: _LifecycleRig,
 ) -> None:
-    """Round 3 major: source deletion drops the lineage's D102 anchors with
-    its tombstone; the recreated file resolves afresh."""
-    added = _watched(rig, source_ref="anchored.md", content=f"{_FACT_SENTENCE}\n")
-    rig.drain()
+    """A reconcile that runs while a source archive's observing cycle is open
+    writes nothing; the finalizer settles the archive, and the file coming
+    back repeats the reconcile."""
+    added = _watched(rig, source_ref="moving.md", content=f"{_FACT_SENTENCE}\n")
+    _drain_except_reconcile(rig)
+    cycle = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="moving.md",
+        cycle_id=cycle,
+    )
+
+    outcome = rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    ).outcome
+
+    assert outcome is RunResultOutcome.SUCCEEDED
+    assert _outcomes(rig) == []  # nothing closed before the cycle settles
+    _complete(rig, cycle)
     _finalize(rig)
-    before = _bindings(rig, added.doc_id)
-    assert before
-    old_anchors = {row[2] for row in before if row[2] is not None}
+    assert _current_claims(rig, added.doc_id) == 0
 
-    _delete_at_source(rig, "anchored.md")
-    assert _bindings(rig, added.doc_id) == set()
-
-    again = _watched(rig, source_ref="anchored.md", content=f"{_FACT_SENTENCE}\n")
-    assert again.created is True
+    _watched(rig, source_ref="moving.md", content=f"{_FACT_SENTENCE}\n")
+    _archiver(rig).unarchive_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id, only_source=True
+    )
     rig.drain()
-    _finalize(rig)
 
-    after = _bindings(rig, added.doc_id)
-    assert after
-    assert not ({row[2] for row in after if row[2] is not None} & old_anchors)
     assert _current_claims(rig, added.doc_id) == 1
     assert _open_works_for(rig) == 1
+
+
+def test_a_version_removed_while_archived_leaves_the_predecessor_to_unarchive(
+    rig: _LifecycleRig,
+) -> None:
+    """Removing the newest version of an archived living lineage repoints it
+    without reviving the predecessor; unarchive makes the predecessor's
+    testimony current again."""
+    first = rig.observe(source_ref="pair.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    second = rig.observe(source_ref="pair.md", content="Acme opened an office.\n")
+    rig.drain()
+    assert _open_works_for(rig) == 0
+    _archive(rig, first.doc_id)
+
+    rig.deletion.delete_version(version_id=second.version_id)
+    assert (
+        rig.scalar(
+            "SELECT current_version_id FROM documents WHERE doc_id = :d", d=first.doc_id
+        )
+        == first.version_id
+    )
+
+    assert _current_claims(rig, first.doc_id) == 0
+    restored = _unarchive(rig, first.doc_id)
+    assert restored.claims_restored == 1
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+            " WHERE c.version_id = :v AND cl.is_current_testimony",
+            v=first.version_id,
+        )
+        == 1
+    )
+
+
+def test_a_moot_review_no_longer_marks_a_shared_fact_withdrawn(
+    rig: _LifecycleRig,
+) -> None:
+    """A support review on an archived document's claim stops marking a fact
+    another document still supports as withdrawn in the SQL views."""
+    rig.observe(source_ref="kept.md", content=f"{_FACT_SENTENCE}\n")
+    gone = rig.observe(source_ref="gone.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    fact_id = rig.relation()["relation_id"]
+    claim_id = rig.scalar(
+        "SELECT claim_id FROM claims WHERE doc_id = :d", d=gone.doc_id
+    )
+    assert isinstance(fact_id, UUID) and isinstance(claim_id, UUID)
+    rig.review.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=fact_id,
+        claim_id=claim_id,
+        diff={"reason": "reextracted"},
+    )
+    state = (
+        "SELECT support_state_current FROM v_memory_fact_source_qualified"
+        " WHERE fact_id = :f"
+    )
+    assert rig.scalar(state, f=fact_id) == "withdrawn"
+
+    _archive(rig, gone.doc_id)
+
+    assert rig.relation()["invalidated_at"] is None
+    assert rig.scalar(state, f=fact_id) == "current"
+    _unarchive(rig, gone.doc_id)
+    assert rig.scalar(state, f=fact_id) == "withdrawn"
+
+
+def test_an_earlier_cycle_leaves_a_pending_source_archive_to_its_own_cascade(
+    rig: _LifecycleRig,
+) -> None:
+    """Fact work lands with zero support while a source archive waits; the
+    version's own ingest cycle finalizes first and closes nothing, and the
+    archive's cascade closes it under the archive's id, which unarchive
+    reopens."""
+    ingest = _cycle(rig)
+    added = rig.observe(
+        source_ref="early.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+        sync_cycle_id=ingest,
+    )
+    _complete(rig, ingest)
+    _drain_only(rig, _STAGES[:4])  # through embedding, before extraction
+    observing = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="early.md",
+        cycle_id=observing,
+    )
+    rig.drain()  # claims publish retired; the fact applies with no support
+    _finalize(rig)  # the ingest cycle only
+    assert _outcomes(rig) == []
+
+    _complete(rig, observing)
+    _finalize(rig)
+
+    assert _open_works_for(rig) == 0
+    assert _outcomes(rig) and all(archive for _outcome, archive in _outcomes(rig))
+    _unarchive(rig, added.doc_id)
+    rig.drain()
+    assert _open_works_for(rig) == 1
+
+
+def test_a_later_finalized_poll_settles_an_archive_an_abandoned_poll_left(
+    rig: _LifecycleRig,
+) -> None:
+    """The poll that observed the deletion died before completing; the next
+    finalized poll of the same source settles the archive under its id."""
+    added = _watched(rig, source_ref="crash.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    _finalize(rig)
+    abandoned = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="crash.md",
+        cycle_id=abandoned,
+    )
+    _finalize(rig)
+    assert _current_claims(rig, added.doc_id) == 1  # still waiting
+
+    _complete(rig, _cycle(rig))
+    _finalize(rig)
+
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    assert all(archive for _outcome, archive in _outcomes(rig))
+
+
+def test_removing_one_archived_carrier_leaves_the_review_to_the_other(
+    rig: _LifecycleRig,
+) -> None:
+    """Two versions carry a reviewed claim; removing one while the document is
+    archived leaves the review open, since the other still carries it."""
+    first = rig.observe(
+        source_ref="carried.md",
+        content=_two_sections(_FILLER_SENTENCE),
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    second = rig.observe(
+        source_ref="carried.md",
+        content=_two_sections("The kitchen was repainted."),
+        versioning_mode="snapshot",
+    )
+    _drain_except_reconcile(rig)  # its reconcile is still queued
+    claim_id = rig.scalar(
+        "SELECT cl.claim_id FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v AND cl.claim_text = :t",
+        v=first.version_id,
+        t=f"# {_FACT_SENTENCE}",
+    )
+    fact_id = rig.relation()["relation_id"]
+    assert isinstance(claim_id, UUID) and isinstance(fact_id, UUID)
+    review_id = rig.review.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=fact_id,
+        claim_id=claim_id,
+        diff={"reason": "reextracted"},
+    )
+    _archive(rig, first.doc_id)
+
+    rig.deletion.delete_version(version_id=second.version_id)
+    rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    )
+    _unarchive(rig, first.doc_id)
+
+    status = "SELECT status::text FROM review_queue WHERE review_id = :r"
+    assert rig.scalar(status, r=review_id) == "pending"
+
+
+def test_removing_the_only_archived_carrier_answers_the_review(
+    rig: _LifecycleRig,
+) -> None:
+    """The reviewed claim is carried only by the removed version: the removal
+    answers its review even though the archive had already retired it."""
+    rig.observe(
+        source_ref="only.md",
+        content=_two_sections(_FILLER_SENTENCE),
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    second = rig.observe(
+        source_ref="only.md",
+        content=_two_sections("The kitchen was repainted."),
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    claim_id = rig.scalar(
+        "SELECT cl.claim_id FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v AND cl.claim_text = :t",
+        v=second.version_id,
+        t="# The kitchen was repainted.",
+    )
+    fact_id = rig.relation()["relation_id"]
+    assert isinstance(claim_id, UUID) and isinstance(fact_id, UUID)
+    review_id = rig.review.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=fact_id,
+        claim_id=claim_id,
+        diff={"reason": "reextracted"},
+    )
+    _archive(rig, second.doc_id)
+
+    rig.deletion.delete_version(version_id=second.version_id)
+    _unarchive(rig, second.doc_id)
+
+    status = "SELECT status::text FROM review_queue WHERE review_id = :r"
+    assert rig.scalar(status, r=review_id) == "auto_resolved"

@@ -6,7 +6,7 @@ import {memoryTools,renderToolsList,validateArguments,ToolArgumentError,ToolErro
 const source=JSON.parse(readFileSync(new URL('../contracts/catalogue.json',import.meta.url)));
 
 test('all twenty-three definitions preserve metadata, schemas and rendering behavior',()=>{
-  const tools=memoryTools();assert.equal(tools.length,23);
+  const tools=memoryTools();assert.equal(tools.length,24);
   assert.deepEqual(tools.map(t=>({name:t.name,description:t.description,permission:t.permission,tool_version:t.toolVersion,http_route:t.httpRoute,input_schema:t.inputSchema,destructive:t.destructive,annotations:t.annotations})),source.tools);
   const listed=renderToolsList({readOnly:true,project:true});
   assert.equal(listed.length,17);
@@ -54,5 +54,5 @@ test('error mapping preserves timeout hints and distinguishes cancellation and p
 test('model wire serialization omits recursive defaults and nulls as Python does',()=>{
   assert.deepEqual(modelDump({name:'DocumentSearchRequest',value:{},excludeDefaults:true}),{});
   assert.deepEqual(modelDump({name:'DocumentSearchRequest',value:{filters:{authors:['alice']}},excludeDefaults:true}),{filters:{authors:['alice']}});
-  assert.deepEqual(modelDump({name:'SearchRequest',value:{query:'text',documents:{language:'en'}},excludeNone:true}),{query:'text',k:10,channel:'semantic',documents:{family:[],authors:[],recipients:[],language:'en',doc_ids:[]}});
+  assert.deepEqual(modelDump({name:'SearchRequest',value:{query:'text',documents:{language:'en'}},excludeNone:true}),{query:'text',k:10,channel:'semantic',documents:{family:[],authors:[],recipients:[],language:'en',doc_ids:[],include_archived:false}});
 });

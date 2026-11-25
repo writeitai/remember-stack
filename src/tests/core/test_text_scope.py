@@ -10,9 +10,11 @@ import pytest
 from remember.mcp_tools import tool
 from remember.mcp_tools._documents import parse_search_documents_arguments
 from remember.models import AtReadTime
+from remember.models import DocumentSearchFilters
 from remember.models import HistoryReadTime
 from remember.models import OverlapReadTime
 from remember.models import SearchRequest
+from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.text_scope import claim_selected
 from rememberstack.core.text_scope import fact_in_scope
 from rememberstack.core.text_scope import TextScope
@@ -107,11 +109,27 @@ def test_time_is_on_the_wire_contracts() -> None:
     assert SearchRequest(query="x").time is None
     definition = tool("claims_and_sources_context")
     assert "time" in definition.input_schema["properties"]  # type: ignore[operator]
-    assert definition.tool_version == 5  # D156 added the documents filter
+    assert definition.tool_version == 6  # D159 added documents.include_archived
     documents = tool("search_documents")
     assert "time" in documents.input_schema["properties"]  # type: ignore[operator]
-    assert documents.tool_version == 4  # D156 added the tags filter
+    assert documents.tool_version == 5  # D159 added include_archived
     request = parse_search_documents_arguments(
         arguments={"time": {"mode": "at", "at": "2026-02-01T00:00:00Z"}}
     )
     assert request.time == AtReadTime(at=_AT)
+
+
+def test_include_archived_alone_restricts_no_fact() -> None:
+    """D159: asking to see archived documents never hides a live fact (one a
+    review holds open has no current support to match)."""
+    archived_only = DocumentSearchFilters(include_archived=True)
+    assert fact_supported_matching(
+        filters=archived_only, fact_kind="f.kind", fact_id="f.id", prefix="d_"
+    ) == ("TRUE", {})
+    selector, _ = fact_supported_matching(
+        filters=DocumentSearchFilters(include_archived=True, family=("email",)),
+        fact_kind="f.kind",
+        fact_id="f.id",
+        prefix="d_",
+    )
+    assert selector != "TRUE"

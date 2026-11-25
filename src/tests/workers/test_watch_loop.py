@@ -10,6 +10,7 @@ from collections.abc import Iterator
 import os
 from pathlib import Path
 import time
+from unittest.mock import MagicMock
 from uuid import UUID
 
 from alembic import command
@@ -37,6 +38,7 @@ from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import ConvertHandler
+from rememberstack.workers import DocumentArchiver
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import SyncCycleRunner
@@ -107,6 +109,7 @@ class _WatchRig:
                 admission=ForgetCatalog(engine=engine),
                 routable_mimes=frozenset({"text/markdown"}),
             ),
+            archiver=DocumentArchiver(engine=engine, profile_refresher=MagicMock()),
             settings=SyncSettings(debounce_quiet_seconds=0.0),
         )
         registry = HandlerRegistry()
@@ -313,43 +316,50 @@ def test_debounce_coalesces_active_edits(rig: _WatchRig) -> None:
     assert len(settled.ingested) == 1
 
 
-def test_source_deletion_tombstones_the_lineage(rig: _WatchRig) -> None:
-    """Delete observed → the lineage is tombstoned (audit-visible), and the
-    observation is idempotent across cycles."""
+def _lineage(rig: _WatchRig, name: str) -> dict[str, object]:
+    with rig.engine.connect() as connection:
+        return dict(
+            connection.execute(
+                text(
+                    "SELECT archived_at, archived_by, deleted_at,"
+                    " (SELECT max(version_no) FROM document_versions v"
+                    "  WHERE v.doc_id = d.doc_id) AS top_version"
+                    " FROM documents d WHERE source_ref = :name"
+                ),
+                {"name": name},
+            )
+            .mappings()
+            .one()  # .one() also proves it stayed a single lineage
+        )
+
+
+def test_source_deletion_archives_the_lineage(rig: _WatchRig) -> None:
+    """Delete observed → a source archive (D159): the file existed and said what
+    it said. The observation is idempotent across cycles."""
     rig.write(name="gone.md", content="short-lived\n")
     rig.cycle()
     (rig.source_dir / "gone.md").unlink()
     removal = rig.cycle()
     assert len(removal.deletions_observed) == 1
     again = rig.cycle()
-    assert again.deletions_observed == ()  # already tombstoned: no re-fire
+    assert again.deletions_observed == ()  # already archived: no re-fire
     with rig.engine.connect() as connection:
-        tombstone = (
-            connection.execute(
-                text(
-                    "SELECT deleted_at, deleted_sync_cycle_id"
-                    " FROM documents WHERE source_ref = 'gone.md'"
-                )
-            )
-            .mappings()
-            .one()
-        )
         cycles = connection.execute(
             text(
                 "SELECT count(*) FROM connector_sync_cycles"
                 " WHERE completed_at IS NOT NULL"
             )
         ).scalar_one()
-    assert tombstone["deleted_at"] is not None
-    # the deletion is stamped with the cycle that observed it (D55 barrier):
-    assert tombstone["deleted_sync_cycle_id"] == removal.cycle_id
+    lineage = _lineage(rig, "gone.md")
+    assert lineage["archived_at"] is not None
+    assert lineage["archived_by"] == "source"
+    assert lineage["deleted_at"] is None  # archive tombstones nothing
     assert cycles >= 3  # every pass recorded and completed
 
 
-def test_recreated_source_resurrects_its_lineage(rig: _WatchRig) -> None:
-    """Codex review: delete-and-recreate must self-heal (D55) — the recreated
-    file is the SAME lineage, live again, not a permanently dead row that
-    gets refetched forever."""
+def test_a_changed_file_reappearing_brings_its_lineage_back(rig: _WatchRig) -> None:
+    """A recreated file with new bytes is a new version of the SAME lineage,
+    which is live again (D159 §2.3)."""
     rig.write(name="phoenix.md", content="first life\n", mtime_offset=-400.0)
     rig.cycle()
     (rig.source_dir / "phoenix.md").unlink()
@@ -357,23 +367,24 @@ def test_recreated_source_resurrects_its_lineage(rig: _WatchRig) -> None:
     rig.write(name="phoenix.md", content="second life\n", mtime_offset=-200.0)
     revived = rig.cycle()
     assert len(revived.ingested) == 1
-    with rig.engine.connect() as connection:
-        lineage = (
-            connection.execute(
-                text(
-                    "SELECT deleted_at, deleted_sync_cycle_id"
-                    " FROM documents WHERE source_ref = 'phoenix.md'"
-                )
-            )
-            .mappings()
-            .one()  # .one() also proves it stayed a single lineage
-        )
-        top_version = connection.execute(
-            text("SELECT max(version_no) FROM document_versions")
-        ).scalar_one()
-    assert lineage["deleted_at"] is None
-    assert lineage["deleted_sync_cycle_id"] is None
-    assert top_version == 2  # a new version on the resurrected lineage
+    lineage = _lineage(rig, "phoenix.md")
+    assert lineage["archived_at"] is None
+    assert lineage["top_version"] == 2
+
+
+def test_the_same_file_reappearing_undoes_its_source_archive(rig: _WatchRig) -> None:
+    """Identical bytes seen again act as unarchive: no new version is made."""
+    rig.write(name="back.md", content="same words\n", mtime_offset=-400.0)
+    rig.cycle()
+    (rig.source_dir / "back.md").unlink()
+    rig.cycle()
+    assert _lineage(rig, "back.md")["archived_by"] == "source"
+    rig.write(name="back.md", content="same words\n", mtime_offset=-200.0)
+    returned = rig.cycle()
+    assert returned.ingested == ()
+    lineage = _lineage(rig, "back.md")
+    assert lineage["archived_at"] is None
+    assert lineage["top_version"] == 1
 
 
 class _CountingSource:

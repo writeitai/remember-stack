@@ -54,7 +54,7 @@ from rememberstack.spine.tags import resolve_tags_on
 from rememberstack.spine.tags import TagCatalog
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.mcp import OperationMcpServer
-from rememberstack.workers import DocumentDeleter
+from rememberstack.workers import DocumentArchiver
 from rememberstack.workers import UploadIngestor
 from tests.database_reset import reset_database
 
@@ -152,10 +152,10 @@ class _Rig:
         )
         return next(item.tags for item in page.documents if item.doc_id == doc_id)
 
-    def delete(self, doc_id: UUID) -> None:
-        DocumentDeleter(
+    def archive(self, doc_id: UUID) -> None:
+        DocumentArchiver(
             engine=self.engine, profile_refresher=MagicMock()
-        ).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=doc_id)
+        ).archive_document(deployment_id=_DEPLOYMENT_ID, doc_id=doc_id)
 
     def count(self, sql: str, **parameters: object) -> int:
         with self.engine.connect() as connection:
@@ -434,53 +434,57 @@ def test_update_document_tags_adds_removes_and_sets_atomically(rig: _Rig) -> Non
         DocumentTagsUpdate(set=("project:a",), add=("project:b",))
 
 
-def test_update_document_tags_refuses_unknown_and_deleted_documents(rig: _Rig) -> None:
-    """A document that does not exist, or is deleted, is not_found."""
+def test_update_document_tags_refuses_unknown_documents_only(rig: _Rig) -> None:
+    """An unknown document is not_found; an archived one is still tagged (D159)."""
     rig.create("project:a")
     with pytest.raises(DocumentNotFoundError):
         rig.update(uuid4(), add=["project:a"])
-    doc = rig.observe(body="Soon gone.", tags=("project:a",))
-    rig.delete(doc.doc_id)
-    with pytest.raises(DocumentNotFoundError):
-        rig.update(doc.doc_id, add=["project:a"])
+    doc = rig.observe(body="Soon archived.")
+    rig.archive(doc.doc_id)
+    assert rig.update(doc.doc_id, add=["project:a"]) == ("project:a",)
 
 
-# -- deletion and reads -------------------------------------------------------
+# -- archive and reads --------------------------------------------------------
 
 
-def test_deletion_keeps_assignment_rows_but_returns_no_tags(rig: _Rig) -> None:
-    """D135 keeps the rows for audit; a deleted lineage is never shown with tags."""
+def test_archive_keeps_assignments_shown_only_with_archived_documents(
+    rig: _Rig,
+) -> None:
+    """D159: an archived lineage keeps its tags; the inventory lists it, with
+    them, only when asked for archived documents."""
     rig.create("project:a")
     kept = rig.observe(body="Stays.", tags=("project:a",), source_ref="docs/a.md")
     gone = rig.observe(body="Goes.", tags=("project:a",), source_ref="docs/b.md")
 
-    rig.delete(gone.doc_id)
+    rig.archive(gone.doc_id)
 
     assert (
         rig.count("SELECT count(*) FROM document_tags WHERE doc_id = :d", d=gone.doc_id)
         == 1
     )
-    page = DocumentInventory(engine=rig.engine).list_documents(
-        deployment_id=_DEPLOYMENT_ID
-    )
+    inventory = DocumentInventory(engine=rig.engine)
+    page = inventory.list_documents(deployment_id=_DEPLOYMENT_ID)
     assert [(item.doc_id, item.tags) for item in page.documents] == [
         (kept.doc_id, ("project:a",))
     ]
-    with rig.engine.connect() as connection:
-        hidden = connection.execute(
-            text(
-                "SELECT d.deleted_at IS NOT NULL,"
-                " ARRAY(SELECT t.name FROM document_tags dt JOIN tags t"
-                "  USING (deployment_id, tag_id)"
-                "  WHERE dt.doc_id = d.doc_id AND d.deleted_at IS NULL)"
-                " FROM documents d WHERE d.doc_id = :d"
-            ),
-            {"d": gone.doc_id},
-        ).one()
-    assert tuple(hidden) == (True, [])
+    everything = inventory.list_documents(
+        deployment_id=_DEPLOYMENT_ID, include_archived=True
+    )
+    assert {
+        (item.doc_id, item.tags, item.archived_at is not None)
+        for item in everything.documents
+    } == {(kept.doc_id, ("project:a",), False), (gone.doc_id, ("project:a",), True)}
 
     returned = rig.observe(body="Goes.", source_ref="docs/b.md")
-    assert returned.created, "re-ingest after deletion versions as without tags"
+    assert not returned.created, "identical bytes leave an archived document as is"
+    assert returned.version_id == gone.version_id
+    assert (
+        rig.count(
+            "SELECT count(*) FROM documents WHERE doc_id = :d AND archived_at IS NOT NULL",
+            d=gone.doc_id,
+        )
+        == 1
+    )
 
 
 def test_search_documents_returns_each_documents_tags(rig: _Rig) -> None:

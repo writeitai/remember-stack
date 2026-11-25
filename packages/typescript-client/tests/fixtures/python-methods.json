@@ -4377,6 +4377,7 @@
               ],
               "doc_ids": [],
               "family": [],
+              "include_archived": false,
               "language": "en",
               "recipients": []
             },
@@ -4625,6 +4626,7 @@
               "family": [
                 "email"
               ],
+              "include_archived": false,
               "recipients": []
             },
             "k": 3,
@@ -6258,6 +6260,7 @@
       "method": "list_documents",
       "options": {
         "cursor": "fixture-cursor",
+        "include_archived": true,
         "limit": 7,
         "status": "failed"
       },
@@ -6274,6 +6277,7 @@
       "typescriptMethod": "listDocuments",
       "typescriptOptions": {
         "cursor": "fixture-cursor",
+        "includeArchived": true,
         "limit": 7,
         "status": "failed"
       },
@@ -6297,6 +6301,10 @@
             [
               "status",
               "failed"
+            ],
+            [
+              "include_archived",
+              "true"
             ]
           ]
         }
@@ -6344,6 +6352,7 @@
           "authors": [
             "alice"
           ],
+          "include_archived": true,
           "modified_from": "2026-10-02T12:00:00+00:00"
         },
         "k": 3,
@@ -6378,6 +6387,7 @@
           "authors": [
             "alice"
           ],
+          "include_archived": true,
           "modified_from": "2026-10-02T12:00:00+00:00"
         },
         "k": 3,
@@ -6396,6 +6406,7 @@
               "authors": [
                 "alice"
               ],
+              "include_archived": true,
               "modified_from": "2026-10-02T12:00:00Z"
             },
             "k": 3,
@@ -7665,27 +7676,27 @@
       ]
     },
     {
-      "method": "delete_document",
+      "method": "archive_document",
       "options": {
         "doc_id": "10000000-0000-0000-0000-000000000001"
       },
       "responses": [
         {
+          "archived_at": "2026-10-02T12:00:00Z",
           "claims_retired": 0,
-          "deleted_at": "2026-10-02T12:00:00Z",
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "observations_closed": 0,
           "relations_closed": 0
         }
       ],
       "result": {
+        "archived_at": "2026-10-02T12:00:00Z",
         "claims_retired": 0,
-        "deleted_at": "2026-10-02T12:00:00Z",
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "observations_closed": 0,
         "relations_closed": 0
       },
-      "typescriptMethod": "deleteDocument",
+      "typescriptMethod": "archiveDocument",
       "typescriptOptions": {
         "docId": "10000000-0000-0000-0000-000000000001"
       },
@@ -7695,34 +7706,34 @@
           "body": null,
           "contentBase64": null,
           "contentType": null,
-          "method": "DELETE",
-          "path": "/documents/10000000-0000-0000-0000-000000000001",
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/archive",
           "query": []
         }
       ]
     },
     {
-      "method": "delete_document",
+      "method": "archive_document",
       "options": {
         "doc_id": "10000000-0000-0000-0000-000000000002"
       },
       "responses": [
         {
+          "archived_at": "2026-10-02T12:00:00Z",
           "claims_retired": 0,
-          "deleted_at": "2026-10-02T12:00:00Z",
           "doc_id": "10000000-0000-0000-0000-000000000001",
           "observations_closed": 0,
           "relations_closed": 0
         }
       ],
       "result": {
+        "archived_at": "2026-10-02T12:00:00Z",
         "claims_retired": 0,
-        "deleted_at": "2026-10-02T12:00:00Z",
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "observations_closed": 0,
         "relations_closed": 0
       },
-      "typescriptMethod": "deleteDocument",
+      "typescriptMethod": "archiveDocument",
       "typescriptOptions": {
         "docId": "10000000-0000-0000-0000-000000000002"
       },
@@ -7732,8 +7743,74 @@
           "body": null,
           "contentBase64": null,
           "contentType": null,
-          "method": "DELETE",
-          "path": "/documents/10000000-0000-0000-0000-000000000002",
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000002/archive",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "unarchive_document",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "claims_restored": 0,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "facts_reopened": 0
+        }
+      ],
+      "result": {
+        "claims_restored": 0,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "facts_reopened": 0
+      },
+      "typescriptMethod": "unarchiveDocument",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/unarchive",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "unarchive_document",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "claims_restored": 0,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "facts_reopened": 0
+        }
+      ],
+      "result": {
+        "claims_restored": 0,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "facts_reopened": 0
+      },
+      "typescriptMethod": "unarchiveDocument",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "POST",
+          "path": "/documents/10000000-0000-0000-0000-000000000002/unarchive",
           "query": []
         }
       ]
@@ -9737,6 +9814,7 @@
               "authors": [],
               "doc_ids": [],
               "family": [],
+              "include_archived": false,
               "language": "en",
               "recipients": []
             },
@@ -9849,6 +9927,7 @@
               "authors": [],
               "doc_ids": [],
               "family": [],
+              "include_archived": false,
               "language": "en",
               "recipients": []
             },
@@ -12030,17 +12109,38 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
-        "detail": "DELETE /documents/{doc_id} returned an invalid response body",
+        "detail": "POST /documents/{doc_id}/archive returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
       },
-      "method": "delete_document",
+      "method": "archive_document",
       "options": {
         "doc_id": "10000000-0000-0000-0000-000000000001"
       },
       "status": 200,
-      "typescriptMethod": "deleteDocument",
+      "typescriptMethod": "archiveDocument",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "POST /documents/{doc_id}/unarchive returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "unarchive_document",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 200,
+      "typescriptMethod": "unarchiveDocument",
       "typescriptOptions": {
         "docId": "10000000-0000-0000-0000-000000000001"
       },
@@ -14417,6 +14517,13 @@
     "MemoryClient.close": "close/disposal tests"
   },
   "responses": {
+    "archive": {
+      "archived_at": "2026-10-02T12:00:00Z",
+      "claims_retired": 0,
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "observations_closed": 0,
+      "relations_closed": 0
+    },
     "bundle": {
       "claims_and_sources": {
         "aggregate": null,
@@ -14500,13 +14607,6 @@
       "message": null,
       "name": "fixture",
       "status": "active"
-    },
-    "deletion": {
-      "claims_retired": 0,
-      "deleted_at": "2026-10-02T12:00:00Z",
-      "doc_id": "10000000-0000-0000-0000-000000000001",
-      "observations_closed": 0,
-      "relations_closed": 0
     },
     "deployment": {
       "build_revision": "",
@@ -14928,6 +15028,11 @@
           "updated_at": "2026-10-02T12:00:00Z"
         }
       ]
+    },
+    "unarchive": {
+      "claims_restored": 0,
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "facts_reopened": 0
     }
   },
   "tools": [
@@ -15041,7 +15146,7 @@
       "arguments": {
         "doc_id": "10000000-0000-0000-0000-000000000001"
       },
-      "name": "delete_document",
+      "name": "archive_document",
       "result": {
         "doc_id": "10000000-0000-0000-0000-000000000001"
       },
@@ -15067,7 +15172,40 @@
           "status_code": null
         }
       },
-      "name": "delete_document",
+      "name": "archive_document",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "unarchive_document",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "unarchive_document",
       "variant": "unknown-key"
     },
     {
@@ -15075,6 +15213,7 @@
         "authors": [
           "alice"
         ],
+        "include_archived": true,
         "language": "en"
       },
       "name": "search_documents",
@@ -15089,6 +15228,7 @@
             "created_to": null,
             "doc_ids": [],
             "family": [],
+            "include_archived": true,
             "language": "en",
             "modified_from": null,
             "modified_to": null,
@@ -15110,6 +15250,7 @@
         "authors": [
           "alice"
         ],
+        "include_archived": true,
         "language": "en",
         "unknown": true
       },
@@ -15930,6 +16071,7 @@
             "created_to": null,
             "doc_ids": [],
             "family": [],
+            "include_archived": false,
             "language": null,
             "modified_from": null,
             "modified_to": null,

@@ -59,7 +59,7 @@ The client is synchronous. There is no async client yet
 | `ContextBundleV2` | model | [Models](#models) |
 | `DeclaredEffectivePeriod` | model | [Models](#models) |
 | `DeploymentBuildInfo` | model | [`deployment_build_info`](#deployment_build_info) |
-| `DocumentDeletion` | model | [Models](#models) |
+| `DocumentArchive` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
 | `DocumentReference` | model | [Models](#models) |
 | `DocumentReferenceSource` | model | [Models](#models) |
@@ -74,6 +74,7 @@ The client is synchronous. There is no async client yet
 | `DocumentSummary` | model | [Models](#models) |
 | `DocumentTagFilter` | model | [Models](#models) |
 | `DocumentTags` | model | [Models](#models) |
+| `DocumentUnarchive` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `EffectiveInterval` | model | [Models](#models) |
 | `EffectivePeriodInput` | model | [Models](#models) |
@@ -342,7 +343,8 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`processing_layers`](#processing_layers) | `GET /processing-layers` | `ProcessingLayerStates` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
-| [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
+| [`archive_document`](#archive_document) | `POST /documents/{doc_id}/archive` | `DocumentArchive` |
+| [`unarchive_document`](#unarchive_document) | `POST /documents/{doc_id}/unarchive` | `DocumentUnarchive` |
 | [`list_tags`](#list_tags) | `GET /tags` | `TagList` |
 | [`create_tag`](#create_tag) | `POST /tags` | `Tag` |
 | [`update_tag`](#update_tag) | `PATCH /tags/{tag_id}` | `Tag` |
@@ -579,6 +581,7 @@ MemoryClient.list_documents(
     limit: int = 50,
     cursor: str | None = None,
     status: Literal["ingesting", "converting", "structuring", "ready", "failed"] | None = None,
+    include_archived: bool = False,
 ) -> DocumentPage
 ```
 
@@ -586,8 +589,9 @@ Returns one page of the deployment's documents, newest document first, as a
 [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
 returned `next_cursor` as `cursor` to read the next page; it is `None` on the last page.
 `status` keeps only documents whose newest version has that status. `limit`
-is 1 to 200; the deployment answers `422` outside that range. Deleted
-documents are not listed. See
+is 1 to 200; the deployment answers `422` outside that range. Archived
+documents are listed, each with `archived_at`, only with
+`include_archived=True`. See
 [`GET /documents`](/docs/reference/http-api/ingest#get-documents).
 
 ```python
@@ -623,9 +627,10 @@ and their text, and returns a
 [`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters)
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
 `recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`,
-`doc_ids` and `tags`, a
+`doc_ids`, `tags`, a
 [`DocumentTagFilter`](/docs/reference/result-types#documenttagfilter)
-(`all`, `any`, `none`) of tag names or ids. With a `query` the results are ranked and not paged; without
+(`all`, `any`, `none`) of tag names or ids, and `include_archived` (default
+`False`), which also returns archived documents, each with `archived_at`. With a `query` the results are ranked and not paged; without
 one they are newest ingested first and `limit` (default 50) / `cursor` pages them.
 Read `next_cursor` for continuation; ranked responses disclose `truncated`. Passing `cursor` with a
 `query`, a date without a timezone, `k` / `limit` outside 1 to 200, or an
@@ -666,33 +671,55 @@ decisions = memory.search_documents(
 )
 ```
 
-#### `delete_document`
+#### `archive_document`
 
 ```python
-MemoryClient.delete_document(*, doc_id: UUID | str) -> DocumentDeletion
+MemoryClient.archive_document(*, doc_id: UUID | str) -> DocumentArchive
 ```
 
-Removes one document, every version of it, from the memory and returns a
-[`DocumentDeletion`](/docs/reference/result-types#documentdeletion) with
-`doc_id`, `deleted_at`, `claims_retired`, `relations_closed` and
+Archives one document, every version of it: the memory stops believing it,
+and it stays readable as history. Returns a
+[`DocumentArchive`](/docs/reference/result-types#documentarchive) with
+`doc_id`, `archived_at`, `claims_retired`, `relations_closed` and
 `observations_closed`. Its claims stop counting as evidence, and facts that
-only it supported are closed with a recorded retraction. The claims and the
-stored original are kept as history. Needs a `write` credential. See
-[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+only it supported are closed with a recorded retraction. Reads leave the
+document out unless they pass `include_archived`. Archiving an archived
+document returns the same `archived_at` with zero counts. Needs a `write`
+credential. See
+[`POST /documents/{doc_id}/archive`](/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
 
 Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
 `MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
-when the document does not exist or is already deleted.
+when the document does not exist.
 
 ```python
 from remember import MemoryApiError
 
 try:
-    deletion = memory.delete_document(doc_id=version.doc_id)
-    print(f"{deletion.claims_retired} claims retired")
+    archive = memory.archive_document(doc_id=version.doc_id)
+    print(f"{archive.claims_retired} claims retired at {archive.archived_at}")
 except MemoryApiError as error:
     if error.status_code != 404:
         raise
+```
+
+#### `unarchive_document`
+
+```python
+MemoryClient.unarchive_document(*, doc_id: UUID | str) -> DocumentUnarchive
+```
+
+Undoes an archive exactly and returns a
+[`DocumentUnarchive`](/docs/reference/result-types#documentunarchive) with
+`doc_id`, `claims_restored` and `facts_reopened`. The claims the archive
+retired count again, and the facts it closed reopen when they have support
+again. A document that is not archived returns zero counts. Needs a `write`
+credential, and raises like `archive_document`. See
+[`POST /documents/{doc_id}/unarchive`](/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
+
+```python
+restored = memory.unarchive_document(doc_id=version.doc_id)
+print(restored.claims_restored, restored.facts_reopened)
 ```
 
 ### Tags
@@ -781,7 +808,7 @@ Raises `ValueError` before sending anything when `doc_id` is not a UUID or a
 list is a single string, `pydantic.ValidationError` when `set` is combined
 with `add` or `remove`, `UnknownTag` when a tag is not registered (nothing
 changes), and `MemoryApiError` with `status_code` 404 for an unknown or
-deleted document, or 409 with `code` `"tag_limit_exceeded"` past 64 tags.
+forgotten document, or 409 with `code` `"tag_limit_exceeded"` past 64 tags.
 
 ```python
 tags = memory.update_document_tags(
@@ -828,7 +855,7 @@ MemoryClient.clear_effective_time(*, doc_id: UUID | str) -> EffectiveTimeCleared
 Withdraws every declared period of a document and returns it to "the newest
 processed version is current". `cleared_at` is `None` when the document had
 no declared periods. Needs a `write` credential. Raises `MemoryApiError`
-with `status_code` 404 for an unknown or deleted document.
+with `status_code` 404 for an unknown or forgotten document.
 
 #### `set_references`
 
@@ -879,7 +906,7 @@ to `{"mode": "history"}`. Each row is a version with its `effective`
 intervals and a `status` of `present`, `absent`, `not_indexed` or
 `processing`. Raises `pydantic.ValidationError` for a malformed key or `limit`
 outside 1 to 200, and `MemoryApiError` with `status_code` 404 for an
-unknown or deleted document. `section_history_request(request=…)` sends a
+unknown or forgotten document. `section_history_request(request=…)` sends a
 prepared `SectionHistoryRequest`. See
 [`GET …/sections/{section_key}/history`](/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
 
@@ -1611,9 +1638,10 @@ models below are Pydantic models (frozen) unless noted.
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
 | `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`), `version_key` (str or `None`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
-| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`, `tags` (tuple of tag names). |
+| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`, `tags` (tuple of tag names), `archived_at` (`None` unless archived). |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
-| `DocumentDeletion` | The result of `delete_document`: `doc_id`, `deleted_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
+| `DocumentArchive` | The result of `archive_document`: `doc_id`, `archived_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
+| `DocumentUnarchive` | The result of `unarchive_document`: `doc_id`, `claims_restored`, `facts_reopened`. |
 | `Tag`, `TagList`, `DocumentTags` | One registered tag (`tag_id`, `name`, `description`, `created_at`, `updated_at`), the result of `list_tags` (`tags`), and the result of `update_document_tags` (`doc_id`, `tags`). |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |

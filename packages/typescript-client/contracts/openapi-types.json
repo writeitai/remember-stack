@@ -330,6 +330,19 @@
       "ChunkEvidenceResult": {
         "additionalProperties": false,
         "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived",
+            "x-exclude-if-none": true
+          },
           "char_end": {
             "title": "Char End",
             "type": "integer"
@@ -977,19 +990,19 @@
         "type": "object",
         "x-extra": "forbid"
       },
-      "DocumentDeletion": {
+      "DocumentArchive": {
         "additionalProperties": false,
-        "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
+        "description": "What archiving one document changed in the live memory (D159 \u00a72.1).\n\nThe document stays readable as history. The counts describe this call: a\nrepeat answers the same ``archived_at`` with zero counts, and a call that\nfinishes an archive another path started reports only what it finished.",
         "properties": {
+          "archived_at": {
+            "format": "date-time",
+            "title": "Archived At",
+            "type": "string"
+          },
           "claims_retired": {
             "minimum": 0,
             "title": "Claims Retired",
             "type": "integer"
-          },
-          "deleted_at": {
-            "format": "date-time",
-            "title": "Deleted At",
-            "type": "string"
           },
           "doc_id": {
             "format": "uuid",
@@ -1009,12 +1022,12 @@
         },
         "required": [
           "doc_id",
-          "deleted_at",
+          "archived_at",
           "claims_retired",
           "relations_closed",
           "observations_closed"
         ],
-        "title": "DocumentDeletion",
+        "title": "DocumentArchive",
         "type": "object",
         "x-extra": "forbid"
       },
@@ -1694,6 +1707,11 @@
             "title": "Family",
             "type": "array"
           },
+          "include_archived": {
+            "default": false,
+            "title": "Include Archived",
+            "type": "boolean"
+          },
           "language": {
             "anyOf": [
               {
@@ -1887,6 +1905,7 @@
               "created_to": null,
               "doc_ids": [],
               "family": [],
+              "include_archived": false,
               "language": null,
               "modified_from": null,
               "modified_to": null,
@@ -1975,6 +1994,19 @@
         "additionalProperties": false,
         "description": "One matching document, described by the version it was judged by.",
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived At"
+          },
           "authors": {
             "default": [],
             "items": {
@@ -2253,6 +2285,19 @@
       "DocumentSummary": {
         "additionalProperties": false,
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived At"
+          },
           "doc_id": {
             "format": "uuid",
             "title": "Doc Id",
@@ -2419,6 +2464,35 @@
           }
         },
         "title": "DocumentTagsUpdate",
+        "type": "object",
+        "x-extra": "forbid"
+      },
+      "DocumentUnarchive": {
+        "additionalProperties": false,
+        "description": "What unarchiving one document restored (D159 \u00a72.3).\n\nUnarchive is the exact undo of the archive: the testimony it ended is\ncurrent again and the facts it closed that have support again are\nreopened. Unarchiving a live document answers zero counts.",
+        "properties": {
+          "claims_restored": {
+            "minimum": 0,
+            "title": "Claims Restored",
+            "type": "integer"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "facts_reopened": {
+            "minimum": 0,
+            "title": "Facts Reopened",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc_id",
+          "claims_restored",
+          "facts_reopened"
+        ],
+        "title": "DocumentUnarchive",
         "type": "object",
         "x-extra": "forbid"
       },
@@ -2898,6 +2972,19 @@
       "EvidenceResult": {
         "additionalProperties": false,
         "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived",
+            "x-exclude-if-none": true
+          },
           "asserted_at": {
             "anyOf": [
               {
@@ -4871,6 +4958,19 @@
       "OutputChunkEvidenceResult": {
         "additionalProperties": false,
         "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived",
+            "x-exclude-if-none": true
+          },
           "char_end": {
             "title": "Char End",
             "type": "integer"
@@ -4985,6 +5085,7 @@
           }
         },
         "required": [
+          "archived",
           "char_end",
           "char_start",
           "chunk_id",
@@ -5549,19 +5650,19 @@
         "type": "object",
         "x-extra": "forbid"
       },
-      "OutputDocumentDeletion": {
+      "OutputDocumentArchive": {
         "additionalProperties": false,
-        "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
+        "description": "What archiving one document changed in the live memory (D159 \u00a72.1).\n\nThe document stays readable as history. The counts describe this call: a\nrepeat answers the same ``archived_at`` with zero counts, and a call that\nfinishes an archive another path started reports only what it finished.",
         "properties": {
+          "archived_at": {
+            "format": "date-time",
+            "title": "Archived At",
+            "type": "string"
+          },
           "claims_retired": {
             "minimum": 0,
             "title": "Claims Retired",
             "type": "integer"
-          },
-          "deleted_at": {
-            "format": "date-time",
-            "title": "Deleted At",
-            "type": "string"
           },
           "doc_id": {
             "format": "uuid",
@@ -5580,13 +5681,13 @@
           }
         },
         "required": [
+          "archived_at",
           "claims_retired",
-          "deleted_at",
           "doc_id",
           "observations_closed",
           "relations_closed"
         ],
-        "title": "DocumentDeletion",
+        "title": "DocumentArchive",
         "type": "object",
         "x-extra": "forbid"
       },
@@ -6300,6 +6401,11 @@
             "title": "Family",
             "type": "array"
           },
+          "include_archived": {
+            "default": false,
+            "title": "Include Archived",
+            "type": "boolean"
+          },
           "language": {
             "anyOf": [
               {
@@ -6376,6 +6482,7 @@
           "created_to",
           "doc_ids",
           "family",
+          "include_archived",
           "language",
           "modified_from",
           "modified_to",
@@ -6514,6 +6621,7 @@
               "created_to": null,
               "doc_ids": [],
               "family": [],
+              "include_archived": false,
               "language": null,
               "modified_from": null,
               "modified_to": null,
@@ -6611,6 +6719,19 @@
         "additionalProperties": false,
         "description": "One matching document, described by the version it was judged by.",
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived At"
+          },
           "authors": {
             "default": [],
             "items": {
@@ -6866,6 +6987,7 @@
           }
         },
         "required": [
+          "archived_at",
           "authors",
           "created_at",
           "doc_id",
@@ -6910,6 +7032,19 @@
       "OutputDocumentSummary": {
         "additionalProperties": false,
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived At"
+          },
           "doc_id": {
             "format": "uuid",
             "title": "Doc Id",
@@ -6965,6 +7100,7 @@
           }
         },
         "required": [
+          "archived_at",
           "doc_id",
           "first_seen_at",
           "latest",
@@ -7089,6 +7225,35 @@
           "set"
         ],
         "title": "DocumentTagsUpdate",
+        "type": "object",
+        "x-extra": "forbid"
+      },
+      "OutputDocumentUnarchive": {
+        "additionalProperties": false,
+        "description": "What unarchiving one document restored (D159 \u00a72.3).\n\nUnarchive is the exact undo of the archive: the testimony it ended is\ncurrent again and the facts it closed that have support again are\nreopened. Unarchiving a live document answers zero counts.",
+        "properties": {
+          "claims_restored": {
+            "minimum": 0,
+            "title": "Claims Restored",
+            "type": "integer"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "facts_reopened": {
+            "minimum": 0,
+            "title": "Facts Reopened",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claims_restored",
+          "doc_id",
+          "facts_reopened"
+        ],
+        "title": "DocumentUnarchive",
         "type": "object",
         "x-extra": "forbid"
       },
@@ -7593,6 +7758,19 @@
       "OutputEvidenceResult": {
         "additionalProperties": false,
         "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Archived",
+            "x-exclude-if-none": true
+          },
           "asserted_at": {
             "anyOf": [
               {
@@ -7789,6 +7967,7 @@
           }
         },
         "required": [
+          "archived",
           "asserted_at",
           "char_end",
           "char_start",
@@ -15009,7 +15188,7 @@
     },
     "/documents": {
       "get": {
-        "description": "One page of documents, newest lineage first.\n\nOrdered by when each document was *first seen*, which never changes \u2014\nre-ingesting one does not move it up. An activity order would, and a\nkeyset cursor against a moving key drops and repeats rows.\n\n`status` filters on the *newest* version's state, which is what makes\n\"show me what failed\" answerable in one call rather than by paging the\nwhole corpus and filtering client-side.",
+        "description": "One page of documents, newest lineage first.\n\nOrdered by when each document was *first seen*, which never changes \u2014\nre-ingesting one does not move it up. An activity order would, and a\nkeyset cursor against a moving key drops and repeats rows.\n\n`status` filters on the *newest* version's state, which is what makes\n\"show me what failed\" answerable in one call rather than by paging the\nwhole corpus and filtering client-side.\n\nArchived documents (D159) are history: listed, with ``archived_at``,\nonly when ``include_archived`` is true.",
         "operationId": "list_documents_documents_get",
         "parameters": [
           {
@@ -15061,6 +15240,16 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
             }
           }
         ],
@@ -15191,10 +15380,10 @@
         "summary": "Search Documents"
       }
     },
-    "/documents/{doc_id}": {
-      "delete": {
-        "description": "Remove one document from the live memory.\n\nIts claims stop counting as current testimony, facts that no other\ndocument supports are closed with a recorded retraction, and it\nleaves the inventory and every read. The claims and the stored\noriginal are kept as history: this is not an erasure.\n\nThe deletion is all or nothing. An unknown id and an already deleted\ndocument are both 404: from the caller's side each is absent. A\ndocument hidden by another path whose evidence was never updated is\nfinished and answers 200 instead.",
-        "operationId": "delete_document_documents__doc_id__delete",
+    "/documents/{doc_id}/archive": {
+      "post": {
+        "description": "Archive one document: the memory stops believing it.\n\nIts claims stop counting as current testimony and facts that no other\ndocument supports are closed with a recorded retraction. The document\nstays readable as history: lists, search and the context operations\ninclude it only with ``include_archived=true``. Unarchive undoes it.\n\nThe archive is all or nothing. A repeat answers the same\n``archived_at`` with zero counts; an unknown id is 404.",
+        "operationId": "archive_document_documents__doc_id__archive_post",
         "parameters": [
           {
             "in": "path",
@@ -15212,7 +15401,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentDeletion"
+                  "$ref": "#/components/schemas/DocumentArchive"
                 }
               }
             },
@@ -15237,7 +15426,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Delete Document"
+        "summary": "Archive Document"
       }
     },
     "/documents/{doc_id}/effective-periods": {
@@ -15492,6 +15681,55 @@
           }
         ],
         "summary": "Update Document Tags"
+      }
+    },
+    "/documents/{doc_id}/unarchive": {
+      "post": {
+        "description": "Undo an archive exactly.\n\nThe testimony the archive ended is current again and the facts it\nclosed reopen when they have support again; processing the archive cut\nshort continues. A document that is not archived answers zero counts;\nan unknown id is 404.",
+        "operationId": "unarchive_document_documents__doc_id__unarchive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentUnarchive"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unarchive Document"
       }
     },
     "/documents/{doc_id}/versions/{version_id}/effective-periods": {

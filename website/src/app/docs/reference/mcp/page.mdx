@@ -42,8 +42,9 @@ writes</Cloud>. See [CLI: How the CLI finds your deployment](/docs/reference/cli
 `--transport http` serves the same tools over HTTP; see
 [Over HTTP](#over-http).
 
-`--read-only` leaves out the two tools that change memory, `ingest` and
-`delete_document`, and refuses calls to them with the error `read_only`.
+`--read-only` leaves out the tools that change memory (`ingest`,
+`archive_document`, `unarchive_document` and the four tag tools that change
+tags), and refuses calls to them with the error `read_only`.
 `pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
@@ -75,7 +76,8 @@ its arguments change in a way an older engine could not handle.
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
-1. `ingest`, `pipeline_readiness`, `delete_document`, `search_documents`,
+1. `ingest`, `pipeline_readiness`, `archive_document`, `unarchive_document`,
+   `search_documents`,
    `section_history`, `document_references`, and the five tag tools
    `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
    `update_document_tags` (with `--read-only`, only `pipeline_readiness`,
@@ -90,7 +92,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 23 tools: 11 + 4 + 1 + 7.
+lists 24 tools: 12 + 4 + 1 + 7.
 
 A deployment that does not process the facts
 [layer](/docs/concepts/pipeline#processing-layers) does not report
@@ -101,8 +103,10 @@ needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
-`ingest`, `delete_document` and the four tag tools that change tags, and
-`destructiveHint` is `true` only for `delete_document` and `delete_tag`.
+`ingest`, `archive_document`, `unarchive_document` and the four tag tools
+that change tags, and `destructiveHint` is `true` only for `delete_tag`.
+Archiving is not destructive: the document stays as history and
+`unarchive_document` undoes it.
 
 The server serves one deployment, so no tool takes a `project` argument; a
 call that passes one is refused with `project_routing_unavailable`. A call to
@@ -282,27 +286,46 @@ ingest that returned `created: false` is polled the same way, because an
 earlier run of the same bytes may still be processing. See
 [Wait until a document is queryable](/docs/guides/wait-for-readiness#over-mcp).
 
-### `delete_document`
+### `archive_document`
 
-Removes one document, every version of it, from the memory. Its claims stop
-counting as evidence, and facts that only it supported are closed with a
-recorded retraction; facts other documents also support stay. The claims and
-the stored original are kept as history. Ingesting the same file again later
-adds it back as a new version.
+Archives one document, every version of it: the memory stops believing it,
+and it stays readable as history. Its claims stop counting as evidence, and
+facts that only it supported are closed with a recorded retraction; facts
+other documents also support stay. Reads leave the document out unless they
+set `include_archived`.
 
 | Parameter | Type | Required | Limits |
 |---|---|---|---|
 | `doc_id` | string | yes | The document's UUID, as `ingest` returned it or a result cites it. No other arguments are accepted. |
 
-The result is a [`DocumentDeletion`](/docs/reference/result-types#documentdeletion):
-`doc_id`, `deleted_at`, `claims_retired`, `relations_closed`,
-`observations_closed`.
+The result is a [`DocumentArchive`](/docs/reference/result-types#documentarchive):
+`doc_id`, `archived_at`, `claims_retired`, `relations_closed`,
+`observations_closed`. Archiving an archived document returns the same
+`archived_at` with zero counts.
 
-The tool description tells the agent to delete only when the user asks to
-remove a specific document, or the document is plainly wrong or unwanted,
-and never as a way to correct a fact: to correct one, ingest a document that
-says the right thing. The token needs `write` scope. See
-[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+The tool description tells the agent to archive when the user says a
+document no longer holds (a dead plan, an outdated policy, a replaced price
+list), never to tidy up, and never as a way to correct one fact: to correct
+one, ingest a document that says the right thing. The token needs `write`
+scope. See
+[`POST /documents/{doc_id}/archive`](/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
+
+### `unarchive_document`
+
+Undoes an archive exactly: the document's claims count as evidence again, and
+the facts its archive closed reopen when they have support again. Its only
+model call is a best-effort refresh of the entity profiles whose facts changed.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The archived document's UUID. No other arguments are accepted. |
+
+The result is a [`DocumentUnarchive`](/docs/reference/result-types#documentunarchive):
+`doc_id`, `claims_restored`, `facts_reopened`. A document that is not
+archived returns zero counts. The tool description tells the agent to use it
+only when the user says an archived document holds again. The token needs
+`write` scope. See
+[`POST /documents/{doc_id}/unarchive`](/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
 
 ### `search_documents`
 
@@ -320,17 +343,21 @@ Alice") rather than asking about its content.
 | `language`, `thread_ref` | string | no | Exact match. |
 | `doc_ids` | array of strings | no | Document UUIDs. |
 | `tags` | object | no | `{"all": [...], "any": [...], "none": [...]}`: tag names or ids the document carries (every one), carries at least one of, or carries none of. At least one non-empty list; up to 32 tags each, none twice. An unregistered tag is `unknown_tag`. |
+| `include_archived` | boolean | no | Default `false`. Also return archived documents, each with `archived_at`. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
 | `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
 | `k` | integer | no | Ranked results with `query`: 1–200; default 20. |
 | `limit` | integer | no | Browse page size without `query`: 1–200; default 50. |
 | `cursor` | string | no | The previous page's `next_cursor`; only without `query`. |
 
-Unknown keys are refused. The result is a
+`search_documents` is at tool version 5, and `claims_and_sources_context`,
+`facts_context` and `combined_context` at 6, 6 and 7: `include_archived`
+raised each by one. Unknown keys are refused. The result is a
 [`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
 `family`, `status`, `authors`, `recipients`, dates, `p3_path`,
-`served_version`, `effective`, `matching_editions` and `overview`),
+`served_version`, `effective`, `matching_editions`, `overview` and
+`archived_at`),
 `next_cursor`, `truncated`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The
@@ -363,7 +390,7 @@ stable id a heading carries in the source: `per-diem` in
 The result is a [`SectionHistoryPage`](/docs/reference/result-types#sectionhistorypage):
 one row per version with `status` `present`, `absent`, `not_indexed` or
 `processing`, and on the first page the `amends` references aimed at the
-section. An unknown or deleted document is `document_not_found`. The token
+section. An unknown or forgotten document is `document_not_found`. The token
 needs `read` scope. See
 [`GET …/sections/{section_key}/history`](/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
 
@@ -463,7 +490,7 @@ Changes the document's tags in one step and returns
 the tags afterwards. Every tag must be registered; any unregistered one
 refuses the whole call with `unknown_tag`. Removing a registered tag the
 document does not carry is not an error. Changing tags never reprocesses
-the document. An unknown or deleted document is `document_not_found`. See
+the document. An unknown or forgotten document is `document_not_found`. See
 [`POST /documents/{doc_id}/tags`](/docs/reference/http-api/ingest#post-documentsdoc_idtags).
 
 ### Assured operations
@@ -526,9 +553,12 @@ versions count as evidence: [Text in force](/docs/reference/assured-operations#t
 `documents` limits the read to certain documents, with the fields of
 `search_documents`' filters: `family`, `authors`, `recipients`,
 `created_from`, `created_to`, `modified_from`, `modified_to`, `language`,
-`thread_ref`, `doc_ids` and `tags` (`{"all": [...], "any": [...], "none":
-[...]}`). Call `list_tags` before filtering by tag; an unregistered tag is
-`unknown_tag`. Supporting evidence then comes only from matching documents,
+`thread_ref`, `doc_ids`, `tags` (`{"all": [...], "any": [...], "none":
+[...]}`) and `include_archived` (default `false`). Call `list_tags` before
+filtering by tag; an unregistered tag is `unknown_tag`. Archived documents
+are left out unless `include_archived` is `true`; then each claim and
+passage from one carries `"archived": true`, and its claims never count as
+current support. Supporting evidence then comes only from matching documents,
 while contradicting evidence and competing facts from every other document
 stay in the answer, marked `"in_documents_filter": false`:
 [The documents filter](/docs/reference/assured-operations#the-documents-filter).
@@ -630,7 +660,7 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`, `update_document_tags`: no such document, or it is deleted. |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: no such document. `section_history`, `document_references`, `update_document_tags`: no such document, or a hard forget removed it. |
 | `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |
 | `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
 | `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |

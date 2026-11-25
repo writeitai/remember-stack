@@ -29,8 +29,8 @@ undeclared target yields its served version over ``W``; a pinned reference
 yields the version with that key over ``W``. Versions are chosen by force or
 key first and checked for readability second — never replaced by another
 version — so the statuses say exactly what is missing: ``target_processing``,
-``target_unavailable`` (never ingested, deleted or forgotten: one status, so
-deletion is not revealed), ``target_not_in_force``,
+``target_unavailable`` (never ingested, archived or forgotten: one status, so
+forgetting is not revealed), ``target_not_in_force``,
 ``section_not_in_version``, ``section_not_indexed`` and
 ``pinned_version_unavailable``. The target as named by the source is returned
 for every status: it is content of the live source document.
@@ -177,6 +177,9 @@ class LineageScope:
 
     doc_id: UUID
     live: bool
+    archived: bool
+    """D159: an archived lineage stays readable as a source, but as a target it
+    is ``target_unavailable`` until it comes back."""
     periodised: bool
     served_version_id: UUID | None
     versions: dict[UUID, VersionInfo]
@@ -557,6 +560,7 @@ class _Reader:
             scopes[doc_id] = LineageScope(
                 doc_id=doc_id,
                 live=lineage is not None and bool(lineage["live"]),
+                archived=lineage is not None and bool(lineage["archived"]),
                 periodised=doc_id in periodised,
                 served_version_id=None
                 if lineage is None
@@ -853,7 +857,7 @@ class _Reader:
 def _resolve_target(*, base: DraftRow, scope: LineageScope | None) -> list[DraftRow]:
     """The target rows of one reference in one source window (§6.2)."""
     candidate = base.candidate
-    if scope is None or not scope.live:
+    if scope is None or not scope.live or scope.archived:
         return [base]
     if candidate.binding == "pinned":
         info = (
@@ -1154,7 +1158,8 @@ _CURRENT: Final = CurrentReadTime()
 
 _SELECT_LINEAGES = text(
     """
-    SELECT doc_id, current_version_id, deleted_at IS NULL AS live
+    SELECT doc_id, current_version_id, deleted_at IS NULL AS live,
+           archived_at IS NOT NULL AS archived
     FROM documents
     WHERE deployment_id = :deployment_id
       AND doc_id = ANY(CAST(:doc_ids AS uuid[]))

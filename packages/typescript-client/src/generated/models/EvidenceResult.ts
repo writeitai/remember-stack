@@ -6,6 +6,7 @@ import type { ClaimOccurrence } from './ClaimOccurrence';
 import type { EffectiveInterval } from './EffectiveInterval';
 import type { EvidenceSpan } from './EvidenceSpan';
 export type EvidenceResult = {
+    archived?: boolean | null;
     asserted_at?: string | null;
     char_end: number;
     char_start: number;

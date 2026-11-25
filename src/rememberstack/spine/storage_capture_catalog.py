@@ -154,7 +154,7 @@ BEGIN
   ELSE
     IF (SELECT count(*) FROM public.deployments) <> 1
        OR (SELECT count(*) FROM public.alembic_version) <> 1
-       OR (SELECT version_num FROM public.alembic_version) <> 'p9_54_0075' THEN
+       OR (SELECT version_num FROM public.alembic_version) <> 'p9_55_0076' THEN
       RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_catalog_scope';
     END IF;
     SELECT deployment_id INTO STRICT native_scope FROM public.deployments;

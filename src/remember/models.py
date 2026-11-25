@@ -150,6 +150,8 @@ class DocumentSummary(BaseModel):
     serving: bool
     tags: tuple[str, ...] = ()
     """The names of the registered tags assigned to the document (D156)."""
+    archived_at: datetime | None = None
+    """When the document was archived (D159); listed only with ``include_archived``."""
 
 
 class DocumentPage(BaseModel):
@@ -158,19 +160,34 @@ class DocumentPage(BaseModel):
     next_cursor: str | None = None
 
 
-class DocumentDeletion(BaseModel):
-    """What deleting one document changed in the live memory.
+class DocumentArchive(BaseModel):
+    """What archiving one document changed in the live memory (D159 §2.1).
 
-    The counts describe this call. A call that finishes a deletion another
-    path started reports only the work it finished.
+    The document stays readable as history. The counts describe this call: a
+    repeat answers the same ``archived_at`` with zero counts, and a call that
+    finishes an archive another path started reports only what it finished.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     doc_id: UUID
-    deleted_at: datetime
+    archived_at: datetime
     claims_retired: int = Field(ge=0)
     relations_closed: int = Field(ge=0)
     observations_closed: int = Field(ge=0)
+
+
+class DocumentUnarchive(BaseModel):
+    """What unarchiving one document restored (D159 §2.3).
+
+    Unarchive is the exact undo of the archive: the testimony it ended is
+    current again and the facts it closed that have support again are
+    reopened. Unarchiving a live document answers zero counts.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    claims_restored: int = Field(ge=0)
+    facts_reopened: int = Field(ge=0)
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +530,10 @@ class DocumentSearchFilters(BaseModel):
     thread_ref: str | None = None
     doc_ids: tuple[UUID, ...] = ()
     tags: DocumentTagFilter | None = None  # D156 caller tags, on the lineage
+    include_archived: bool = False
+    """D159: also consider archived documents, which are history and hidden by
+    default. Their passages and claims are marked ``archived``; their claims
+    are never current fact support."""
 
 
 class DocumentSearchRequest(BaseModel):
@@ -620,6 +641,9 @@ class DocumentSearchResult(BaseModel):
     other_matching_version_ids: tuple[UUID, ...] = ()
     matched_by: tuple[Literal["name", "content"], ...] = ()
     score: float | None = None
+    archived_at: datetime | None = None
+    """When the document was archived (D159); returned only with
+    ``filters.include_archived``."""
 
 
 class DocumentPeopleMatch(BaseModel):
@@ -1486,6 +1510,9 @@ class EvidenceResult(BaseModel):
     occurrences: tuple[ClaimOccurrence, ...] = ()
     """One occurrence per selected version, by effective start; the first
     is the one the top-level coordinates describe."""
+    archived: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    """True for a claim or passage of an archived document (D159), which only
+    ``documents.include_archived`` returns; absent otherwise."""
 
 
 class FactEvidence(BaseModel):
@@ -1545,6 +1572,9 @@ class ChunkEvidenceResult(BaseModel):
     effective periods (D140 §3.7)."""
     served_version: bool = True
     """Whether the chunk's version is its document's served version."""
+    archived: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    """True for a claim or passage of an archived document (D159), which only
+    ``documents.include_archived`` returns; absent otherwise."""
 
 
 class SourceRecord(BaseModel):

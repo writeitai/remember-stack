@@ -2392,6 +2392,72 @@ def test_examples_execute_within_caps_on_corpus(
         assert outcome.returned_row_count <= 50
 
 
+def test_documents_about_leaves_out_an_archived_document(
+    example_corpus: tuple[
+        str,
+        UUID,
+        ExampleFixtureHandles,
+        tuple[UUID, ...],
+        tuple[UUID, ...],
+        dict[str, str],
+        tuple[UUID, ...],
+        tuple[UUID, ...],
+    ],
+) -> None:
+    """D159: mentions survive an archive as history; the shipped example
+    still lists live documents only."""
+    url, deployment_id, handles, claims, chunks, bodies, tomb_claims, tomb_chunks = (
+        example_corpus
+    )
+    search = _FixtureSearch(
+        live_claims=claims,
+        live_chunks=chunks,
+        tombstone_claims=tomb_claims,
+        tombstone_chunks=tomb_chunks,
+        chunk_bodies=bodies,
+    )
+    executor = _ModeAwareExecutor(
+        _sandbox_executor(url, deployment_id=deployment_id, search=search), search
+    )
+    _, sql = EXAMPLE_QUERIES["documents_about"]
+    params = example_operator_fixtures("documents_about", handles=handles)["positive"][
+        "parameters"
+    ]
+    assert isinstance(params, tuple)
+
+    def run() -> int:
+        outcome = executor.query_sql(
+            sql=sql,
+            parameters=params,
+            max_rows=50,
+            principal="example-run-documents-about-archived",
+            tier=LimitTier.ANALYTICAL,
+        )
+        assert outcome.error_code is None
+        return outcome.returned_row_count
+
+    assert run() > 0
+    engine = create_engine(url)
+    archive = (
+        "UPDATE documents SET archived_at = now(), archived_by = 'caller'"
+        " WHERE deployment_id = :d AND archived_at IS NULL"
+    )
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(archive), {"d": deployment_id})
+        assert run() == 0
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE documents SET archived_at = NULL, archived_by = NULL"
+                    " WHERE deployment_id = :d"
+                ),
+                {"d": deployment_id},
+            )
+        engine.dispose()
+
+
 # --- validation report / immutability / discovery ----------------------------
 
 

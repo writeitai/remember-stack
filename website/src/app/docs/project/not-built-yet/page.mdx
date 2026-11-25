@@ -27,11 +27,11 @@ absent from the current release; nothing here has a date.
 
 - **Forgetting a document from a client.** The engine can forget (erase) a
   document, but no HTTP route, SDK method, CLI command or MCP tool requests a
-  forget yet, and `GET /forgets` does not exist. Deleting a document removes it
-  from the memory but keeps its claims and stored original as history. A
-  forgotten document's content cannot be ingested again: there is no
-  `allow_forgotten` option yet.
-- **Deleting one version.** You can delete a whole document, not a single
+  forget yet, and `GET /forgets` does not exist. Archiving a document stops the
+  memory believing it but keeps the document, its claims and its stored
+  original as history; there is no delete. A forgotten document's content
+  cannot be ingested again: there is no `allow_forgotten` option yet.
+- **Archiving one version.** You can archive a whole document, not a single
   version of it.
 - **Document filters on fact lookups and SQL functions.** Claim and chunk
   search and the three context operations (`claims_and_sources_context`,
