@@ -9723,6 +9723,7 @@ The main places the engine logs:
 | The control plane rejects the meter's producer credential | `meter_receipt_unauthorized` | ERROR |
 | The control plane is unavailable; the receipt is retried | `meter_receipt_retry` | WARNING |
 | A receipt conflicts with the recorded one | `meter_measurement_quarantined` / `meter_receipt_conflict` | ERROR |
+| A managed storage-capture scope fails | The declared refusal code, or `storage_capture_failed` | ERROR |
 
 Forwarding is off by default: the engine sends nothing anywhere itself. To
 collect these records, attach a handler to the `rememberstack` logger, as
