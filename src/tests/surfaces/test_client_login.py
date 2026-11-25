@@ -574,3 +574,24 @@ def test_json_account_commands_keep_the_key_and_device_token_out_of_output(
     }
     assert main(["logout", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == {"removed": True}
+
+
+@pytest.mark.parametrize(
+    ("issuer_error", "public_suffix"),
+    [("invalid_client", " (invalid_client)"), ("device-secret", "")],
+)
+def test_json_login_keeps_only_public_oauth_error_codes(
+    issuer: FakeIssuer,
+    capsys: pytest.CaptureFixture[str],
+    issuer_error: str,
+    public_suffix: str,
+) -> None:
+    """Expose known OAuth codes while ignoring arbitrary value echoes."""
+    issuer.poll_script = [issuer_error]
+    assert main(["login", "--issuer", ISSUER, "--json"]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    diagnostic = json.loads(captured.err.splitlines()[-1])["error"]
+    assert diagnostic["code"] == "device_grant_failed"
+    assert diagnostic["detail"] == "token polling failed with HTTP 400" + public_suffix
+    assert "device-secret" not in captured.err

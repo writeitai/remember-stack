@@ -713,12 +713,7 @@ def _choose_backend(args: argparse.Namespace, *, dry_run: bool) -> str:
         return target_env
     if explicit_self_hosted:
         return "self_hosted"
-    if (
-        sys.stdin.isatty()
-        and not dry_run
-        and not getattr(args, "json", False)
-        and not _headless(args)
-    ):
+    if sys.stdin.isatty() and not dry_run and not getattr(args, "json", False):
         print("Choose your Remember backend:")
         print("  1) remember.dev [default]")
         print("  2) Self-hosted engine (http://127.0.0.1:8000)")
@@ -900,7 +895,14 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
             action="Install Remember with `uv tool install remember` and check PATH.",
         ) from error
 
-    harnesses = _harnesses(agent, target_dir)
+    try:
+        harnesses = _harnesses(agent, target_dir)
+    except RuntimeError as error:
+        raise failure(
+            code="setup_failed",
+            detail=str(error),
+            action="Install Claude Code or Claude Desktop, or pass another --agent.",
+        ) from error
     backend = _choose_backend(args, dry_run=dry_run)
     if backend == "self_hosted":
         plan = _self_hosted_plan(

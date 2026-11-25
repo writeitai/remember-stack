@@ -670,3 +670,17 @@ def test_json_setup_keeps_hosted_auth_configuration(
     assert issuer.calls("/oauth/device") == []
     cursor = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
     assert cursor["mcpServers"]["remember"] == {"url": ENDPOINT}
+
+
+def test_json_setup_names_the_missing_claude_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The failure tells callers what to install or how to select another agent."""
+    monkeypatch.setattr("remember.setup._claude_desktop_present", lambda: False)
+    assert main(["setup", "--json", "--agent", "claude", "--dir", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "setup_failed"
+    assert "Claude Code" in error["detail"]
+    assert "--agent" in error["agent_action"]

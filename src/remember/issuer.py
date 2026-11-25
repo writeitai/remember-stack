@@ -451,7 +451,10 @@ def poll_for_key(
             raise DeviceGrantError(detail="the device code expired before approval")
         else:
             raise DeviceGrantError(
-                detail=(f"token polling failed with HTTP {response.status_code}")
+                detail=(
+                    f"token polling failed with HTTP {response.status_code}"
+                    + (f" ({error_code})" if error_code in _PUBLIC_OAUTH_ERRORS else "")
+                )
             )
 
 
