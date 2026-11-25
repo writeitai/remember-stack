@@ -378,13 +378,14 @@ def selfhost_api() -> Iterator[tuple[FastAPI, Engine]]:
 
 def _app_routes(*, app: FastAPI) -> dict[tuple[str, str], APIRoute]:
     """Inventory every registered operation, including ones hidden from OpenAPI."""
-    assert all(isinstance(route, APIRoute) for route in app.routes)
-    return {
-        (method, route.path_format): route
-        for route in app.routes
-        if isinstance(route, APIRoute)
-        for method in route.methods
-    }
+    operations: dict[tuple[str, str], APIRoute] = {}
+    for route in app.routes:
+        assert isinstance(route, APIRoute) and route.methods
+        for method in route.methods:
+            operation = (method, route.path_format)
+            assert operation not in operations, operation
+            operations[operation] = route
+    return operations
 
 
 def _assert_rejected_before_routing(
