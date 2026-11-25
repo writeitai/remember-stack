@@ -67,8 +67,8 @@ characters in all, and stays the same across releases; a renamed or removed
 code is listed in the changelog. The worker runner's records (item
 failures, retries and leases), live graph records and metering records use a
 fixed message, with identifiers such as `processing_id`, `stage`,
-`attempt` or `sqlstate` as separate fields on the record. Other parts of the
-engine, such as the query sandbox, are being brought under the same rules.
+`attempt` or `sqlstate` as separate fields on the record. Query sandbox
+errors use the exception type and SQLSTATE without including SQL or values.
 
 A worker item's failure, a model provider failure on a request and a live
 graph query failure can carry your content in their text: a provider's error
@@ -91,6 +91,21 @@ The main places the engine logs:
 | A live graph query times out or loses its connection (503) | `graph_query_failed` | ERROR |
 | A live graph result no longer matches its rows (503) | `graph_hydration_mismatch` | ERROR |
 | The live graph has no free slot (503) | `graph_capacity_exhausted` | WARNING |
+| A query consumes a database failure | `query_database_failed` | ERROR |
+| A query sandbox dependency fails | `query_dependency_unavailable` | ERROR |
+| A read reaches its database budget | `query_budget_exceeded` | WARNING |
+| A query search projection is unavailable | `search_projection_unavailable` | WARNING |
+| Model-based document structuring falls back | `structure_fallback` | ERROR |
+| The document skeleton check fails | `skeleton_check_failed` | ERROR |
+| Section title role classification fails | `section_roles_failed` | ERROR |
+| A section summary cannot be generated | `summary_failed` | ERROR |
+| Profile refresh after document archive fails | `profile_refresh_failed` | ERROR |
+| A synchronization item fails | `sync_item_failed` | ERROR |
+| A Vertex stream reports usage the engine cannot parse | `provider_usage_unparsed` | ERROR |
+| A native storage capture scope fails | The declared refusal code or `storage_capture_failed` | ERROR |
+| A spend lease cannot be reserved or committed | `spend_lease_unavailable` / `spend_lease_commit_failed` | ERROR |
+| The perimeter fails while authenticating a request | `perimeter_auth_failed` | ERROR |
+| A signing-key or revocation refresh keeps the last accepted state after a failure | `perimeter_refresh_failed` | WARNING |
 | An MCP tool fails unexpectedly | `mcp_tool_failed` | ERROR |
 | The control plane rejects the meter's producer credential | `meter_receipt_unauthorized` | ERROR |
 | The control plane is unavailable; the receipt is retried | `meter_receipt_retry` | WARNING |
@@ -102,35 +117,17 @@ below.
 
 ### Sentry, GlitchTip or Bugsink
 
-The engine has a built-in Sentry-protocol reporter. It is off unless you set
-a DSN.
+For coded failures, use the Sentry SDK's Python logging integration. The
+built-in reporter configured by `REMEMBERSTACK_SENTRY_DSN` omits
+`error_code` and skips worker-loop logs. See the
+[configuration reference](/docs/reference/configuration#observability) for
+its settings. The `setup`, `api` and worker<Cloud> and `meter-receipts`</Cloud>
+processes report through the built-in reporter. It keeps the exception type
+and stack frames, replaces the message with `[redacted]`, and drops request
+data, breadcrumbs, frame locals and extras. Worker attempt events include
+`stage` and `processing_id` tags, plus `lane` when available.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `REMEMBERSTACK_SENTRY_DSN` | unset | The project DSN. Unset or empty keeps it off. |
-| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | the deployment slug | The environment name on each event. |
-| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | Share of error events sent, from 0.0 to 1.0. |
-
-`compose.yaml` passes all three. Set them in `.env` and run
-`docker compose up -d`. The `setup`, `api` and worker<Cloud> and `meter-receipts`</Cloud>
-processes report errors; the one-shot projection command does not.
-
-Events are stripped to metadata before they leave the process: the
-exception type and stack trace stay; the exception message is replaced by
-`[redacted]`; request bodies, breadcrumbs, local variables, user data and
-extras are removed. Because extras are removed, the `error_code` is not on
-the event. A failed worker attempt that is recorded as a retry or a dead
-letter is reported (subject to the sample rate) with the tags `stage` and
-`processing_id`, and `lane` when the item has one;
-`remember ops inspect` lists a sample of dead-lettered items by
-`processing_id`. The adapter forwards no log records from the worker
-loop itself (`rememberstack.workers.base`): an expired lease, a failed
-finalizer, or an item that failed after its worker lost the lease. ERROR
-records from other engine loggers reach it. Collect the worker loop's records
-with a logging handler as below. Performance tracing is off.
-
-To keep the codes, leave `REMEMBERSTACK_SENTRY_DSN` unset and initialise the
-SDK yourself in a bootstrap module (see [Where the setup runs](#where-the-setup-runs)):
+Leave `REMEMBERSTACK_SENTRY_DSN` unset and initialise the SDK in a bootstrap module (see [Where the setup runs](#where-the-setup-runs)):
 
 ```python
 import logging
@@ -186,21 +183,52 @@ bearer token, which feeds PostHog Logs rather than Error Tracking; see
 
 ### OpenTelemetry
 
-For zero-code export, install `opentelemetry-distro` in an image built on
-the engine's, pinned to the release that matches the image's
-`opentelemetry-sdk` (for example `opentelemetry-distro==0.65b0` with SDK
-1.44.0; an unpinned install upgrades the SDK past the image's exporter), and run the engine's command under `opentelemetry-instrument`
-with these settings (the image's exporter speaks HTTP, while the agent
-defaults to gRPC):
+OpenTelemetry can export Python logs with `error_code` as a log attribute.
+For a Compose deployment, build an image with the instrumentation packages
+that match the engine's OpenTelemetry SDK. This example uses SDK `1.44.0`
+and its matching instrumentation release `0.65b0`.
 
-```bash
-export OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://collector.example:4318/v1/logs
-export OTEL_TRACES_EXPORTER=none
-export OTEL_METRICS_EXPORTER=none
-opentelemetry-instrument python -m rememberstack.profiles.selfhost api
+```dockerfile
+# Dockerfile.otel
+FROM ghcr.io/writeitai/remember-stack:0.21.3
+USER root
+RUN uv pip install --python /app/.venv/bin/python --no-deps \
+    opentelemetry-distro==0.65b0 \
+    opentelemetry-instrumentation==0.65b0 \
+    opentelemetry-instrumentation-logging==0.65b0 \
+    'wrapt<3'
+USER app
 ```
+
+Point the logs exporter at your Collector's OTLP HTTP receiver. This override
+instruments the API. Apply the same image, build and entrypoint to each worker
+service you want to collect. Compose passes each service's existing command
+to the instrumented entrypoint.
+
+```yaml
+# compose.override.yaml
+services:
+  api:
+    image: rememberstack-otel:local
+    build:
+      context: .
+      dockerfile: Dockerfile.otel
+    entrypoint: ["opentelemetry-instrument", "python", "-m", "rememberstack.profiles.selfhost"]
+    environment:
+      OTEL_SERVICE_NAME: rememberstack-api
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_TRACES_EXPORTER: none
+      OTEL_METRICS_EXPORTER: none
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: https://collector.example:4318/v1/logs
+```
+
+Run `docker compose up -d --build api`. When an engine request fails with
+`provider_call_failed`, find the record from `rememberstack-api` in your
+Collector's destination and filter its log attributes by
+`error_code=provider_call_failed`. A Collector with the `debug` exporter
+at `detailed` verbosity shows the attribute in its own logs. See the
+[OpenTelemetry Collector logs example](https://opentelemetry.io/docs/zero-code/python/logs-example/).
 
 Or attach the SDK's handler in a bootstrap module:
 

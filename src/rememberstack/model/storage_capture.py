@@ -196,3 +196,8 @@ class StorageCaptureAck(_CaptureRecord):
 
 class StorageCaptureEncodingError(ValueError):
     """A safe, content-free refusal of malformed or inconsistent evidence."""
+
+    def __init__(self, code: str) -> None:
+        """Carry the declared reason used by both capture results and logs."""
+        super().__init__(code)
+        self.code = code

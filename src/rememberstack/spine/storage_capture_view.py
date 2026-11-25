@@ -52,6 +52,11 @@ _GUARD_LIFETIME_US = 10_000_000
 class NativeStorageCaptureRefused(RuntimeError):
     """A content-free refusal; no reconnect, re-lock or historical repair."""
 
+    def __init__(self, code: str) -> None:
+        """Carry the caller's declared, content-free refusal code."""
+        super().__init__(code)
+        self.code = code
+
 
 class NativeCaptureProfile(BaseModel):
     """Operator-selected qualification, never request-selected clock or role.

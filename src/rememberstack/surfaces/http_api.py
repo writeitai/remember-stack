@@ -158,6 +158,7 @@ from rememberstack.model.client import SectionHistoryRequest
 from rememberstack.model.processing_layers import LayerAdmission
 from rememberstack.model.processing_layers import LayerSelectionError
 from rememberstack.model.processing_layers import LayerUnavailableError
+from rememberstack.ports.auth import AuthCredentialDeclined
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.queue import TaskQueuePort
 from rememberstack.spine.new_work import announce_new_work
@@ -2899,7 +2900,18 @@ def _authenticate(
                 scheme=scheme, value=SecretBytes(value.encode("utf-8"))
             )
         )
-    except Exception as error:  # any auth failure is an opaque 401
+    except (AuthCredentialDeclined, ValueError) as error:
+        raise HTTPException(
+            status_code=401, detail="perimeter authentication failed"
+        ) from error
+    except Exception as error:
+        logger.error(
+            "The perimeter could not authenticate the request.",
+            extra={
+                "error_code": "perimeter_auth_failed",
+                "exception_type": type(error).__name__,
+            },
+        )
         raise HTTPException(
             status_code=401, detail="perimeter authentication failed"
         ) from error
@@ -3333,7 +3345,15 @@ def _install_spend_lease(*, app: FastAPI) -> None:
             return JSONResponse(
                 status_code=error.status_code, content={"detail": error.detail}
             )
-        except SpendLeaseUnavailable:
+        except SpendLeaseUnavailable as error:
+            logger.error(
+                "The spend lease could not be reserved.",
+                extra={
+                    "error_code": "spend_lease_unavailable",
+                    "operation": operation_name,
+                    "exception_type": type(error).__name__,
+                },
+            )
             return JSONResponse(
                 status_code=503, content={"detail": "spend_lease_unavailable"}
             )
@@ -3352,13 +3372,23 @@ def _install_spend_lease(*, app: FastAPI) -> None:
                     reservation_id=reservation_id,
                     read_cost=None if path_id == "ingest" else read_cost,
                 )
-            except (SpendLeaseRefused, SpendLeaseUnavailable):
-                pass
+            except (SpendLeaseRefused, SpendLeaseUnavailable) as error:
+                logger.error(
+                    "The spend lease could not be committed.",
+                    extra={
+                        "error_code": "spend_lease_commit_failed",
+                        "operation": operation_name,
+                        "exception_type": type(error).__name__,
+                    },
+                )
         else:
             try:
                 spend_lease.release(
                     authorization=authorization, reservation_id=reservation_id
                 )
-            except (SpendLeaseRefused, SpendLeaseUnavailable):
+            except (
+                SpendLeaseRefused,
+                SpendLeaseUnavailable,
+            ):  # error-contract: exempt failed-response lease releases expire on TTL
                 pass
         return response

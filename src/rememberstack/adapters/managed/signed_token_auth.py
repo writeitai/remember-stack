@@ -61,6 +61,7 @@ from rememberstack.model import AuthenticatedContext
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import CredentialKind
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.ports.auth import AuthCredentialDeclined
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ _MEMORY_PERMISSIONS = {
 }
 
 
-class SignedTokenUnusable(Exception):
+class SignedTokenUnusable(AuthCredentialDeclined):
     """This adapter refuses the presented credential; the message is the reason class."""
 
 

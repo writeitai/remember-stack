@@ -91,6 +91,7 @@ class _FakeLease:
         self.read_costs: list[ReadEmbeddingCost | None] = []
         self.releases: list[UUID] = []
         self.reserve_error: Exception | None = None
+        self.commit_error: Exception | None = None
         self._id = uuid4()
 
     def reserve(self, **kwargs: object) -> UUID:
@@ -108,6 +109,8 @@ class _FakeLease:
         read_cost: ReadEmbeddingCost | None,
     ) -> None:
         """Record a commit and the read cost it reported."""
+        if self.commit_error is not None:
+            raise self.commit_error
         self.commits.append(reservation_id)
         self.read_costs.append(read_cost)
 
@@ -307,8 +310,8 @@ def test_lease_200_ingests_and_commits() -> None:
     assert reserved["mime"] == "text/plain"
 
 
-def test_lease_timeout_fail_closed() -> None:
-    """Timeout never reaches ingest."""
+def test_lease_timeout_fail_closed(caplog: pytest.LogCaptureFixture) -> None:
+    """Timeout never reaches ingest, and the operator sees a coded error."""
     lease = _FakeLease()
     lease.reserve_error = SpendLeaseUnavailable("spend lease timed out")
     ingest = _CountingIngest()
@@ -320,7 +323,32 @@ def test_lease_timeout_fail_closed() -> None:
         headers={"Authorization": f"Bearer {_SECRET}"},
     )
     assert response.status_code == 503
+    assert response.json() == {"detail": "spend_lease_unavailable"}
     assert ingest.calls == 0
+    (record,) = caplog.records
+    assert record.levelname == "ERROR"
+    assert vars(record)["error_code"] == "spend_lease_unavailable"
+
+
+def test_lease_commit_failure_keeps_the_successful_response(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed commit is visible once after work that already succeeded."""
+    lease = _FakeLease()
+    lease.commit_error = SpendLeaseUnavailable("commit timed out")
+    ingest = _CountingIngest()
+    response = _guarded_app(lease=lease, ingest=ingest).post(
+        "/ingest",
+        params={"filename": "n.txt", "mime": "text/plain"},
+        content=b"hello",
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 200
+    assert ingest.calls == 1
+    (record,) = caplog.records
+    assert record.levelname == "ERROR"
+    assert vars(record)["error_code"] == "spend_lease_commit_failed"
+    assert record.exc_info is None
 
 
 def test_healthz_and_operations_list_skip_lease() -> None:

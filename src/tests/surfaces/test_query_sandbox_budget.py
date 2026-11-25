@@ -9,6 +9,7 @@ body read answers ``statement_timeout``; a genuine failure keeps its own code.
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -20,6 +21,7 @@ from sqlalchemy.exc import OperationalError
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.surfaces.query_sandbox import bridge
 from rememberstack.surfaces.query_sandbox import executor as executor_module
+from rememberstack.surfaces.query_sandbox import nomination
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
 from rememberstack.surfaces.query_sandbox.result import QueryErrorCode
@@ -67,7 +69,9 @@ def _query(
 ) -> Any:
     @contextmanager
     def transaction(self: object, **_: object) -> Iterator[MagicMock]:
-        yield MagicMock()
+        cursor = MagicMock()
+        cursor.connection.execute.return_value.fetchone.return_value = ("snap", None)
+        yield cursor
 
     monkeypatch.setattr(QuerySandboxExecutor, "_transaction", transaction)
     monkeypatch.setattr(
@@ -146,6 +150,71 @@ class _SharingSearch(_Search):
     @contextmanager
     def imported_snapshot(self, **_: object) -> Iterator[None]:
         yield
+
+
+@pytest.mark.parametrize(
+    ("failure", "noticed_at", "expected_log"),
+    [
+        (
+            psycopg.errors.QueryCanceled("private_canary"),
+            0.001,
+            "query_database_failed",
+        ),
+        (psycopg.errors.TransactionTimeout("private_canary"), 10.0, None),
+        (
+            psycopg.errors.UndefinedColumn("private_canary"),
+            10.0,
+            "query_database_failed",
+        ),
+        (RuntimeError("private_canary"), 10.0, "query_dependency_unavailable"),
+    ],
+)
+def test_coded_failure_uses_the_time_at_first_catch(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: Exception,
+    noticed_at: float,
+    expected_log: str | None,
+) -> None:
+    """A projection can cross the deadline during its cleanup."""
+    now = [0.0]
+    monkeypatch.setattr(
+        executor_module, "time", SimpleNamespace(monotonic=lambda: now[0])
+    )
+    monkeypatch.setattr(nomination, "monotonic", lambda: now[0])
+
+    class Projection(_SharingSearch):
+        """Raise at the selected instant and delay cleanup until after the deadline."""
+
+        @contextmanager
+        def imported_snapshot(self, **_: object) -> Iterator[None]:
+            """Advance the clock when the bridge unwinds the read scope."""
+            try:
+                yield
+            finally:
+                now[0] = 20.0
+
+        def search_claims_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+            """Emulate a dependency failure during nomination."""
+            now[0] = noticed_at
+            raise failure
+
+    outcome = _query(monkeypatch, Projection(None))
+    assert outcome.error_code == (
+        QueryErrorCode.STATEMENT_TIMEOUT
+        if budget_exhausted(failure)
+        else QueryErrorCode.P1_UNAVAILABLE
+    )
+    if expected_log is None:
+        assert caplog.records == []
+        return
+    (record,) = caplog.records
+    assert record.levelname == "ERROR"
+    assert vars(record)["error_code"] == expected_log
+    assert vars(record)["exception_type"] == type(failure).__name__
+    assert vars(record)["sqlstate"] == getattr(failure, "sqlstate", None)
+    assert record.exc_info is None
+    assert "private_canary" not in caplog.text
 
 
 def _failing_connection_query(

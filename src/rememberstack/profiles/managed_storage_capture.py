@@ -105,6 +105,11 @@ _ASSET_NAME = TypeAdapter(AssetName)
 class ManagedStorageCaptureUnavailable(RuntimeError):
     """One non-secret refused attempt; no past reconstruction or zero fallback."""
 
+    def __init__(self, code: str) -> None:
+        """Carry the caller's declared, content-free refusal code."""
+        super().__init__(code)
+        self.code = code
+
 
 class PendingProviderCapture(Protocol):
     """One already launched original provider invocation, not a second API."""

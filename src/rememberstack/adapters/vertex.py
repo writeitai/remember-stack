@@ -457,8 +457,8 @@ class VertexModelProvider:
                     run_tag="",
                 )
             )
-        except Exception as emit_error:
-            _logger.warning("vertex generation record dropped: %s", emit_error)
+        except Exception:  # error-contract: exempt optional telemetry export
+            _logger.warning("Vertex generation record was dropped.")
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """Refuse: this adapter serves generation only, by design."""
@@ -556,9 +556,18 @@ def _try_usage(
     *, body: dict[str, Any], price: VertexModelPrice, latency_ms: int
 ) -> ProviderCallUsage | None:
     """Return parsed usage when the stream actually reported it; never invent it."""
+    if body.get("usage") is None:
+        return None
     try:
         return _usage(body=body, price=price, latency_ms=latency_ms)
-    except ProviderAccountingError:
+    except ProviderAccountingError as error:
+        _logger.error(
+            "Vertex stream usage could not be parsed.",
+            extra={
+                "error_code": "provider_usage_unparsed",
+                "exception_type": type(error).__name__,
+            },
+        )
         return None
 
 
@@ -586,7 +595,9 @@ def _error_preview(response: httpx.Response) -> str:
     """Read an unread streamed error body, then return a short text preview."""
     try:
         response.read()
-    except httpx.HTTPError:
+    except (  # error-contract: exempt error preview of an already failed call
+        httpx.HTTPError
+    ):
         return ""
     return response.text[:500]
 

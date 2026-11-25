@@ -508,7 +508,7 @@ class OpenRouterModelProvider:
                 stripped = content.strip()
                 if stripped.startswith("{") or stripped.startswith("["):
                     decoded, _ = json.JSONDecoder().raw_decode(stripped)
-            except Exception:
+            except Exception:  # error-contract: raised later as an invalid completion
                 decoded = None
 
             if decoded is None:
@@ -621,8 +621,8 @@ class OpenRouterModelProvider:
                     provider_host=provider_host,
                 )
             )
-        except Exception as emit_error:
-            _logger.warning("openrouter generation record dropped: %s", emit_error)
+        except Exception:  # error-contract: exempt optional telemetry export
+            _logger.warning("OpenRouter generation record was dropped.")
 
     def _capture_invalid_completion(
         self,
@@ -704,11 +704,17 @@ class OpenRouterModelProvider:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 json.dump(artifact, stream, ensure_ascii=True, indent=2)
                 stream.write("\n")
-        except (OSError, TypeError, ValueError):
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+        ):  # error-contract: exempt optional invalid-response diagnostic capture
             if created and target is not None:
                 try:
                     target.unlink(missing_ok=True)
-                except OSError:
+                except (  # error-contract: exempt cleanup of the rejected diagnostic capture
+                    OSError
+                ):
                     pass
             _logger.warning("could not capture invalid OpenRouter completion")
 
@@ -912,7 +918,9 @@ class OpenRouterModelProvider:
             if isinstance(generation_id, str) and generation_id:
                 try:
                     metadata = self._get_generation(generation_id=generation_id)
-                except OpenRouterProviderError:
+                except (  # error-contract: exempt optional provider-name enrichment
+                    OpenRouterProviderError
+                ):
                     metadata = None
                 if isinstance(metadata, dict):
                     name = metadata.get("provider_name")
@@ -1590,7 +1598,7 @@ def recover_completion_usage(
                 generation_id=generation_id,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
             )
-        except (
+        except (  # error-contract: raised later when the usage retry budget is exhausted
             httpx.HTTPError,
             OpenRouterProviderError,
             ProviderAccountingError,

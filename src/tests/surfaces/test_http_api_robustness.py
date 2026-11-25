@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from datetime import UTC
+from typing import NoReturn
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -24,7 +25,9 @@ from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import IngestedVersion
+from rememberstack.model import PerimeterCredential
 from rememberstack.model import ProviderCallError
+from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.http_api import build_api
@@ -153,6 +156,7 @@ def _client(
     graph: object | None = None,
     open_query: object | None = None,
     ingest: object | None = None,
+    auth: AuthPerimeterPort | None = None,
 ) -> TestClient:
     """Build an API over the given fakes."""
     return TestClient(
@@ -162,6 +166,7 @@ def _client(
             graph=graph,  # type: ignore[arg-type]
             open_query=open_query,  # type: ignore[arg-type]
             ingest=ingest,  # type: ignore[arg-type]
+            auth=auth,
         ),
         raise_server_exceptions=False,
     )
@@ -210,6 +215,38 @@ def test_lookup_browse_limit_is_bounded(route: str, limit: int) -> None:
     )
     assert response.status_code == 422
     assert engine.calls == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (ValueError("private_canary"), []),
+        (RuntimeError("private_canary"), [("ERROR", "perimeter_auth_failed")]),
+    ],
+)
+def test_authentication_failure_keeps_opaque_response(
+    caplog: pytest.LogCaptureFixture,
+    failure: Exception,
+    expected: list[tuple[str, str]],
+) -> None:
+    """Refusals are quiet and an adapter crash reaches the operator once."""
+
+    class Auth:
+        """Fail during the server's perimeter check."""
+
+        def authenticate(self, *, credential: PerimeterCredential) -> NoReturn:
+            """Refuse or fail with potentially sensitive exception text."""
+            raise failure
+
+    client = _client(auth=Auth())
+    response = client.get(
+        "/lookup/relations", headers={"Authorization": "Bearer credential"}
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "perimeter authentication failed"}
+    assert _coded(caplog) == expected
+    assert "private_canary" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 @pytest.mark.parametrize(
