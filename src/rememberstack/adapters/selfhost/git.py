@@ -153,11 +153,12 @@ class LocalGitRepository:
             owners={path: compiled[path] for path in entries},
         )
         if legacy:
-            self._migrate(
+            head = self._migrate(
                 worktree=worktree,
                 branch=branch,
                 base=base,
                 head=head,
+                old_snapshot=old_snapshot,
                 snapshot=new_snapshot,
                 compiled=paths,
             )
@@ -173,9 +174,11 @@ class LocalGitRepository:
         self,
         *,
         needles: tuple[str, ...],
+        page_needles: tuple[str, ...],
         compiled: Mapping[str, UUID],
         drop: frozenset[UUID],
         accepted: AcceptedHashes,
+        dropped: Callable[[frozenset[UUID]], None],
         lease: AbstractContextManager[None],
     ) -> KnowledgeErasure:
         """Rewrite in a private mirror, then publish it under ``lease``."""
@@ -196,17 +199,26 @@ class LocalGitRepository:
                     compiled=paths,
                 )
             rewritten = _history_refs(mirror, aliases=self._aliases())
+            entries = {
+                **legacy_tip,
+                **({} if snapshot is None else _tree(mirror, snapshot)),
+            }
+            # A generated band can name an erased ID without recording a
+            # citation: such a page leaves the snapshot too.
+            naming = _citing_blobs(
+                mirror, {value for _, value in entries.values()}, page_needles
+            )
+            owners = {
+                **{path: compiled[path] for path in paths},
+                **({} if snapshot is None else _owners(mirror, snapshot)),
+            }
             with lease:
                 hashes = accepted(drop) if drop else {}
-                entries = {} if snapshot is None else _tree(mirror, snapshot)
-                owners = {
-                    **{path: compiled[path] for path in paths},
-                    **({} if snapshot is None else _owners(mirror, snapshot)),
-                }
                 kept = {
                     path: entry
-                    for path, entry in {**legacy_tip, **entries}.items()
-                    if not self._dropped(
+                    for path, entry in entries.items()
+                    if entry[1] not in naming
+                    and not self._dropped(
                         mirror=mirror,
                         entry=entry,
                         owner=owners.get(path),
@@ -232,6 +244,16 @@ class LocalGitRepository:
                     expected={**read, SNAPSHOT_REF: snapshot},
                     updates=updates,
                 )
+                extra = (
+                    frozenset(
+                        owners[path]
+                        for path, entry in entries.items()
+                        if entry[1] in naming and path in owners
+                    )
+                    - drop
+                )
+                if extra:
+                    dropped(extra)
                 # Every pass collects garbage, so a pass that died after its
                 # ref update still leaves no unreachable forgotten object.
                 self._collect_garbage()
@@ -263,19 +285,20 @@ class LocalGitRepository:
         branch: str,
         base: str,
         head: str,
+        old_snapshot: str | None,
         snapshot: str | None,
         compiled: frozenset[str],
-    ) -> None:
+    ) -> str:
         """One-time cleanup of a pre-D159 branch, published with the snapshot.
 
         The branch carried compiled pages: their machine-written revisions
         leave the branch history in the same publication that moves the pages
         into the snapshot. Revisions a person wrote at those paths stay.
+        Returns the branch head it installed.
         """
         with TemporaryDirectory(prefix="rememberstack-k-migrate-") as temporary:
             mirror = self._mirror(Path(temporary))
             read = _history_refs(mirror, aliases=self._aliases())
-            read_snapshot = _ref(mirror, SNAPSHOT_REF)
             outgoing = {f"{_OUT}head": head}
             if snapshot is not None:
                 outgoing[f"{_OUT}snapshot"] = snapshot
@@ -295,7 +318,7 @@ class LocalGitRepository:
             finally:
                 for ref in outgoing:
                     _git(worktree, "update-ref", "-d", ref)
-            if snapshot is None and read_snapshot is not None:
+            if snapshot is None and _ref(mirror, SNAPSHOT_REF) is not None:
                 _git(mirror, "update-ref", "-d", SNAPSHOT_REF)
             self._rewrite_history(
                 mirror=mirror,
@@ -308,14 +331,17 @@ class LocalGitRepository:
             updates: dict[str, str | None] = {
                 ref: value for ref, value in rewritten.items() if read.get(ref) != value
             }
-            if snapshot != read_snapshot:
+            if snapshot != old_snapshot:
                 updates[SNAPSHOT_REF] = snapshot
+            # The snapshot this cycle checked out, not the one truth holds now:
+            # a forget that dropped a page meanwhile makes this publish fail.
             self._advance(
                 source=mirror,
-                expected={**read, branch: base, SNAPSHOT_REF: read_snapshot},
+                expected={**read, branch: base, SNAPSHOT_REF: old_snapshot},
                 updates=updates,
             )
             self._collect_garbage()
+            return rewritten[branch]
 
     def _rewrite_history(
         self,

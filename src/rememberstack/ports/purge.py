@@ -88,9 +88,11 @@ class KGitPurgePort(Protocol):
         self,
         *,
         needles: tuple[str, ...],
+        page_needles: tuple[str, ...],
         compiled: Mapping[str, UUID],
         drop: frozenset[UUID],
         accepted: Callable[[frozenset[UUID]], Mapping[UUID, str | None]],
+        dropped: Callable[[frozenset[UUID]], None],
         lease: AbstractContextManager[None],
     ) -> KnowledgeErasure:
         """Drop compiled pages and rewrite history that names a forgotten ID.
@@ -98,7 +100,10 @@ class KGitPurgePort(Protocol):
         ``compiled`` maps each live compiled path to its artifact. The pages of
         the ``drop`` artifacts leave the compiled snapshot, unless the body
         there is the one ``accepted`` (read under the lease) reports as the
-        artifact's accepted rebuild. A current authored page or sidecar that
+        artifact's accepted rebuild. A compiled page whose body names one of
+        ``page_needles`` (IDs that no longer exist) leaves it too, and
+        ``dropped`` (called under the lease) reports such pages outside
+        ``drop``. A current authored page or sidecar that
         names a needle blocks: it is reported and its history is kept until
         the owner edits it. Every other path whose history names a needle has
         that history rewritten to its current file (or removed when it no

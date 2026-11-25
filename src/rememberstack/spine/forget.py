@@ -377,6 +377,60 @@ class ForgetCatalog:
         }
         return tuple(sorted({*map(str, ids), *(value.hex for value in ids)}))
 
+    def page_needles(self, *, forget: Forget) -> tuple[str, ...]:
+        """The needles of IDs that no longer exist: the document, its versions
+        and its exclusive facts. A compiled page naming one is forgotten text;
+        a shared fact a rebuilt page renders is not."""
+        with self._engine.connect() as connection:
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+            )
+            surviving = {
+                str(value)
+                for value in connection.execute(
+                    text("""SELECT relation_id FROM relations
+                    WHERE deployment_id = :d AND relation_id = ANY(CAST(:ids AS uuid[]))
+                    UNION ALL SELECT observation_id FROM observations
+                    WHERE deployment_id = :d
+                      AND observation_id = ANY(CAST(:ids AS uuid[]))"""),
+                    {"d": forget.deployment_id, "ids": collected["fact_ids"]},
+                ).scalars()
+            }
+        ids = {
+            forget.doc_id,
+            *forget.version_ids,
+            *(UUID(value) for value in collected["fact_ids"] if value not in surviving),
+        }
+        return tuple(sorted({*map(str, ids), *(value.hex for value in ids)}))
+
+    def pages_dropped(self, *, forget: Forget, artifact_ids: frozenset[UUID]) -> None:
+        """Compiled pages the K step dropped because their body named the document.
+
+        They are marked stale at once (called under the K lease) and the next
+        sweep's PostgreSQL step treats them as collected pages (summaries and
+        transcripts erased).
+        """
+        with self._engine.begin() as connection:
+            connection.execute(
+                _COMPILED_ARTIFACT_STATEMENTS[1],
+                {
+                    "deployment_id": forget.deployment_id,
+                    "compiled_artifact_ids": sorted(artifact_ids, key=str),
+                },
+            )
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+                lock=True,
+            )
+            collected["k_dropped"] = sorted(
+                {*collected["k_dropped"], *map(str, artifact_ids)}
+            )
+            _store_collected(connection=connection, forget=forget, collected=collected)
+
     def waiting(self, *, deployment_id: UUID) -> tuple[Forget, ...]:
         """Records waiting for an owner to redact authored pages or sidecars."""
         with self._engine.connect() as connection:
@@ -641,6 +695,11 @@ class _Sweep:
         # A cycle that published a page but has not finalized it yet holds
         # the page's citations only in its pending compilation.
         compiled = sorted(set(compiled) | set(self._ids(_PENDING_CITING, p)), key=str)
+        # Pages the last K step dropped for naming the document: once.
+        compiled = sorted(
+            set(compiled) | {UUID(value) for value in collected["k_dropped"]}, key=str
+        )
+        collected["k_dropped"] = []
         if p["linked_fact_ids"]:
             # A fact sheet renders facts without recording citations; it is
             # deterministic and cheap to rebuild, so every one is rebuilt.
@@ -874,6 +933,7 @@ def _collected(
         "chunk_ids",
         "k_artifact_ids",
         "k_pending",
+        "k_dropped",
         "object_keys",
     ):
         collected[key] = sorted(collected.get(key) or ())

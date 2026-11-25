@@ -86,6 +86,7 @@ _ARTIFACT_ID = UUID("75000000-0000-0000-0000-000000000020")
 _SUBSCRIPTION_ID = UUID("75000000-0000-0000-0000-000000000021")
 _PLAN_RUN_ID = UUID("75000000-0000-0000-0000-000000000022")
 _FORGET_ID = UUID("75000000-0000-0000-0000-000000000023")
+_BAND_ARTIFACT_ID = UUID("75000000-0000-0000-0000-0000000000b8")
 _PENDING_ARTIFACT_ID = UUID("75000000-0000-0000-0000-0000000000b7")
 _EXCLUSIVE_MENTION_ID = UUID("75000000-0000-0000-0000-000000000026")
 _TARGET_SHARED_MENTION_ID = UUID("75000000-0000-0000-0000-000000000027")
@@ -2097,11 +2098,17 @@ def _k_repository(*, root: Path) -> Path:
     (checkout / "k/proof").mkdir(parents=True)
     (checkout / "k/proof/page.md").write_text(f"# {_TOKEN}\n", encoding="utf-8")
     (checkout / "k/proof/pending.md").write_text(f"## {_TOKEN}\n", encoding="utf-8")
+    # A prose page whose generated band names the exclusive relation, with no
+    # recorded citation.
+    (checkout / "k/proof/band.md").write_text(
+        f"Prose.\n\n## Fact sheet\n- {_EXCLUSIVE_RELATION_ID}\n", encoding="utf-8"
+    )
     adapter.publish(
         worktree=checkout,
         compiled={
             "k/proof/page.md": _ARTIFACT_ID,
             "k/proof/pending.md": _PENDING_ARTIFACT_ID,
+            "k/proof/band.md": _BAND_ARTIFACT_ID,
         },
     )
     return repository
@@ -2164,6 +2171,20 @@ def test_knowledge_plane_erasure_and_the_authored_wait(
     open_page = "k/notes/open.md"
     authored_id = uuid4()
     with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO knowledge_artifacts (artifact_id, deployment_id, layer,"
+                " page_kind, scope_id, git_path, writer_version, content_hash,"
+                " status) VALUES (:a, :d, 'K2', 'compiled', :scope,"
+                " 'k/proof/band.md', 'writer-test', :hash, 'active')"
+            ),
+            {
+                "a": _BAND_ARTIFACT_ID,
+                "d": _DEPLOYMENT_ID,
+                "scope": _SCOPE_ID,
+                "hash": "e" * 64,
+            },
+        )
         # A cycle published this page and died before finalizing it: its
         # citation of the document is only in the pending compilation.
         connection.execute(
@@ -2255,6 +2276,15 @@ def test_knowledge_plane_erasure_and_the_authored_wait(
             {"a": _ARTIFACT_ID},
         ).one()
     assert tuple(page) == ("stale", None)  # ordinary K work rebuilds it
+    with seeded_engine.connect() as connection:
+        band = connection.execute(
+            text(
+                "SELECT status::text, content_hash FROM knowledge_artifacts"
+                " WHERE artifact_id = :a"
+            ),
+            {"a": _BAND_ARTIFACT_ID},
+        ).one()
+    assert tuple(band) == ("stale", None)
 
     # The owner redacts; the K sync (here: its check over a fresh checkout)
     # rewrites that page's history and completes the forget.

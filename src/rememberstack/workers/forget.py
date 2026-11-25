@@ -95,12 +95,16 @@ class ForgetKnowledgeEraser:
         deployment_id = forget.deployment_id
         return self._repository.erase(
             needles=self._catalog.needles(forget=forget),
+            page_needles=self._catalog.page_needles(forget=forget),
             compiled=compiled_paths(
                 control_plane=self._control_plane, deployment_id=deployment_id
             ),
             drop=frozenset(drop_artifact_ids),
             accepted=lambda ids: self._catalog.accepted_hashes(
                 deployment_id=deployment_id, artifact_ids=ids
+            ),
+            dropped=lambda ids: self._catalog.pages_dropped(
+                forget=forget, artifact_ids=ids
             ),
             lease=self._control_plane.commit_lease(deployment_id=deployment_id),
         )

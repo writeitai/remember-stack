@@ -32,6 +32,11 @@ class _Lease:
         yield
 
 
+def _ignore(ids: frozenset[UUID]) -> None:
+    """No compiled page names the document outside the drop set."""
+    assert not ids
+
+
 def _none(ids: frozenset[UUID]) -> dict[UUID, str | None]:
     """No page has an accepted rebuild."""
     return dict.fromkeys(ids)
@@ -88,6 +93,8 @@ def test_erase_rewrites_only_history_that_names_the_document(tmp_path: Path) -> 
 
     first = purge.erase(
         needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        dropped=_ignore,
         compiled=_COMPILED,
         drop=frozenset(),
         accepted=_none,
@@ -95,6 +102,8 @@ def test_erase_rewrites_only_history_that_names_the_document(tmp_path: Path) -> 
     )
     second = purge.erase(
         needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        dropped=_ignore,
         compiled=_COMPILED,
         drop=frozenset(),
         accepted=_none,
@@ -137,6 +146,8 @@ def test_a_current_citation_blocks_and_keeps_its_history(tmp_path: Path) -> None
 
     first = _adapter(repository).erase(
         needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        dropped=_ignore,
         compiled=_COMPILED,
         drop=frozenset(),
         accepted=_none,
@@ -144,6 +155,8 @@ def test_a_current_citation_blocks_and_keeps_its_history(tmp_path: Path) -> None
     )
     second = _adapter(repository).erase(
         needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        dropped=_ignore,
         compiled=_COMPILED,
         drop=frozenset(),
         accepted=_none,
@@ -188,6 +201,8 @@ def test_compiled_pages_form_a_parentless_snapshot_and_drop_without_trace(
 
     erasure = _adapter(repository).erase(
         needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        dropped=_ignore,
         compiled=_COMPILED,
         drop=frozenset({_ARTIFACT}),
         accepted=_none,
@@ -270,6 +285,8 @@ def test_an_accepted_rebuild_stays_and_replaced_snapshots_leave_no_object(
 
     erasure = adapter.erase(
         needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        dropped=_ignore,
         compiled=_COMPILED,
         drop=frozenset({_ARTIFACT}),
         accepted=lambda ids: dict.fromkeys(ids, rebuilt),
@@ -308,8 +325,9 @@ def test_the_pre_d159_branch_migrates_in_one_publication(tmp_path: Path) -> None
     checkout = tmp_path / "checkout"
     adapter.checkout(destination=checkout)
 
-    adapter.publish(worktree=checkout, compiled=_COMPILED)
+    revision = adapter.publish(worktree=checkout, compiled=_COMPILED)
 
+    assert revision.root == _output("-C", str(repository), "rev-parse", "HEAD")
     bodies = _output(
         "-C", str(repository), "log", "--branches", "-p", "--", "K1/compiled.md"
     )
@@ -323,6 +341,79 @@ def test_the_pre_d159_branch_migrates_in_one_publication(tmp_path: Path) -> None
     assert _output("-C", str(repository), "status", "--porcelain") == ""
 
 
+def test_a_stale_migrating_publish_cannot_restore_a_dropped_page(
+    tmp_path: Path,
+) -> None:
+    """The migration verifies the snapshot its cycle checked out."""
+    repository = _repository(root=tmp_path)
+    adapter = _adapter(repository)
+    other = UUID("59100000-0000-0000-0000-00000000cccc")
+    compiled = {**_COMPILED, "K1/other.md": other}
+    seed = tmp_path / "seed"
+    adapter.checkout(destination=seed)
+    (seed / "K1/other.md").write_text(f"names {_TOKEN}\n", encoding="utf-8")
+    adapter.publish(worktree=seed, compiled=compiled)
+    # A person commits a compiled path on the branch: the next publish migrates.
+    (repository / "K1/compiled.md").write_text("direct edit\n", encoding="utf-8")
+    _commit(repository=repository, message="direct edit")
+    stale = tmp_path / "stale"
+    adapter.checkout(destination=stale)
+    adapter.erase(
+        needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        compiled=compiled,
+        drop=frozenset({other}),
+        accepted=_none,
+        dropped=_ignore,
+        lease=_Lease().hold(),
+    )
+
+    with pytest.raises(KRepositoryMovedError):
+        adapter.publish(worktree=stale, compiled=compiled)
+
+    # The refused publish fetched its objects; the next pass collects them.
+    again = adapter.erase(
+        needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        compiled=compiled,
+        drop=frozenset({other}),
+        accepted=_none,
+        dropped=_ignore,
+        lease=_Lease().hold(),
+    )
+    assert not again.removed
+    assert _everything(repository).lower().count(_TOKEN.encode()) == 0
+
+
+def test_a_page_whose_band_names_an_erased_id_leaves_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A generated fact band can name an erased fact without a citation."""
+    repository = _repository(root=tmp_path)
+    adapter = _adapter(repository)
+    checkout = tmp_path / "checkout"
+    adapter.checkout(destination=checkout)
+    (checkout / "K1/compiled.md").write_text(
+        f"prose\n\n## Fact sheet\n- relation {_TOKEN}\n", encoding="utf-8"
+    )
+    adapter.publish(worktree=checkout, compiled=_COMPILED)
+    reported: list[frozenset[UUID]] = []
+
+    erasure = adapter.erase(
+        needles=(_TOKEN,),
+        page_needles=(_TOKEN,),
+        compiled=_COMPILED,
+        drop=frozenset(),
+        accepted=_none,
+        dropped=reported.append,
+        lease=_Lease().hold(),
+    )
+
+    assert erasure.removed
+    assert reported == [frozenset({_ARTIFACT})]
+    assert _everything(repository).lower().count(_TOKEN.encode()) == 0
+
+
 def test_erase_rejects_traversing_paths(tmp_path: Path) -> None:
     """Never hand an escaping path to Git or the filesystem."""
     repository = _repository(root=tmp_path)
@@ -330,6 +421,8 @@ def test_erase_rejects_traversing_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         _adapter(repository).erase(
             needles=(_TOKEN,),
+            page_needles=(_TOKEN,),
+            dropped=_ignore,
             compiled={"../outside.md": _ARTIFACT},
             drop=frozenset(),
             accepted=_none,

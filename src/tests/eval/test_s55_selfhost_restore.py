@@ -128,6 +128,8 @@ class _Knowledge:
     ) -> KnowledgeErasure:
         return self.repository.erase(
             needles=(str(forget.doc_id),),
+            page_needles=(str(forget.doc_id),),
+            dropped=lambda ids: None,
             compiled=_COMPILED_PATHS,
             drop=frozenset(drop_artifact_ids),
             accepted=lambda ids: dict.fromkeys(ids),

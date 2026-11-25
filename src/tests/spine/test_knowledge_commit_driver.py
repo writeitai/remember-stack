@@ -1150,10 +1150,11 @@ def test_k_sync_finishes_the_authored_wait_after_the_owner_edits(
     assert _output("-C", str(repository), "status", "--porcelain") == ""
 
 
-def test_a_page_that_still_cites_does_not_hold_up_another_redaction(
+def test_a_waiting_page_holds_up_neither_redaction_nor_compilation(
     graph: _CompileGraph, tmp_path: Path
 ) -> None:
-    """The redaction check runs even when authored validation fails the cycle."""
+    """§5 test 5 and 8: a page still citing the forgotten document waits with
+    its flag; another page's redaction completes and unrelated pages publish."""
     doc_id, fact_id = uuid4(), uuid4()
     first, second = "notes/first.md", "notes/second.md"
     cites = f'---\ncites: ["doc:{doc_id}"]\n---\n# Page\n'
@@ -1172,20 +1173,25 @@ def test_a_page_that_still_cites_does_not_hold_up_another_redaction(
     (repository / first).write_text("# Page\n\nRedacted.\n", encoding="utf-8")
     _commit(repository=repository, message="owner redacts one page")
 
-    # The forgotten document no longer exists: the other page fails validation.
-    with pytest.raises(KnowledgeCompilationError):
-        _run(
-            graph=graph,
-            remote=_local(repository),
-            compiler=_Compiler(),
-            redactions=_redactions(graph, repository),
-        )
+    result = _run(
+        graph=graph,
+        remote=_local(repository),
+        compiler=_Compiler(),
+        redactions=_redactions(graph, repository),
+    )
 
+    assert result.compiled_artifact_ids == graph.artifact_ids
     assert _forget_state(graph=graph, forget_id=forget_id) == (
         "waiting_for_redaction",
         [second],
     )
     assert _log_count(repository, first) == 1
+    with graph.engine.connect() as connection:
+        second_id = connection.execute(
+            text("SELECT artifact_id FROM knowledge_artifacts WHERE git_path = :p"),
+            {"p": second},
+        ).scalar_one()
+    assert graph.control.authored_review_state(artifact_id=second_id).redaction_required
 
 
 def _log_count(repository: Path, path: str) -> int:

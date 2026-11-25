@@ -205,7 +205,9 @@ class KnowledgeCommitDriver:
             schedule = knowledge_compile_order(artifacts=artifacts)
             if not schedule:
                 revision = checkout.root
-                if plan_files_changed:
+                # A pending decision may change a page's kind: publishing
+                # moves it between the snapshot and the branch.
+                if plan_files_changed or pending_decisions:
                     revision = self._publish(
                         deployment_id=deployment_id, worktree=worktree
                     ).root
