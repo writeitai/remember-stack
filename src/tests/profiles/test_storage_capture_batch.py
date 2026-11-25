@@ -85,7 +85,7 @@ def test_worker_failure_carries_its_code_beside_completed_peer(
     ]
     (record,) = caplog.records
     assert record.levelname == "ERROR"
-    assert record.error_code == "capture_writer_class_unknown"
+    assert vars(record)["error_code"] == "capture_writer_class_unknown"
     assert record.exc_info is None
 
 
@@ -104,7 +104,7 @@ def test_broken_provider_context_fails_every_scope_keeping_own_codes(
         (None, "capture_writer_class_unknown"),
     ]
 
-    assert [record.error_code for record in caplog.records] == [
+    assert [vars(record)["error_code"] for record in caplog.records] == [
         "capture_writer_class_unknown",
         "provider_transport_lost",
     ]
@@ -119,7 +119,7 @@ def test_preflight_failure_keeps_only_the_type_of_free_text_errors(
     results = _run(inputs=(item,), capture=Mock())
     assert [(r.completed, r.failure) for r in results] == [(None, "OSError")]
     (record,) = caplog.records
-    assert record.error_code == "storage_capture_failed"
+    assert vars(record)["error_code"] == "storage_capture_failed"
     assert record.exc_info is None
     assert "private_canary" not in caplog.text
 
