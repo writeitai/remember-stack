@@ -171,11 +171,12 @@ def mount(directory: str, *, connection: Connection, http: httpx.Client) -> int:
     return 0
 
 
-def unmount(directory: str) -> int:
+def unmount(directory: str, *, machine: bool = False) -> int:
     """Delegate local unmount without credentials or a ticket."""
     result = subprocess.run(
         [_mountable(), "unmount", str(Path(directory).resolve())],
         stdin=subprocess.DEVNULL,
+        capture_output=machine,
         check=False,
     )
     return _exit_code(result.returncode)

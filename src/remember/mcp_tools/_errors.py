@@ -194,7 +194,7 @@ def map_error(error: BaseException) -> ToolError:
     if isinstance(error, ValidationError):
         return ToolError(
             code="local_backend_error",
-            detail=f"Local backend validation failed: {error}",
+            detail="Local backend returned an invalid result.",
             status_code=None,
             retryable=False,
             agent_action=(

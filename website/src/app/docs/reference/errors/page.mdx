@@ -177,8 +177,13 @@ timeouts, store codes).
 
 ## MCP tool errors
 
-The MCP server returns a tool failure as a normal tool result with
-`"isError": true` and one JSON text block. Every tool — `ingest`,
+With `remember --json <command>`, the CLI writes an error object as one line of
+JSON on stderr and exits nonzero. Warnings and login progress can appear on
+other stderr lines. Default CLI output prints the cause, code and next action
+as text.
+
+The MCP server returns a tool failure with `"isError": true` and one JSON text
+block containing the same error fields. Every tool — `ingest`,
 `pipeline_readiness`, `archive_document`, `unarchive_document`, `forget_document`, the assured operations and the SQL
 query tools — returns the same object:
 
@@ -245,6 +250,20 @@ after the colon (for example `org_usd_ceiling_exhausted`).
 
 </Cloud>
 
+### Local CLI errors
+
+| `code` | Cause | Next action |
+|---|---|---|
+| `invalid_arguments` | A flag, argument or connection setting is invalid. | Check the command's help, then fix the input. |
+| `missing_credentials`, `credentials_unusable` | The command needs a key or cannot read the stored entry. | Sign in, supply the required key, or fix the credential file. |
+| `stored_key_refused` | The configured destination is outside the stored key's allowed audience. | Supply the intended destination's key explicitly via `REMEMBER_API_KEY` or `--api-key`. |
+| `device_grant_failed`, `issuer_error` | The browser grant failed or its issuer could not be used. | Check the issuer and network, rerun login and approve promptly. |
+| `confirmation_required` | The permanent forget was not confirmed. | Get confirmation, then rerun with `--yes`. |
+| `doctor_failed`, `setup_failed` | At least one diagnostic or harness setup step failed. | Resolve the failed check or fix the named harness configuration. |
+
+A deployment that requires authentication returns `unauthorized` without
+a valid key. Self-hosted deployments can also allow anonymous access.
+
 ### JSON-RPC errors
 
 | Code | Message | Cause |
@@ -273,7 +292,7 @@ seconds between polls.
 | `429` or `503` | Keeps polling, no faster than `Retry-After`. |
 | `access_denied` | Stops: you declined in the browser. Run `remember login` again. |
 | `expired_token` | Stops: the code expired before approval. Run it again and approve sooner. |
-| any other error | Stops with `token polling failed with HTTP <status> (<error>)`. |
+| any other error | Stops with `token polling failed with HTTP <status>`. |
 | code expires while polling | Stops: `the device code expired before approval`. |
 | metadata unavailable | Stops, naming the metadata URL. |
 | a key issued by another issuer | Stops, and revokes that key. |

@@ -37,6 +37,7 @@ from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
+from remember.errors import redact_diagnostic
 from remember.errors import UnknownTag
 from remember.http_routes import is_read_route
 from remember.issuer import fetch_issuer_metadata
@@ -1653,7 +1654,8 @@ class MemoryClient:
         if response.status_code == 429:
             raise _rate_limited(response)
         if not response.is_success:
-            detail = response.text
+            secrets = (response.request.headers.get("Authorization", ""),)
+            detail = f"Deployment answered HTTP {response.status_code}."
             code: str | None = None
             retryable: bool | None = None
             request_id: str | None = None
@@ -1677,14 +1679,21 @@ class MemoryClient:
                         detail = "deployment API returned a malformed structured error"
                     elif public_detail.get("code") == "layer_unavailable":
                         raise LayerUnavailable(
-                            detail=str(public_detail.get("message") or ""),
-                            layer=str(public_detail.get("layer") or ""),
+                            detail=redact_diagnostic(
+                                str(public_detail.get("message") or ""), secrets=secrets
+                            ),
+                            layer=redact_diagnostic(
+                                str(public_detail.get("layer") or ""), secrets=secrets
+                            ),
                         )
                     elif public_detail.get("code") == "unknown_tag" and isinstance(
                         public_detail.get("tags"), list
                     ):
                         raise UnknownTag(
-                            tags=tuple(str(tag) for tag in public_detail["tags"]),
+                            tags=tuple(
+                                redact_diagnostic(str(tag), secrets=secrets)
+                                for tag in public_detail["tags"]
+                            ),
                             status_code=response.status_code,
                         )
                     elif public_detail.get("code") in _TAG_ERROR_CODES and (
@@ -1712,10 +1721,12 @@ class MemoryClient:
                 detail = "deployment API returned a malformed error envelope"
             raise MemoryApiError(
                 status_code=response.status_code,
-                detail=detail,
+                detail=redact_diagnostic(detail, secrets=secrets),
                 code=code,
                 retryable=retryable,
-                request_id=request_id,
+                request_id=redact_diagnostic(request_id, secrets=secrets)
+                if request_id
+                else None,
             )
         try:
             return response.json()
@@ -1961,7 +1972,10 @@ class AccountApi:
             raise _rate_limited(response)
         if not response.is_success:
             raise MemoryApiError(
-                status_code=response.status_code, detail=_error_detail(response)
+                status_code=response.status_code,
+                detail=redact_diagnostic(
+                    _error_detail(response), secrets=(request.headers["Authorization"],)
+                ),
             )
         try:
             return response.json()
@@ -2019,7 +2033,12 @@ def _rate_limited(response: httpx.Response) -> RateLimited:
         detail = str(envelope.get("message") or code or detail)
     elif isinstance(envelope, str):
         detail = envelope
-    return RateLimited(detail=detail, code=code, retry_after=_retry_after(response))
+    secrets = (response.request.headers.get("Authorization", ""),)
+    return RateLimited(
+        detail=redact_diagnostic(detail, secrets=secrets),
+        code=code,
+        retry_after=_retry_after(response),
+    )
 
 
 def _error_detail(response: httpx.Response) -> str:

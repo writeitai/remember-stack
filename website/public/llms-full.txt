@@ -20163,7 +20163,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.21.3), installed by `pip install remember`.
+This page describes the `remember` CLI, installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -20239,9 +20239,37 @@ remember query "Who owns the billing migration?"
 
 ### Output
 
-Commands print their results to standard output: JSON for memory
-commands. Warnings and errors go to standard error, so
-you can pipe the output into `jq` safely.
+Pass `--json` before or after the command. A completed command writes one JSON
+value to stdout, with the protocol streams listed below as exceptions. Diagnostics,
+warnings and progress go to stderr. Check the exit status before using the result.
+
+```bash
+remember setup --json --self-hosted --agent cursor --dry-run
+remember --json tags list
+remember --json --version
+```
+
+| Command | JSON output |
+|---|---|
+| Memory commands and engine `ops` | Their documented result object. `operations list` and `connectors list` return arrays in JSON mode, including `[]` when empty. They keep one object per line in default mode. |
+| `setup` | `backend` (`cloud` or `self_hosted`), `dry_run` and the `harnesses` array. Harness IDs are `cursor`, `agy`, `codex`, `claude_code` and `claude_desktop`. JSON mode uses headless setup. |
+| `doctor` | `version`, overall `ok` and `checks`. Each check contains `name`, `ok` and `detail`. A failed check still produces the report and exits nonzero. |
+| `login` | `issuer`, `key_id` and `expires_at` after approval. Instructions and the short browser approval code go to stderr. Complete the browser step while the command polls. |
+| `whoami` | `api_url` for a stored self-hosted connection. For a hosted key, `issuer`, `key_id`, `expires_at`, `projects`, `permissions`, `default_project` and `account` when available. |
+| `switch` | `project` (the new default project's ID) and `name`. |
+| `logout` | `removed` is true when the stored entry was removed and false when no entry was present. |
+| `unmount` | `{"unmounted":true}` on success. |
+| `--version` | `version`. |
+| `mcp`, `mount` | MCP stdout carries its JSON-RPC messages in stdio mode. Mount stdout carries newline-delimited JSON events as they happen. `--json` gives command-level failures the same stderr format as other commands. |
+| `--help` | Command help text. |
+
+In JSON mode a failure emits a JSON object under `error` on stderr. Read
+`code`, `retryable` and `agent_action` to choose the next step. Other stderr
+lines can contain progress or warnings. See [CLI and MCP errors](https://remember.dev/docs/reference/errors#mcp-tool-errors).
+
+For a confirmed permanent forget in a script, pass `--yes`. Without that flag,
+JSON mode and non-terminal runs exit with `confirmation_required` before sending
+the request.
 
 ### Exit codes
 
@@ -22133,8 +22161,13 @@ timeouts, store codes).
 
 ## MCP tool errors
 
-The MCP server returns a tool failure as a normal tool result with
-`"isError": true` and one JSON text block. Every tool — `ingest`,
+With `remember --json <command>`, the CLI writes an error object as one line of
+JSON on stderr and exits nonzero. Warnings and login progress can appear on
+other stderr lines. Default CLI output prints the cause, code and next action
+as text.
+
+The MCP server returns a tool failure with `"isError": true` and one JSON text
+block containing the same error fields. Every tool — `ingest`,
 `pipeline_readiness`, `archive_document`, `unarchive_document`, `forget_document`, the assured operations and the SQL
 query tools — returns the same object:
 
@@ -22185,6 +22218,20 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `transport_error` | 0 | yes | Retry with back-off; check the deployment URL and network. |
 | `local_backend_error` | `null` | no | Report a composition/contract defect; do not retry the same call. |
 | `internal_error` | `null` | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
+
+### Local CLI errors
+
+| `code` | Cause | Next action |
+|---|---|---|
+| `invalid_arguments` | A flag, argument or connection setting is invalid. | Check the command's help, then fix the input. |
+| `missing_credentials`, `credentials_unusable` | The command needs a key or cannot read the stored entry. | Sign in, supply the required key, or fix the credential file. |
+| `stored_key_refused` | The configured destination is outside the stored key's allowed audience. | Supply the intended destination's key explicitly via `REMEMBER_API_KEY` or `--api-key`. |
+| `device_grant_failed`, `issuer_error` | The browser grant failed or its issuer could not be used. | Check the issuer and network, rerun login and approve promptly. |
+| `confirmation_required` | The permanent forget was not confirmed. | Get confirmation, then rerun with `--yes`. |
+| `doctor_failed`, `setup_failed` | At least one diagnostic or harness setup step failed. | Resolve the failed check or fix the named harness configuration. |
+
+A deployment that requires authentication returns `unauthorized` without
+a valid key. Self-hosted deployments can also allow anonymous access.
 
 ### JSON-RPC errors
 

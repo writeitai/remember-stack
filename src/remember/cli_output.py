@@ -6,8 +6,12 @@ from dataclasses import replace
 import json
 import sys
 
-from remember.mcp_tools._errors import invalid_arguments
-from remember.mcp_tools._errors import ToolError
+from remember.connection import environment_key
+from remember.credentials import CredentialError
+from remember.credentials import load_credentials
+from remember.errors import redact_diagnostic
+from remember.mcp_tools import invalid_arguments
+from remember.mcp_tools import ToolError
 
 
 class CommandFailure(Exception):
@@ -47,8 +51,32 @@ def failure(
     )
 
 
-def report_error(*, error: ToolError, machine: bool) -> None:
+def diagnostic_secrets(*, key: str | None = None) -> tuple[str, ...]:
+    """Collect the credential values that may have reached this command."""
+    try:
+        stored = load_credentials()
+    except (CredentialError, OSError):
+        stored = None
+    return (
+        key or "",
+        environment_key() or "",
+        stored.key.get_secret_value() if stored and stored.key is not None else "",
+    )
+
+
+def report_error(*, error: ToolError, machine: bool, key: str | None = None) -> None:
     """Write an actionable failure to stderr, using the MCP envelope for JSON."""
+    secrets = diagnostic_secrets(key=key)
+    error = replace(
+        error,
+        detail=redact_diagnostic(error.detail, secrets=secrets),
+        reason_code=redact_diagnostic(error.reason_code, secrets=secrets)
+        if error.reason_code
+        else None,
+        request_id=redact_diagnostic(error.request_id, secrets=secrets)
+        if error.request_id
+        else None,
+    )
     if machine:
         print(json.dumps(error.as_dict()), file=sys.stderr)
     else:

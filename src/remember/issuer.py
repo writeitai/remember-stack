@@ -439,10 +439,7 @@ def poll_for_key(
             raise DeviceGrantError(detail="the device code expired before approval")
         else:
             raise DeviceGrantError(
-                detail=(
-                    f"token polling failed with HTTP {response.status_code}"
-                    + (f" ({error_code})" if error_code else "")
-                )
+                detail=(f"token polling failed with HTTP {response.status_code}")
             )
 
 
@@ -455,9 +452,7 @@ def _issued_key(response: httpx.Response) -> IssuedKey:
             detail="the issuer returned an unusable token response"
         ) from error
     if body.token_type.lower() != "bearer":
-        raise DeviceGrantError(
-            detail=f"the issuer returned token_type {body.token_type!r}, not Bearer"
-        )
+        raise DeviceGrantError(detail="the issuer returned an unsupported token type")
     key = body.access_token.get_secret_value()
     claims = signed_key_claims(key)
     expires_at = claims.expires_at if claims is not None else None
