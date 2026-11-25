@@ -32,7 +32,8 @@ def test_ops_has_no_second_snapshot_builder(monkeypatch: pytest.MonkeyPatch) -> 
     """Snapshots are built only by `project --plane p3`, which writes to the
     store the mount publisher reads; `ops` offers no local-directory variant."""
     monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
-    assert cli_main(["ops", "rebuild", "--deployment", str(_DEPLOYMENT_ID)]) == 2
+    with pytest.raises(SystemExit):
+        cli_main(["ops", "rebuild", "--deployment", str(_DEPLOYMENT_ID)])
 
 
 def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(

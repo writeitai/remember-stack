@@ -153,6 +153,12 @@ def main(argv: list[str] | None = None) -> int:
         handler = handlers.get(args.command)
         if handler is not None:
             return handler(args)
+    except _ParseFailure as error:
+        diagnostic = usage_failure(str(error))
+        report_error(error=diagnostic.error, machine=machine)
+        if not machine:
+            raise SystemExit(diagnostic.exit_code) from None
+        return diagnostic.exit_code
     except CommandFailure as error:
         report_error(
             error=error.error, machine=machine, key=getattr(args, "api_key", None)
@@ -914,8 +920,6 @@ def _run_documents(args: argparse.Namespace) -> int:
 
 def _confirmed_forget(*, doc_id: UUID) -> bool:
     """Ask on the terminal before forgetting; no answer is a refusal."""
-    if not sys.stdin.isatty():
-        return False
     sys.stderr.write(
         f"Forget document {doc_id}? It and everything derived only from it are"
         " erased for good; there is no undo. [y/N] "
@@ -1317,6 +1321,10 @@ def _add_tag_flags(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(flag, action="append", default=[], help=help_text)
 
 
+class _ParseFailure(ValueError):
+    """A credential-safe command grammar diagnostic."""
+
+
 class _CliParser(argparse.ArgumentParser):
     """Expose the output option at each command level and report parse failures safely."""
 
@@ -1333,13 +1341,15 @@ class _CliParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> NoReturn:
         """Identify the affected argument without echoing the supplied value."""
+        if message.startswith("the following arguments are required:"):
+            raise _ParseFailure(f"{message}. See {self.prog} --help.")
         label, _, _ = message.partition(":")
         cause = (
             label + " is invalid"
             if label.startswith("argument ")
             else "Invalid arguments"
         )
-        raise usage_failure(f"{cause} for {self.prog}. See {self.prog} --help.")
+        raise _ParseFailure(f"{cause} for {self.prog}. See {self.prog} --help.")
 
 
 def _build_parser(

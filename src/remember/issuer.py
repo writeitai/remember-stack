@@ -50,6 +50,18 @@ DEVICE_GRANT_TYPE: Final = "urn:ietf:params:oauth:grant-type:device_code"
 _MAX_REDIRECTS: Final = 3
 _POLL_CAP_SECONDS: Final = 30.0
 _SLOW_DOWN_STEP_SECONDS: Final = 5.0
+_PUBLIC_OAUTH_ERRORS: Final = frozenset(
+    {
+        "invalid_client",
+        "invalid_grant",
+        "invalid_request",
+        "invalid_scope",
+        "server_error",
+        "temporarily_unavailable",
+        "unauthorized_client",
+        "unsupported_grant_type",
+    }
+)
 
 
 class IssuerError(MemoryApiError):

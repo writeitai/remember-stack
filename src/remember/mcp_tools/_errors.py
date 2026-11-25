@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import replace
 import json
+from math import isfinite
 from typing import Final
 
 from pydantic import ValidationError
@@ -90,7 +91,11 @@ class ToolError:
             error["reason_code"] = self.reason_code
         if self.request_id is not None:
             error["request_id"] = self.request_id
-        if self.retry_after is not None:
+        if (
+            self.retry_after is not None
+            and isfinite(self.retry_after)
+            and self.retry_after >= 0
+        ):
             error["retry_after"] = self.retry_after
         return {"error": error}
 

@@ -20252,7 +20252,7 @@ remember --json --version
 | Command | JSON output |
 |---|---|
 | Memory commands and engine `ops` | Their documented result object. `operations list` and `connectors list` return arrays in JSON mode, including `[]` when empty. They keep one object per line in default mode. |
-| `setup` | `backend` (`cloud` or `self_hosted`), `dry_run` and the `harnesses` array. Harness IDs are `cursor`, `agy`, `codex`, `claude_code` and `claude_desktop`. JSON mode uses headless setup. |
+| `setup` | `backend` (`cloud` or `self_hosted`), `dry_run` and the `harnesses` array. Harness IDs are `cursor`, `agy`, `codex`, `claude_code` and `claude_desktop`. JSON mode skips the backend question and requires an existing hosted key, `--headless`, or `--dry-run` for hosted setup. |
 | `doctor` | `version`, overall `ok` and `checks`. Each check contains `name`, `ok` and `detail`. A failed check still produces the report and exits nonzero. |
 | `login` | `issuer`, `key_id` and `expires_at` after approval. Instructions and the short browser approval code go to stderr. Complete the browser step while the command polls. |
 | `whoami` | `api_url` for a stored self-hosted connection. For a hosted key, `issuer`, `key_id`, `expires_at`, `projects`, `permissions`, `default_project` and `account` when available. |
@@ -20267,9 +20267,11 @@ In JSON mode a failure emits a JSON object under `error` on stderr. Read
 `code`, `retryable` and `agent_action` to choose the next step. Other stderr
 lines can contain progress or warnings. See [CLI and MCP errors](https://remember.dev/docs/reference/errors#mcp-tool-errors).
 
+For SQL result reports, read `termination_reason` to tell whether the
+statement completed. See [SQL query results](https://remember.dev/docs/reference/http-api/query#how-results-and-errors-come-back).
+
 For a confirmed permanent forget in a script, pass `--yes`. Without that flag,
-JSON mode and non-terminal runs exit with `confirmation_required` before sending
-the request.
+JSON mode exits with `confirmation_required` before sending the request.
 
 ### Exit codes
 
@@ -22229,6 +22231,15 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `device_grant_failed`, `issuer_error` | The browser grant failed or its issuer could not be used. | Check the issuer and network, rerun login and approve promptly. |
 | `confirmation_required` | The permanent forget was not confirmed. | Get confirmation, then rerun with `--yes`. |
 | `doctor_failed`, `setup_failed` | At least one diagnostic or harness setup step failed. | Resolve the failed check or fix the named harness configuration. |
+| `command_unavailable` | An engine operator command was invoked outside its container. | Run it in the engine container or use the public `operations` command. |
+| `invalid_configuration` | An environment setting or input field failed validation. | Correct the named settings or arguments. |
+| `file_unreadable`, `local_io_error` | A command could not read, write or open a local resource. | Check its path, permissions and available disk space. |
+| `launcher_unavailable` | Setup could not find an installed CLI or runner. | Install Remember, then check PATH. |
+| `hosted_credentials_present` | The file still holds a hosted key when configuring a self-hosted engine. | Run `remember logout` to revoke it first. |
+| `durability_unconfirmed`, `revocation_unconfirmed` | A credential change could not be confirmed on disk or by its issuer. | Inspect the current sign-in state and follow the accompanying next action. |
+| `mount_failed`, `unmount_failed` | Mountable failed or returned an invalid event. | Check the mountpoint, installed client and stderr diagnostics before retrying. |
+| `work_ledger_error`, `graph_catalog_error` | An engine operator command could not complete. | Inspect the processing row or check database access and migrations as directed. |
+| `interrupted` | The command was interrupted. | Check the outcome before rerunning. |
 
 A deployment that requires authentication returns `unauthorized` without
 a valid key. Self-hosted deployments can also allow anonymous access.

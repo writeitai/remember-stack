@@ -644,3 +644,29 @@ def test_codex_non_table_mcp_servers_fails_only_codex(
     assert "'mcp_servers' must be a table" in err and "Traceback" not in err
     assert config.read_text(encoding="utf-8") == "mcp_servers = 123\n"
     assert (tmp_path / ".cursor" / "mcp.json").is_file()
+
+
+def test_json_setup_keeps_hosted_auth_configuration(
+    tmp_path: Path, issuer: FakeIssuer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """JSON setup never starts login or rewrites an OAuth entry as key-header auth."""
+    args = ["setup", "--json", "--cloud", "--agent", "cursor", "--dir", str(tmp_path)]
+    assert main(args) == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert json.loads(captured.err)["error"]["code"] == "missing_credentials"
+    assert issuer.calls("/oauth/device") == []
+    assert not (tmp_path / ".cursor").exists()
+
+    _store_key()
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "backend": "cloud",
+        "dry_run": False,
+        "harnesses": ["cursor"],
+    }
+    assert not captured.err
+    assert issuer.calls("/oauth/device") == []
+    cursor = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+    assert cursor["mcpServers"]["remember"] == {"url": ENDPOINT}

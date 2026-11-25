@@ -1598,7 +1598,9 @@ class MemoryClient:
                     headers=merged,
                 )
             except httpx.HTTPError as error:
-                raise MemoryApiError(status_code=0, detail=str(error)) from error
+                raise _transport_failure(
+                    error, authorization=self._http.headers.get("Authorization", "")
+                ) from error
         read = is_read_route(method=method, path=path)
         for attempt in (1, 2):
             base, authorization = self._route.target()
@@ -1615,15 +1617,21 @@ class MemoryClient:
                     headers=merged,
                 )
             except httpx.TimeoutException as error:
-                raise MemoryApiError(status_code=0, detail=str(error)) from error
+                raise _transport_failure(
+                    error, authorization=authorization or ""
+                ) from error
             except httpx.NetworkError as error:
                 if attempt == 1:
                     changed = self._route.re_resolve(previous_url=base)
                     if read and changed:
                         continue
-                raise MemoryApiError(status_code=0, detail=str(error)) from error
+                raise _transport_failure(
+                    error, authorization=authorization or ""
+                ) from error
             except httpx.HTTPError as error:
-                raise MemoryApiError(status_code=0, detail=str(error)) from error
+                raise _transport_failure(
+                    error, authorization=authorization or ""
+                ) from error
             if attempt == 1 and _looks_moved(response) and self._route.key_routed:
                 changed = self._route.re_resolve(previous_url=base)
                 if read and changed:
@@ -1967,7 +1975,9 @@ class AccountApi:
         try:
             response = send_same_origin(self._http, request)
         except httpx.HTTPError as error:
-            raise MemoryApiError(status_code=0, detail=str(error)) from error
+            raise _transport_failure(
+                error, authorization=request.headers["Authorization"]
+            ) from error
         if response.status_code == 429:
             raise _rate_limited(response)
         if not response.is_success:
@@ -2016,6 +2026,12 @@ def _looks_moved(response: httpx.Response) -> bool:
     except ValueError:
         return True
     return not (isinstance(body, dict) and "detail" in body)
+
+
+def _transport_failure(error: httpx.HTTPError, *, authorization: str) -> MemoryApiError:
+    """Keep the network cause while removing any echoed Authorization value."""
+    detail = redact_diagnostic(str(error), secrets=(authorization,))
+    return MemoryApiError(status_code=0, detail=detail)
 
 
 def _rate_limited(response: httpx.Response) -> RateLimited:

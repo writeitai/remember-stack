@@ -21,6 +21,7 @@ from pydantic import Field
 from pydantic import SecretStr
 from pydantic import ValidationError
 
+from remember.cli_output import failure
 from remember.connection import Connection
 from remember.connection import resolve_project
 from remember.issuer import fetch_issuer_metadata
@@ -145,9 +146,17 @@ def mount(directory: str, *, connection: Connection, http: httpx.Client) -> int:
                 try:
                     event = json.loads(line)
                 except ValueError as error:
-                    raise ValueError("mountable returned invalid JSON") from error
+                    raise failure(
+                        code="mount_failed",
+                        detail="mountable returned invalid JSON.",
+                        action="Check the installed mountable version and local mountpoint.",
+                    ) from error
                 if not isinstance(event, dict):
-                    raise ValueError("mountable returned a non-object JSON event")
+                    raise failure(
+                        code="mount_failed",
+                        detail="mountable returned a non-object JSON event.",
+                        action="Check the installed mountable version and local mountpoint.",
+                    )
                 if event.get("event") == "mounted":
                     if event.get("path") != directory:
                         continue
@@ -167,7 +176,11 @@ def mount(directory: str, *, connection: Connection, http: httpx.Client) -> int:
     if code:
         return code
     if not mounted:
-        raise ValueError(f"mountable exited without a mounted event for {directory}")
+        raise failure(
+            code="mount_failed",
+            detail=f"mountable exited without a mounted event for {directory}.",
+            action="Check the local mountpoint and mount diagnostics before retrying.",
+        )
     return 0
 
 
@@ -176,7 +189,7 @@ def unmount(directory: str, *, machine: bool = False) -> int:
     result = subprocess.run(
         [_mountable(), "unmount", str(Path(directory).resolve())],
         stdin=subprocess.DEVNULL,
-        capture_output=machine,
+        stdout=subprocess.DEVNULL if machine else None,
         check=False,
     )
     return _exit_code(result.returncode)

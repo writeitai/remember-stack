@@ -487,11 +487,9 @@ def configure_claude_code(
         return True
     executable = shutil.which("claude")
     if executable is None:
-        report(
-            "[-] Claude Code CLI not found on PATH. To configure manually, run in "
-            f"{cwd}:\n    {shlex.join(add)}"
+        raise RuntimeError(
+            "Claude Code CLI was not found on PATH. Install it or select another harness."
         )
-        return False
     try:
         # `claude mcp add` refuses an existing name, so an earlier entry goes
         # first; a missing one makes `remove` fail, which is fine.
@@ -512,11 +510,12 @@ def configure_claude_code(
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        report(f"[!] Claude Code registration failed: {error}")
-        return False
+        raise RuntimeError(f"Claude Code registration failed: {error}") from error
     if result.returncode != 0:
-        report(f"[!] Claude Code registration returned exit code {result.returncode}.")
-        return False
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(
+            f"Claude Code registration exited with status {result.returncode}: {detail}"
+        )
     report(f"[✓] Configured Claude Code, {_describe(entry)}")
     return True
 
@@ -693,12 +692,8 @@ def _configure(
 
 
 def _headless(args: argparse.Namespace) -> bool:
-    """Use environment-based auth for JSON, non-terminal, and CI runs."""
-    if (
-        getattr(args, "headless", False)
-        or getattr(args, "json", False)
-        or not sys.stdin.isatty()
-    ):
+    """Use environment-based auth when explicitly requested or in CI."""
+    if getattr(args, "headless", False):
         return True
     ci = (_SetupSettings.model_validate({}).ci or "").strip().lower()
     return ci not in ("", "0", "false")
@@ -718,7 +713,12 @@ def _choose_backend(args: argparse.Namespace, *, dry_run: bool) -> str:
         return target_env
     if explicit_self_hosted:
         return "self_hosted"
-    if sys.stdin.isatty() and not dry_run and not _headless(args):
+    if (
+        sys.stdin.isatty()
+        and not dry_run
+        and not getattr(args, "json", False)
+        and not _headless(args)
+    ):
         print("Choose your Remember backend:")
         print("  1) remember.dev [default]")
         print("  2) Self-hosted engine (http://127.0.0.1:8000)")
@@ -855,6 +855,12 @@ def _hosted_plan(
             elif dry_run:
                 report(
                     "[dry-run] Would run `remember login` first (no key from this issuer is stored)"
+                )
+            elif getattr(args, "json", False):
+                raise failure(
+                    code="missing_credentials",
+                    detail="No stored key for the selected issuer.",
+                    action="Run `remember login` first, or select `--headless` to configure environment-based authentication.",
                 )
             else:
                 report("  Not signed in; running `remember login` first.")

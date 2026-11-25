@@ -260,6 +260,15 @@ after the colon (for example `org_usd_ceiling_exhausted`).
 | `device_grant_failed`, `issuer_error` | The browser grant failed or its issuer could not be used. | Check the issuer and network, rerun login and approve promptly. |
 | `confirmation_required` | The permanent forget was not confirmed. | Get confirmation, then rerun with `--yes`. |
 | `doctor_failed`, `setup_failed` | At least one diagnostic or harness setup step failed. | Resolve the failed check or fix the named harness configuration. |
+| `command_unavailable` | An engine operator command was invoked outside its container. | Run it in the engine container or use the public `operations` command. |
+| `invalid_configuration` | An environment setting or input field failed validation. | Correct the named settings or arguments. |
+| `file_unreadable`, `local_io_error` | A command could not read, write or open a local resource. | Check its path, permissions and available disk space. |
+| `launcher_unavailable` | Setup could not find an installed CLI or runner. | Install Remember, then check PATH. |
+| `hosted_credentials_present` | The file still holds a hosted key when configuring a self-hosted engine. | Run `remember logout` to revoke it first. |
+| `durability_unconfirmed`, `revocation_unconfirmed` | A credential change could not be confirmed on disk or by its issuer. | Inspect the current sign-in state and follow the accompanying next action. |
+| `mount_failed`, `unmount_failed` | Mountable failed or returned an invalid event. | Check the mountpoint, installed client and stderr diagnostics before retrying. |
+| `work_ledger_error`, `graph_catalog_error` | An engine operator command could not complete. | Inspect the processing row or check database access and migrations as directed. |
+| `interrupted` | The command was interrupted. | Check the outcome before rerunning. |
 
 A deployment that requires authentication returns `unauthorized` without
 a valid key. Self-hosted deployments can also allow anonymous access.
@@ -292,7 +301,7 @@ seconds between polls.
 | `429` or `503` | Keeps polling, no faster than `Retry-After`. |
 | `access_denied` | Stops: you declined in the browser. Run `remember login` again. |
 | `expired_token` | Stops: the code expired before approval. Run it again and approve sooner. |
-| any other error | Stops with `token polling failed with HTTP <status>`. |
+| any other error | Stops with `token polling failed with HTTP <status>`, followed by a recognized OAuth error code when supplied. |
 | code expires while polling | Stops: `the device code expired before approval`. |
 | metadata unavailable | Stops, naming the metadata URL. |
 | a key issued by another issuer | Stops, and revokes that key. |
