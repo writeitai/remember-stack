@@ -70,7 +70,9 @@ def _worker(*, failing: Mock, completed: object) -> Mock:
     return Mock(side_effect=capture)
 
 
-def test_worker_failure_carries_its_code_beside_completed_peer() -> None:
+def test_worker_failure_carries_its_code_beside_completed_peer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """One Project's refusal names its code; the other Project still completes."""
     good, bad = _input(deployment_id="a"), _input(deployment_id="b")
     completed = object()
@@ -81,9 +83,15 @@ def test_worker_failure_carries_its_code_beside_completed_peer() -> None:
         (completed, None),
         (None, "capture_writer_class_unknown"),
     ]
+    (record,) = caplog.records
+    assert record.levelname == "ERROR"
+    assert record.error_code == "capture_writer_class_unknown"
+    assert record.exc_info is None
 
 
-def test_broken_provider_context_fails_every_scope_keeping_own_codes() -> None:
+def test_broken_provider_context_fails_every_scope_keeping_own_codes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A lost stream fails completed scopes too; a scope's own refusal is kept."""
     good, bad = _input(deployment_id="a"), _input(deployment_id="b")
     results = _run(
@@ -96,13 +104,24 @@ def test_broken_provider_context_fails_every_scope_keeping_own_codes() -> None:
         (None, "capture_writer_class_unknown"),
     ]
 
+    assert [record.error_code for record in caplog.records] == [
+        "capture_writer_class_unknown",
+        "provider_transport_lost",
+    ]
 
-def test_preflight_failure_keeps_only_the_type_of_free_text_errors() -> None:
+
+def test_preflight_failure_keeps_only_the_type_of_free_text_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A message that is not a fixed code never leaves the engine."""
     item = _input(deployment_id="a")
-    item.evidence_store.read_manifest.side_effect = OSError("/secret/path missing")
+    item.evidence_store.read_manifest.side_effect = OSError("private_canary")
     results = _run(inputs=(item,), capture=Mock())
     assert [(r.completed, r.failure) for r in results] == [(None, "OSError")]
+    (record,) = caplog.records
+    assert record.error_code == "storage_capture_failed"
+    assert record.exc_info is None
+    assert "private_canary" not in caplog.text
 
 
 def test_result_requires_exactly_evidence_or_failure() -> None:
