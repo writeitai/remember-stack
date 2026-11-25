@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_f78672e8a2243142_corpus_publication_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-22 14:24 +0000
+            created at 2026-11-25 16:55 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -173,7 +173,9 @@
     <p class="run run2"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t"><span class="str">  ON s.deployment_id = g.deployment_id AND s.representation_id = g.representation_id</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t"><span class="str"> AND s.structure_generation_id = g.structure_generation_id AND s.node_path = &#x27;0&#x27;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t"><span class="str">WHERE d.deployment_id = :deployment_id AND d.deleted_at IS NULL</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t"><span class="str">  -- D159: the corpus is the current corpus; an archived document leaves it</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t"><span class="str">  AND d.archived_at IS NULL</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -183,7 +185,7 @@
             <a class="nav" href="z_f78672e8a2243142_corpus_publication_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-22 14:24 +0000
+            created at 2026-11-25 16:55 +0000
         </p>
     </div>
 </footer>

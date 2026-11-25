@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_849f61c527315a4a_profile_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-22 14:24 +0000
+            created at 2026-11-25 16:55 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -457,7 +457,7 @@
     <p class="run"><span class="n"><a id="t373" href="#t373">373</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">error</span> <span class="key">is</span> <span class="key">None</span> <span class="key">and</span> <span class="nam">self</span><span class="op">.</span><span class="nam">out</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t374" href="#t374">374</a></span><span class="t">            <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t375" href="#t375">375</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">out</span><span class="op">.</span><span class="nam">write</span><span class="op">(</span><span class="nam">data</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t376" href="#t376">376</a></span><span class="t">            <span class="key">except</span> <span class="nam">OSError</span> <span class="key">as</span> <span class="nam">err</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t376" href="#t376">376</a></span><span class="t">            <span class="key">except</span> <span class="nam">OSError</span> <span class="key">as</span> <span class="nam">err</span><span class="op">:</span>  <span class="com"># error-contract: raised later by the render caller</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t377" href="#t377">377</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">error</span> <span class="op">=</span> <span class="nam">err</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t378" href="#t378">378</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">size</span> <span class="op">+=</span> <span class="nam">len</span><span class="op">(</span><span class="nam">data</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t379" href="#t379">379</a></span><span class="t">        <span class="key">return</span> <span class="nam">len</span><span class="op">(</span><span class="nam">data</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -549,7 +549,7 @@
             <a class="nav" href="z_849f61c527315a4a_profile_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-22 14:24 +0000
+            created at 2026-11-25 16:55 +0000
         </p>
     </div>
 </footer>
