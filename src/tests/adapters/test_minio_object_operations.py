@@ -186,7 +186,7 @@ def test_purge_deletes_explicit_folder_markers_under_the_prefix(
 
     assert bucket.store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),)) == 1
     bucket.store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
-    assert [key.root for key in bucket.store.iter_keys(prefix="")] == ["document/"]
+    assert [key.root for key in bucket.store.iter_purge_keys()] == ["document/"]
 
 
 @pytest.mark.parametrize("operation", ["upload_part", "complete_multipart_upload"])

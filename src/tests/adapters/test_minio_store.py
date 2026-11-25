@@ -311,15 +311,22 @@ def test_purge_removes_empty_folder_markers_deepest_first_without_counting() -> 
         store.write_bytes(key=ObjectKey(name), content=b"x", storage_class="hot")
     store.delete(key=ObjectKey("document/sibling"))  # leaves "document/" listed
 
+    # A marker is not an object to readers; purge discovery still sees it.
+    assert [key.root for key in store.iter_keys(prefix="")] == [
+        "doc/a",
+        "doc/nested/deep/b",
+    ]
+    assert "document/" in {key.root for key in store.iter_purge_keys()}
     # Files are counted; the folders they leave behind are deleted, uncounted.
     assert store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),)) == 2
-    assert [key.root for key in store.iter_keys(prefix="")] == ["document/"]
-    assert ("corpus", "doc/") not in client.folders
+    assert {folder for _, folder in client.folders} == {"document/"}
     # A folder left only as a marker (an earlier sweep removed its files) is
     # purged without error and without counting as residue.
     client.folders.add(("corpus", "doc/again/"))
+    with pytest.raises(RuntimeError, match="doc/again/"):
+        store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
     assert store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),)) == 0
-    assert [key.root for key in store.iter_keys(prefix="")] == ["document/"]
+    assert {folder for _, folder in client.folders} == {"document/"}
     store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
 
 

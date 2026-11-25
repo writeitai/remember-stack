@@ -550,6 +550,48 @@ def test_incremental_and_empty_store_reconcile_converge_and_clean_orphans(
     assert state.assert_tree() == incremental
 
 
+def _folder_markers(state: Publication) -> set[str]:
+    """Every listed key ending in "/" (a gateway's empty folder)."""
+    listed = state.bucket.client.list_objects_v2(Bucket=state.bucket.name)
+    return {
+        item["Key"] for item in listed.get("Contents", ()) if item["Key"].endswith("/")
+    }
+
+
+def test_folder_markers_never_stick_publication_or_reconcile(
+    publication: Publication,
+) -> None:
+    """A gateway's "x/" folders are not objects: a rename, a stale-file cleanup
+    and a full reconcile each remove the ones they leave, and never fail on them."""
+    state = publication
+    state.publish()
+    old = state.source.path
+
+    def mark(*keys: str) -> None:
+        for key in keys:
+            state.bucket.client.put_object(Bucket=state.bucket.name, Key=key, Body=b"")
+
+    mark(old + "/", old + "/media/", old + "/media/empty/")
+    state.change(title="Renamed", topic="Moved")
+    state.publish()
+    assert not {marker for marker in _folder_markers(state) if marker.startswith(old)}
+
+    current = next(doc for doc in state.selected() if doc.doc_id == state.source.doc_id)
+    stale = ObjectKey(current.path + "/stale/leftover.bin")
+    state.bucket.store.replace_stream(
+        key=stale, chunks=(b"stale",), storage_class="hot"
+    )
+    mark(current.path + "/stale/")
+    state.publish()
+    assert _folder_markers(state) == set()
+
+    mark("unknown/", "unknown/empty/", "pdf/lost--" + corpus_suffix(uuid4()) + "/")
+    expected = state.assert_tree()
+    state.publisher.reconcile(deployment_id=state.source.deployment_id, verify=True)
+    assert _folder_markers(state) == set()
+    assert state.assert_tree() == expected
+
+
 def test_reconcile_repairs_path_state_missed_by_database(
     publication: Publication,
 ) -> None:

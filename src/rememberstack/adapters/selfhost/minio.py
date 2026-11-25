@@ -456,7 +456,45 @@ class MinIOObjectStore:
                 raise
 
     def iter_keys(self, *, prefix: str) -> Iterator[ObjectKey]:
-        """Enumerate all pages, retaining only boundary-matching object names."""
+        """Enumerate all pages of boundary-matching object names.
+
+        A folder marker (see ``remove_empty_folder_markers``) is not an object.
+        """
+        for name in self._iter_listed(prefix=prefix):
+            if not name.endswith("/"):
+                yield ObjectKey(name)
+
+    def remove_empty_folder_markers(
+        self, *, prefix: str, before_write: Callable[[], None] | None = None
+    ) -> None:
+        """Delete the empty-folder markers below ``prefix``, deepest first.
+
+        Some S3 gateways (mountable, SeaweedFS) keep a folder after its last
+        object is deleted and list it as a key ending in "/", which no engine
+        key can be. Deleting one can empty its parent, which the gateway then
+        lists, so list again until none remain. A marker that survives its
+        deletion raises rather than pass for an empty folder.
+        """
+        deleted: set[str] = set()
+        while markers := sorted(
+            (name for name in self._iter_listed(prefix=prefix) if name.endswith("/")),
+            key=lambda name: (-name.count("/"), name),
+        ):
+            if deleted.issuperset(markers):
+                raise RuntimeError(f"folder markers survived deletion: {markers!r}")
+            for name in markers:
+                validate_object_path(name, prefix=True)
+                if before_write:
+                    before_write()
+                try:
+                    self._client.delete_object(Bucket=self._bucket, Key=name)
+                except ClientError as error:
+                    if _error_code(error=error) not in {"404", "NoSuchKey", "NotFound"}:
+                        raise
+            deleted.update(markers)
+
+    def _iter_listed(self, *, prefix: str) -> Iterator[str]:
+        """Every listed name under the boundary, folder markers included."""
         boundary = validate_object_path(prefix, prefix=True)
         token = ""
         seen: set[str] = set()
@@ -470,7 +508,7 @@ class MinIOObjectStore:
             )
             for item in page.get("Contents", ()):
                 if matches_object_prefix(item["Key"], prefix=boundary):
-                    yield ObjectKey(item["Key"])
+                    yield item["Key"]
             if not page.get("IsTruncated", False):
                 return
             token = page.get("NextContinuationToken", "")
@@ -510,13 +548,13 @@ class MinIOObjectStore:
                 removed += 1
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
-                if key.root in kept or key.root.endswith("/"):
+                if key.root in kept:
                     continue
                 if before_write:
                     before_write()
                 self.delete(key=key)
                 removed += 1
-            self._delete_folder_markers(boundary=boundary, before_write=before_write)
+            self.remove_empty_folder_markers(prefix=boundary, before_write=before_write)
         # Suspended versioning still retains source-bearing history. Never
         # confuse an empty current listing with erasure of those bytes.
         if self._has_versions():
@@ -549,38 +587,6 @@ class MinIOObjectStore:
             pass  # logged by _iter_uploads; the provider's cleanup policy applies
         return removed
 
-    def _delete_folder_markers(
-        self, *, boundary: str, before_write: Callable[[], None] | None
-    ) -> None:
-        """Delete the empty-folder markers below a purged prefix, deepest first.
-
-        Some S3 gateways (mountable, SeaweedFS) list an empty folder as a key
-        ending in "/", which no engine key can be. A marker holds no bytes, so
-        it is not counted as a removed object. Deleting one can empty its
-        parent, which the gateway then lists, so list again until none remain.
-        """
-        deleted: set[str] = set()
-        while markers := sorted(
-            (
-                key.root
-                for key in self.iter_keys(prefix=boundary)
-                if key.root.endswith("/")
-            ),
-            key=lambda name: (-name.count("/"), name),
-        ):
-            if deleted.issuperset(markers):
-                raise RuntimeError(f"folder markers survived deletion: {markers!r}")
-            for name in markers:
-                validate_object_path(name, prefix=True)
-                if before_write:
-                    before_write()
-                try:
-                    self._client.delete_object(Bucket=self._bucket, Key=name)
-                except ClientError as error:
-                    if _error_code(error=error) not in {"404", "NoSuchKey", "NotFound"}:
-                        raise
-            deleted.update(markers)
-
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
     ) -> ObjectPurgeEvidence:
@@ -592,7 +598,7 @@ class MinIOObjectStore:
             if self._exists(normalized=normalized):
                 remaining.append(normalized)
         for prefix in prefixes:
-            remaining.extend(key.root for key in self.iter_keys(prefix=prefix.root))
+            remaining.extend(self._iter_listed(prefix=prefix.root))
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         if self._has_versions():
             for name, version in self._iter_versions(prefix=""):
@@ -644,8 +650,12 @@ class MinIOObjectStore:
         return removed
 
     def iter_purge_keys(self) -> Iterator[ObjectKey]:
-        """Include retained keys and uploads that no published object exposes."""
-        yield from self.iter_keys(prefix="")
+        """Include retained keys and uploads that no published object exposes.
+
+        Folder markers are listed too, so a folder left only as a marker is
+        still found by name (a corpus folder by its document suffix).
+        """
+        yield from (ObjectKey(name) for name in self._iter_listed(prefix=""))
         if self._has_versions():
             for name, _ in self._iter_versions(prefix=""):
                 yield ObjectKey(name)
