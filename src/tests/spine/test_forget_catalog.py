@@ -2378,3 +2378,195 @@ def test_a_shared_entity_keeps_only_surviving_spellings(seeded_engine: Engine) -
         )
     assert _TOKEN not in name
     assert all(_TOKEN not in alias for alias in aliases)
+
+
+def test_a_rationale_citing_an_entity_merged_into_a_touched_one_is_cleared(
+    seeded_engine: Engine,
+) -> None:
+    """§3.3 through redirects: a surviving decision whose T4 rationale cites an
+    entity merged into one the document touched loses the prose (top level
+    and nested) and keeps its verdict."""
+    absorbed = UUID("75000000-0000-0000-0000-0000000000d1")
+    mention = UUID("75000000-0000-0000-0000-0000000000d2")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-rationale"
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name, status, merged_into) VALUES (:e, :d,"
+                " 'Absorbed', 'absorbed', 'merged', :survivor)"
+            ),
+            {"e": absorbed, "d": _DEPLOYMENT_ID, "survivor": _SHARED_ENTITY_ID},
+        )
+        _record_merge(
+            connection=connection, survivor=_SHARED_ENTITY_ID, absorbed=absorbed
+        )
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_CONTROL_ENTITY_ID,
+            surface="control redirect mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'candidates', jsonb_build_array(CAST(:absorbed AS text)),"
+                " 'rationale', CAST(:phrase AS text),"
+                " 't4_selection', jsonb_build_object('rationale', CAST(:phrase AS text),"
+                " 'choice', 'kept'))"
+                " WHERE decision_id = :decision"
+            ),
+            {"absorbed": str(absorbed), "phrase": phrase, "decision": decision},
+        )
+
+    forget = _hide(engine=seeded_engine)
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+
+    with seeded_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT entity_id, features FROM resolution_decisions"
+                    " WHERE decision_id = :decision"
+                ),
+                {"decision": decision},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["entity_id"] == _CONTROL_ENTITY_ID  # the verdict stays
+    assert "rationale" not in row["features"]
+    assert "rationale" not in row["features"]["t4_selection"]
+    assert row["features"]["t4_selection"]["choice"] == "kept"
+    assert phrase not in str(row["features"])
+
+
+def test_a_rationale_recording_only_the_survivor_of_an_undone_merge_is_cleared(
+    seeded_engine: Engine,
+) -> None:
+    """The entity the document touched was merged into a survivor, a decision
+    on another document recorded only the survivor while its T4 prose quoted
+    the merged entity's evidence, and the merge was then undone. The merge
+    history still links them: the prose goes, the verdict stays."""
+    survivor = UUID("75000000-0000-0000-0000-0000000000d3")
+    mention = UUID("75000000-0000-0000-0000-0000000000d4")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-survivor-rationale"
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:e, :d, 'Survivor', 'survivor')"
+            ),
+            {"e": survivor, "d": _DEPLOYMENT_ID},
+        )
+        merge = _record_merge(
+            connection=connection, survivor=survivor, absorbed=_SHARED_ENTITY_ID
+        )
+        # the unmerge: the redirect is gone, the history stays
+        unmerge = _record_merge(
+            connection=connection, survivor=_SHARED_ENTITY_ID, absorbed=survivor
+        )
+        connection.execute(
+            text("UPDATE merge_events SET reversed_by = :u WHERE merge_id = :m"),
+            {"u": unmerge, "m": merge},
+        )
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_CONTROL_ENTITY_ID,
+            surface="control survivor mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'candidates', jsonb_build_array(CAST(:survivor AS text)),"
+                " 'rationale', CAST(:phrase AS text),"
+                " 't4_selection', jsonb_build_object('rationale', CAST(:phrase AS text)))"
+                " WHERE decision_id = :decision"
+            ),
+            {"survivor": str(survivor), "phrase": phrase, "decision": decision},
+        )
+
+    forget = _hide(engine=seeded_engine)
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+
+    with seeded_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT entity_id, features FROM resolution_decisions"
+                    " WHERE decision_id = :decision"
+                ),
+                {"decision": decision},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["entity_id"] == _CONTROL_ENTITY_ID
+    assert phrase not in str(row["features"])
+    assert row["features"]["candidates"] == [str(survivor)]
+
+
+def _record_merge(*, connection: Connection, survivor: UUID, absorbed: UUID) -> UUID:
+    """One merge_events row linking two entities (the merge history)."""
+    merge_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO merge_events (merge_id, deployment_id, survivor_id,"
+            " absorbed_id, pre_merge_membership_snapshot) VALUES"
+            " (:m, :d, :survivor, :absorbed, '{}'::jsonb)"
+        ),
+        {
+            "m": merge_id,
+            "d": _DEPLOYMENT_ID,
+            "survivor": survivor,
+            "absorbed": absorbed,
+        },
+    )
+    return merge_id
+
+
+def test_a_fresh_rationale_is_cleared_without_keeping_the_forget_erasing(
+    seeded_engine: Engine,
+) -> None:
+    """A T4 decision written after the first sweep about an entity the
+    document touched loses its prose on the next sweep, and that sweep is
+    still clean: clearing prose is never residue, so the forget completes."""
+    catalog = ForgetCatalog(engine=seeded_engine)
+    forget = _hide(engine=seeded_engine)
+    assert catalog.sweep_postgres(forget=forget).removed
+    mention = UUID("75000000-0000-0000-0000-0000000000d5")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-fresh-rationale"
+    with seeded_engine.begin() as connection:
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_SHARED_ENTITY_ID,
+            surface="control fresh mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'rationale', CAST(:phrase AS text)) WHERE decision_id = :decision"
+            ),
+            {"phrase": phrase, "decision": decision},
+        )
+
+    findings = catalog.sweep_postgres(forget=forget)
+
+    assert not findings.removed  # a clean sweep: the forget can complete
+    with seeded_engine.connect() as connection:
+        features = connection.execute(
+            text("SELECT features FROM resolution_decisions WHERE decision_id = :d"),
+            {"d": decision},
+        ).scalar_one()
+    assert "rationale" not in features

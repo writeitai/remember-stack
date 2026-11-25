@@ -493,6 +493,7 @@ class ReconcileHandler:
                 deployment_id=deployment_id,
                 doc_id=doc_id,
                 reconciliation_id=reconciliation_id,
+                settled=True,
             )
         try:
             self._profile_refresher.refresh_for_facts(
@@ -663,11 +664,13 @@ class CycleFinalizer:
                         NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
                     ),
                 )
+                first = catalog.settle_archive_cycle(doc_id=doc_id)
                 _archive_cascade(
                     catalog=catalog,
                     deployment_id=deployment_id,
                     doc_id=doc_id,
                     reconciliation_id=reconciliation_id,
+                    settled=not first,
                 )
         return tuple(finalized)
 
@@ -990,6 +993,9 @@ def archive_lineage_on(
     state = catalog.lineage_state(deployment_id=deployment_id, doc_id=doc_id)
     if state is None or state["deleted_at"] is not None:
         raise DocumentNotFoundError(str(doc_id))
+    # The episode's first full cascade: a new archive, or a caller taking
+    # over a source archive whose cycle has not settled it yet.
+    first = state["archived_at"] is None or state["archived_cycle_id"] is not None
     archived_at = catalog.set_archived(doc_id=doc_id, archived_by=archived_by)
     delta = _archive_cascade(
         catalog=catalog,
@@ -998,6 +1004,7 @@ def archive_lineage_on(
         reconciliation_id=archive_reconciliation_id(
             doc_id=doc_id, archived_at=archived_at
         ),
+        settled=not first,
     )
     return delta, archived_at
 
@@ -1172,23 +1179,27 @@ def _archive_cascade(
     deployment_id: UUID,
     doc_id: UUID,
     reconciliation_id: UUID,
+    settled: bool,
 ) -> ReconciliationDelta:
     """The archive cascade (§8): currency → recount → close, archive-marked.
 
     Retires every claim of the lineage no live version carries — all of them
-    while it is archived — and recounts and closes every fact any of the
-    lineage's claims touches, so fact work that applied already-retired
-    claims is settled too. Idempotent under the archive reconciliation id.
+    while it is archived — and recounts every fact any of the lineage's
+    claims touches. The episode's first cascade (``settled`` False) closes
+    every such fact left without support. A later sweep of a settled archive
+    closes only a fact whose last support this sweep itself retired, or one
+    no other lineage ever evidenced: a shared fact is closed by whichever
+    run drops its other support. Idempotent under the archive id; it runs
+    in one transaction, so its own retirements are never replayed.
     """
+    fresh = catalog.stale_for_lineage_removal(
+        deployment_id=deployment_id, doc_id=doc_id
+    )
     return _cascade_run(
         catalog=catalog,
         deployment_id=deployment_id,
         transitions=_with_recorded(
-            catalog=catalog,
-            transitions=catalog.stale_for_lineage_removal(
-                deployment_id=deployment_id, doc_id=doc_id
-            ),
-            reconciliation_id=reconciliation_id,
+            catalog=catalog, transitions=fresh, reconciliation_id=reconciliation_id
         ),
         reconciliation_id=reconciliation_id,
         boundary=None,
@@ -1196,6 +1207,7 @@ def _archive_cascade(
             deployment_id=deployment_id, doc_id=doc_id
         ),
         archive=True,
+        late_work=(doc_id, tuple(item.claim_id for item in fresh)) if settled else None,
     )
 
 
@@ -1233,6 +1245,7 @@ def _cascade_run(
     boundary: object,
     scope_claim_ids: tuple[UUID, ...],
     archive: bool,
+    late_work: tuple[UUID, tuple[UUID, ...]] | None = None,
 ) -> ReconciliationDelta:
     """Apply one source-acted basis change end to end, idempotently.
 
@@ -1260,20 +1273,29 @@ def _cascade_run(
         catalog.resolve_deleted_support_reviews(
             deployment_id=deployment_id, claim_ids=claim_ids
         )
+    closable_relations = catalog.open_zero_support_relations(
+        deployment_id=deployment_id, relation_ids=relation_ids
+    )
+    closable_observations = catalog.open_zero_support_observations(
+        deployment_id=deployment_id, observation_ids=observation_ids
+    )
+    if late_work is not None:
+        closable_relations, closable_observations = catalog.late_archive_facts(
+            doc_id=late_work[0],
+            retired_claim_ids=late_work[1],
+            relation_ids=closable_relations,
+            observation_ids=closable_observations,
+        )
     closed_relations = catalog.close_relations(
         deployment_id=deployment_id,
-        relation_ids=catalog.open_zero_support_relations(
-            deployment_id=deployment_id, relation_ids=relation_ids
-        ),
+        relation_ids=closable_relations,
         boundary=boundary,
         reconciliation_id=reconciliation_id,
         archive=archive,
     )
     closed_observations = catalog.close_observations(
         deployment_id=deployment_id,
-        observation_ids=catalog.open_zero_support_observations(
-            deployment_id=deployment_id, observation_ids=observation_ids
-        ),
+        observation_ids=closable_observations,
         reconciliation_id=reconciliation_id,
         archive=archive,
     )
