@@ -294,51 +294,103 @@ _DISCOVER_REFERENCES = text(
     UNION SELECT relname, attname FROM logical
     """
 )
-# Every discovered reference, classified. "swept": the sweep deletes the row or
-# unbinds the value, checked below for the seeded target. Anything else is a
-# reviewed content-free value the design keeps (§3.1): its reason is the text.
-# A new table or column fails this test until it is classified here.
-_SWEPT_TABLES = frozenset(
+# Every discovered reference, classified column by column. "Swept": the sweep
+# deletes the row or unbinds the value, checked below for the seeded target.
+# _KEPT holds the reviewed content-free values the design keeps (§3.1). A new
+# column fails this test until it is listed in one of the two.
+_SWEPT_COLUMNS = frozenset(
     {
-        "application_context_bindings",
-        "chunk_claims",
-        "chunk_search",
-        "chunks",
-        "claim_extraction_decisions",
-        "claims",
-        "document_crossrefs",
-        "document_effective_periods",
-        "document_effective_time_events",
-        "document_entity_bindings",
-        "document_metadata",
-        "document_names",
-        "document_people",
-        "document_reference_generations",
-        "document_representations",
-        "document_sections",
-        "document_skeleton_checks",
-        "document_structure_generations",
-        "document_tags",
-        "document_version_scope",
-        "document_versions",
-        "documents",
-        "fact_applications",
-        "grounding_audits",
-        "knowledge_artifact_evidence",
-        "mentions",
-        "normalization_outputs",
-        "normalize_observation_staging",
-        "obs_flush_entity_units",
-        "obs_flush_version_state",
-        "observation_adjudications",
-        "observation_evidence",
-        "observations",
-        "processing_layer_gaps",
-        "relation_adjudications",
-        "relation_evidence",
-        "relations",
-        "resolution_decisions",
-        "selection_results",
+        "application_context_bindings.application_id",
+        "chunk_claims.chunk_id",
+        "chunk_claims.claim_id",
+        "chunk_search.chunk_id",
+        "chunks.chunk_id",
+        "chunks.doc_id",
+        "chunks.representation_id",
+        "chunks.section_id",
+        "chunks.version_id",
+        "claim_extraction_decisions.chunk_id",
+        "claim_extraction_decisions.claim_id",
+        "claim_extraction_decisions.doc_id",
+        "claims.chunk_id",
+        "claims.claim_id",
+        "claims.doc_id",
+        "claims.section_id",
+        "document_crossrefs.from_doc_id",
+        "document_crossrefs.from_representation_id",
+        "document_crossrefs.from_version_id",
+        "document_crossrefs.generation_id",
+        "document_crossrefs.to_doc_id",
+        "document_effective_periods.doc_id",
+        "document_effective_periods.version_id",
+        "document_effective_time_events.doc_id",
+        "document_entity_bindings.doc_id",
+        "document_metadata.doc_id",
+        "document_metadata.version_id",
+        "document_names.version_id",
+        "document_people.version_id",
+        "document_reference_generations.doc_id",
+        "document_reference_generations.representation_id",
+        "document_reference_generations.version_id",
+        "document_representations.current_structure_generation_id",
+        "document_representations.representation_id",
+        "document_representations.version_id",
+        "document_sections.doc_id",
+        "document_sections.parent_section_id",
+        "document_sections.representation_id",
+        "document_sections.section_id",
+        "document_sections.structure_generation_id",
+        "document_sections.version_id",
+        "document_skeleton_checks.doc_id",
+        "document_skeleton_checks.representation_id",
+        "document_skeleton_checks.version_id",
+        "document_structure_generations.doc_id",
+        "document_structure_generations.representation_id",
+        "document_structure_generations.selecting_check_id",
+        "document_structure_generations.version_id",
+        "document_tags.doc_id",
+        "document_version_scope.doc_id",
+        "document_version_scope.version_id",
+        "document_versions.current_representation_id",
+        "document_versions.doc_id",
+        "document_versions.version_id",
+        "documents.current_version_id",
+        "documents.doc_id",
+        "fact_applications.claim_id",
+        "fact_applications.input_claim_ids",
+        "fact_applications.normalizer_version",
+        "grounding_audits.claim_id",
+        "knowledge_artifact_evidence.claim_lineage_id",
+        "knowledge_artifact_evidence.doc_id",
+        "mentions.chunk_id",
+        "mentions.claim_id",
+        "mentions.doc_id",
+        "mentions.mention_id",
+        "normalization_outputs.claim_id",
+        "normalize_observation_staging.application_id",
+        "normalize_observation_staging.claim_id",
+        "normalize_observation_staging.doc_id",
+        "normalize_observation_staging.version_id",
+        "obs_flush_entity_units.doc_id",
+        "obs_flush_entity_units.representation_id",
+        "obs_flush_entity_units.version_id",
+        "obs_flush_version_state.representation_id",
+        "obs_flush_version_state.version_id",
+        "observation_adjudications.consumed_claim_ids",
+        "observation_adjudications.triggering_claim_id",
+        "observation_evidence.claim_id",
+        "observation_evidence.doc_id",
+        "observations.window_claim_ids",
+        "processing_layer_gaps.doc_id",
+        "processing_layer_gaps.version_id",
+        "relation_adjudications.consumed_claim_ids",
+        "relation_adjudications.triggering_claim_id",
+        "relation_evidence.claim_id",
+        "relation_evidence.doc_id",
+        "relations.window_claim_ids",
+        "resolution_decisions.mention_id",
+        "selection_results.chunk_id",
+        "selection_results.representation_id",
     }
 )
 _KEPT: dict[str, str] = {
@@ -354,6 +406,75 @@ _KEPT: dict[str, str] = {
 }
 # Payload columns (text and JSON) of rows the sweep keeps that may still name
 # a forgotten ID, by design: the record and content-free history.
+# Every table, classified, so a new table (one holding a payload with no ID
+# column, say) fails this test until someone decides what a forget does to it.
+_SUBTREE_TABLES = frozenset(name.split(".")[0] for name in _SWEPT_COLUMNS)
+_OTHER_TABLES: dict[str, str] = {
+    # Content-free rows the sweep keeps (§3.1).
+    "forgets": "kept: the forget record (IDs and hashes)",
+    "managed_ingest_measurements": "kept: metering receipt, counts and UUIDs",
+    "managed_ingest_outcomes": "kept: metering outcome, counts and UUIDs",
+    "testimony_currency_events": "kept: content-free currency history",
+    "processing_state": "kept: work-ledger rows, error text cleared",
+    "cost_ledger": "kept: costs and UUIDs",
+    "surface_cost_ledger": "kept: request-time costs, no document content",
+    "surface_cost_meter_state": "kept: meter cursor",
+    # Shared state the sweep deletes, retires or recomputes from survivors.
+    "entities": "swept: exclusive entities retired content-free, shared reworded",
+    "aliases": "swept: aliases only the document used are deleted",
+    "merge_events": "swept: merge evidence and lemmas of touched entities cleared",
+    "predicates": "swept: source-generated predicates no relation uses are deleted",
+    "review_queue": "swept: reviews of the document's facts deleted",
+    "fact_window_review_attempts": "swept: attempts on swept facts deleted",
+    "resolution_exclusions": "swept: reasons of touched entity pairs cleared",
+    "content_objects": "swept: originals no surviving version uses are retired",
+    "knowledge_artifacts": "swept: citing compiled pages marked stale and rebuilt",
+    "knowledge_compilations": "swept: compilations of rebuilt pages deleted",
+    "knowledge_plan_decisions": "swept: rationale citing the document cleared",
+    "knowledge_plan_runs": "swept: transcripts collected and purged",
+    "knowledge_dispatches": "swept: dispatches of rebuilt pages deleted",
+    "knowledge_page_rules": "unrelated: owner rules, no document content",
+    "knowledge_page_watches": "unrelated: page watches, no document content",
+    "knowledge_quarantines": "kept: owner edits; decisions they cite are kept",
+    "knowledge_refresh_queue": "swept: queued refreshes of rebuilt pages deleted",
+    "knowledge_rule_keys": "unrelated: rule keys",
+    "knowledge_subscriptions": "unrelated: subscriptions",
+    "connector_sync_cycles": "kept: cycle counts and times",
+    "projection_snapshots": "kept: projection markers, no document content",
+    "scopes": "unrelated: retrieval scopes",
+    "scope_interests": "unrelated: scope interests",
+    # Deployment configuration and registries with no per-document content.
+    "alembic_version": "unrelated: schema version",
+    "assured_operations": "unrelated: operation registry",
+    "deployment_extension_packs": "unrelated: configuration",
+    "deployment_processing_layers": "unrelated: configuration",
+    "deployments": "unrelated: configuration",
+    "entity_types": "unrelated: type registry",
+    "extension_packs": "unrelated: registry",
+    "ingest_principals": "unrelated: who ingests, not what",
+    "p1_search_channels": "unrelated: search configuration",
+    "part_config": "unrelated: partition maintenance",
+    "part_config_sub": "unrelated: partition maintenance",
+    "perimeter_state": "unrelated: credential state",
+    "pipeline_component_versions": "unrelated: component registry",
+    "resolver_versions": "unrelated: component registry",
+    "saved_queries": "unrelated: query registry",
+    "saved_query_audit": "unrelated: query registry audit",
+    "saved_query_registry_state": "unrelated: query registry",
+    "saved_query_versions": "unrelated: query registry",
+    "tags": "unrelated: tag registry (assignments are document_tags)",
+    "canary_cases": "unrelated: evaluation fixtures",
+    "eval_runs": "unrelated: evaluation runs",
+    "golden_claim_labels": "unrelated: evaluation fixtures",
+    "golden_pairs": "unrelated: evaluation fixtures",
+}
+_DISCOVER_TABLES = text(
+    """
+    SELECT relname FROM pg_class
+    WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')
+      AND NOT relispartition AND relname NOT LIKE 'template\\_%'
+    """
+)
 _PAYLOAD_KEPT: dict[str, str] = {
     "forgets.collected": "the forget record's content-free IDs and opaque keys",
     "processing_state.content_hash": "work-ledger key: a document's publication work is keyed by its ID",
@@ -376,13 +497,20 @@ def test_schema_coverage_classifies_every_document_reference(
                 _DISCOVER_REFERENCES, {"subtree": list(_SUBTREE)}
             ).all()
         }
-    swept = {name for name in discovered if name.split(".")[0] in _SWEPT_TABLES}
-    unclassified = discovered - swept - set(_KEPT)
+        tables = set(connection.execute(_DISCOVER_TABLES).scalars().all())
+    unclassified = discovered - _SWEPT_COLUMNS - set(_KEPT)
     assert not unclassified, f"classify these references: {sorted(unclassified)}"
-    stale = (set(_KEPT) - discovered) | (
-        _SWEPT_TABLES - {name.split(".")[0] for name in swept}
+    stale = (_SWEPT_COLUMNS | set(_KEPT)) - discovered
+    assert not stale, f"classified but no longer references: {sorted(stale)}"
+    assert not _SUBTREE_TABLES & set(_OTHER_TABLES)
+    classified_tables = _SUBTREE_TABLES | set(_OTHER_TABLES)
+    assert not tables - classified_tables, (
+        f"classify these tables: {sorted(tables - classified_tables)}"
     )
-    assert not stale, f"classified but no longer in the schema: {sorted(stale)}"
+    assert not classified_tables - tables, (
+        f"classified tables that no longer exist: {sorted(classified_tables - tables)}"
+    )
+    swept = _SWEPT_COLUMNS
 
     catalog = ForgetCatalog(engine=seeded_engine)
     forget = _hide(engine=seeded_engine)

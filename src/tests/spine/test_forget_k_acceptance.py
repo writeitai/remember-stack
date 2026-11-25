@@ -10,10 +10,8 @@ and only in this module.
 
 from collections.abc import Callable
 from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-import shutil
 import subprocess
 from threading import Event
 from threading import Thread
@@ -429,25 +427,38 @@ def _assert_canary_gone(rig: _Rig, *, unrelated: str = _UNRELATED_BODY) -> None:
     assert _output("-C", str(repository), "status", "--porcelain") == ""
 
 
-class _HeldAtTheLease(KnowledgeControlPlane):
-    """Test hook: the forget's K publication waits at the K lease until released.
+class _HeldInHistoryPreparation(LocalGitRepository):
+    """Test hook: the forget waits inside its K history preparation.
 
-    Everything the K step prepares (mirror, history rewrite, snapshot) is done
-    by then; only the publication under the lease remains.
+    The private mirror has already captured the old refs and the snapshot it
+    will compare-and-swap against; the history rewrite has not run yet, and
+    the K lease is taken only after preparation ends.
     """
 
-    def __init__(self, *, engine: Engine, arrived: Event, release: Event) -> None:
-        super().__init__(engine=engine)
+    def __init__(self, *, repository: Path, arrived: Event, release: Event) -> None:
+        super().__init__(
+            repository=repository,
+            author_name="RememberStack",
+            author_email="rememberstack@example.test",
+        )
         self.arrived = arrived
         self.release = release
 
-    @contextmanager
-    def commit_lease(self, *, deployment_id: UUID) -> Iterator[None]:
+    def _rewrite_history(
+        self,
+        *,
+        mirror: Path,
+        refs: tuple[str, ...],
+        branch: str,
+        needles: tuple[str, ...],
+        compiled: frozenset[str],
+    ) -> tuple[tuple[str, ...], dict[str, tuple[str, str]]]:
         self.arrived.set()
         if not self.release.wait(timeout=_WAIT_S):
             raise TimeoutError("the held forget was never released")
-        with super().commit_lease(deployment_id=deployment_id):
-            yield
+        return super()._rewrite_history(
+            mirror=mirror, refs=refs, branch=branch, needles=needles, compiled=compiled
+        )
 
 
 class _Rebuilder:
@@ -484,9 +495,11 @@ class _Rebuilder:
 def test_unrelated_k_publication_proceeds_while_a_forget_prepares(
     rig: _Rig, record_property: Callable[[str, object], None]
 ) -> None:
-    """§5 test 5 (K leg, timed): while a forget is held after its hide with its
-    K erasure prepared and unpublished, an unrelated page compiles and
-    publishes; the forget then completes. Durations are recorded, not asserted.
+    """§5 test 5 (K leg, timed): while a forget is held inside its K history
+    preparation (old refs captured, nothing published), an unrelated page
+    compiles and publishes under the K lease, so preparation runs outside it;
+    the hold is released only after that publication finished, and the forget
+    then completes. Durations are recorded, not asserted.
     """
     with rig.engine.begin() as connection:
         connection.execute(
@@ -502,15 +515,16 @@ def test_unrelated_k_publication_proceeds_while_a_forget_prepares(
             rig,
             knowledge=ForgetKnowledgeEraser(
                 catalog=rig.catalog,
-                control_plane=_HeldAtTheLease(
-                    engine=rig.engine, arrived=arrived, release=release
+                control_plane=rig.control,
+                repository=_HeldInHistoryPreparation(
+                    repository=rig.repository, arrived=arrived, release=release
                 ),
-                repository=_local(rig.repository),
             ),
         ),
     )
     failures: list[BaseException] = []
     finished: list[float] = []
+    published = False
 
     def forget_worker() -> None:
         try:
@@ -524,7 +538,7 @@ def test_unrelated_k_publication_proceeds_while_a_forget_prepares(
     thread = Thread(target=forget_worker, name="forget-worker", daemon=True)
     thread.start()
     try:
-        assert arrived.wait(timeout=_WAIT_S), "the forget never reached its K step"
+        assert arrived.wait(timeout=_WAIT_S), "the forget never prepared its K step"
         assert rig.record().status is ForgetStatus.ERASING
         rebuilder = _Rebuilder()
         publication_started = time.monotonic()
@@ -553,9 +567,12 @@ def test_unrelated_k_publication_proceeds_while_a_forget_prepares(
             rig.token not in (request.previous_markdown or "")
             for request in rebuilder.requests
         )
+        published = True
     finally:
+        # Released only once the unrelated publication finished (or failed).
         release.set()
         thread.join(timeout=_WAIT_S)
+    assert published
     assert not thread.is_alive(), "the forget worker never stopped"
     if failures:
         raise failures[0]
@@ -705,27 +722,37 @@ def test_an_interrupted_sweep_is_retried_through_the_work_ledger(
     assert rig.record().last_error is None
 
 
-def test_forget_reapply_erases_a_restored_k_repository_and_object_store(
+def test_forget_reapply_erases_a_k_repository_restored_from_a_mirror(
     rig: _Rig, tmp_path: Path
 ) -> None:
-    """§5 test 11: restore the K repository and the object store (with an
-    ingest_stored original) from a backup taken before a completed forget; the
-    real ``forget-reapply`` sweeps clean them again, and a mirror of the
-    restored repository is clean, while the unrelated page survives."""
-    k_backup, raw_backup = tmp_path / "k-backup", tmp_path / "raw-backup"
-    shutil.copytree(rig.repository, k_backup, symlinks=True)
-    shutil.copytree(rig.raw_root, raw_backup, symlinks=True)
+    """§5 test 11 (K leg): a mirror backup taken before the forget is restored
+    into the active K repository after the forget completed (Git only; the
+    object store stays clean); the real ``forget-reapply`` sweeps leave no Git
+    object naming the canary or the document, and the unrelated page survives."""
+    backup = tmp_path / "k-backup.git"
+    _git("clone", "--quiet", "--mirror", str(rig.repository), str(backup))
     worker = _worker(rig, _handler(rig))
     forget = _hide(rig)
     _run_until_complete(rig, worker)
     _assert_canary_gone(rig)
 
-    # The operator restores both stores from the backup (D60: backups are theirs).
-    for backup, live in ((k_backup, rig.repository), (raw_backup, rig.raw_root)):
-        shutil.rmtree(live)
-        shutil.copytree(backup, live, symlinks=True)
+    # The operator restores the K repository's refs and objects from the mirror.
+    _git(
+        "-C",
+        str(rig.repository),
+        "fetch",
+        "--quiet",
+        "--force",
+        "--update-head-ok",
+        str(backup),
+        "+refs/*:refs/*",
+    )
+    _git("-C", str(rig.repository), "reset", "--quiet", "--hard", "HEAD")
     assert rig.token.encode() in _objects(rig.repository)
-    assert _stored(rig.raw_root, rig.token)
+    assert _output(
+        "-C", str(rig.repository), "log", "--all", "--format=%H", "-S", rig.token
+    )
+    assert not _stored(rig.raw_root, rig.token)
 
     assert ForgetService(engine=rig.engine, catalog=rig.catalog).reapply(
         deployment_id=_DEPLOYMENT_ID
@@ -733,12 +760,13 @@ def test_forget_reapply_erases_a_restored_k_repository_and_object_store(
     assert rig.record().status is ForgetStatus.ERASING
     _run_until_complete(rig, worker)
 
+    # Every Git object of every ref, reachable or not, and the unrelated page.
     _assert_canary_gone(rig)
-    mirror = tmp_path / "mirror.git"
-    _git("clone", "--quiet", "--mirror", str(rig.repository), str(mirror))
-    assert rig.token.encode() not in _objects(mirror)
-    assert _output("-C", str(mirror), "show", f"{_SNAPSHOT}:{_UNRELATED_PATH}") == (
-        _UNRELATED_BODY.strip()
+    assert (
+        _output(
+            "-C", str(rig.repository), "log", "--all", "--format=%H", "-S", rig.token
+        )
+        == ""
     )
-    # The backup itself is the operator's and keeps what it held.
-    assert rig.token.encode() in _objects(k_backup)
+    # The backup itself is the operator's and keeps what it held (D60).
+    assert rig.token.encode() in _objects(backup)

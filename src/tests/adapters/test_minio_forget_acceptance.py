@@ -27,6 +27,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import threading
@@ -91,11 +92,78 @@ from tests.spine.test_managed_metering_sql import _due
 from tests.spine.test_managed_metering_sql import _SCOPE
 from tests.spine.test_managed_metering_sql import ControlledReadiness
 from tests.spine.test_managed_metering_sql import ControlledReceipts
+from tests.t4_test_doubles import match_first_t4_candidate
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("59400000-0000-0000-0000-000000000001")
 _CANARY = "D159-CANARY-7f3a9c"
 _ROUTES = {"text/markdown": MarkdownPassthroughConverter()}
+_TARGET = re.compile(r"TARGET CHUNK:\n(.+)")
+
+
+def _route(prompt: str, type_name: str) -> dict[str, object]:
+    """Deterministic answers: every target chunk becomes one claim; every
+    claim states the shared fact, and the canary document's claims also state
+    an exclusive fact about an entity named with the canary. Wording a model
+    writes from a canary prompt carries the canary (copied wording)."""
+    canary = _CANARY in prompt
+    if type_name == "FallbackStructureResponse":
+        return {"sections": []}
+    if type_name == "RootSummaryPlacementResponse":
+        summary = f"The {_CANARY} launch plan." if canary else "A billing note."
+        return {"summary": summary, "placement_path": "/plans/"}
+    if type_name == "ContextPrefix":
+        return {"prefix": f"From the {_CANARY} plan." if canary else "A note."}
+    if type_name in {"SelectionResponse", "ClaimifyResponse"}:
+        match = _TARGET.search(prompt)
+        assert match is not None
+        span = match.group(1).strip()
+        if type_name == "SelectionResponse":
+            return {"candidates": [{"source_span": span, "outcome": "keep"}]}
+        label = re.search(r"\[(S\d+)\] TARGET \(origin-eligible\):", prompt)
+        return {
+            "claims": [
+                {
+                    "claim_text": span,
+                    "source_refs": [label.group(1) if label is not None else "S1"],
+                    "entailment_self_verdict": True,
+                }
+            ]
+        }
+    if type_name == "NormalizationResponse":
+        relations: list[dict[str, object]] = [
+            {
+                "subject": {"name": "Dana Novak"},
+                "predicate": "works_for",
+                "object": {"name": "Acme"},
+            }
+        ]
+        if canary:
+            relations.append(
+                {
+                    "subject": {"name": f"{_CANARY} Labs"},
+                    "predicate": "works_for",
+                    "object": {"name": "Acme"},
+                }
+            )
+        return {"relations": relations, "observations": []}
+    if type_name == "FactLabelResponse":
+        if _CANARY in prompt and f"{_CANARY} Labs" in prompt:
+            return {"label": f"{_CANARY} Labs works for Acme."}
+        suffix = f" (per the {_CANARY} plan)" if canary else ""
+        return {"label": f"Dana Novak works for Acme{suffix}."}
+    if type_name == "SupersessionVerdict":
+        return {"outcome": "coexist", "confidence": 0.9}
+    if type_name == "ObservationVerdict":
+        return {"outcome": "new", "confidence": 0.9}
+    if type_name == "FactApplicationDecision":
+        return same_fact_application_answer(prompt=prompt)
+    if type_name == "PromptFactDecision":
+        return same_fact_application_answer(prompt=prompt)
+    if type_name == "T4Selection":
+        return match_first_t4_candidate(prompt, type_name)
+    raise AssertionError(f"unexpected response type {type_name}")
 
 
 @pytest.fixture(scope="module")
@@ -204,7 +272,7 @@ class _Stack:
             raw_store=self.raw,
             artifact_store=self.artifacts,
             corpusfs_store=self.corpus,
-            model_provider=FakeModelProvider(),
+            model_provider=FakeModelProvider(generate_router=_route),
             model_provider_settings=OpenRouterSettings(api_key="unused"),
             conversion_routes=_ROUTES,
         )
@@ -390,8 +458,10 @@ def _canary_document(folder: Path) -> Path:
 def test_a_metered_canary_is_gone_from_the_dump_and_every_object_version(
     database_engine: Engine, buckets: _Buckets, tmp_path: Path
 ) -> None:
-    """§5 tests 1 and 3: after a completed forget the canary is in no dump row
-    and no object version; a resync skips the file; the control survives."""
+    """§5 tests 1 and 3: the canary reaches claims, an exclusive fact, an entity
+    name, the corpus and every store; after a completed forget it is in no dump
+    row and no object version, a resync skips the file, and the control keeps
+    exactly its claim, its original, its corpus folder and the shared fact."""
     _bootstrap(database_engine, buckets)
     folder = tmp_path / "watched"
     folder.mkdir()
@@ -422,6 +492,13 @@ def test_a_metered_canary_is_gone_from_the_dump_and_every_object_version(
             {"d": target},
         ).scalar_one()
     assert measured == 1, "the target is a metered document"
+    # The canary reached claims, an exclusive fact and an entity name; the
+    # shared fact has evidence from both documents.
+    assert any(_CANARY in claim for _, claim in _claims(database_engine))
+    assert _facts(database_engine) == {
+        (f"{_CANARY} Labs", "works_for", "Acme", 1),
+        ("Dana Novak", "works_for", "Acme", 3),
+    }
     assert _CANARY in _database_dump(database_engine)
     stored = [key for _, key, body in buckets.versions() if _CANARY.encode() in body]
     assert any(name.startswith(str(target)) for name in stored), stored
@@ -459,12 +536,48 @@ def test_a_metered_canary_is_gone_from_the_dump_and_every_object_version(
             sync_cycle_id=None,
         )
     assert _CANARY not in _database_dump(database_engine)
+    # Nothing extra (§5 test 3): the control keeps its claim and the shared
+    # fact, now supported by the control alone and worded without the canary.
+    assert [doc for doc, _ in _claims(database_engine)] == [control.doc_id]
+    assert _facts(database_engine) == {("Dana Novak", "works_for", "Acme", 1)}
+    with database_engine.connect() as connection:
+        labels = connection.execute(text("SELECT fact_label FROM relations")).scalars()
+        assert all(label is None or _CANARY not in label for label in labels)
     # The control keeps its original and its corpus folder, byte for byte.
     assert stack.original(control.doc_id) == control_original
     assert {
         key: stack.corpus.read_bytes(key=ObjectKey(key))
         for key in stack.corpus_folder(control.doc_id)
     } == control_folder
+
+
+def _claims(engine: Engine) -> list[tuple[UUID, str]]:
+    with engine.connect() as connection:
+        return [
+            (row[0], row[1])
+            for row in connection.execute(
+                text("SELECT doc_id, claim_text FROM claims ORDER BY claim_text")
+            ).all()
+        ]
+
+
+def _facts(engine: Engine) -> set[tuple[str, str, str, int]]:
+    """Current relations by endpoint names, with their evidence counts."""
+    with engine.connect() as connection:
+        return {
+            (row[0], row[1], row[2], row[3])
+            for row in connection.execute(
+                text(
+                    "SELECT s.canonical_name, r.predicate, o.canonical_name,"
+                    " (SELECT count(*) FROM relation_evidence e"
+                    "  WHERE e.relation_id = r.relation_id)"
+                    " FROM relations r"
+                    " JOIN entities s ON s.entity_id = r.subject_entity_id"
+                    " JOIN entities o ON o.entity_id = r.object_entity_id"
+                    " WHERE r.invalidated_at IS NULL"
+                )
+            ).all()
+        }
 
 
 class _HeldRegistration:
