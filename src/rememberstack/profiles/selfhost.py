@@ -1344,7 +1344,7 @@ class SelfHostProfile:
         if trust is not None:
             attach_perimeter_trust_refresh(app=app, trust=trust)
 
-        @app.get("/healthz", include_in_schema=False)
+        @app.get("/healthz", tags=["liveness"], include_in_schema=False)
         def healthz() -> dict[str, str]:
             """Prove the process can reach its authoritative PostgreSQL spine."""
             with self._engine.connect() as connection:

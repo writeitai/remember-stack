@@ -182,12 +182,16 @@ def test_build_api_does_not_register_export() -> None:
 
 def test_export_accepts_export_token_and_rejects_customer_token() -> None:
     """Export auth is a dedicated bearer, not the query perimeter."""
+    reader = _FakeReader()
     app = build_cost_export_app(
-        reader=_FakeReader(),
+        reader=reader,
         deployment_id=_DEPLOYMENT,
         token=_EXPORT_TOKEN,
         bucket=_TokenBucket(rate_per_s=10.0, capacity=10.0),
     )
+    schema = app.openapi()
+    assert set(schema["paths"]) == {"/ops/cost-export/v1"}
+    assert schema["paths"]["/ops/cost-export/v1"]["get"]["tags"] == ["operator"]
     client = TestClient(app)
     denied = client.get("/ops/cost-export/v1")
     assert denied.status_code == 401
@@ -196,6 +200,7 @@ def test_export_accepts_export_token_and_rejects_customer_token() -> None:
         "/ops/cost-export/v1", headers={"Authorization": f"Bearer {_CUSTOMER_TOKEN}"}
     )
     assert wrong.status_code == 401
+    assert not reader.calls
     ok = client.get(
         "/ops/cost-export/v1", headers={"Authorization": f"Bearer {_EXPORT_TOKEN}"}
     )

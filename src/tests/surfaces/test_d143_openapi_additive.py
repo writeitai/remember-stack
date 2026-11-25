@@ -13,7 +13,7 @@ selector of the document search filter; D156 step 3 adds the filtered fact
 read's optional ``in_documents_filter`` marks and matching evidence total.
 D159 adds the forget routes, their record schemas and the optional
 ``allow_forgotten`` query parameter on ``POST /ingest``.
-Those are stripped too.
+Those are stripped too, along with the additive operation audience tags.
 """
 
 from __future__ import annotations
@@ -103,7 +103,8 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
         stripped["paths"].pop(path, None)
     for operations in stripped["paths"].values():
         for operation in operations.values():
-            if not isinstance(operation, dict) or "parameters" not in operation:
+            operation.pop("tags", None)
+            if "parameters" not in operation:
                 continue
             kept = [
                 p

@@ -33,6 +33,9 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.lifecycle import archive_reconciliation_id
 from rememberstack.spine.migrations.versions import p9_55_0076_archive as migration
+from rememberstack.spine.migrations.versions import (
+    p9_56_0077_settled_source_archives as settled_migration,
+)
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import DocumentArchiver
 from tests.database_reset import reset_database
@@ -66,13 +69,18 @@ def migration_config() -> Iterator[tuple[Config, Engine]]:
         command.upgrade(config=config, revision="head")
 
 
-def test_archive_reconciliation_id_matches_the_frozen_upgrade_copy() -> None:
-    """The upgrade relabels with the same id the runtime derives."""
+def test_archive_reconciliation_id_matches_the_frozen_upgrade_copies() -> None:
+    """The upgrades derive the same id the runtime derives."""
     doc_id = uuid4()
     at = datetime.fromisoformat("2026-11-20T10:11:12.123456+01:00")
-    assert migration.archive_reconciliation_id(
-        doc_id=doc_id, archived_at=at
-    ) == archive_reconciliation_id(doc_id=doc_id, archived_at=at)
+    expected = archive_reconciliation_id(doc_id=doc_id, archived_at=at)
+    assert (
+        migration.archive_reconciliation_id(doc_id=doc_id, archived_at=at) == expected
+    )
+    assert (
+        settled_migration.archive_reconciliation_id(doc_id=doc_id, archived_at=at)
+        == expected
+    )
 
 
 def _bootstrap(engine: Engine) -> None:
@@ -396,58 +404,61 @@ def test_a_d135_caller_closure_rendered_in_a_session_offset_is_relabelled(
 def test_the_upgrade_marks_source_archives_an_earlier_release_settled(
     migration_config: tuple[Config, Engine], tmp_path: Path
 ) -> None:
-    """p9_56_0077: a source archive whose cycle finalized and whose claims are
-    no longer current is settled; one still waiting keeps its cycle."""
+    """p9_56_0077 judges by what a first cascade leaves behind. Settled: a
+    currency event carries the archive's id (here an archive an earlier
+    release settled after a later poll released its abandoned cycle), or no
+    claim is current and no open fact is this lineage's alone. Unsettled and
+    kept: a current claim, or an open fact only this lineage evidences."""
     config, engine = migration_config
     reset_database(config=config)
     command.upgrade(config=config, revision="head")
     _bootstrap(engine)
     rig = _LifecycleRig(engine=engine, root=tmp_path)
-    settled = rig.observe(source_ref="settled.md", content=f"{_FACT_SENTENCE}\n")
-    reopened = rig.observe(source_ref="reopened.md", content="Bob runs the depot.\n")
-    waiting = rig.observe(source_ref="waiting.md", content="Acme opened an office.\n")
+    released = rig.observe(source_ref="released.md", content="Acme opened an office.\n")
+    idle = rig.observe(source_ref="idle.md", content="Bob runs the depot.\n")
+    waiting = rig.observe(source_ref="waiting.md", content="Carol paints boats.\n")
+    alone = rig.observe(source_ref="alone.md", content=f"{_FACT_SENTENCE}\n")
     rig.drain()
+    archiver = DocumentArchiver(engine=engine, profile_refresher=rig.profile_refresher)
+    archiver.archive_document(deployment_id=_DEPLOYMENT_ID, doc_id=released.doc_id)
+    assert rig.relation()["invalidated_at"] is None
     command.downgrade(config=config, revision="p9_55_0076")
-    finalized, backfilled, open_cycle = uuid4(), uuid4(), uuid4()
+    abandoned = uuid4()
     with engine.begin() as connection:
-        for cycle, finalized_at, reopened_at in (
-            (finalized, "now()", "NULL"),
-            # finalized once, then reopened by a D143 layer backfill
-            (backfilled, "NULL", "now()"),
-            (open_cycle, "NULL", "NULL"),
-        ):
-            connection.execute(
-                text(
-                    "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
-                    " source_kind, completed_at, finalized_at, layers_reopened_at)"
-                    f" VALUES (:c, :d, 'watched_directory', now(), {finalized_at},"
-                    f" {reopened_at})"
-                ),
-                {"c": cycle, "d": _DEPLOYMENT_ID},
-            )
-        for doc_id in (settled.doc_id, reopened.doc_id):
+        connection.execute(
+            text(
+                "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
+                " source_kind) VALUES (:c, :d, 'watched_directory')"
+            ),
+            {"c": abandoned, "d": _DEPLOYMENT_ID},
+        )
+        for doc_id in (idle.doc_id, alone.doc_id):
             connection.execute(
                 text(
                     "UPDATE claims SET is_current_testimony = false WHERE doc_id = :d"
                 ),
                 {"d": doc_id},
             )
-        for doc_id, cycle in (
-            (settled.doc_id, finalized),
-            (reopened.doc_id, backfilled),
-            (waiting.doc_id, open_cycle),
-        ):
+        connection.execute(
+            text(
+                "UPDATE documents SET archived_by = 'source', archived_cycle_id = :c"
+                " WHERE doc_id = :d"
+            ),
+            {"c": abandoned, "d": released.doc_id},
+        )
+        for doc_id in (idle.doc_id, waiting.doc_id, alone.doc_id):
             connection.execute(
                 text(
                     "UPDATE documents SET archived_at = now(), archived_by = 'source',"
                     " archived_cycle_id = :c WHERE doc_id = :d"
                 ),
-                {"c": cycle, "d": doc_id},
+                {"c": abandoned, "d": doc_id},
             )
 
     command.upgrade(config=config, revision="head")
 
     marker = "SELECT archived_cycle_id FROM documents WHERE doc_id = :d"
-    assert _scalar(engine, marker, d=settled.doc_id) is None
-    assert _scalar(engine, marker, d=reopened.doc_id) is None
-    assert _scalar(engine, marker, d=waiting.doc_id) == open_cycle
+    assert _scalar(engine, marker, d=released.doc_id) is None
+    assert _scalar(engine, marker, d=idle.doc_id) is None
+    assert _scalar(engine, marker, d=waiting.doc_id) == abandoned
+    assert _scalar(engine, marker, d=alone.doc_id) == abandoned
