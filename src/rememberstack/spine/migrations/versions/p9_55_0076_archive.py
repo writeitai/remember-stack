@@ -456,6 +456,23 @@ _CLEAR_EPISODE_TOMBSTONES = text(
     """
 )
 
+_EPISODE_CASCADED = text(
+    """
+    SELECT EXISTS (
+               SELECT 1 FROM testimony_currency_events e
+               WHERE e.reconciliation_id = :rid
+           )
+        OR EXISTS (
+               SELECT 1 FROM relation_adjudications a
+               WHERE a.features ->> 'reconciliation_id' = CAST(:rid AS text)
+           )
+        OR EXISTS (
+               SELECT 1 FROM observation_adjudications a
+               WHERE a.features ->> 'reconciliation_id' = CAST(:rid AS text)
+           )
+    """
+)
+
 _ARCHIVE_LINEAGE = text(
     """
     UPDATE documents
@@ -535,12 +552,17 @@ def upgrade() -> None:
                 statement, {**params, "rid": str(rid), "run_ids": run_ids}
             )
         connection.execute(_CLEAR_EPISODE_TOMBSTONES, params)
+        # A source archive still waits only if D135's cascade never ran: its
+        # cycle never finalized and nothing the episode wrote (now relabelled
+        # to the archive's id) exists. An earlier finalizer could cascade a
+        # stranded deletion before its cycle finalized.
+        cascaded = connection.execute(_EPISODE_CASCADED, {"rid": rid}).scalar_one()
         connection.execute(
             _ARCHIVE_LINEAGE,
             {
                 "doc_id": doc_id,
                 "archived_by": row["archived_by"],
-                "cycle_id": row["archived_cycle_id"],
+                "cycle_id": None if cascaded else row["archived_cycle_id"],
             },
         )
     apply_view_ddl(sql=DOCUMENTS_INVENTORY_DDL)
