@@ -1,6 +1,9 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, Github } from "lucide-react";
+import { docsPageMetadata } from "@/lib/docs/metadata";
+
+export const metadata = docsPageMetadata("/docs/");
 
 export default function Home() {
   return (

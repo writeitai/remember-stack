@@ -37,6 +37,10 @@ The production identity is copied from
 small presentation assets locally so its GitHub Pages artifact has no runtime
 dependency on the managed-cloud origin.
 
+The docs favicon at `public/favicon.ico` is the approved app ICO from
+`writeitai/ultimate-memory-cloud@51d117a27bacee6eea6c33b9a7f8f9f1f7f9e4ec:fe/public/favicon.ico`.
+The declared SVG icon and the social preview both use the existing brain mark.
+
 When that source contract changes, update the local tokens and vector together,
 refresh the pinned provenance above and in
 `plan/designs/docs_site_design.md`, then verify desktop and mobile layouts.
@@ -176,6 +180,8 @@ The documentation site is deployed canonically at **`https://remember.dev/docs`*
 - The Cloudflare Pages Function on `remember.dev` proxies `/docs` and `/docs/*` to `https://docs.remember.dev` with the path preserved. `/pagefind/*` is also proxied for compatibility.
 - GitHub Pages **must retain the custom domain `docs.remember.dev`**, and its DNS-only CNAME must point to `writeitai.github.io`. Removing the repository custom domain produces GitHub 404s at both addresses even when the build and deploy succeed.
 - `docs.remember.dev` currently serves the documentation directly; it does **not** redirect to the canonical site. Redirecting that hostname back to `remember.dev/docs` would loop because it is also the proxy origin. A future redirect cutover needs a separate, verified origin first.
+- The origin's `/` page declares `https://remember.dev/docs/` as its canonical URL. Each `/docs/` page declares its own canonical URL on the apex and uses its MDX title and description for social previews.
+- The origin's `robots.txt` points to `https://remember.dev/sitemap.xml`. The apex sitemap gets its docs routes from the generated origin `/llms.txt` index. After building, run `python ../scripts/check_docs_seo.py` from `website/` to check that the index matches the exported docs and that the export contains the expected metadata and assets.
 
 ### Hosting recovery and verification
 

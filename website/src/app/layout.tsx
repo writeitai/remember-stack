@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "@/components/site/SiteHeader";
+import { docsPageMetadata } from "@/lib/docs/metadata";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -13,11 +14,9 @@ const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
 });
 
-const siteUrl = "https://remember.dev";
-const docsUrl = "https://remember.dev/docs";
-
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  ...docsPageMetadata("./"),
+  metadataBase: new URL("https://remember.dev"),
   title: {
     default: "Remember — Documentation",
     template: "%s — Remember",
@@ -25,17 +24,10 @@ export const metadata: Metadata = {
   description:
     "Open memory infrastructure for AI agents: auditable, navigable knowledge at scale.",
   icons: {
-    icon: "/brand/mark.svg",
-  },
-  openGraph: {
-    title: "Remember — Documentation",
-    description:
-      "A memory system for AI agents: millions of documents distilled into auditable, navigable knowledge.",
-    siteName: "Remember Documentation",
-    type: "website",
-  },
-  alternates: {
-    canonical: "./",
+    icon: [
+      { url: "/favicon.ico", type: "image/x-icon", sizes: "16x16 32x32 48x48" },
+      { url: "/brand/mark.svg", type: "image/svg+xml", sizes: "any" },
+    ],
   },
 };
 
