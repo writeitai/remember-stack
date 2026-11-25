@@ -27,9 +27,9 @@ on that saved data.
 
 ## Published results
 
-**94.09% LLM-judge accuracy: 1,449 / 1,540 correct** with the Mem0-style judge,
-completed November 16, 2026. Both grading passes cover the same saved answers
-to all category 1–4 questions in ten conversations:
+RememberStack completed this run on November 16, 2026. Two LLM judges graded
+the same saved answers to all 1,540 category 1–4 questions across ten
+conversations, excluding the 446 adversarial questions.
 
 | Grading policy | Correct answers | Accuracy |
 | --- | ---: | ---: |
@@ -74,6 +74,37 @@ The Mem0-style pass accepted 64 answers rejected by the native judge and
 rejected five native successes, for a net increase of 59. Every question keeps
 both labels. These are LLM-judged accuracy scores; the harness also records
 official token-overlap F1 separately.
+
+### Separately published Mem0 and Hindsight results
+
+Each vendor published results from its own evaluation. The runs use different
+retrieval setups, answer models and judges. The scores support conclusions about
+each run under its own setup.
+
+- **Mem0 Platform.** Mem0's results table reports **92.5% (1,425/1,540)** with
+  its managed v3 pipeline at top-200 retrieval and **91.8% (1,414/1,540)** at
+  top 50. [Mem0's benchmark results](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/README.md#locomo)
+  (retrieved 2026-11-25).
+- **Mem0's other published figures.** The linked top-200 data file records
+  **91.56% (1,410/1,540)** for categories 1–4, using `gpt-5` on Azure to answer
+  and grade. Those settings describe the file's 91.56% result. The Mem0 paper
+  reports LLM-judge scores of **66.88%** for Mem0 and **68.44%** for its graph
+  variant. [Top-200 data file](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/results/platform/locomo_results.json),
+  [Mem0 paper](https://arxiv.org/html/2504.19413) (both retrieved 2026-11-25).
+- **Hindsight v0.4.19.** Vectorize's Agent Memory Benchmark reports **92.0%
+  (1,417/1,540)** in single-query mode. One retrieval call supplies context to
+  `gemini-3.1-pro-preview` for answering, and `gemini-2.5-flash-lite` grades the
+  answers. [Hindsight's benchmark post](https://hindsight.vectorize.io/blog/2026/03/23/agent-memory-benchmark#hindsight-on-the-new-baseline),
+  [published run data](https://github.com/vectorize-io/agent-memory-benchmark/blob/9905feb48f7f0a820629ac06a88b75ecfef77b7f/outputs/locomo/locomo-hindsight/rag/locomo10.json.gz)
+  (both retrieved 2026-11-25).
+- **Hindsight's other published figures.** The conversations leaderboard
+  reports **85.5%** on a filtered set of 1,502 questions across ten
+  conversations, using Hindsight's `reflect` operation with `gemma-4-26b-a4b`
+  and a `gemini-3.1-flash-lite` judge. The Hindsight paper reports **83.18%**
+  with OSS-20B, **85.67%** with OSS-120B and **89.61%** with Gemini 3 Pro.
+  [Conversations leaderboard](https://benchmarks.hindsight.vectorize.io/leaderboards/conversations),
+  [Hindsight paper, Table 4](https://arxiv.org/html/2512.12818#S7.T4)
+  (both retrieved 2026-11-25).
 
 ### Running the separate judge on saved answers
 
