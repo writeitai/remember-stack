@@ -11127,7 +11127,7 @@ for it; it will not become ready on its own.
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
 | `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
-| `422` | `ambiguous_office_format` | Legacy Office container bytes have no declared Word, Excel or PowerPoint subtype. |
+| `422` | `ambiguous_office_format` | Legacy Office container bytes name no single Word, Excel or PowerPoint document. |
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
 
 A self-hosted deployment has no body cap unless you set
@@ -21261,7 +21261,7 @@ their code in `code`. `wait_for_readiness` raises
 | `413` | `body_too_large` | The ingest body is over the cap. | Split the document. |
 | `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
 | `422` | `content_type_mismatch` | The ingest MIME hint contradicts the detected byte class. Nothing was stored. | Send the correct file and a compatible MIME hint. |
-| `422` | `ambiguous_office_format` | A legacy Office container needs a Word, Excel or PowerPoint subtype. | Supply the matching legacy Office MIME. |
+| `422` | `ambiguous_office_format` | A legacy Office container names no single Word, Excel or PowerPoint document. | Save the file again from its Office application, or in a current format. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |

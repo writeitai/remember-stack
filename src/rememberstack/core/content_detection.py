@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import codecs
+from email import policy as email_policy
+from email.parser import BytesHeaderParser
 import io
 import itertools
 import mmap
@@ -13,6 +15,7 @@ from typing import IO
 import zipfile
 
 from rememberstack.core.format_registry import family_for_mime
+from rememberstack.core.format_registry import SNIFF_BYTES
 from rememberstack.model.content_detection import ContentDetectionError
 
 _OFFICE_MIMES = {
@@ -26,6 +29,15 @@ _OFFICE_MIMES = {
     "application/vnd.oasis.opendocument.spreadsheet",
     "application/vnd.oasis.opendocument.presentation",
 }
+_OFFICE_FAMILIES = frozenset({"word", "presentation", "spreadsheet"})
+"""Registry families whose declared spellings (templates, macro-enabled
+documents) are Office packages."""
+_TEXT_FAMILIES = frozenset(
+    {"markdown", "text", "other_text", "log", "code", "config", "html"}
+    | {"delimited", "email", "notebook", "binary"}
+)
+"""Registry families a text-class declaration may name (``binary`` included:
+it decides nothing)."""
 _TEXT_HINTS = {"text/markdown", "text/x-markdown"}
 _TEXT_APPLICATION_HINTS = {
     "application/javascript",
@@ -404,6 +416,215 @@ def _office_zip_mime(*, content: Content) -> str | None:
     return None
 
 
+_CFB_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_CFB_STREAM_MIMES = {
+    "worddocument": "application/msword",
+    "workbook": "application/vnd.ms-excel",
+    "book": "application/vnd.ms-excel",
+    "powerpoint document": "application/vnd.ms-powerpoint",
+}
+"""Root streams that name a legacy Office subtype (MS-DOC, MS-XLS, MS-PPT),
+case-folded: compound-file names compare without case."""
+_CFB_LAST_SECTOR = 0xFFFFFFFA
+_CFB_END_OF_CHAIN = 0xFFFFFFFE
+_CFB_NO_STREAM = 0xFFFFFFFF
+_CFB_MAX_SECTORS = 4096
+"""Directory, FAT and DIFAT sectors read at most: a bound on crafted chains."""
+
+
+def _u32(data: bytes, offset: int) -> int:
+    """A little-endian unsigned 32-bit field."""
+    return int.from_bytes(data[offset : offset + 4], "little")
+
+
+def _ole_office_mime(*, content: Content) -> str | None:
+    """The legacy Office subtype an OLE file's root streams name, or None.
+
+    Reads the compound file's header, its whole DIFAT (the declared number of
+    DIFAT sectors, ended by ENDOFCHAIN), the FAT sectors it needs and the
+    directory chain (MS-CFB), bounded by :data:`_CFB_MAX_SECTORS`. Any
+    malformed structure (a sector outside the file, a repeated sector, a
+    chain not ended by ENDOFCHAIN, a directory link that is neither NOSTREAM
+    nor an entry, a revisited entry) gives None. Only the root storage's own
+    children count, so an embedded object's streams do not; None when no
+    subtype or more than one is named.
+    """
+    header = bytes(content[:512])
+    if len(header) < 512 or not header.startswith(_CFB_SIGNATURE):
+        return None
+    shift = int.from_bytes(header[30:32], "little")
+    if shift not in (9, 12):
+        return None
+    size = 1 << shift
+    per_sector = size // 4
+    reads = 0
+
+    def sector(sid: int) -> bytes | None:
+        nonlocal reads
+        reads += 1
+        if reads > _CFB_MAX_SECTORS or sid > _CFB_LAST_SECTOR:
+            return None
+        start = (sid + 1) * size
+        data = bytes(content[start : start + size])
+        return data if len(data) == size else None
+
+    fat_count = _u32(header, 44)
+    difat = [_u32(header, 76 + 4 * index) for index in range(109)]
+    next_difat = _u32(header, 68)
+    difat_seen: set[int] = set()
+    for _ in range(_u32(header, 72)):
+        if next_difat in difat_seen:
+            return None
+        difat_seen.add(next_difat)
+        block = sector(next_difat)
+        if block is None:
+            return None
+        difat.extend(_u32(block, 4 * i) for i in range(per_sector - 1))
+        next_difat = _u32(block, size - 4)
+    fats = difat[:fat_count]
+    sectors_in_file = len(content) // size - 1
+    if (
+        next_difat != _CFB_END_OF_CHAIN
+        or len(fats) < fat_count
+        or len(set(fats)) < fat_count
+        or any(fat >= sectors_in_file for fat in fats)
+    ):
+        return None
+
+    entries: list[bytes] = []
+    directory_seen: set[int] = set()
+    sid = _u32(header, 48)
+    while sid != _CFB_END_OF_CHAIN:
+        index, slot = divmod(sid, per_sector)
+        if sid in directory_seen or index >= fat_count:
+            return None
+        directory_seen.add(sid)
+        data = sector(sid)
+        fat = sector(fats[index])
+        if data is None or fat is None:
+            return None
+        entries.extend(data[offset : offset + 128] for offset in range(0, size, 128))
+        sid = _u32(fat, 4 * slot)
+    declared_sectors = _u32(header, 40)
+    if shift == 12 and declared_sectors != len(directory_seen):
+        return None
+    if not entries or entries[0][66] != 5:
+        return None
+    found: set[str] = set()
+    pending = [(_u32(entries[0], 76), True)]
+    seen = {0}
+    while pending:
+        index, at_root = pending.pop()
+        if index == _CFB_NO_STREAM:
+            continue
+        if index >= len(entries) or index in seen:
+            return None
+        seen.add(index)
+        entry = entries[index]
+        length = int.from_bytes(entry[64:66], "little")
+        if at_root and entry[66] == 2 and 2 <= length <= 64:
+            name = entry[: length - 2].decode("utf-16-le", errors="replace")
+            if name.casefold() in _CFB_STREAM_MIMES:
+                found.add(_CFB_STREAM_MIMES[name.casefold()])
+        pending.extend(((_u32(entry, 68), at_root), (_u32(entry, 72), at_root)))
+        if entry[66] == 1:
+            pending.append((_u32(entry, 76), False))
+    return found.pop() if len(found) == 1 else None
+
+
+_BLANK_LINE = re.compile(rb"\r?\n\r?\n")
+"""The blank line that ends an Internet message's header block."""
+_RFC822_HEADER = re.compile(rb"[\x21-\x39\x3b-\x7e]+:")
+_RFC822_MAIL_FIELDS = ("To", "Date", "Subject", "Message-ID", "Received")
+"""Fields besides ``From`` that mark a header block as an Internet message."""
+_UTF16_TEXT_MIMES = frozenset({"text/csv", "text/tab-separated-values"})
+"""Text the delimited reader decodes from a UTF-16 byte-order mark."""
+
+
+def _clean_through_end(*, content: Content, decoder: Any, skip: int) -> bool:
+    """Decode the whole file a window at a time; no error, no control character."""
+    for start in range(skip, max(len(content), skip + 1), _TEXT_CHUNK_BYTES):
+        window = bytes(content[start : start + _TEXT_CHUNK_BYTES])
+        try:
+            text = decoder.decode(window, final=start + len(window) >= len(content))
+        except UnicodeDecodeError:
+            return False
+        if _CONTROL_CHARACTERS.search(text):
+            return False
+    return True
+
+
+def _is_utf16_text(*, content: Content) -> bool:
+    """A UTF-16 byte-order mark, then text without control characters to the end."""
+    return bytes(content[:2]) in {
+        codecs.BOM_UTF16_LE,
+        codecs.BOM_UTF16_BE,
+    } and _clean_through_end(
+        content=content, decoder=codecs.getincrementaldecoder("utf-16")(), skip=0
+    )
+
+
+def _looks_like_rfc822(*, content: Content) -> bool:
+    """An Internet message: mail header fields, a blank line, a text body.
+
+    For a message whose body is not UTF-8 (an 8-bit transfer encoding); a
+    UTF-8 message is already text. The header block has no binary control
+    characters and parses without defects, with a well-formed ``From``
+    mailbox and another non-empty mail field (To, Date, Subject, Message-ID
+    or Received); the whole body (decoded as Latin-1) has no binary control
+    characters.
+    """
+    head = bytes(content[:SNIFF_BYTES])
+    blank = _BLANK_LINE.search(head)
+    if blank is None or b"\x00" in head[: blank.start()]:
+        return False
+    block = head[: blank.start()].replace(b"\r\n", b"\n")
+    for line in block.split(b"\n"):
+        if line[:1] not in {b" ", b"\t"} and not _RFC822_HEADER.match(line):
+            return False
+    if _CONTROL_CHARACTERS.search(block.decode("latin-1")):
+        return False
+    try:
+        headers = BytesHeaderParser(policy=email_policy.default).parsebytes(
+            block + b"\n\n"
+        )
+        sender = headers["From"]
+        mailbox = (
+            sender is not None
+            and not sender.defects
+            and any(address.username and address.domain for address in sender.addresses)
+        )
+        corroborated = any(
+            str(headers.get(name, "")).strip() for name in _RFC822_MAIL_FIELDS
+        )
+    except (ValueError, TypeError, IndexError, AttributeError, RecursionError):
+        # A header the mail parser cannot read (deeply nested comments recurse)
+        # is not a message.
+        return False
+    if headers.defects or not (mailbox and corroborated):
+        return False
+    return _clean_through_end(
+        content=content,
+        decoder=codecs.getincrementaldecoder("latin-1")(),
+        skip=blank.end(),
+    )
+
+
+def sniffed_text_mimes(*, content: Content) -> frozenset[str]:
+    """Stored types a non-UTF-8 text body may take, from its bytes alone.
+
+    UTF-16 text (a byte-order mark, then text without control characters to
+    the end) may be a delimited file, which the table reader decodes; as with
+    UTF-8 text, the name or declaration picks that family within the class; an Internet message with an 8-bit body may be
+    an email. Other bytes that are not UTF-8 take none.
+    """
+    if _is_utf16_text(content=content):
+        return _UTF16_TEXT_MIMES
+    if _looks_like_rfc822(content=content):
+        return frozenset({"message/rfc822"})
+    return frozenset()
+
+
 def _detected_mime(*, content: Content) -> str:
     """Choose a class from signatures, package structure, or strict UTF-8."""
     if has_pdf_body(content=content):
@@ -448,17 +669,21 @@ def _detected_mime(*, content: Content) -> str:
     bmff = _bmff_mime(content=content)
     if bmff is not None:
         return bmff
-    if _looks_like_adts(content=content):
+    # A UTF-16 little-endian byte-order mark (FF FE) is also an MPEG-1 Layer I
+    # frame sync, a layer real files practically never use; it is text, not
+    # audio.
+    utf16 = _starts(content, codecs.BOM_UTF16_LE)
+    if not utf16 and _looks_like_adts(content=content):
         return "audio/aac"
-    if _looks_like_mpeg_frame(content=content):
+    if not utf16 and _looks_like_mpeg_frame(content=content):
         return "audio/mpeg"
     if _starts(content, b"PK\x03\x04"):
         office = _office_zip_mime(content=content)
         if office is not None:
             return office
         return "application/octet-stream"
-    if _starts(content, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        return "application/x-ole-office"
+    if _starts(content, _CFB_SIGNATURE):
+        return _ole_office_mime(content=content) or "application/x-ole-office"
     # Strict UTF-8 without control characters, decoded a window at a time.
     # For the HTML opener only the first characters after the leading
     # whitespace matter; collapsing each whitespace run to one space keeps
@@ -485,6 +710,18 @@ def _detected_mime(*, content: Content) -> str:
     return "text/plain"
 
 
+def _is_office_package_declaration(*, declared: str) -> bool:
+    """A declared spelling of a Word, presentation or spreadsheet package.
+
+    Templates, slideshows and macro-enabled documents count; RTF, a text
+    format the word family also reads, does not.
+    """
+    return (
+        declared != "application/rtf"
+        and family_for_mime(mime=declared).name in _OFFICE_FAMILIES
+    )
+
+
 def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     """Return byte-authoritative MIME, refusing a contradictory declaration."""
     detected = _detected_mime(content=content)
@@ -492,38 +729,55 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
     declared = _IMAGE_MIME_ALIASES.get(declared, declared)
     declared = _AUDIO_MIME_ALIASES.get(declared, declared)
     if detected == "application/octet-stream":
+        sniffed = sniffed_text_mimes(content=content)
+        if sniffed:
+            # Text the bytes allow for these families: E0's registry routing
+            # picks the family (name first, then declaration), as for UTF-8;
+            # a declaration of a non-text family contradicts the bytes.
+            if (
+                declared not in {"", "application/octet-stream"}
+                and declared not in sniffed
+                and not declared.startswith("text/")
+                and family_for_mime(mime=declared).name not in _TEXT_FAMILIES
+            ):
+                raise ContentDetectionError(code="content_type_mismatch")
+            return detected
         if (
             declared.startswith(("text/", "image/", "audio/", "video/"))
             or declared == "application/pdf"
             or declared in _OFFICE_MIMES
+            or _is_office_package_declaration(declared=declared)
         ):
             raise ContentDetectionError(code="content_type_mismatch")
         return detected
     if detected.startswith("text/"):
         if detected == "text/html":
-            if declared not in {
-                "",
-                "application/octet-stream",
-                "text/plain",
-                "text/html",
-            }:
+            if (
+                declared not in {"", "application/octet-stream", "text/plain"}
+                and family_for_mime(mime=declared).name != "html"
+            ):
                 raise ContentDetectionError(code="content_type_mismatch")
             return detected
         if (
             declared not in {"", "application/octet-stream"}
             and declared not in _TEXT_APPLICATION_HINTS
             and not declared.startswith("text/")
-            and family_for_mime(mime=declared).name != "binary"
+            and family_for_mime(mime=declared).name not in _TEXT_FAMILIES
         ):
             raise ContentDetectionError(code="content_type_mismatch")
         return "text/markdown" if declared in _TEXT_HINTS else "text/plain"
+    if detected == "application/x-ole-office":
+        # Its root streams named no Word, Excel or PowerPoint document (or
+        # more than one); no declaration decides what the bytes do not.
+        raise ContentDetectionError(code="ambiguous_office_format")
     detected_class = (
-        "office"
-        if detected in _OFFICE_MIMES or detected == "application/x-ole-office"
-        else detected.split("/", 1)[0]
+        "office" if detected in _OFFICE_MIMES else detected.split("/", 1)[0]
     )
     declared_class = (
-        "office" if declared in _OFFICE_MIMES else declared.split("/", 1)[0]
+        "office"
+        if declared in _OFFICE_MIMES
+        or _is_office_package_declaration(declared=declared)
+        else declared.split("/", 1)[0]
     )
     if (
         declared not in {"", "application/octet-stream"}
@@ -546,12 +800,4 @@ def detect_content_mime(*, content: Content, declared_mime: str) -> str:
         and declared != detected
     ):
         raise ContentDetectionError(code="content_type_mismatch")
-    if detected == "application/x-ole-office":
-        if declared in {
-            "application/msword",
-            "application/vnd.ms-excel",
-            "application/vnd.ms-powerpoint",
-        }:
-            return declared
-        raise ContentDetectionError(code="ambiguous_office_format")
     return detected

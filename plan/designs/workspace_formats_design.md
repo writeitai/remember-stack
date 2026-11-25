@@ -120,7 +120,7 @@ sent to a head/tail profile.
 | `image` | png, jpg, jpeg, gif, webp, tif, tiff, bmp, heic, avif, psd | card (the D115 route when providers are configured) | card |
 | `media` | wav, mp3, m4a, flac, ogg, aac, mp4, mov, webm, mkv, avi | card | card |
 | `archive` | zip, tar (and compound tar), 7z, rar, gz, bz2, xz, zst | card | card; member listing for zip and tar |
-| `binary` | pages, numbers, key, msg, mbox, rds, rdata, everything else, and unrecognized bytes | card | card |
+| `binary` | pages, numbers, key, mbox, rds, rdata, everything else, and unrecognized bytes (an Outlook `.msg` is refused at upload as `ambiguous_office_format`: D132 reads OLE subtypes from the bytes and no reader exists) | card | card |
 
 The table states each family's successful conversion outcome; §3 states the
 PDF's typed failure at its effective size limit.
