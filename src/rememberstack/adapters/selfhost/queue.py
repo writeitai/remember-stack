@@ -207,7 +207,7 @@ class SelfHostWorkerLoop:
                     while not self._wake_pending and not stop.is_set():
                         self._wake.wait()
                     self._wake_pending = False
-        except BaseException as error:  # re-raised by run_for
+        except BaseException as error:  # error-contract: raised later by run_for
             errors.append(error)
             stop.set()
             with self._wake:

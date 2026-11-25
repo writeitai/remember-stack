@@ -28,7 +28,9 @@ def run_with_time_limit[T](*, work: Callable[[], T], what: str) -> T:
     def _target() -> None:
         try:
             results.append(work())
-        except BaseException as err:  # re-raised in the calling thread
+        except (  # error-contract: raised later in the calling thread
+            BaseException
+        ) as err:
             errors.append(err)
 
     thread = threading.Thread(target=_target, name=f"convert-{what}", daemon=True)

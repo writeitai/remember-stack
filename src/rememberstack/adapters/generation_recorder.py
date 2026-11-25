@@ -259,15 +259,15 @@ class OtelSpanRecorder:
         """Emit one span. Swallows delivery errors into a warning."""
         try:
             self._emit(record=record)
-        except Exception as error:
-            _logger.warning("generation record span dropped: %s", error)
+        except Exception:  # error-contract: exempt optional telemetry export
+            _logger.warning("Generation record span was dropped.")
 
     def flush(self) -> None:
         """Push buffered spans. Swallows delivery errors into a warning."""
         try:
             self._flusher()
-        except Exception as error:
-            _logger.warning("generation record flush dropped: %s", error)
+        except Exception:  # error-contract: exempt optional telemetry export
+            _logger.warning("Generation record flush failed.")
 
     def _emit(self, *, record: GenerationRecord) -> None:
         """Send one span with the full prompt and raw completion attached."""

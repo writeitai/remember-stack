@@ -9,11 +9,13 @@ the query path — operator performance directive, 2026-08-04).
 """
 
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 import json
+import logging
 import time
 from typing import Final
 from typing import Protocol
@@ -50,12 +52,15 @@ from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
+from rememberstack.surfaces.query_sandbox.nomination import BudgetRejection
 from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.result import GraphInvocation
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
 from rememberstack.surfaces.query_sandbox.result import ResultLimits
 from rememberstack.surfaces.query_sandbox.result import SemanticInvocation
+
+_logger = logging.getLogger(__name__)
 
 # The only relations whose reference permits a non-null `evaluated_at` (§4.4:
 # every referenced relation must be current/as-of fact/graph surface).
@@ -102,7 +107,97 @@ _TYPE_NAMES: Final = {
 }
 
 
-def _type_name(cursor: psycopg.Cursor, oid: int) -> str:
+def _report_query_failure(
+    *, error: SandboxRejection | psycopg.Error, deadline_passed: bool
+) -> None:
+    """Log the original operational cause without SQL, values or a traceback."""
+    if isinstance(error, SandboxRejection) and error.code not in {
+        QueryErrorCode.SCHEMA_VERSION_MISMATCH,
+        QueryErrorCode.STATEMENT_TIMEOUT,
+        QueryErrorCode.EXECUTION_ERROR,
+        QueryErrorCode.PG_UNAVAILABLE,
+        QueryErrorCode.P1_UNAVAILABLE,
+        QueryErrorCode.GRAPH_UNAVAILABLE,
+        QueryErrorCode.CORPUS_BODY_UNAVAILABLE,
+        QueryErrorCode.CONFIRMATION_FAILED,
+    }:
+        return
+    if deadline_passed and budget_exhausted(error):
+        return
+    cause: BaseException = error
+    seen = {id(cause)}
+    while True:
+        original = getattr(cause, "orig", None)
+        next_cause = (
+            original if isinstance(original, BaseException) else cause.__cause__
+        )
+        if next_cause is None or id(next_cause) in seen:
+            break
+        seen.add(id(next_cause))
+        cause = next_cause
+    exception_type = type(cause).__name__
+    sqlstate = getattr(cause, "sqlstate", None)
+    if isinstance(cause, psycopg.Error) or (
+        isinstance(error, SandboxRejection)
+        and error.code
+        in {QueryErrorCode.SCHEMA_VERSION_MISMATCH, QueryErrorCode.PG_UNAVAILABLE}
+    ):
+        _logger.error(
+            "The query sandbox database operation failed.",
+            extra={
+                "error_code": "query_database_failed",
+                "sqlstate": sqlstate,
+                "exception_type": exception_type,
+            },
+        )
+    else:
+        _logger.error(
+            "A query sandbox dependency failed.",
+            extra={
+                "error_code": "query_dependency_unavailable",
+                "sqlstate": sqlstate,
+                "exception_type": exception_type,
+            },
+        )
+
+
+def _database_failure_result(
+    *, error: psycopg.Error, uses_graph_helper: bool
+) -> tuple[QueryErrorCode, str]:
+    """Map an execution error to the public result code and fixed message."""
+    if isinstance(
+        error, (psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout)
+    ):
+        return QueryErrorCode.STATEMENT_TIMEOUT, "the statement exceeded its timeout"
+    if isinstance(error, psycopg.errors.LockNotAvailable):
+        return QueryErrorCode.LOCK_TIMEOUT, "a required lock was not available in time"
+    if isinstance(
+        error, psycopg.errors.InvalidParameterValue
+    ) and _is_graph_clock_error(
+        uses_graph_helper=uses_graph_helper, message=str(error)
+    ):
+        return (
+            QueryErrorCode.INVALID_PARAMETER,
+            "a graph traversal requires both temporal clocks or neither",
+        )
+    if isinstance(
+        error,
+        (
+            psycopg.errors.ConfigurationLimitExceeded,
+            psycopg.errors.DiskFull,
+            psycopg.errors.OutOfMemory,
+            psycopg.errors.TooManyConnections,
+        ),
+    ):
+        return QueryErrorCode.RESOURCE_LIMIT, "the statement exceeded a resource cap"
+    if isinstance(error, psycopg.OperationalError):
+        return QueryErrorCode.PG_UNAVAILABLE, "the deployment database is unavailable"
+    return QueryErrorCode.EXECUTION_ERROR, "the statement failed during execution"
+
+
+def _type_name(
+    *, cursor: psycopg.Cursor, oid: int, record_failure: Callable[[psycopg.Error], None]
+) -> str:
     """The SQL type name for a result column, asked of the server itself.
 
     A static OID table cannot know array or extension types; `format_type`
@@ -120,6 +215,7 @@ def _type_name(cursor: psycopg.Cursor, oid: int) -> str:
             # the request budget ran out: the transaction is aborted, so this
             # is the request's statement_timeout, not a missing type name
             raise
+        record_failure(error)
         return str(oid)
     return str(row[0]) if row and row[0] else str(oid)
 
@@ -752,10 +848,38 @@ class QuerySandboxExecutor:
             )
 
         request_deadline = clock + effective_statement_timeout_ms / 1000
+        observed_error: SandboxRejection | psycopg.Error | None = None
+        deadline_passed = False
+
+        def record_failure(error: SandboxRejection | psycopg.Error) -> None:
+            """Keep the first failure and its timing before cleanup can run."""
+            nonlocal observed_error, deadline_passed
+            if observed_error is None:
+                observed_error = error
+                observed_at = (
+                    error.observed_at
+                    if isinstance(error, BudgetRejection)
+                    else time.monotonic()
+                )
+                deadline_passed = observed_at >= request_deadline
+
+        @contextmanager
+        def observe_failure() -> Iterator[None]:
+            """Record a transaction body failure before unwinding the transaction."""
+            try:
+                yield
+            except (SandboxRejection, psycopg.Error) as error:
+                record_failure(error)
+                raise
+
         try:
-            with self._transaction(
-                limits_ms=limits, statement_timeout_ms=effective_statement_timeout_ms
-            ) as cursor:
+            with (
+                self._transaction(
+                    limits_ms=limits,
+                    statement_timeout_ms=effective_statement_timeout_ms,
+                ) as cursor,
+                observe_failure(),
+            ):
                 differences = live_schema_differences_psycopg(
                     connection=cursor.connection
                 )
@@ -839,7 +963,11 @@ class QuerySandboxExecutor:
                 columns = tuple(
                     ResultColumn(
                         name=d.name,
-                        type=_type_name(cursor, d.type_code),
+                        type=_type_name(
+                            cursor=cursor,
+                            oid=d.type_code,
+                            record_failure=record_failure,
+                        ),
                         nullable=True,  # PostgreSQL does not report result
                         # nullability for computed columns; the contract says
                         # so rather than guessing per expression.
@@ -858,71 +986,22 @@ class QuerySandboxExecutor:
                     (columns, raw, graph_invocations) = _consume_graph_carrier(
                         columns=columns, rows=raw, graph_functions=graph_functions
                     )
-        except SandboxRejection as rejection:
-            return self._failure(
-                rejection.code,
-                rejection.message,
-                request_id,
-                started,
-                clock,
-                limits_model,
-                principal,
-                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
-            )
-        except (psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout):
-            # 57014 and 25P04 alike: the request budget ran out (r3 P2-1)
-            return self._failure(
-                QueryErrorCode.STATEMENT_TIMEOUT,
-                "the statement exceeded its timeout",
-                request_id,
-                started,
-                clock,
-                limits_model,
-                principal,
-                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
-            )
-        except psycopg.errors.LockNotAvailable:
-            return self._failure(
-                QueryErrorCode.LOCK_TIMEOUT,
-                "a required lock was not available in time",
-                request_id,
-                started,
-                clock,
-                limits_model,
-                principal,
-                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
-            )
-        except psycopg.errors.InvalidParameterValue as error:
-            graph_clock_error = _is_graph_clock_error(
-                uses_graph_helper=uses_graph_helper, message=str(error)
-            )
-            return self._failure(
-                (
-                    QueryErrorCode.INVALID_PARAMETER
-                    if graph_clock_error
-                    else QueryErrorCode.EXECUTION_ERROR
-                ),
-                (
-                    "a graph traversal requires both temporal clocks or neither"
-                    if graph_clock_error
-                    else "the statement failed during execution"
-                ),
-                request_id,
-                started,
-                clock,
-                limits_model,
-                principal,
-                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
-            )
         except (
-            psycopg.errors.ConfigurationLimitExceeded,
-            psycopg.errors.DiskFull,
-            psycopg.errors.OutOfMemory,
-            psycopg.errors.TooManyConnections,
-        ):
+            SandboxRejection,
+            psycopg.Error,
+        ) as error:  # error-contract: mixed rejection or operational failure reported below
+            _report_query_failure(
+                error=observed_error or error, deadline_passed=deadline_passed
+            )
+            if isinstance(error, SandboxRejection):
+                code, message = error.code, error.message
+            else:
+                code, message = _database_failure_result(
+                    error=error, uses_graph_helper=uses_graph_helper
+                )
             return self._failure(
-                QueryErrorCode.RESOURCE_LIMIT,
-                "the statement exceeded a resource cap",
+                code,
+                message,
                 request_id,
                 started,
                 clock,
@@ -930,28 +1009,9 @@ class QuerySandboxExecutor:
                 principal,
                 query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
-        except psycopg.OperationalError:
-            return self._failure(
-                QueryErrorCode.PG_UNAVAILABLE,
-                "the deployment database is unavailable",
-                request_id,
-                started,
-                clock,
-                limits_model,
-                principal,
-                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
-            )
-        except psycopg.Error:
-            return self._failure(
-                QueryErrorCode.EXECUTION_ERROR,
-                "the statement failed during execution",
-                request_id,
-                started,
-                clock,
-                limits_model,
-                principal,
-                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
-            )
+        if observed_error is not None:
+            # A failed type-name lookup can still produce a result with its OID.
+            _report_query_failure(error=observed_error, deadline_passed=deadline_passed)
 
         truncated = len(raw) > row_cap
         rows = raw[:row_cap]

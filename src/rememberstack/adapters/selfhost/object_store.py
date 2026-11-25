@@ -284,6 +284,9 @@ class LocalFSObjectStore:
         while path != root and path.is_relative_to(root):
             try:
                 path.rmdir()
-            except (FileNotFoundError, OSError):
+            except (
+                FileNotFoundError,
+                OSError,
+            ):  # error-contract: exempt best-effort parent directory pruning
                 return
             path = path.parent

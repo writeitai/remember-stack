@@ -9,7 +9,7 @@ from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field
-import re
+import logging
 import time
 
 import psycopg
@@ -24,14 +24,21 @@ from rememberstack.adapters.fsit_storage_capture_transport import (
 )
 from rememberstack.adapters.fsit_storage_capture_transport import ProviderCaptureScope
 from rememberstack.adapters.fsit_storage_capture_transport import (
+    ProviderCaptureUnavailable,
+)
+from rememberstack.adapters.fsit_storage_capture_transport import (
     RawProviderCaptureTransport,
 )
 from rememberstack.core.storage_capture import capture_request_id
+from rememberstack.model.storage_capture import StorageCaptureEncodingError
 from rememberstack.model.storage_capture import StorageCaptureRequest
 from rememberstack.ports.storage_capture import StorageCaptureEvidenceStore
 from rememberstack.ports.storage_capture import StorageCaptureObjectStore
 from rememberstack.profiles.managed_storage_capture import check_capture_configuration
 from rememberstack.profiles.managed_storage_capture import CompletedStorageCapture
+from rememberstack.profiles.managed_storage_capture import (
+    ManagedStorageCaptureUnavailable,
+)
 from rememberstack.profiles.managed_storage_capture import replay_completed_capture
 from rememberstack.profiles.managed_storage_capture import StorageCaptureCatalog
 from rememberstack.profiles.storage_capture_profile import ManagedStorageCaptureProfile
@@ -139,17 +146,33 @@ class ManagedStorageCaptureResult:
             raise ValueError("capture_result_shape")
 
 
-_FAILURE_CODE = re.compile(r"[a-z0-9_]{1,64}")
+_logger = logging.getLogger(__name__)
 
 
-def _failure_code(error: BaseException) -> str:
-    """Return the error's code-shaped message, else only its type name.
-
-    Engine refusals carry fixed codes such as ``capture_writer_class_unknown``.
-    Free-text messages may hold paths or content, so only the name survives.
-    """
-    message = str(error)
-    return message if _FAILURE_CODE.fullmatch(message) else type(error).__name__
+def _report_capture_scope_failure(error: Exception) -> str:
+    """Report one failed scope and return its content-free result reason."""
+    kind = type(error).__name__
+    if isinstance(
+        error,
+        (
+            NativeStorageCaptureRefused,
+            ManagedStorageCaptureUnavailable,
+            ProviderCaptureUnavailable,
+            StorageCaptureEncodingError,
+        ),
+    ):
+        _logger.error(
+            "Storage capture scope failed.",
+            extra={"error_code": error.code, "exception_type": kind},
+            stacklevel=2,
+        )
+        return error.code
+    _logger.error(
+        "Storage capture scope failed.",
+        extra={"error_code": "storage_capture_failed", "exception_type": kind},
+        stacklevel=2,
+    )
+    return kind
 
 
 def _capture_project(
@@ -202,7 +225,7 @@ def capture_storage_batch(
         or isinstance(maximum_frame_bytes, bool)
         or maximum_frame_bytes <= 0
     ):
-        raise ValueError("capture_batch_admission_bound")
+        raise StorageCaptureEncodingError("capture_batch_admission_bound")
     first = inputs[0]
     seen: set[str] = set()
     for item in inputs:
@@ -212,7 +235,7 @@ def capture_storage_batch(
             != first.profile.bindings.provider_cell_id
             or item.request.deployment_id in seen
         ):
-            raise ValueError("capture_batch_exact_scope")
+            raise StorageCaptureEncodingError("capture_batch_exact_scope")
         seen.add(item.request.deployment_id)
 
     results: dict[int, CompletedStorageCapture] = {}
@@ -238,7 +261,7 @@ def capture_storage_batch(
                 )
                 pending.append((index, item))
         except Exception as error:
-            failures[index] = _failure_code(error)
+            failures[index] = _report_capture_scope_failure(error)
     if not pending:
         return _results(inputs=inputs, results=results, failures=failures)
 
@@ -264,14 +287,15 @@ def capture_storage_batch(
                 try:
                     results[futures[future]] = future.result()
                 except Exception as error:
-                    failures[futures[future]] = _failure_code(error)
+                    failures[futures[future]] = _report_capture_scope_failure(error)
     except Exception as error:
         # A broken original stream/context cannot qualify an incomplete scope.
         # Already completed replay stays independent of this new invocation.
         # A scope's own earlier failure is kept: it is usually the root cause.
         for index, _ in pending:
             results.pop(index, None)
-            failures.setdefault(index, _failure_code(error))
+            if index not in failures:
+                failures[index] = _report_capture_scope_failure(error)
     finally:
         # Exiting the source first closes blocking I/O; workers then unwind
         # their native contexts before shutdown returns to the caller.

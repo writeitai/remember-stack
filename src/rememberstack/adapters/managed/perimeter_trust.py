@@ -312,10 +312,15 @@ class PerimeterTrust:
                 keys = load_verification_keys(
                     jwks=self._fetch(self._signing_keys_url).decode("utf-8")
                 )
-            except Exception as error:  # noqa: BLE001 - keep the last good set
+            except (  # error-contract: expected refresh retry with cached keys
+                Exception
+            ) as error:
                 logger.warning(
-                    "signing key set fetch failed; keeping the last one",
-                    extra={"reason": str(error)},
+                    "Signing key refresh failed. The last key set stays in use.",
+                    extra={
+                        "error_code": "perimeter_refresh_failed",
+                        "exception_type": type(error).__name__,
+                    },
                 )
             self._snapshot = _Snapshot(keys=keys, document=self._snapshot.document)
             try:
@@ -325,10 +330,13 @@ class PerimeterTrust:
                     "revocation document rejected; keeping the last accepted one",
                     extra={"reason": str(error)},
                 )
-            except Exception as error:  # noqa: BLE001 - keep the last accepted one
+            except Exception as error:  # error-contract: expected refresh retry with cached revocations
                 logger.warning(
-                    "revocation document refresh failed; keeping the last accepted one",
-                    extra={"reason": str(error)},
+                    "Revocation refresh failed. The last accepted document stays in use.",
+                    extra={
+                        "error_code": "perimeter_refresh_failed",
+                        "exception_type": type(error).__name__,
+                    },
                 )
             self._log_if_not_fresh()
 

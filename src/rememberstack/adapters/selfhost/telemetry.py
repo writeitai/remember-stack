@@ -64,7 +64,7 @@ class FanoutTelemetry:
         for sink in self._sinks[1:]:
             try:
                 sink.export_event(event=event)
-            except Exception:
+            except Exception:  # error-contract: exempt optional telemetry export
                 _logger.warning("optional telemetry event export failed", exc_info=True)
 
     def export_exception(
@@ -75,7 +75,7 @@ class FanoutTelemetry:
         for sink in self._sinks[1:]:
             try:
                 sink.export_exception(event=event, exception=exception)
-            except Exception:
+            except Exception:  # error-contract: exempt optional telemetry export
                 _logger.warning(
                     "optional telemetry exception export failed", exc_info=True
                 )

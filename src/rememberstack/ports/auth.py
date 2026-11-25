@@ -7,10 +7,18 @@ from rememberstack.model import AuthenticatedContext
 from rememberstack.model import PerimeterCredential
 
 
+class AuthCredentialDeclined(Exception):
+    """The provided credential was evaluated and refused by the perimeter."""
+
+
 @runtime_checkable
 class AuthPerimeterPort(Protocol):
     """Authenticate perimeter credentials without introducing internal tenancy."""
 
     def authenticate(self, *, credential: PerimeterCredential) -> AuthenticatedContext:
-        """Return the authenticated principal and its one deployment context."""
+        """Return the principal and deployment, or raise on credential refusal.
+
+        Implementations may use ``AuthCredentialDeclined`` or ``ValueError``
+        for refusal. Other exceptions indicate an operational failure.
+        """
         ...

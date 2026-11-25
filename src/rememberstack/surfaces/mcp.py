@@ -613,7 +613,9 @@ class OperationMcpServer:
                     )
                 )
             )
-        except LayerUnavailableError as error:
+        except (  # error-contract: expected layer unavailable result
+            LayerUnavailableError
+        ) as error:
             return error_result(
                 layer_unavailable(layer=error.layer.value, detail=str(error))
             )

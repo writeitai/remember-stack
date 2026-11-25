@@ -551,7 +551,9 @@ class ImageOcrDescriptionConverter:
             for lane, future in futures.items():
                 try:
                     results[lane] = future.result()
-                except Exception as err:
+                except (  # error-contract: raised later by _lane_failure
+                    Exception
+                ) as err:
                     # A malformed provider response must not discard a paid sibling
                     # result or automatically repeat a call with unknown accounting.
                     results[lane] = _LaneOutcome(
@@ -571,7 +573,10 @@ class ImageOcrDescriptionConverter:
             return _LaneOutcome(
                 result=None, usage_events=(), error=err, retryable=False
             )
-        except (MistralOcrProviderError, ProviderCallError) as err:
+        except (
+            MistralOcrProviderError,
+            ProviderCallError,
+        ) as err:  # error-contract: raised later by _lane_failure
             usage = _usage_from_provider_error(error=err)
             events = (
                 (ConverterUsageEvent(call_key=_OCR_LANE, usage=usage),)
@@ -635,7 +640,7 @@ class ImageOcrDescriptionConverter:
             }
         try:
             response = self._post_description(payload=payload)
-        except httpx.HTTPError as err:
+        except httpx.HTTPError as err:  # error-contract: raised later by _lane_failure
             return _LaneOutcome(
                 result=None,
                 usage_events=(),
@@ -697,14 +702,19 @@ class ImageOcrDescriptionConverter:
                 started_ns=started_ns,
                 fetch_generation=self._fetch_generation,
             )
-        except ProviderAccountingError as err:
+        except (  # error-contract: raised later by _lane_failure
+            ProviderAccountingError
+        ) as err:
             return _LaneOutcome(
                 result=None, usage_events=(), error=err, retryable=False
             )
         event = ConverterUsageEvent(call_key=_DESCRIPTION_LANE, usage=usage)
         try:
             parsed = _parse_description(body=body)
-        except (ConversionError, ProviderCallError) as err:
+        except (
+            ConversionError,
+            ProviderCallError,
+        ) as err:  # error-contract: raised later by _lane_failure
             retryable = not isinstance(err, ConversionError)
             return _LaneOutcome(
                 result=None, usage_events=(event,), error=err, retryable=retryable
