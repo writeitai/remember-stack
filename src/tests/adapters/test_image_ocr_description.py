@@ -1,10 +1,12 @@
 """Dual-lane image conversion: assembly, checkpoints, failures, and routing."""
 
 import base64
+from collections.abc import Callable
 from decimal import Decimal
 import io
 import json
 from pathlib import Path
+import sys
 from typing import Any
 from uuid import uuid4
 
@@ -772,14 +774,22 @@ def test_unsupported_mime_and_oversize_fail_before_provider_calls() -> None:
         description_transport=_description_transport(calls=calls),
         max_image_bytes=8,
     )
-    with pytest.raises(ConversionError, match="image/gif"):
-        converter.convert(content=_PNG, mime="image/gif")
-    with pytest.raises(ConversionError, match="image/webp"):
-        converter.convert(content=_PNG, mime="image/webp")
+    with pytest.raises(ConversionError, match="image/svg"):
+        converter.convert(content=_PNG, mime="image/svg+xml")
     with pytest.raises(ConversionError, match="ceiling"):
         converter.convert(content=_PNG, mime="image/png")
     assert calls == []
-    assert SUPPORTED_IMAGE_MIMES == frozenset(("image/png", "image/jpeg"))
+    assert SUPPORTED_IMAGE_MIMES == {
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/tiff",
+        "image/bmp",
+        "image/heic",
+        "image/avif",
+        "image/vnd.adobe.photoshop",
+    }
 
 
 def test_ocr_byte_ceiling_is_applied_before_either_call() -> None:
@@ -807,7 +817,7 @@ def test_invalid_spoofed_animated_and_oversize_images_do_not_call_providers() ->
         max_image_width=4,
         max_image_height=4,
     )
-    with pytest.raises(ConversionError, match="static JPEG or PNG"):
+    with pytest.raises(ConversionError, match="static PNG, JPEG or WebP"):
         converter.convert(content=b"not-an-image", mime="image/png")
     with pytest.raises(ConversionError, match="does not match detected"):
         converter.convert(content=_JPEG, mime="image/png")
@@ -1304,3 +1314,377 @@ def test_instruction_like_visual_label_remains_a_model_observation() -> None:
     content = payloads[0]["messages"][0]["content"]
     assert "untrusted evidence" in content[0]["text"]
     assert base64.b64decode(content[1]["image_url"]["url"].split(",", 1)[1]) == pixels
+
+
+def _saved(image: Image.Image, *, kind: str, **options: object) -> bytes:
+    """One image encoded as ``kind`` (a Pillow format name)."""
+    output = io.BytesIO()
+    image.save(output, format=kind, **options)
+    return output.getvalue()
+
+
+def _lane_inputs(*, content: bytes, mime: str) -> tuple[str, bytes, str]:
+    """Convert once; return the OCR data URL's MIME, the description bytes and MIME."""
+    ocr_urls: list[str] = []
+    captured: list[dict[str, object]] = []
+
+    def ocr(request: httpx.Request) -> httpx.Response:
+        """Record the OCR input."""
+        ocr_urls.append(json.loads(request.content)["document"]["image_url"])
+        return httpx.Response(200, json=_ocr_raw())
+
+    _converter(
+        ocr_transport=httpx.MockTransport(ocr),
+        description_transport=_description_transport(captured=captured),
+    ).convert(content=content, mime=mime)
+    url = captured[0]["messages"][0]["content"][1]["image_url"]["url"]  # type: ignore[index]
+    header, encoded = str(url).split(",", 1)
+    assert ocr_urls[0] == url
+    return header, base64.b64decode(encoded), ocr_urls[0].split(";", 1)[0][5:]
+
+
+def test_webp_goes_to_both_lanes_unchanged() -> None:
+    """WebP is native: the original bytes reach OCR and the description."""
+    webp = _saved(Image.new("RGB", (4, 3), "red"), kind="WEBP", lossless=True)
+    header, sent, mime = _lane_inputs(content=webp, mime="image/webp")
+    assert header == "data:image/webp;base64" and mime == "image/webp"
+    assert sent == webp
+
+
+@pytest.mark.parametrize(
+    ("mime", "encode"),
+    [
+        ("image/gif", lambda image: _saved(image.convert("P"), kind="GIF")),
+        ("image/tiff", lambda image: _saved(image, kind="TIFF")),
+        ("image/bmp", lambda image: _saved(image, kind="BMP")),
+        ("image/avif", lambda image: _saved(image, kind="AVIF", quality=100)),
+        ("image/heic", lambda image: _heic(image)),
+    ],
+)
+def test_other_formats_become_one_png_for_both_lanes(
+    mime: str, encode: Callable[[Image.Image], bytes]
+) -> None:
+    """GIF, TIFF, BMP, AVIF and HEIC reach both lanes as the same PNG."""
+    source = encode(Image.new("RGB", (5, 3), (0, 0, 255)))
+    header, sent, lane_mime = _lane_inputs(content=source, mime=mime)
+    assert header == "data:image/png;base64" and lane_mime == "image/png"
+    with Image.open(io.BytesIO(sent)) as png:
+        assert (png.format, png.size, png.mode) == ("PNG", (5, 3), "RGB")
+
+
+def _heic(image: Image.Image) -> bytes:
+    """``image`` as HEIC through pillow-heif."""
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    return _saved(image, kind="HEIF", quality=100)
+
+
+def test_animated_gif_and_multipage_tiff_use_the_first_frame() -> None:
+    """The first frame or page is what both lanes see."""
+    frames = [Image.new("RGB", (4, 4), colour) for colour in ("red", "lime")]
+    gif = _saved(frames[0], kind="GIF", save_all=True, append_images=frames[1:])
+    tiff = _saved(frames[0], kind="TIFF", save_all=True, append_images=frames[1:])
+    for content, mime in ((gif, "image/gif"), (tiff, "image/tiff")):
+        _, sent, _ = _lane_inputs(content=content, mime=mime)
+        with Image.open(io.BytesIO(sent)) as png:
+            assert png.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+        manifest = _converter().convert(content=content, mime=mime).manifest
+        assert manifest.coverage.complete is False
+        assert "only the first frame, page or image was read" in manifest.coverage.gaps
+        assert manifest.components[0].name == "png-conversion"
+    single = _saved(frames[0], kind="TIFF")
+    manifest = _converter().convert(content=single, mime="image/tiff").manifest
+    assert manifest.components[0].version == "png-first-frame-exif-srgb-v1"
+    assert "only the first frame, page or image was read" not in manifest.coverage.gaps
+
+
+def test_exif_orientation_is_applied_before_the_png() -> None:
+    """A TIFF stored sideways with an EXIF rotation reaches the lanes upright."""
+    image = Image.new("RGB", (6, 2), "white")
+    exif = Image.Exif()
+    exif[0x0112] = 6  # rotate 90 degrees clockwise to display
+    tiff = _saved(image, kind="TIFF", exif=exif)
+    _, sent, _ = _lane_inputs(content=tiff, mime="image/tiff")
+    with Image.open(io.BytesIO(sent)) as png:
+        assert png.size == (2, 6)
+
+
+def test_an_embedded_colour_profile_is_applied_and_dropped() -> None:
+    """A profile-tagged TIFF is transformed to sRGB; the PNG carries no profile."""
+    from PIL import ImageCms
+
+    srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    image = Image.new("RGB", (2, 2), (200, 30, 30))
+    _, sent, _ = _lane_inputs(
+        content=_saved(image, kind="TIFF", icc_profile=srgb), mime="image/tiff"
+    )
+    with Image.open(io.BytesIO(sent)) as png:
+        assert "icc_profile" not in png.info
+        assert png.getpixel((0, 0)) == (200, 30, 30)
+
+
+def test_converted_formats_keep_their_own_lane_keys() -> None:
+    """A TIFF and a PNG of the same pixels never share a lane checkpoint."""
+    calls: list[str] = []
+    store = MemoryLaneCheckpoints()
+    image = Image.new("RGB", (3, 3), "blue")
+    converter = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=_description_transport(calls=calls),
+    )
+    converter.convert(
+        content=_saved(image, kind="PNG"), mime="image/png", checkpoints=store
+    )
+    converter.convert(
+        content=_saved(image, kind="TIFF"), mime="image/tiff", checkpoints=store
+    )
+    assert calls.count("ocr") == 2
+
+
+def test_a_converted_image_over_the_pixel_ceiling_is_refused_before_decoding() -> None:
+    """The header's size is checked before any pixel is decoded."""
+    calls: list[str] = []
+    converter = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=_description_transport(calls=calls),
+        max_image_pixels=4,
+    )
+    with pytest.raises(ConversionError, match="pixel"):
+        converter.convert(
+            content=_saved(Image.new("RGB", (8, 8)), kind="BMP"), mime="image/bmp"
+        )
+    with pytest.raises(ConversionError, match="readable GIF"):
+        converter.convert(content=b"GIF89a\x01\x00\x01\x00broken", mime="image/gif")
+    assert calls == []
+
+
+def test_sixteen_bit_greyscale_keeps_its_tones() -> None:
+    """16-bit samples are scaled to 8 bits, not clipped at 255."""
+    ramp = Image.new("I;16", (3, 1))
+    for x, value in enumerate((16_384, 32_768, 65_535)):
+        ramp.putpixel((x, 0), value)
+    _, sent, _ = _lane_inputs(content=_saved(ramp, kind="TIFF"), mime="image/tiff")
+    with Image.open(io.BytesIO(sent)) as png:
+        # 0..65535 maps to 0..255 (16384 * 255 / 65535 = 63.75).
+        assert [png.getpixel((x, 0)) for x in range(3)] == [
+            (63, 63, 63),
+            (127, 127, 127),
+            (255, 255, 255),
+        ]
+
+
+def test_a_greyscale_image_with_a_profile_and_a_bad_profile_are_handled() -> None:
+    """A grey TIFF ignores its profile and is read opaque; a bad profile is a bad file."""
+    from PIL import ImageCms
+
+    srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    grey = Image.new("LA", (2, 2), (90, 0))
+    _, sent, _ = _lane_inputs(
+        content=_saved(grey, kind="TIFF", icc_profile=srgb), mime="image/tiff"
+    )
+    with Image.open(io.BytesIO(sent)) as png:
+        assert png.getpixel((0, 0)) == (90, 90, 90)
+    calls: list[str] = []
+    converter = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=_description_transport(calls=calls),
+    )
+    broken = _saved(Image.new("RGB", (2, 2)), kind="TIFF", icc_profile=b"not-a-profile")
+    with pytest.raises(ConversionError, match="readable TIFF"):
+        converter.convert(content=broken, mime="image/tiff")
+    assert calls == []
+
+
+def test_webp_bounds_and_animation_are_read_from_the_header_first() -> None:
+    """Oversized or animated WebP is refused before Pillow opens it."""
+    calls: list[str] = []
+    converter = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=_description_transport(calls=calls),
+        max_image_pixels=16,
+    )
+    for kwargs in ({"lossless": True}, {"lossless": False}):
+        big = _saved(Image.new("RGB", (8, 8), "red"), kind="WEBP", **kwargs)
+        with pytest.raises(ConversionError, match="8x8 pixels"):
+            converter.convert(content=big, mime="image/webp")
+    frames = [Image.new("RGB", (2, 2), colour) for colour in ("red", "blue")]
+    animated = _saved(frames[0], kind="WEBP", save_all=True, append_images=frames[1:])
+    with pytest.raises(ConversionError, match="animated"):
+        converter.convert(content=animated, mime="image/webp")
+    with pytest.raises(ConversionError, match="static PNG, JPEG or WebP"):
+        converter.convert(content=b"RIFF\x00\x00\x00\x00WEBPjunk", mime="image/webp")
+    assert calls == []
+
+
+def test_a_palette_tiff_with_a_profile_is_expanded_before_the_transform() -> None:
+    """The profile of a palette image applies to its RGB colours."""
+    from PIL import ImageCms
+
+    srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    image = Image.new("RGB", (2, 2), (200, 30, 30)).convert("P")
+    _, sent, _ = _lane_inputs(
+        content=_saved(image, kind="TIFF", icc_profile=srgb), mime="image/tiff"
+    )
+    with Image.open(io.BytesIO(sent)) as png:
+        assert png.mode == "RGB" and "icc_profile" not in png.info
+
+
+def test_a_webp_labelled_png_never_reaches_the_webp_decoder() -> None:
+    """Pillow's WebP decoder is enabled only for a declared, preflighted WebP."""
+    webp = _saved(Image.new("RGB", (8, 8), "red"), kind="WEBP", lossless=True)
+    with pytest.raises(ConversionError, match="static PNG, JPEG or WebP"):
+        _converter().convert(content=webp, mime="image/png")
+
+
+def test_converted_images_are_bounded_before_decoding() -> None:
+    """Pixel and dimension ceilings apply from the header, in the child process."""
+    gif = _saved(Image.new("P", (8, 8)), kind="GIF")
+    with pytest.raises(ConversionError, match="pixel count 64"):
+        _converter(max_image_pixels=16).convert(content=gif, mime="image/gif")
+    bmp = _saved(Image.new("RGB", (8, 4)), kind="BMP")
+    with pytest.raises(ConversionError, match="8x4 exceed"):
+        _converter(max_image_width=4, max_image_height=4).convert(
+            content=bmp, mime="image/bmp"
+        )
+
+
+def test_the_conversion_process_is_capped_in_time_and_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conversion that outlives its time or memory cap is a bad file."""
+    from rememberstack.adapters.converters import image_png
+
+    tiff = _saved(Image.new("RGB", (64, 64), "blue"), kind="TIFF")
+    monkeypatch.setattr(image_png, "PNG_CONVERSION_TIMEOUT_S", 0.001)
+    with pytest.raises(ConversionError, match="took longer"):
+        _converter().convert(content=tiff, mime="image/tiff")
+    monkeypatch.setattr(image_png, "PNG_CONVERSION_TIMEOUT_S", 60.0)
+    if sys.platform != "linux":
+        return  # only Linux caps address space
+    monkeypatch.setattr(image_png, "PNG_CONVERSION_MEMORY_BYTES", 16 * 2**20)
+    with pytest.raises(ConversionError, match="memory"):
+        _converter().convert(content=tiff, mime="image/tiff")
+
+
+def test_a_png_over_the_ceiling_and_32_bit_samples_are_refused() -> None:
+    """The child refuses a PNG over the byte ceiling and samples without a mapping."""
+    noisy = Image.effect_noise((256, 256), 64).convert("RGB")
+    tiff = _saved(noisy, kind="TIFF", compression="tiff_lzw")
+    with pytest.raises(ConversionError, match="as PNG exceeds"):
+        _converter(max_image_bytes=len(tiff) + 1).convert(
+            content=tiff, mime="image/tiff"
+        )
+    with pytest.raises(ConversionError, match="no defined display mapping"):
+        _converter().convert(
+            content=_saved(Image.new("I", (2, 2), 7), kind="TIFF"), mime="image/tiff"
+        )
+
+
+def test_signed_eight_bit_tiff_samples_are_refused() -> None:
+    """SampleFormat 2 (signed) has no display mapping, at any depth."""
+    signed = _saved(Image.new("L", (2, 2), 5), kind="TIFF", tiffinfo={339: 2})
+    with pytest.raises(ConversionError, match="no defined display mapping"):
+        _converter().convert(content=signed, mime="image/tiff")
+
+
+def test_a_psd_with_extra_saved_channels_is_refused_before_decoding() -> None:
+    """Five channels in RGB mode: Pillow would misplace the composite."""
+    header = b"8BPS" + (1).to_bytes(2, "big") + b"\x00" * 6
+    header += (5).to_bytes(2, "big") + (2).to_bytes(4, "big") * 2  # 5 in RGB
+    header += (8).to_bytes(2, "big") + (3).to_bytes(2, "big")
+    with pytest.raises(ConversionError, match="5 channels"):
+        _converter().convert(
+            content=header + b"\x00" * 64, mime="image/vnd.adobe.photoshop"
+        )
+
+
+def test_a_tiny_lossless_webp_reaches_both_lanes_unchanged() -> None:
+    """A valid lossless WebP shorter than 30 bytes is not refused by the preflight."""
+    webp = _saved(Image.new("RGB", (1, 1), "red"), kind="WEBP", lossless=True)
+    assert len(webp) < 40
+    _, sent, mime = _lane_inputs(content=webp, mime="image/webp")
+    assert sent == webp and mime == "image/webp"
+
+
+def test_a_webp_that_does_not_decode_calls_no_provider() -> None:
+    """A truncated pixel payload behind a valid header is a bad file."""
+    calls: list[str] = []
+    webp = _saved(Image.new("RGB", (16, 16), "red"), kind="WEBP", quality=80)
+    truncated = webp[: len(webp) // 2]
+    with pytest.raises(ConversionError):
+        _converter(
+            ocr_transport=_ocr_transport(calls=calls),
+            description_transport=_description_transport(calls=calls),
+        ).convert(content=truncated, mime="image/webp")
+    assert calls == []
+
+
+def test_a_planar_sixteen_bit_rgb_tiff_keeps_its_colours() -> None:
+    """Each channel in its own plane: libtiff keeps red, green and blue apart."""
+    import struct
+
+    width, height = 3, 1
+    planes = [
+        [65535, 0, 0],  # red plane: only the first pixel
+        [0, 65535, 0],  # green plane: only the second
+        [0, 0, 65535],  # blue plane: only the third
+    ]
+    data = b"".join(struct.pack("<3H", *plane) for plane in planes)
+    entries = [
+        (256, 3, 1, width),
+        (257, 3, 1, height),
+        (258, 3, 3, 0),  # BitsPerSample offset, patched below
+        (259, 3, 1, 1),
+        (262, 3, 1, 2),
+        (273, 4, 3, 0),  # StripOffsets offset, patched below
+        (277, 3, 1, 3),
+        (278, 3, 1, height),
+        (279, 4, 3, 0),  # StripByteCounts offset, patched below
+        (284, 3, 1, 2),
+    ]
+    ifd_size = 2 + 12 * len(entries) + 4
+    extra = 8 + ifd_size
+    bits_at, offsets_at, counts_at = extra, extra + 6, extra + 18
+    data_at = extra + 30
+    values = {258: bits_at, 273: offsets_at, 279: counts_at}
+    ifd = struct.pack("<H", len(entries))
+    for tag, kind, count, value in entries:
+        value = values.get(tag, value)
+        packed = (
+            struct.pack("<I", value)
+            if kind == 4 or count > 1
+            else struct.pack("<HH", value, 0)
+        )
+        ifd += struct.pack("<HHI", tag, kind, count) + packed
+    ifd += struct.pack("<I", 0)
+    tiff = b"II*\x00" + struct.pack("<I", 8) + ifd
+    tiff += struct.pack("<3H", 16, 16, 16)
+    tiff += struct.pack("<3I", *(data_at + 6 * plane for plane in range(3)))
+    tiff += struct.pack("<3I", 6, 6, 6)
+    tiff += data
+    _, sent, _ = _lane_inputs(content=tiff, mime="image/tiff")
+    with Image.open(io.BytesIO(sent)) as png:
+        assert [png.getpixel((x, 0)) for x in range(3)] == [
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+        ]
+
+
+def test_a_psd_without_a_real_composite_calls_no_provider() -> None:
+    """Version info saying hasRealMergedData = 0 is a bad file, not a white image."""
+    header = b"8BPS" + (1).to_bytes(2, "big") + b"\x00" * 6
+    header += (3).to_bytes(2, "big") + (2).to_bytes(4, "big") * 2
+    header += (8).to_bytes(2, "big") + (3).to_bytes(2, "big")
+    version_info = (1).to_bytes(4, "big") + b"\x00" + b"\x00" * 3
+    resource = b"8BIM" + (1057).to_bytes(2, "big") + b"\x00\x00"
+    resource += len(version_info).to_bytes(4, "big") + version_info
+    psd = header + (0).to_bytes(4, "big") + len(resource).to_bytes(4, "big") + resource
+    calls: list[str] = []
+    with pytest.raises(ConversionError, match="no real composite"):
+        _converter(
+            ocr_transport=_ocr_transport(calls=calls),
+            description_transport=_description_transport(calls=calls),
+        ).convert(content=psd + b"\x00" * 64, mime="image/vnd.adobe.photoshop")
+    assert calls == []
