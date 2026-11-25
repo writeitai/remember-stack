@@ -5,7 +5,11 @@
 [![PyPI](https://img.shields.io/pypi/v/remember)](https://pypi.org/project/remember/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**Memory engine for AI agents**
+<p align="center">
+  <img src="website/public/brand/memory-graph.svg" alt="RememberStack memory graph: sources resolve into connected facts" width="520" />
+</p>
+
+## Memory engine for AI agents
 
 Process anything relevant: email, chat, specs, meeting notes, tickets, images,
 video, audio.
@@ -23,7 +27,9 @@ Your agents have easy access to the information - they remember!
 <br />
 
 <p align="center">
-  <img src="website/public/brand/memory-graph.svg" alt="RememberStack memory graph: sources resolve into connected facts" width="520" />
+  <a href="benchmarks/locomo/README.md#published-results">
+    <img src="benchmarks/locomo/assets/ai-memory-engines.png" alt="Published LoCoMo scores for AI memory engines. RememberStack 94.09%, Mem0 92.5%, Hindsight 92.0%." width="820" />
+  </a>
 </p>
 
 ---
@@ -45,10 +51,6 @@ Your agents have easy access to the information - they remember!
   is true today, what held last March, or how something changed.
 - **Where it came from.** Every fact links to its claims, every claim to the
   characters in the source. Your agent can quote and cite; you can check.
-
-<p align="center">
-  <img src="website/public/docs/diagrams/claims-and-facts.svg" alt="Claims (what sources said) feed facts (what is true now)" width="820" />
-</p>
 
 ## Built for agents
 
