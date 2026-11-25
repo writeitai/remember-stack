@@ -48,8 +48,9 @@ The same workflow runs `uv run --locked python scripts/check_client_api.py`.
 It resolves the tagged engine inventory against recorded Python and TypeScript
 requests, real `remember` commands, and the shared MCP catalogue. CLI and MCP
 cases invoke the normal entry points using offline HTTP success and refusal
-fixtures. `check:parity` regenerates those SDK fixtures in memory, and the Node
-suite replays them against the TypeScript client.
+fixtures. The checker validates observed parameters, bodies and successful
+replies against the fresh OpenAPI schemas. `check:parity` regenerates the SDK
+fixtures in memory, and the Node suite replays them against the TypeScript client.
 
 The per-operation fingerprints in `scripts/client_api_contract.json` include
 parameters, request body, success and error responses, security and referenced

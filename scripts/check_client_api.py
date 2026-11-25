@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+from collections.abc import Iterator
 from contextlib import redirect_stderr
 from contextlib import redirect_stdout
 import hashlib
@@ -14,12 +16,14 @@ import shlex
 from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import unquote
 
 from export_openapi import build_document
 from export_typescript_parity import ID
 from export_typescript_parity import select_response
 from export_typescript_parity import TARGET
 import httpx
+from jsonschema import Draft202012Validator
 
 from remember import cli
 from remember.client import Client
@@ -117,15 +121,18 @@ def validate_inventory(
         )
 
 
+def route_pattern(*, route: str) -> str:
+    """Compile path placeholders as named groups for parameter validation."""
+    return re.sub(r"\\\{([^}]+)\\\}", r"(?P<\1>[^/]+)", re.escape(route))
+
+
 def match_route(*, routes: set[str], method: str, path: str) -> str:
     """Match a recorded wire path to one exported operation template."""
     exact = f"{method} {path}"
     if exact in routes:
         return exact
     matches = [
-        route
-        for route in routes
-        if re.fullmatch(re.sub(r"\\\{[^}]+\\\}", "[^/]+", re.escape(route)), exact)
+        route for route in routes if re.fullmatch(route_pattern(route=route), exact)
     ]
     if len(matches) != 1:
         raise ValueError(f"{exact} matches {matches} in client API")
@@ -165,17 +172,119 @@ def wire_shape(*, document: dict[str, Any], operation: dict[str, Any]) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def verify_clients(*, routes: set[str], fixture: dict[str, Any]) -> None:
+def validate_sample(
+    *,
+    document: dict[str, Any],
+    route: str,
+    operation: dict[str, Any],
+    wire: dict[str, Any],
+    response: Any,
+    status: int,
+) -> None:
+    """Check observed wire parameters, request and response against OpenAPI."""
+
+    def validate(*, schema: dict[str, Any], value: Any) -> None:
+        """Resolve schema references in the complete OpenAPI document."""
+        validator = Draft202012Validator(
+            {**schema, "components": document["components"]},
+            format_checker=Draft202012Validator.FORMAT_CHECKER,
+        )
+        if error := next(validator.iter_errors(value), None):
+            raise ValueError(f"{route} {list(error.path)}: {error.message}")
+
+    path = re.fullmatch(route_pattern(route=route), f"{wire['method']} {wire['path']}")
+    assert path is not None, (route, wire["path"])
+    path_values = {name: [unquote(value)] for name, value in path.groupdict().items()}
+    query = httpx.QueryParams(wire["query"])
+    declared_query = set()
+    for parameter in operation.get("parameters", []):
+        name, location = parameter["name"], parameter["in"]
+        if location == "query":
+            declared_query.add(name)
+            values = query.get_list(name)
+        elif location == "path":
+            values = path_values.get(name, [])
+        else:
+            values = (
+                [wire["headers"][name.lower()]]
+                if name.lower() in wire.get("headers", {})
+                else []
+            )
+        if not values:
+            # Historical SDK recordings do not store headers, and the current
+            # contract declares no required caller-supplied header.
+            assert not parameter.get("required", False), (route, name)
+            continue
+        schema = parameter["schema"]
+        value_type = next(
+            variant["type"]
+            for variant in schema.get("anyOf", [schema])
+            if variant.get("type") != "null"
+        )
+        if value_type == "array":
+            value = values
+        else:
+            assert len(values) == 1, (route, name, values)
+            value = values[0]
+            if value_type in {"boolean", "integer"}:
+                value = json.loads(value)
+        validate(schema=schema, value=value)
+    assert set(query.keys()) <= declared_query, (
+        route,
+        set(query.keys()) - declared_query,
+    )
+    body = operation.get("requestBody", {})
+    if wire["contentType"]:
+        content = body["content"][wire["contentType"]]
+        validate(
+            schema=content["schema"],
+            value=(
+                wire["body"]
+                if wire["contentType"] == "application/json"
+                else wire["contentBase64"]
+            ),
+        )
+    else:
+        assert not body.get("required", False), route
+    response_schema = (
+        operation["responses"]
+        .get(str(status), {})
+        .get("content", {})
+        .get("application/json", {})
+        .get("schema")
+    )
+    if response_schema:
+        validate(schema=response_schema, value=response)
+    else:
+        # Perimeter denials are verified by test_openapi_export.py. FastAPI
+        # does not list the middleware's 401 in these operations.
+        assert status == 401, (route, status)
+
+
+def verify_clients(
+    *, document: dict[str, Any], operations: dict[str, Any], fixture: dict[str, Any]
+) -> None:
     """Join recorded SDK traffic and executable CLI/MCP cases to the tagged routes."""
-    sdk_routes = {
-        match_route(routes=routes, method=wire["method"], path=wire["path"])
-        for case in fixture["cases"]
-        for wire in case["wire"]
-        # The SDK also ships optional operator connector methods. Their
-        # conformance runs in check:parity outside the public engine inventory.
-        if (wire["method"], wire["path"].split("/")[1])
-        not in {("GET", "connectors"), ("POST", "connectors")}
-    }
+    routes = set(operations)
+    sdk_routes = set()
+    for case in fixture["cases"]:
+        for wire, response in zip(case["wire"], case["responses"], strict=True):
+            # The optional operator connector methods have their own SDK parity cases.
+            if (wire["method"], wire["path"].split("/")[1]) in {
+                ("GET", "connectors"),
+                ("POST", "connectors"),
+            }:
+                continue
+            route = match_route(routes=routes, method=wire["method"], path=wire["path"])
+            sdk_routes.add(route)
+            validate_sample(
+                document=document,
+                route=route,
+                operation=operations[route],
+                wire=wire,
+                response=response,
+                status=200,
+            )
     validate_inventory(
         surface="Python and TypeScript SDK",
         routes=routes,
@@ -210,15 +319,19 @@ def verify_clients(*, routes: set[str], fixture: dict[str, Any]) -> None:
     # Use the ID to target PATCH directly, as the lookup is a separate operation.
     valid_arguments["update_tag"]["tag"] = ID
     for name, route in tools.items():
-        check_mcp(
-            name=name, route=route, arguments=valid_arguments[name], responses=responses
-        )
+        for probe in check_mcp(
+            name=name, arguments=valid_arguments[name], responses=responses
+        ):
+            probe.verify(document=document, route=route, operation=operations[route])
     with TemporaryDirectory(prefix="remember-cli-contract-") as directory:
         upload = Path(directory) / "fixture.md"
         upload.write_text("fixture", encoding="utf-8")
         for route, command in CLI_COMMANDS.items():
             argv = [arg.format(id=ID, file=upload) for arg in shlex.split(command)]
-            check_cli(argv=argv, route=route, responses=responses)
+            for probe in check_cli(argv=argv, responses=responses):
+                probe.verify(
+                    document=document, route=route, operation=operations[route]
+                )
 
 
 class WireProbe:
@@ -228,18 +341,30 @@ class WireProbe:
         """Use the shared SDK conformance replies or reject the credential."""
         self.responses = responses
         self.refuses = refuses
-        self.calls: list[str] = []
+        self.calls: list[tuple[dict[str, Any], Any, int]] = []
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         """Return a fixture or a 401 without contacting a running engine."""
-        self.calls.append(
-            f"{request.method} {request.url.raw_path.decode().split('?')[0]}"
+        status = 401 if self.refuses else 200
+        response = (
+            {"detail": "contract credential refused"}
+            if self.refuses
+            else select_response(request=request, fixtures=self.responses)
         )
-        if self.refuses:
-            return httpx.Response(401, json={"detail": "contract credential refused"})
-        return httpx.Response(
-            200, json=select_response(request=request, fixtures=self.responses)
-        )
+        content_type = request.headers.get("content-type")
+        wire = {
+            "method": request.method,
+            "path": request.url.raw_path.decode().split("?")[0],
+            "query": list(request.url.params.multi_items()),
+            "headers": request.headers,
+            "contentType": content_type,
+            "body": json.loads(request.content)
+            if content_type == "application/json"
+            else None,
+            "contentBase64": base64.b64encode(request.content).decode(),
+        }
+        self.calls.append((wire, response, status))
+        return httpx.Response(status, json=response)
 
     def client(self) -> Client:
         """Construct the real SDK with the probe as its HTTP transport."""
@@ -250,30 +375,45 @@ class WireProbe:
             )
         )
 
-    def assert_route(self, *, route: str) -> None:
-        """An invocation must reach the declared operation, even on refusal."""
-        assert any(
-            re.fullmatch(re.sub(r"\\\{[^}]+\\\}", "[^/]+", re.escape(route)), call)
-            for call in self.calls
-        ), (route, self.calls)
+    def verify(
+        self, *, document: dict[str, Any], route: str, operation: dict[str, Any]
+    ) -> None:
+        """Require the command or tool to reach and satisfy its declared operation."""
+        matched = [
+            (wire, response, status)
+            for wire, response, status in self.calls
+            if re.fullmatch(
+                route_pattern(route=route), f"{wire['method']} {wire['path']}"
+            )
+        ]
+        assert matched, (route, self.calls)
+        for wire, response, status in matched:
+            validate_sample(
+                document=document,
+                route=route,
+                operation=operation,
+                wire=wire,
+                response=response,
+                status=status,
+            )
 
 
 def check_mcp(
-    *, name: str, route: str, arguments: dict[str, Any], responses: dict[str, Any]
-) -> None:
+    *, name: str, arguments: dict[str, Any], responses: dict[str, Any]
+) -> Iterator[WireProbe]:
     """Invoke every advertised memory tool through its HTTP-backed handler."""
     for refuses in (False, True):
         probe = WireProbe(responses=responses, refuses=refuses)
         with probe.client() as client:
             server = EngineMcpServer(client=client, path_ingest=False)
             result = server.call_tool(name=name, arguments=arguments)
-        probe.assert_route(route=route)
         assert result.get("isError") is refuses, (name, result)
         if refuses:
             assert "contract credential refused" in str(result), (name, result)
+        yield probe
 
 
-def check_cli(*, argv: list[str], route: str, responses: dict[str, Any]) -> None:
+def check_cli(*, argv: list[str], responses: dict[str, Any]) -> Iterator[WireProbe]:
     """Exercise the real CLI parser and handler with successful and refused HTTP."""
     for refuses in (False, True):
         probe = WireProbe(responses=responses, refuses=refuses)
@@ -291,13 +431,14 @@ def check_cli(*, argv: list[str], route: str, responses: dict[str, Any]) -> None
             redirect_stderr(stderr),
         ):
             code = cli.main(argv)
-        probe.assert_route(route=route)
         assert code == int(refuses), (argv, code, stdout.getvalue(), stderr.getvalue())
         assert stdout.getvalue() or refuses or argv == ["operations", "list"], argv
         if refuses:
             assert (
                 "contract credential refused" in stdout.getvalue() + stderr.getvalue()
             ), argv
+
+        yield probe
 
 
 def main() -> None:
@@ -313,7 +454,7 @@ def main() -> None:
         if isinstance(operation, dict) and "client" in operation.get("tags", [])
     }
     fixture = json.loads(TARGET.read_text(encoding="utf-8"))
-    verify_clients(routes=set(operations), fixture=fixture)
+    verify_clients(document=document, operations=operations, fixture=fixture)
     new = {
         route: wire_shape(document=document, operation=operation)
         for route, operation in operations.items()
