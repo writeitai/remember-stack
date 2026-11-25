@@ -2075,3 +2075,78 @@ def test_d159_upgrade_turns_d74_manifests_into_forget_records() -> None:
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
     assert _head_revision(database_url=database_url) == "p9_54_0075"
+
+
+def test_d159_upgrade_guards_a_preparing_named_upload() -> None:
+    """§5 test 13: a migrated `preparing` upload named plan.md refuses changed bytes."""
+    from rememberstack.model import DocumentForgottenError
+    from rememberstack.spine import ForgetCatalog
+
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_53_0074")
+    engine = create_engine(database_url)
+    deployment_id, doc_id = uuid4(), uuid4()
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES (:d, 'd159-plan',"
+                    " 'D159 plan', 'mem://raw', 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                    " raw_uri) VALUES (:d, :h, 'text/markdown', 'raw')"
+                ),
+                {"d": deployment_id, "h": "a" * 64},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref) VALUES (:doc, :d, 'upload', 'plan.md')"
+                ),
+                {"doc": doc_id, "d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                    " content_hash, version_no) VALUES (gen_random_uuid(), :d, :doc,"
+                    " :h, 1)"
+                ),
+                {"d": deployment_id, "doc": doc_id, "h": "a" * 64},
+            )
+            # Preparing: D74 had stored no manifest and no identity hash yet.
+            connection.execute(
+                text(
+                    "INSERT INTO forget_manifests (forget_id, deployment_id, doc_id,"
+                    " schema_version) VALUES (gen_random_uuid(), :d, :doc, 1)"
+                ),
+                {"d": deployment_id, "doc": doc_id},
+            )
+
+        command.upgrade(config=config, revision="p9_54_0075")
+
+        with pytest.raises(DocumentForgottenError):
+            ForgetCatalog(engine=engine).guard_ingest(
+                deployment_id=deployment_id,
+                source_kind="upload",
+                source_ref="plan.md",
+                content_hash="b" * 64,
+            )
+        with engine.connect() as connection:
+            assert connection.execute(
+                text(
+                    "SELECT deleted_at IS NOT NULL FROM documents WHERE doc_id = :doc"
+                ),
+                {"doc": doc_id},
+            ).scalar_one()
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_54_0075"

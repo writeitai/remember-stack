@@ -178,10 +178,9 @@ def _convert(*, connection, row) -> None:  # noqa: ANN001
         ).scalars()
     )
     identity = row["source_identity_hash"]
-    # The live rule: a one-shot upload's lineage is its bytes (source_ref is
-    # one of its content hashes); any other source_ref is an identity.
-    one_shot = row["source_kind"] == "upload" and row["source_ref"] in hashes
-    if identity is None and row["source_ref"] is not None and not one_shot:
+    # Every record keeps its lineage's identity whenever the source names one,
+    # uploads included.
+    if identity is None and row["source_ref"] is not None:
         # The D74/D159 source-identity hash, frozen here so this migration
         # never changes with application code.
         identity = hashlib.sha256(
