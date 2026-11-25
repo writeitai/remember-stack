@@ -338,13 +338,13 @@ def test_a_late_corpus_write_is_removed_by_the_next_sweep(
             reapply=False,
             series="",
         )
-        assert handler.sweep(forget=record, payload=first, meter=NoopCostMeter())
+        assert handler.sweep(forget=record, payload=first, meter=NoopCostMeter())[0]
         forget.state.bucket.store.replace_stream(
             key=late, chunks=(_TOKEN,), storage_class="hot", sha256=digest(_TOKEN)
         )
         later = replace(first, sweep=2, first=False)
-        assert handler.sweep(forget=record, payload=later, meter=NoopCostMeter())
-        assert not handler.sweep(forget=record, payload=later, meter=NoopCostMeter())
+        assert handler.sweep(forget=record, payload=later, meter=NoopCostMeter())[0]
+        assert not handler.sweep(forget=record, payload=later, meter=NoopCostMeter())[0]
         forget.sweep_until_clean()
         forget.assert_clean()
 

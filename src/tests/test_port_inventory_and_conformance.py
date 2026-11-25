@@ -132,8 +132,9 @@ class FakeKGitRemote:
         """Return a revision for the requested driver worktree."""
         return KRevision(root=f"checkout:{destination.name}")
 
-    def publish(self, *, worktree: Path) -> KRevision:
+    def publish(self, *, worktree: Path, compiled: Mapping[str, UUID]) -> KRevision:
         """Return the revision published from the driver worktree."""
+        del compiled
         return KRevision(root=f"published:{worktree.name}")
 
 

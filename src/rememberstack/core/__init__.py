@@ -43,6 +43,7 @@ from rememberstack.core.extension_packs import ExtensionPack
 from rememberstack.core.extension_packs import PackEntityType
 from rememberstack.core.extension_packs import PackPredicate
 from rememberstack.core.extension_packs import WORK_PACK
+from rememberstack.core.forget import cites_forgotten
 from rememberstack.core.forget import source_identity_hash
 from rememberstack.core.knowledge_authored import authored_declaration_is_empty
 from rememberstack.core.knowledge_authored import knowledge_citation_reference
@@ -105,6 +106,7 @@ __all__ = (
     "CHUNKER_VERSION",
     "ChunkerParams",
     "chunk_content_hash",
+    "cites_forgotten",
     "chunker_version",
     "count_tokens",
     "extraction_input_hash",
