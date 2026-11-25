@@ -712,9 +712,9 @@ class OpenRouterModelProvider:
             if created and target is not None:
                 try:
                     target.unlink(missing_ok=True)
-                except (
+                except (  # error-contract: exempt cleanup of the rejected diagnostic capture
                     OSError
-                ):  # error-contract: exempt cleanup of the rejected diagnostic capture
+                ):
                     pass
             _logger.warning("could not capture invalid OpenRouter completion")
 
@@ -918,9 +918,9 @@ class OpenRouterModelProvider:
             if isinstance(generation_id, str) and generation_id:
                 try:
                     metadata = self._get_generation(generation_id=generation_id)
-                except (
+                except (  # error-contract: exempt optional provider-name enrichment
                     OpenRouterProviderError
-                ):  # error-contract: exempt optional provider-name enrichment
+                ):
                     metadata = None
                 if isinstance(metadata, dict):
                     name = metadata.get("provider_name")

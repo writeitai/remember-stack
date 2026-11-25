@@ -155,6 +155,8 @@ from rememberstack.spine.tags import resolve_filter_tags_on
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 
+_logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from rememberstack.surfaces.graph_queries import GraphQueries
 
@@ -471,9 +473,6 @@ def disclose_layers(*, envelope: Envelope, admission: LayerAdmission) -> Envelop
     )
 
 
-_logger = logging.getLogger(__name__)
-
-
 def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envelope]:
     """Run the default compound recipe in one bounded PostgreSQL snapshot."""
 
@@ -496,11 +495,7 @@ def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envel
             ) as connection:
                 call_kwargs["_snapshot_connection"] = connection
                 return method(*args, **call_kwargs)
-        except (
-            DBAPIError,
-            SQLAlchemyTimeoutError,
-            TimeoutError,
-        ) as error:  # error-contract: mixed deadline or database failure logged below
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             _report_query_read_failure(error=error)
             return _facts_context_graph_boundary(
                 time=selected_time,
@@ -1847,9 +1842,9 @@ class QueryEngine:
                 )
             except P1EntityScopeTooBroadError as error:
                 return _entity_scope_too_broad(grain=Grain.FACT, explanation=str(error))
-            except (
+            except (  # error-contract: expected disclosed projection boundary
                 P1SearchUnavailableError
-            ):  # error-contract: expected disclosed projection boundary
+            ):
                 _logger.warning(
                     "The query search projection is unavailable.",
                     extra={"error_code": "search_projection_unavailable"},
@@ -1860,11 +1855,7 @@ class QueryEngine:
                     explanation="the primary P1 fact channels are not ready",
                     workaround="retry after P1 relation and observation publication",
                 )
-            except (
-                DBAPIError,
-                SQLAlchemyTimeoutError,
-                TimeoutError,
-            ) as error:  # error-contract: mixed deadline or database failure logged below
+            except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
                 _report_query_read_failure(error=error)
                 return _facts_context_graph_boundary(
                     time=selected_time,
@@ -1894,11 +1885,7 @@ class QueryEngine:
                             time=selected_time, evaluated_at=evaluation
                         ),
                     )
-        except (
-            DBAPIError,
-            SQLAlchemyTimeoutError,
-            TimeoutError,
-        ) as error:  # error-contract: mixed deadline or database failure logged below
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             _report_query_read_failure(error=error)
             return _facts_context_graph_boundary(
                 time=selected_time,
@@ -1951,7 +1938,7 @@ class QueryEngine:
                     _deadline=database_deadline,
                     _connection=_snapshot_connection,
                 )
-            except (  # error-contract: mixed capacity, deadline or query failure logged below
+            except (
                 DBAPIError,
                 SQLAlchemyTimeoutError,
                 GraphBusyError,
@@ -2003,11 +1990,7 @@ class QueryEngine:
                     deployment_id=deployment_id,
                     entity_ids=tuple(neighbors),
                 )
-        except (
-            DBAPIError,
-            SQLAlchemyTimeoutError,
-            TimeoutError,
-        ) as error:  # error-contract: mixed deadline or database failure logged below
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             _report_query_read_failure(error=error)
             return _facts_context_graph_boundary(
                 time=selected_time,
@@ -4145,9 +4128,9 @@ class QueryEngine:
             )
         except P1EntityScopeTooBroadError:
             raise
-        except (
+        except (  # error-contract: expected projection channel is unpublished
             P1SearchUnavailableError
-        ):  # error-contract: expected projection channel is unpublished
+        ):
             _logger.warning(
                 "The entity profile search projection is unavailable.",
                 extra={"error_code": "search_projection_unavailable"},
@@ -4787,9 +4770,9 @@ class QueryEngine:
                     k=QUERY_RESOLVE_CANDIDATE_LIMIT + 1,
                 ),
             )
-        except (
+        except (  # error-contract: expected disclosed projection boundary
             P1SearchUnavailableError
-        ):  # error-contract: expected disclosed projection boundary
+        ):
             _logger.warning(
                 "The query search projection is unavailable.",
                 extra={"error_code": "search_projection_unavailable"},

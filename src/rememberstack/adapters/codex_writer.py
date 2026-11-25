@@ -72,9 +72,9 @@ class CodexCLIAgentAdapter:
                     check=False,
                     timeout=request.timeout_seconds,
                 )
-            except (
+            except (  # error-contract: raised later by the knowledge driver
                 subprocess.TimeoutExpired
-            ) as error:  # error-contract: raised later by the knowledge driver
+            ) as error:
                 stdout = _timeout_text(value=error.stdout)
                 stderr = _timeout_text(value=error.stderr)
                 return KnowledgeAgentSessionResult(

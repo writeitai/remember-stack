@@ -17,6 +17,7 @@ import logging
 
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import PerimeterCredential
+from rememberstack.ports.auth import AuthCredentialDeclined
 from rememberstack.ports.auth import AuthPerimeterPort
 
 logger = logging.getLogger(__name__)
@@ -47,10 +48,15 @@ class CompositeAuth:
         for adapter in self._adapters:
             try:
                 return adapter.authenticate(credential=credential)
-            except Exception as error:  # error-contract: expected adapters signal credential denial by raising
-                logger.debug(
-                    "perimeter adapter %s declined the credential: %s",
-                    type(adapter).__name__,
-                    error,
+            except (AuthCredentialDeclined, ValueError):
+                continue
+            except Exception as error:
+                logger.error(
+                    "A perimeter authentication adapter failed.",
+                    extra={
+                        "error_code": "perimeter_auth_failed",
+                        "adapter": type(adapter).__name__,
+                        "exception_type": type(error).__name__,
+                    },
                 )
         raise ValueError("unknown credential")

@@ -229,9 +229,9 @@ class CorpusPublicationCatalog:
                             ),
                             params,
                         )
-                    except (
+                    except (  # error-contract: exempt cleanup discards the broken connection
                         DBAPIError
-                    ):  # error-contract: exempt cleanup discards the broken connection
+                    ):
                         connection.invalidate()
 
     def clear(

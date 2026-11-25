@@ -148,27 +148,29 @@ class ManagedStorageCaptureResult:
 _logger = logging.getLogger(__name__)
 
 
-def _record_failure(error: Exception) -> str:
-    """Report one failed scope and preserve its content-free result reason."""
+def _report_capture_scope_failure(error: Exception) -> str:
+    """Report one failed scope and return its content-free result reason."""
     kind = type(error).__name__
-    code = (
-        error.code
-        if isinstance(
-            error,
-            (
-                NativeStorageCaptureRefused,
-                ManagedStorageCaptureUnavailable,
-                ProviderCaptureUnavailable,
-            ),
+    if isinstance(
+        error,
+        (
+            NativeStorageCaptureRefused,
+            ManagedStorageCaptureUnavailable,
+            ProviderCaptureUnavailable,
+        ),
+    ):
+        _logger.error(
+            "Storage capture scope failed",
+            extra={"error_code": error.code, "exception_type": kind},
+            stacklevel=2,
         )
-        else None
-    )
+        return error.code
     _logger.error(
         "Storage capture scope failed",
-        extra={"error_code": code or "storage_capture_failed", "exception_type": kind},
+        extra={"error_code": "storage_capture_failed", "exception_type": kind},
         stacklevel=2,
     )
-    return code or kind
+    return kind
 
 
 def _capture_project(
@@ -257,7 +259,7 @@ def capture_storage_batch(
                 )
                 pending.append((index, item))
         except Exception as error:
-            failures[index] = _record_failure(error)
+            failures[index] = _report_capture_scope_failure(error)
     if not pending:
         return _results(inputs=inputs, results=results, failures=failures)
 
@@ -283,7 +285,7 @@ def capture_storage_batch(
                 try:
                     results[futures[future]] = future.result()
                 except Exception as error:
-                    failures[futures[future]] = _record_failure(error)
+                    failures[futures[future]] = _report_capture_scope_failure(error)
     except Exception as error:
         # A broken original stream/context cannot qualify an incomplete scope.
         # Already completed replay stays independent of this new invocation.
@@ -291,7 +293,7 @@ def capture_storage_batch(
         for index, _ in pending:
             results.pop(index, None)
             if index not in failures:
-                failures[index] = _record_failure(error)
+                failures[index] = _report_capture_scope_failure(error)
     finally:
         # Exiting the source first closes blocking I/O; workers then unwind
         # their native contexts before shutdown returns to the caller.

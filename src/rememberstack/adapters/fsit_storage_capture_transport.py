@@ -273,9 +273,9 @@ class _PendingProviderCapture:
             return
         try:
             manifest = self.complete()
-        except (
+        except (  # error-contract: expected when the provider already closed the scope
             ProviderScopeUnavailable
-        ):  # error-contract: expected when the provider already closed the scope
+        ):
             self._mark_native_closed()
             return
         for _ in self.iter_pages(manifest=manifest):

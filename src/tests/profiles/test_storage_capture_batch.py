@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import logging
+from threading import Event
 from unittest.mock import Mock
 from unittest.mock import patch
 
@@ -87,6 +89,40 @@ def test_worker_failure_carries_its_code_beside_completed_peer(
     assert record.levelname == "ERROR"
     assert vars(record)["error_code"] == "capture_writer_class_unknown"
     assert record.exc_info is None
+
+
+def test_scope_failure_is_logged_while_a_peer_is_still_running() -> None:
+    """The batch publishes the first failure before it waits for every scope."""
+    good, bad = _input(deployment_id="a"), _input(deployment_id="b")
+    failed_scope_logged = Event()
+    completed = object()
+
+    class CaptureFailure(logging.Handler):
+        """Release the other scope only when the coded failure reaches logging."""
+
+        def emit(self, record: logging.LogRecord) -> None:
+            """Signal receipt of the error from the failed scope."""
+            if vars(record).get("error_code") == "capture_writer_class_unknown":
+                failed_scope_logged.set()
+
+    def capture(*, item: Mock, provider: Mock, scope: object) -> object:
+        """Keep the healthy scope running until the failed scope is reported."""
+        if item is bad:
+            raise ManagedStorageCaptureUnavailable("capture_writer_class_unknown")
+        assert failed_scope_logged.wait(timeout=3)
+        return completed
+
+    logger = logging.getLogger(_MODULE)
+    handler = CaptureFailure()
+    logger.addHandler(handler)
+    try:
+        results = _run(inputs=(good, bad), capture=Mock(side_effect=capture))
+    finally:
+        logger.removeHandler(handler)
+    assert [(r.completed, r.failure) for r in results] == [
+        (completed, None),
+        (None, "capture_writer_class_unknown"),
+    ]
 
 
 def test_broken_provider_context_fails_every_scope_keeping_own_codes(

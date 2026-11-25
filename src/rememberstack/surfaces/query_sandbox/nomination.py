@@ -888,11 +888,19 @@ def budget_exhausted(error: BaseException) -> bool:
     return False
 
 
-def budget_rejection(error: BaseException) -> SandboxRejection:
+class BudgetRejection(SandboxRejection):
+    """A wrapped timeout with the time the bridge first saw the failure."""
+
+    def __init__(self, *, cause: BaseException) -> None:
+        """Record the catch time before projection cleanup can change it."""
+        self.observed_at = monotonic()
+        super().__init__(
+            code=QueryErrorCode.STATEMENT_TIMEOUT,
+            message="the request's statement budget ran out",
+        )
+        self.__cause__ = cause
+
+
+def budget_rejection(error: BaseException) -> BudgetRejection:
     """The sandbox's ordinary statement-timeout failure for an exhausted budget."""
-    rejection = SandboxRejection(
-        code=QueryErrorCode.STATEMENT_TIMEOUT,
-        message="the request's statement budget ran out",
-    )
-    rejection.__cause__ = error
-    return rejection
+    return BudgetRejection(cause=error)

@@ -732,9 +732,9 @@ class SectionSummarizer:
                 )
                 placement = payload.get("placement")
                 sections = payload.get("sections", ())
-            except (
+            except (  # error-contract: expected cache miss for a missing or corrupt sidecar
                 Exception
-            ):  # error-contract: expected cache miss for a missing or corrupt sidecar
+            ):
                 # Sidecars are immutable cache metadata, not an availability
                 # dependency. Missing/legacy/malformed objects simply miss.
                 continue
@@ -764,9 +764,9 @@ class SectionSummarizer:
                             summary=normalized_summary, placement_path=cached_placement
                         ),
                     )
-                except (
+                except (  # error-contract: expected cache miss for an invalid entry
                     Exception
-                ):  # error-contract: expected cache miss for an invalid entry
+                ):
                     continue
         return cache
 

@@ -595,9 +595,9 @@ def _error_preview(response: httpx.Response) -> str:
     """Read an unread streamed error body, then return a short text preview."""
     try:
         response.read()
-    except (
+    except (  # error-contract: exempt error preview of an already failed call
         httpx.HTTPError
-    ):  # error-contract: exempt error preview of an already failed call
+    ):
         return ""
     return response.text[:500]
 

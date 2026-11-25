@@ -312,9 +312,9 @@ class PerimeterTrust:
                 keys = load_verification_keys(
                     jwks=self._fetch(self._signing_keys_url).decode("utf-8")
                 )
-            except (
+            except (  # error-contract: expected refresh retry with cached keys
                 Exception
-            ) as error:  # error-contract: expected refresh retry with cached keys
+            ) as error:
                 logger.warning(
                     "Signing key refresh failed. The last key set stays in use.",
                     extra={

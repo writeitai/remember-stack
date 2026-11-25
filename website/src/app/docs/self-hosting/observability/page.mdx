@@ -67,8 +67,8 @@ characters in all, and stays the same across releases; a renamed or removed
 code is listed in the changelog. The worker runner's records (item
 failures, retries and leases), live graph records and metering records use a
 fixed message, with identifiers such as `processing_id`, `stage`,
-`attempt` or `sqlstate` as separate fields on the record. Other parts of the
-engine, such as the query sandbox, are being brought under the same rules.
+`attempt` or `sqlstate` as separate fields on the record. Query sandbox
+errors use the exception type and SQLSTATE without including SQL or values.
 
 A worker item's failure, a model provider failure on a request and a live
 graph query failure can carry your content in their text: a provider's error
@@ -91,6 +91,10 @@ The main places the engine logs:
 | A live graph query times out or loses its connection (503) | `graph_query_failed` | ERROR |
 | A live graph result no longer matches its rows (503) | `graph_hydration_mismatch` | ERROR |
 | The live graph has no free slot (503) | `graph_capacity_exhausted` | WARNING |
+| The query sandbox consumes a database or dependency failure | `query_database_failed` / `query_dependency_unavailable` | ERROR |
+| A native storage capture scope fails | The declared refusal code or `storage_capture_failed` | ERROR |
+| A spend lease cannot be reserved or committed | `spend_lease_unavailable` / `spend_lease_commit_failed` | ERROR |
+| The perimeter fails while authenticating a request | `perimeter_auth_failed` | ERROR |
 | An MCP tool fails unexpectedly | `mcp_tool_failed` | ERROR |
 | The control plane rejects the meter's producer credential | `meter_receipt_unauthorized` | ERROR |
 | The control plane is unavailable; the receipt is retried | `meter_receipt_retry` | WARNING |

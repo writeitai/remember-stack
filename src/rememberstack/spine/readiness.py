@@ -696,9 +696,9 @@ def _live_graph_status(
         connection.exec_driver_sql("RESET ROLE")
         role_active = False
         return True, "ready"
-    except (
+    except (  # error-contract: expected readiness probe returns a coded reason
         SQLAlchemyError
-    ):  # error-contract: expected readiness probe returns a coded reason
+    ):
         return False, "graph_database_or_permission_failed"
     except (KeyError, TypeError, ValueError):
         return False, "graph_smoke_contract_failed"
@@ -706,9 +706,9 @@ def _live_graph_status(
         if role_active:
             try:
                 connection.exec_driver_sql("RESET ROLE")
-            except (
+            except (  # error-contract: exempt role cleanup; connection closes below
                 SQLAlchemyError
-            ):  # error-contract: exempt role cleanup; connection closes below
+            ):
                 pass
 
 

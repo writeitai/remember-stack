@@ -52,6 +52,7 @@ from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
+from rememberstack.surfaces.query_sandbox.nomination import BudgetRejection
 from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.result import GraphInvocation
 from rememberstack.surfaces.query_sandbox.result import QueryResult
@@ -855,7 +856,12 @@ class QuerySandboxExecutor:
             nonlocal observed_error, deadline_passed
             if observed_error is None:
                 observed_error = error
-                deadline_passed = time.monotonic() >= request_deadline
+                observed_at = (
+                    error.observed_at
+                    if isinstance(error, BudgetRejection)
+                    else time.monotonic()
+                )
+                deadline_passed = observed_at >= request_deadline
 
         @contextmanager
         def observe_failure() -> Iterator[None]:

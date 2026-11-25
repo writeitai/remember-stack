@@ -1919,9 +1919,9 @@ class PostgresP1Index:
                 channel="semantic",
                 policy=ENTITY_INPUT_POLICY,
             )
-        except (
+        except (  # error-contract: expected unavailable result from a readiness probe
             P1SearchUnavailableError
-        ):  # error-contract: expected unavailable result from a readiness probe
+        ):
             return False
         return True
 

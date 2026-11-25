@@ -14,9 +14,7 @@ One AST rule over ``src/rememberstack`` (D158 design §4):
 Code inside a nested function, lambda or class does not run when the handler
 does, so it never satisfies the enclosing handler.
 
-``BASELINE`` counts, per function, the backlog handlers (analysis §5) not yet
-converted. A new violating handler raises its function's count and fails;
-each implementation PR lowers the counts it fixes, and a stale count fails.
+The conversion backlog is complete. The test requires zero violating handlers.
 """
 
 from __future__ import annotations
@@ -46,7 +44,11 @@ FAILURE_CLASSES = {
     "subprocess.TimeoutExpired",
     "RuntimeError",
 }
-REPORTERS = {"_internal_error"}
+REPORTERS = {
+    "_internal_error",
+    "_report_capture_scope_failure",
+    "_report_query_read_failure",
+}
 HANDLER_LEVELS = {"error", "exception"}
 ERROR_LEVELS = {"error", "exception", "critical"}
 SUPPRESSION = re.compile(
@@ -60,29 +62,7 @@ DEFERRED = (
     ast.GeneratorExp,
 )
 
-# Backlog (analysis §5): violating handlers per "relative/path.py::function".
-# Lower a count (or drop the entry) as handlers are fixed; never raise one.
-BASELINE: dict[str, int] = {
-    "adapters/codex_writer.py::CodexCLIAgentAdapter.run_session": 1,
-    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_description": 1,
-    "adapters/converters/image_ocr_description.py::ImageOcrDescriptionConverter._run_missing_lanes": 1,
-    "adapters/converters/time_limit.py::run_with_time_limit._target": 1,
-    "adapters/fsit_storage_capture_transport.py::_PendingProviderCapture.discard": 1,
-    "adapters/managed/perimeter_trust.py::PerimeterTrust.refresh": 1,
-    "adapters/openrouter.py::OpenRouterModelProvider._resolve_provider_host": 1,
-    "adapters/openrouter.py::OpenRouterModelProvider._write_invalid_capture": 1,
-    "adapters/postgres_p1.py::PostgresP1Index.entity_semantic_ready": 1,
-    "adapters/vertex.py::_error_preview": 1,
-    "profiles/storage_capture_batch.py::capture_storage_batch": 3,
-    "spine/corpus_publication.py::CorpusPublicationCatalog.locked": 1,
-    "spine/readiness.py::_live_graph_status": 2,
-    "surfaces/http_api.py::_authenticate": 1,
-    "surfaces/mcp.py::OperationMcpServer.call_tool": 1,
-    "surfaces/query_engine.py::QueryEngine._default_facts_context.confirmed_facts": 1,
-    "surfaces/query_engine.py::QueryEngine._embedding_resolve_hits": 1,
-    "surfaces/query_engine.py::QueryEngine._nominate_facts_context": 1,
-    "workers/e0_summary.py::SectionSummarizer._load_cache": 2,
-}
+BASELINE: dict[str, int] = {}
 
 
 def _package() -> list[tuple[str, str, ast.Module]]:
@@ -369,25 +349,11 @@ def _scan() -> tuple[Counter[str], list[str]]:
 
 
 def test_failure_handlers_raise_or_report_with_a_code() -> None:
-    """No function has more violating handlers than its backlog count."""
+    """Require every covered handler to raise, report or explain its outcome."""
     handlers, _ = _scan()
-    new = sorted(
-        f"{key} ({count} > {BASELINE.get(key, 0)})"
-        for key, count in handlers.items()
-        if count > BASELINE.get(key, 0)
+    assert dict(handlers) == BASELINE, (
+        f"handlers that neither raise nor log a coded ERROR: {dict(sorted(handlers.items()))}"
     )
-    assert new == [], f"handlers that neither raise nor log a coded ERROR: {new}"
-
-
-def test_baseline_has_no_fixed_entries() -> None:
-    """Lower a backlog count once its handlers are fixed."""
-    handlers, _ = _scan()
-    stale = sorted(
-        f"{key} ({handlers.get(key, 0)} < {count})"
-        for key, count in BASELINE.items()
-        if handlers.get(key, 0) < count
-    )
-    assert stale == [], f"fixed, lower in BASELINE: {stale}"
 
 
 def test_every_error_log_has_a_stable_code() -> None:
