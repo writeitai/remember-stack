@@ -45,19 +45,6 @@ _PERIODS_PATH = f"/documents/{_DOC}/versions/{_VERSION}/effective-periods"
 _CLEAR_PATH = f"/documents/{_DOC}/effective-periods"
 
 
-class _Boundary:
-    """Admission and readiness that accept the served deployment."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Admission is open."""
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _UnusedEngine:
     """Query-engine placeholder; these routes never call it."""
 
@@ -191,13 +178,10 @@ def _client(
     auth: _ScopedAuth | None = None,
 ) -> TestClient:
     """An API exposing only the composed ingest and period routes."""
-    boundary = _Boundary()
     return TestClient(
         build_api(
             engine=_UnusedEngine(),  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             ingest=ingest,
             effective_time=effective_time,
             auth=auth,

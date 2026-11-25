@@ -12,7 +12,6 @@ from pydantic import SecretStr
 from pydantic import ValidationError
 import pytest
 
-from rememberstack.model import ForgetInProgressError
 from rememberstack.spine.cost_export import COST_EXPORT_PAGE_FIELDS
 from rememberstack.spine.cost_export import COST_EXPORT_RECEIPT_FIELDS
 from rememberstack.spine.cost_export import CostExportConfigError
@@ -34,19 +33,6 @@ _WORK = UUID("33333333-3333-3333-3333-333333333333")
 _WHEN = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
 _EXPORT_TOKEN = "e" * 32
 _CUSTOMER_TOKEN = "customer-perimeter-token"
-
-
-class _Ready:
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
-class _ForgetAdmission:
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        raise ForgetInProgressError(str(deployment_id))
 
 
 class _FakeReader:
@@ -188,12 +174,7 @@ def test_origin_main_cost_export_cursor_still_decodes() -> None:
 
 def test_build_api_does_not_register_export() -> None:
     """The customer app physically cannot serve the export path."""
-    app = build_api(
-        engine=cast(QueryEngine, object()),
-        deployment_id=_DEPLOYMENT,
-        admission=_Ready(),  # type: ignore[arg-type]
-        readiness=_Ready(),  # type: ignore[arg-type]
-    )
+    app = build_api(engine=cast(QueryEngine, object()), deployment_id=_DEPLOYMENT)
     paths = {getattr(route, "path", None) for route in app.routes}
     assert "/ops/cost-export/v1" not in paths
     assert TestClient(app).get("/ops/cost-export/v1").status_code == 404
@@ -240,31 +221,6 @@ def test_malformed_cursor_is_422() -> None:
     )
     assert response.status_code == 422
     assert "receipts" not in response.json() or "detail" in response.json()
-
-
-def test_forget_in_progress_on_customer_app_does_not_stop_export() -> None:
-    """D74 admission is a customer-app dependency; export has none."""
-    customer = build_api(
-        engine=cast(QueryEngine, object()),
-        deployment_id=_DEPLOYMENT,
-        admission=_ForgetAdmission(),  # type: ignore[arg-type]
-        readiness=_Ready(),  # type: ignore[arg-type]
-    )
-    export = build_cost_export_app(
-        reader=_FakeReader(),
-        deployment_id=_DEPLOYMENT,
-        token=_EXPORT_TOKEN,
-        bucket=_TokenBucket(rate_per_s=10.0, capacity=10.0),
-    )
-    assert TestClient(customer).get("/resolve", params={"name": "x"}).status_code == 503
-    assert (
-        TestClient(export)
-        .get(
-            "/ops/cost-export/v1", headers={"Authorization": f"Bearer {_EXPORT_TOKEN}"}
-        )
-        .status_code
-        == 200
-    )
 
 
 def test_rate_limit_is_one_request_per_second() -> None:

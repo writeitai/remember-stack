@@ -44,17 +44,6 @@ def _sample_chunk() -> ChunkEvidenceResult:
     )
 
 
-class _Ready:
-    """Open admission/readiness boundary."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Accept the configured deployment."""
-
-
 class _Engine:
     """Capture the exact adjacent_chunks arguments the route forwards."""
 
@@ -76,12 +65,9 @@ class _Engine:
 
 def _client(engine: _Engine) -> TestClient:
     """Build a TestClient against a fresh API with the given stub engine."""
-    boundary = _Ready()
     app = build_api(
         engine=engine,  # type: ignore[arg-type]
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,  # type: ignore[arg-type]
-        readiness=boundary,  # type: ignore[arg-type]
     )
     return TestClient(app)
 

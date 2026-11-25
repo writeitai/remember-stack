@@ -13,9 +13,7 @@ from rememberstack.core.selection_references import card_from_payload
 from rememberstack.core.selection_references import card_payload
 from rememberstack.core.selection_references import CardDiagnostic
 from rememberstack.core.selection_references import GroundedCard
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import SelectionResponse
-from rememberstack.spine.admission import active_forget_id_on
 
 
 @dataclass(frozen=True)
@@ -33,16 +31,7 @@ class FrozenSelection:
 def require_extraction_sources_on(
     *, connection: Connection, deployment_id: UUID, chunk_ids: tuple[UUID, ...]
 ) -> None:
-    """Fence late publication against forget and require every source to survive."""
-    connection.execute(
-        text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
-        {"key": f"hard-forget:{deployment_id}"},
-    )
-    if (
-        active_forget_id_on(connection=connection, deployment_id=deployment_id)
-        is not None
-    ):
-        raise ForgetInProgressError("extraction publication is fenced by hard forget")
+    """Require every source to survive; a hidden (forgotten) lineage publishes nothing."""
     present = set(
         connection.execute(
             text("""

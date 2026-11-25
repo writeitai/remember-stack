@@ -47,7 +47,6 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine.document_bindings import DOCUMENT_BINDING_GENERATION
 from rememberstack.spine.entity_eligibility import surface_appears_in_claim
 from rememberstack.spine.entity_registry import normalized_lemma
-from rememberstack.spine.fact_applications import application_fence
 from rememberstack.spine.profile_refresher import load_entity_profile_evidence_many
 from rememberstack.spine.profile_refresher import (
     profile_summary as build_profile_summary,
@@ -348,10 +347,7 @@ class CascadeResolver:
         self, *, deployment_id: UUID, doc_id: UUID, lemma: str
     ) -> Iterator[Connection]:
         """Fence source deletion/forget and identity changes in global lock order."""
-        with (
-            self._engine.begin() as connection,
-            application_fence(connection=connection, deployment_id=deployment_id),
-        ):
+        with self._engine.begin() as connection:
             present = connection.execute(
                 _LIVE_SOURCE, {"deployment_id": deployment_id, "doc_id": doc_id}
             ).scalar_one_or_none()

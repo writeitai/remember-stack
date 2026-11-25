@@ -38,19 +38,6 @@ _PINNED_REF = UUID("12121212-1212-1212-1212-121212121212")
 _LABELLED_REF = UUID("34343434-3434-3434-3434-343434343434")
 
 
-class _Ready:
-    """Open admission/readiness boundary for route tests."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Accept the configured deployment."""
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _UnusedEngine:
     """Query-engine placeholder; graph routes never call it."""
 
@@ -91,13 +78,10 @@ class _Graph:
 
 def _client(graph: _Graph) -> TestClient:
     """Build the graph-only API test client."""
-    boundary = _Ready()
     return TestClient(
         build_api(
             engine=_UnusedEngine(),  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             graph=graph,
         )
     )
@@ -406,13 +390,10 @@ def test_entity_graph_reads_follow_the_facts_layer(
 ) -> None:
     """D143 §7.3: facts disabled is 409; an empty answer while facts backfill is
     a boundary; with facts complete the envelope is unchanged."""
-    boundary = _Ready()
     client = TestClient(
         build_api(
             engine=_UnusedEngine(),  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             graph=_EmptyGraph(),
             processing_layers=_Layers(facts=facts),
         )

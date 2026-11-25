@@ -41,17 +41,6 @@ from tests.signed_key_support import ready_auth
 from tests.signed_key_support import TENANT
 
 
-class _OpenBoundary:
-    """Admission and readiness for the perimeter-only HTTP proof."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Admit the configured deployment while the API composes."""
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Leave request admission open."""
-
-
 class _UnusedEngine:
     """A query engine that a refused request must never reach."""
 
@@ -130,12 +119,9 @@ def _ingest_client(
 ) -> tuple[TestClient, _RecordingIngest]:
     """Compose the real HTTP perimeter around one recording ingest port."""
     ingest = _RecordingIngest(deployment_id=deployment_id)
-    boundary = _OpenBoundary()
     app = build_api(
         engine=_UnusedEngine(),  # type: ignore[arg-type]
         deployment_id=deployment_id,
-        admission=boundary,  # type: ignore[arg-type]
-        readiness=boundary,  # type: ignore[arg-type]
         surface=_EmptyOperations(deployment_id=deployment_id),  # type: ignore[arg-type]
         ingest=ingest,
         connectors=object(),  # type: ignore[arg-type]

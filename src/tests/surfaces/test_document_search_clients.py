@@ -54,17 +54,6 @@ _VERSION = UUID("57000000-0000-0000-0000-000000000002")
 _AT = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
 
 
-class _Boundary:
-    """Open admission and readiness for the one deployment under test."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _Search:
     """Record every request; refuse the cursor ``bad`` like the spine does."""
 
@@ -99,12 +88,9 @@ class _Search:
 def surface() -> tuple[MemoryClient, _Search]:
     """The real HTTP app with only the document search route composed."""
     search = _Search()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         document_search=search,
     )
     return MemoryClient(client=TestClient(app)), search
@@ -282,13 +268,10 @@ def test_cursor_round_trips_and_refuses_garbage() -> None:
 
 def _remote_names(*, document_search: bool, read_only: bool) -> list[str]:
     """What a remote MCP lists against an origin with or without the route."""
-    boundary = _Boundary()
     build_info = _BuildInfo()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         build_info=build_info,
         document_search=_Search() if document_search else None,
     )
@@ -375,13 +358,7 @@ class _SearchEngine:
 def test_search_documents_filter_passes_through_sdk_and_http() -> None:
     """D134 §4: `documents` travels in the POST body; unfiltered stays GET."""
     engine = _SearchEngine()
-    boundary = _Boundary()
-    app = build_api(
-        engine=cast("QueryEngine", engine),
-        deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
-    )
+    app = build_api(engine=cast("QueryEngine", engine), deployment_id=_DEPLOYMENT_ID)
     client = MemoryClient(client=TestClient(app))
     filters = DocumentSearchFilters(family=("other",), authors=("alice@acme.com",))
 
@@ -464,13 +441,10 @@ class _TagRefusingSearch(_Search):
 
 
 def _tag_app(search: _TagRefusingSearch) -> TestClient:
-    boundary = _Boundary()
     return TestClient(
         build_api(
             engine=cast("QueryEngine", object()),
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             document_search=search,
         )
     )
@@ -515,12 +489,8 @@ def test_search_routes_map_unknown_filter_tags_to_unknown_tag() -> None:
         def search_chunks(self, **kwargs: object) -> Envelope:
             raise UnknownTagError(tags=["typo"])
 
-    boundary = _Boundary()
     app = build_api(
-        engine=cast("QueryEngine", _Refusing()),
-        deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
+        engine=cast("QueryEngine", _Refusing()), deployment_id=_DEPLOYMENT_ID
     )
     http = TestClient(app)
     body = {"query": "x", "documents": {"tags": {"all": ["typo"], "none": ["oops"]}}}
@@ -541,13 +511,7 @@ def test_search_routes_map_unknown_filter_tags_to_unknown_tag() -> None:
 
 def test_sdk_search_claims_and_chunks_send_the_tag_selector() -> None:
     engine = _SearchEngine()
-    boundary = _Boundary()
-    app = build_api(
-        engine=cast("QueryEngine", engine),
-        deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
-    )
+    app = build_api(engine=cast("QueryEngine", engine), deployment_id=_DEPLOYMENT_ID)
     client = MemoryClient(client=TestClient(app))
     filters = DocumentSearchFilters(
         family=("email",), tags=DocumentTagFilter(none=("project:ci-smoke",))

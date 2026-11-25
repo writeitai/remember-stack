@@ -135,7 +135,6 @@ x-app: &app
     REMEMBERSTACK_TYPESAFE_TIMEOUT_S: ${REMEMBERSTACK_TYPESAFE_TIMEOUT_S:-30.0}
   volumes:
     - app-state:/var/lib/rememberstack
-    - forget-manifests:/var/lib/rememberstack/forget-manifests
 
 services:
   postgres:
@@ -187,7 +186,7 @@ services:
   # AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY become the single admin identity
   # and switch S3 authentication on, so both are required.
   # The engine sets no S3 lifecycle rules, which `weed server` would store
-  # without enforcing; deletion is explicit (hard forget purges objects).
+  # without enforcing; deletion is explicit (a forget purges objects).
   object-store:
     restart: unless-stopped
     image: chrislusf/seaweedfs:4.44@sha256:e67e8c385484120b78bff47ba5f4debbca47fbd27ed1a39f016f47e8baea615b
@@ -284,6 +283,5 @@ services:
 
 volumes:
   app-state:
-  forget-manifests:
   object-store-data:
   postgres-data:

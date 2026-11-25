@@ -90,11 +90,11 @@ from rememberstack.model import ConverterLaneError
 from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import ConvertSource
 from rememberstack.model import DerivationRange
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import FileHints
-from rememberstack.model import ForgottenSourceError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import ModelRequest
@@ -201,13 +201,13 @@ _STORED_KEY: Final = re.compile(r"uploads/[A-Za-z0-9_-]{16,128}")
 disjoint from the engine's own keys (``<doc_id>/…``, ``forgotten/…``)."""
 
 
-_STORED_REFUSALS: Final = (ValueError, ForgottenSourceError)
+_STORED_REFUSALS: Final = (ValueError, DocumentForgottenError)
 """What refuses a stored object for good (size, content type,
 metadata, a forgotten identity); anything else may succeed on retry."""
 
 
 class IngestAdmission(Protocol):
-    """The one D74 check required before an ingest writes any bytes."""
+    """The D159 re-ingest guard, checked before an ingest writes any bytes."""
 
     def guard_ingest(
         self,
@@ -217,7 +217,7 @@ class IngestAdmission(Protocol):
         source_ref: str,
         content_hash: str,
     ) -> None:
-        """Raise when admission is closed or the identity was forgotten."""
+        """Raise ``DocumentForgottenError`` when a forget record guards this content."""
         ...
 
 
@@ -299,7 +299,7 @@ class UploadIngestor:
             )
         except ObjectAlreadyExistsError:
             pass  # identical bytes already landed — ingest retries are no-ops
-        ingested = self._catalog.record_upload(
+        ingested = self._register(
             record=UploadRecord(
                 deployment_id=deployment_id,
                 doc_id=doc_id,
@@ -317,10 +317,8 @@ class UploadIngestor:
                 source_path=upload.source_path,
                 tags=upload.tags,
             ),
-            convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
-            metered=self._meter_scope is not None,
-            routable_mimes=self._routable_for(upload=upload),
+            upload=upload,
         )
         self._release_unretained(
             deployment_id=deployment_id,
@@ -353,27 +351,27 @@ class UploadIngestor:
         nor moves it, and records ``key`` as the version's raw object. If the
         deployment already holds identical bytes under another key, that
         version answers, keeps its own raw object, and the engine deletes the
-        object at ``key`` (only the kept object is ever purged by hard
-        forget). A repeated registration of the same key changes nothing.
-        Callers never delete registered objects; hard forget removes them.
+        object at ``key`` (only the kept object is ever purged by a forget).
+        A repeated registration of the same key changes nothing. Callers
+        never delete registered objects; a forget removes them.
 
-        A refusal (declared size, content type, a forgotten
-        identity, invalid metadata) raises :class:`StoredObjectRefusedError`
+        A refusal (declared size, content type, a forgotten document's bytes
+        (:class:`DocumentForgottenError`), invalid metadata) raises
+        :class:`StoredObjectRefusedError`
         carrying the original refusal. The engine deletes the refused object
         unless a content keeps ``key`` as its raw object (a refused
         re-registration of a registered key keeps it), and the error's
         ``raw_object_deleted`` says which. Other failures (storage or
-        database errors, admission paused for a forget in progress) raise
+        database errors) raise
         unchanged and delete nothing, so a retry can succeed;
         :meth:`discard_unregistered` removes an object abandoned after such
         a failure. The caller must not register or discard the same key
         concurrently.
 
         ``key`` must be ``uploads/<id>`` with an opaque ``id`` of 16–128
-        characters from ``[A-Za-z0-9_-]``: hard forget purges a version's raw
+        characters from ``[A-Za-z0-9_-]``: a forget purges a version's raw
         key in every store, so a key outside this namespace could name
-        another object, and file names would enter the immutable forget
-        manifests. ``size`` must match the stored object. The uploader
+        another object, and file names would enter the forget record. ``size`` must match the stored object. The uploader
         chooses the storage class (D51 routing is not applied).
 
         A metered deployment measures the version in the convert stage, as
@@ -478,7 +476,7 @@ class UploadIngestor:
 
         For objects that never became a version: an upload whose registration
         was never completed or retried, swept after it is abandoned, since
-        unregistered bytes would escape hard forget. Returns ``False`` and
+        unregistered bytes would escape a forget. Returns ``False`` and
         keeps the object when a content keeps ``key`` as its raw object;
         otherwise deletes it (absence succeeds) and returns ``True``.
         :meth:`ingest_stored` uses the same rule for an object it refuses.
@@ -572,13 +570,7 @@ class UploadIngestor:
             )
         except ObjectAlreadyExistsError:
             pass
-        ingested = self._catalog.record_upload(
-            record=record,
-            convert_component_version=E0_CONVERT_VERSION,
-            lane=lane,
-            metered=self._meter_scope is not None,
-            routable_mimes=self._routable_for(upload=upload),
-        )
+        ingested = self._register(record=record, lane=lane, upload=upload)
         self._release_unretained(
             deployment_id=deployment_id,
             content_hash=content_hash,
@@ -586,13 +578,41 @@ class UploadIngestor:
         )
         return ingested
 
+    def _register(
+        self, *, record: UploadRecord, lane: ProcessingLane, upload: DocumentUpload
+    ) -> IngestedVersion:
+        """Register a written original; a forget that won the race keeps nothing.
+
+        The re-ingest guard runs again under the lineage row lock. When it
+        refuses, the original this ingest just wrote is removed unless some
+        content already keeps that key (D159 §3.6).
+        """
+        try:
+            return self._catalog.record_upload(
+                record=record,
+                convert_component_version=E0_CONVERT_VERSION,
+                lane=lane,
+                metered=self._meter_scope is not None,
+                routable_mimes=self._routable_for(upload=upload),
+            )
+        except DocumentForgottenError:
+            if isinstance(
+                self._raw_store, ObjectPurgePort
+            ) and not self._catalog.raw_object_registered(
+                deployment_id=record.deployment_id, key=record.raw_uri
+            ):
+                self._raw_store.purge_objects(
+                    keys=(ObjectKey(record.raw_uri),), prefixes=()
+                )
+            raise
+
     def _release_unretained(
         self, *, deployment_id: UUID, content_hash: str, key: ObjectKey
     ) -> None:
         """Remove a raw object this ingest wrote or was given but does not keep.
 
         Each content keeps one raw object, the first one recorded, and only
-        that one is purged by hard forget. A copy written under another key
+        that one is purged by a forget. A copy written under another key
         (an earlier version of these bytes arrived through another entry
         point, file name or upload key) would outlive a forget, so it is
         removed as soon as the record shows it is not the kept one.
@@ -710,7 +730,10 @@ class UploadIngestor:
         source_ref: str,
         content_hash: str,
     ) -> None:
-        """Check D74 before writing forgotten bytes back into the raw store."""
+        """Refuse forgotten content before writing its bytes (D159 §3.6).
+
+        Checked again at registration under the lineage row lock.
+        """
         self._admission.guard_ingest(
             deployment_id=deployment_id,
             source_kind=source_kind,

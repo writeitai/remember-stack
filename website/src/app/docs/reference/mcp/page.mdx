@@ -635,7 +635,6 @@ them. Every tool returns the same JSON:
 | `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
 | `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |
 | `chunk_not_found` | 404 | no | `document_references`: no such passage, or its document is deleted. |
-| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. |
 | `unauthorized` | 401 | no | The key is missing, wrong, expired or revoked. |
 | `insufficient_permission` | 403 | no | The key may not do this on this deployment. |

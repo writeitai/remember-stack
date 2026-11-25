@@ -4773,7 +4773,7 @@ the name and look the id up.
 A deleted document never shows its tags: it leaves `GET /documents`, search
 and the SQL views, and its tags with it. The engine keeps the record of which
 tags it carried, so if you ingest the document again it comes back with
-those tags. Forgetting a document (the operator's hard forget) removes that
+those tags. Forgetting a document removes that
 record; the registered tags themselves stay, because they are the
 deployment's vocabulary, not content from any document.
 
@@ -7258,10 +7258,10 @@ publication uses complete-object replacement, streaming large files through mult
 uploads, with digest metadata and paged listings. The project's checks exercise SeaweedFS
 and real MinIO adapter contracts. Another S3-compatible store has to support
 path-style requests, conditional writes and user metadata on objects. Complete-object replacement, multipart streaming and fully paged listings
-are also required for the corpus. Hard-forget reads the bucket's versioning policy;
-when versions are retained, it must list and delete every matching object version
-and delete marker. Grant those operations to the purge adapter. An unknown policy
-or failed retained-version purge keeps admission closed.
+are also required for the corpus. A forget reads the bucket's versioning policy;
+when versions are retained, it must list, read and delete every matching object
+version and delete marker. Grant those operations to the purge adapter. A failed
+retained-version purge fails that sweep, which is retried until it succeeds.
 
 SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
 of them, so the bundled store holds up to about 100 GiB before writes fail
@@ -7269,7 +7269,7 @@ of them, so the bundled store holds up to about 100 GiB before writes fail
 preallocated, so unused capacity takes no disk. To store more, raise
 `-volume.max` on the `object-store` service in `compose.yaml`. The engine
 sets no S3 lifecycle (expiry) rules; it deletes published objects itself
-during a hard forget.
+when it forgets a document.
 
 For unfinished multipart uploads, purge aborts matching uploads when the
 provider supports listing them. A `NotImplemented`/501 response to that listing
@@ -7318,7 +7318,7 @@ below and [Scaling](https://remember.dev/docs/self-hosting/scaling)).
   is capped at about 100 GiB (see
   [S3-compatible object storage](#s3-compatible-object-storage)).
 
-Nothing is deleted automatically; a hard forget removes a document's data.
+Nothing is deleted automatically; a forget removes a document's data.
 
 **Database connections.** Compose starts PostgreSQL with
 `max_connections` from `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS`, `300` by
@@ -7533,7 +7533,6 @@ Compose names volumes after the project, `rememberstack`:
 | `rememberstack_postgres-data` | `/var/lib/postgresql` in `postgres` | The database: every document, version, claim, fact and entity, the work queue and the cost ledger |
 | `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and corpus copies |
 | `rememberstack_app-state` | `/var/lib/rememberstack` in the app containers | Working directories; the optional debug capture of invalid model output |
-| `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Portable hard-forget intent, replayed before serving restored data. |
 
 The first two hold the memory. Back them up together; see
 [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#back-up).
@@ -9162,20 +9161,59 @@ The output has `ready`, `changed`, `problems_before` and `problems_after`.
 It also checks the versions of `pgvector`,
 `pg_textsearch` and `pg_partman`.
 
-## When a hard forget is in progress
+## Forgetting a document
 
-While a hard forget is running, the API answers `503` with
-`{"code": "forget_in_progress"}`. Ordinary claims, publication and reconcile
-refuse to run. The coordinator alone can erase source bytes and regenerate
-navigation under the closed barrier.
+A forget erases one document and everything derived only from it. It is not
+yet exposed on the HTTP API, SDK, CLI or MCP surfaces (see
+[not built yet](https://remember.dev/docs/project/not-built-yet)); in this release it is requested
+inside the engine. Nothing else in the deployment stops while a forget runs.
 
-The Python hard-forget coordinator and ordinary workers use the same purge path.
-There is no public CLI command that starts a hard forget. API startup and
-`project --plane p3` replay every portable manifest before serving or repairing
-restored data, including manifests previously marked complete. Any error keeps
-admission closed. A host with controlled mount sessions must acknowledge stopping
-them and erasing their caches; operator-managed FUSE mounts must be stopped and
-remounted. See [restore ordering](https://remember.dev/docs/self-hosting/upgrades#hard-forget-manifests).
+- **The hide.** In one database transaction the document, its versions,
+  passages and testimony disappear from every read, and its queued or running
+  work can no longer be claimed or renew its lease. A forget record is written:
+  IDs and content hashes only, never text.
+- **The sweep.** A `forget` job then deletes the document's rows, its objects
+  (including retained object versions), its corpus folders and the corpus
+  navigation that listed it, and rebuilds compiled knowledge pages that cited
+  it. It sweeps again after a quiet period
+  (`REMEMBERSTACK_SELFHOST_FORGET_QUIET_PERIOD_S`, 15 minutes by default) and
+  repeats until a sweep finds nothing left; the record then becomes `complete`.
+  A failed sweep records an error code on the record and is retried with
+  backoff, without an attempt limit.
+- **Authored knowledge pages.** The engine never rewrites prose a person or
+  agent wrote. If an authored page still cites the document, the record stays
+  `waiting_for_redaction` and lists the page's path; once the owner removes the
+  citation, the next check erases that page's history and completes the forget.
+- **Re-ingest.** Ingesting the same bytes or the same source (`source_kind` and
+  `source_ref`) again is refused with `409 document_forgotten`; connectors skip
+  the file.
+
+### After restoring a backup
+
+Forget erases the active stores; your backups follow your own policy. After you
+restore object storage, the corpus bucket or the knowledge repository from a
+backup taken before a forget, re-run the sweeps of every forget the database
+still records:
+
+```bash
+docker compose exec -T api \
+  remember ops forget-reapply --deployment "$DEPLOYMENT_ID"
+```
+
+It prints the forget IDs it re-armed; ordinary workers run the sweeps, and
+nothing waits for them. A database restored from before a forget no longer has
+that forget's record: forget the document again.
+
+### Limits
+
+- PostgreSQL erasure is logical: no later query or dump returns the content, but
+  old row versions stay in table files and write-ahead log until PostgreSQL
+  overwrites them. Forget does not run `VACUUM FULL`.
+- An operator-managed S3 FUSE mount stops listing the document when its cache
+  expires; a file already open in such a tool may keep serving what it read
+  until it is closed. See [filesystem views](https://remember.dev/docs/self-hosting/filesystem-views).
+- A worker stalled for longer than the quiet period after the hide could still
+  write once; the quiet period is set longer than a work lease for this reason.
 
 ---
 
@@ -9207,7 +9245,7 @@ Run the commands on this page from the directory that holds your
 | Work waits and nothing fails | `defer_reason` in [See what is waiting and why](#see-what-is-waiting-and-why) | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
 | The answer is empty or not what you expected | `negative`, `temporal_scope`, the operation you called | [Empty or surprising answers](#empty-or-surprising-answers) |
 | A SQL query returns `200` with no rows and an `error_code` | `termination_reason` | [A SQL query is rejected](#a-sql-query-is-rejected) |
-| `503` with `forget_in_progress` | `docker compose logs api` | [503 forget_in_progress](#503-forget_in_progress) |
+| `409` with `document_forgotten` | the `forget_id` in the answer | [409 document_forgotten](#409-document_forgotten) |
 | `setup` stops after an upgrade | `docker compose logs setup` | [setup refuses an existing database](#setup-refuses-an-existing-database) |
 
 ## Running operator commands
@@ -9578,15 +9616,14 @@ The codes you meet most often:
 
 Every code is in [Errors and status codes](https://remember.dev/docs/reference/errors#sql-query-codes).
 
-## 503 forget_in_progress
+## 409 document_forgotten
 
-The API answers `503` with `{"code": "forget_in_progress"}` while a hard
-forget is running, and the operator commands that copy or replay data
-refuse to run. There is no public CLI command that starts hard-forget. Startup
-also closes admission while replaying portable intent from a restore, and a
-failed replay leaves it closed for retry. See
-[Hard-forget manifests](https://remember.dev/docs/self-hosting/upgrades#hard-forget-manifests) and
-[When a hard forget is in progress](https://remember.dev/docs/self-hosting/operating#when-a-hard-forget-is-in-progress).
+An ingest answered `409` with
+`{"code": "document_forgotten", "forget_id": "...", "forgotten_at": "..."}`:
+the same bytes, or the same `source_kind` and `source_ref`, belong to a
+document this deployment forgot. Connectors skip such a file and log
+`sync.item_forgotten`. The refusal is deliberate; do not retry. See
+[Forgetting a document](https://remember.dev/docs/self-hosting/operating#forgetting-a-document).
 
 ## setup refuses an existing database
 
@@ -10223,17 +10260,16 @@ Backups are your responsibility. RememberStack does not schedule them, and
 the project does not test a restore procedure. What follows is grounded in
 how the Compose deployment stores its data.
 
-A deployment's state lives in four Docker volumes:
+A deployment's state lives in three Docker volumes:
 
 | Volume | Must be backed up |
 |---|---|
 | `rememberstack_postgres-data` | Yes: the database |
 | `rememberstack_object-store-data` | Yes: original files and derived artifacts |
-| `rememberstack_forget-manifests` | Yes, separately durable: never roll portable intent back with an older data backup |
 | `rememberstack_app-state` | Optional: working directories and debug captures |
 
 Corpus folders in the object store can be reconciled; everything else in the
-first three volumes cannot. The database and the object store refer to
+first two volumes cannot. The database and the object store refer to
 each other, so back them up at the same moment.
 
 ### A cold backup of the volumes
@@ -10243,7 +10279,7 @@ The simplest consistent backup stops the stack and copies the volumes:
 ```bash
 docker compose stop
 mkdir -p backup
-for volume in postgres-data object-store-data forget-manifests app-state; do
+for volume in postgres-data object-store-data app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/source:ro" \
     -v "$PWD/backup:/backup" \
@@ -10255,15 +10291,10 @@ docker compose start
 Keep the `backup/` directory and your `.env` together: a restore needs the
 same deployment id and the same database and object-store credentials.
 
-For a same-machine restore, retain the current `forget-manifests` volume.
-Restore only the ordinary data volumes from the older backup, with the same
-`.env`. On another machine, first provision the manifest volume from your latest
-separately durable intent store; the copy captured with an older data backup can
-be missing later forget requests.
+To restore, put the volumes back with the same `.env`:
 
 ```bash
 docker compose down
-# Keep rememberstack_forget-manifests and its latest accepted intent.
 docker volume rm rememberstack_postgres-data rememberstack_object-store-data rememberstack_app-state
 docker compose create
 for volume in postgres-data object-store-data app-state; do
@@ -10274,10 +10305,14 @@ for volume in postgres-data object-store-data app-state; do
 done
 docker compose up -d --wait
 docker compose exec -T api remember ops graph-catalog ensure
+docker compose exec -T api remember ops forget-reapply --deployment "$DEPLOYMENT_ID"
 ```
 
-The last command checks that the graph views and functions in the restored database
-match this release ([Operating the pipeline](https://remember.dev/docs/self-hosting/operating#the-graph-catalog)).
+The graph-catalog command checks that the graph views and functions in the
+restored database match this release
+([Operating the pipeline](https://remember.dev/docs/self-hosting/operating#the-graph-catalog)). The
+last command re-runs the erasure of every document the restored database
+records as forgotten; see [forgets after a restore](#forgets-after-a-restore).
 
 ### A logical backup
 
@@ -10299,24 +10334,26 @@ creating the roles, restoring the dump into an empty database with
 `pg_restore`, copying the buckets back, and running `setup`; the project
 has not tested this path.
 
-### Hard-forget manifests
+### Forgets after a restore
 
-The `forget-manifests` volume holds portable, content-free intent for permanently
-removed documents. Keep it independently durable and carry all accepted intent
-into a restore. An older database or object bucket cannot undo that intent.
+A forget erases the active stores, not your backups. Each forget leaves a
+content-free record in the database, so after restoring object storage, the
+corpus bucket or the knowledge repository from a backup taken before a forget,
+`remember ops forget-reapply` erases that document from them again. It is an
+ordinary command: it queues the sweeps, workers run them, and nothing waits for
+them. A database restored from before a forget no longer has that forget's
+record, and the document comes back; forget it again.
 
-Before any API or controlled mount reopens, startup rematerializes every manifest,
-scrubs restored authority, scans the corpus for the document's deterministic
-suffix, erases its copies/uploads and retained versions, and regenerates shared
-indexes. It repeats this even when PostgreSQL still says `complete`, covering
-bucket-only, database-only and combined restores. A failure leaves admission
-closed for retry. Other documents' originals and media remain in place.
-
-The PostgreSQL + real MinIO canary exercises these independent data restores;
-transporting production backups, backup expiry and provisioning remain operator
-responsibilities. Stop and remount operator-managed FUSE sessions. A composing
-host must supply cache acknowledgements for sessions it controls, and K purge and
-rebuild capabilities when K history exists.
+**Upgrading from a release with D74 hard-forget.** The upgrade turns each
+complete hard-forget into a complete forget record, and an unfinished one into
+a forget that is erasing: the document is hidden and its sweeps are queued.
+The `forget-manifests` volume and the
+`REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` and
+`REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` settings are no longer
+used; after the upgrade you can remove the volume
+(`docker volume rm rememberstack_forget-manifests`). A forget kept only in that
+volume and not in the database is not carried over: forget the document again
+if a restore brings it back.
 
 ---
 
@@ -10336,7 +10373,8 @@ available through the version-addressed API.
 ## Mount the corpus
 
 Use an S3 filesystem tool with read-only credentials and options to mount the
-configured corpus bucket. Bound its stat, listing and data caches. The bucket
+configured corpus bucket. Bound its stat, listing and data caches: a forgotten
+document disappears from the mount only when those caches expire. The bucket
 root is the filesystem root; separate raw and artifact mounts are unnecessary.
 RememberStack does not provision a FUSE mount or enforce local permissions.
 Provider access logging must include reads of corpus originals.
@@ -10437,23 +10475,20 @@ Normal document deletion removes that document's recorded corpus folders and
 repairs navigation before reporting success. A store failure reports failure and
 leaves durable retry work.
 
-Before coordinating hard-forget on operator-managed processes, stop ordinary
-writers and wait for their outstanding storage calls. An expired work lease is
-not proof that an issued provider request has stopped.
+A forget erases every folder carrying the document's suffix, including
+unfinished uploads and retained object versions, and rewrites the navigation
+files that listed it from the database. It runs alongside ordinary publication,
+without stopping it, and repeats after a quiet period until nothing is left. It
+preserves other documents' files in place. When a provider does not implement
+multipart-upload listing, unfinished-part cleanup follows that provider's
+policy and a warning is logged.
 
-Hard-forget closes admission, drains work, erases every matching suffix folder,
-unfinished upload and retained object version, then regenerates navigation from
-scrubbed database authority. It preserves other document files in place. When a
-provider does not implement multipart-upload listing, purge records
-`provider_managed` coverage and logs a warning; unfinished-part cleanup follows
-that provider's policy. Published-object absence is still verified.
-
-Before restoring traffic, the startup gate replays every portable manifest,
-including ones previously marked complete. Keep that intent outside the ordinary
-restore set. A replay failure keeps admission closed. Engine-controlled sessions
-must stop serving and acknowledge cache erasure; operator-managed FUSE mounts
-must be stopped and remounted for forget. See
-[hard-forget recovery](https://remember.dev/docs/self-hosting/upgrades#hard-forget-manifests).
+Mounts are not stopped. An operator-managed S3 FUSE mount stops listing the
+document, and new opens of its paths fail, when the tool's stat and listing
+caches expire, so keep them bounded. A file already open in such a tool may keep
+serving what it read until it is closed. Bytes a client copied out of a mount
+are outside the engine. After restoring the corpus bucket from a backup, run
+[`remember ops forget-reapply`](https://remember.dev/docs/self-hosting/operating#after-restoring-a-backup).
 
 ---
 
@@ -10643,7 +10678,7 @@ A failed request returns a non-2xx status and a JSON body with a single
 | Form | Example | Where |
 |---|---|---|
 | Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph. |
-| Object with `code` | `{"detail": {"code": "forget_in_progress"}}` | `503` while a deletion (hard forget) runs. |
+| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` | `409` when an ingest names forgotten content. |
 | Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
 
@@ -10669,7 +10704,6 @@ do about it.
 | `422` | validation list | A parameter or body is missing, has the wrong type, or is out of bounds. |
 | `429` | `{"code": "rate_limited", …}` / `{"code": "concurrency_limited", …}` | An [admission limit](#admission-limits) was reached. Wait the `Retry-After` seconds, then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. Report it. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Every route except the credential check is closed until it finishes. Retry later. |
 
 ## Admission limits
 
@@ -11091,7 +11125,7 @@ for it; it will not become ready on its own.
 |---|---|---|
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
 | `413` | `body_too_large` | The body is over the deployment's cap. |
-| `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
+| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | These bytes, or this `source_kind` and `source_ref`, belong to a document this deployment forgot. Checked before any byte is stored and again when the version is registered. Do not retry. |
 | `409` | `{"code": "version_key_conflict", "message": …, "version_id": …, "version_key": …}` | The `version_key` already names another version of this document (`version_id`), or names the latest version but the bytes differ. Nothing was stored. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version of this document (`version_id`) already declares this `effective_from`. Nothing was stored. |
 | `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing was stored. |
@@ -11106,7 +11140,6 @@ for it; it will not become ready on its own.
 | `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
 | `422` | `ambiguous_office_format` | Legacy Office container bytes name no single Word, Excel or PowerPoint document. |
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
 
 A self-hosted deployment has no body cap unless you set
 `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`, and accepts any file its
@@ -11623,7 +11656,6 @@ new version.
 | `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
 | `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
 | `422` | validation list | `doc_id` is not a UUID. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running, or started preparing just before the delete. Nothing was deleted; retry later. |
 
 ### Example
 
@@ -14254,9 +14286,7 @@ Compose file uses it as the API container's health check.
 ### Response
 
 `200` with `{"status": "ok"}` after a `SELECT 1` succeeds. If the database
-cannot be reached, the request fails with `500`. While a hard forget runs, it
-answers `503` with `{"detail": {"code": "forget_in_progress"}}` like every
-other route.
+cannot be reached, the request fails with `500`.
 
 ### Example
 
@@ -20693,7 +20723,6 @@ them. Every tool returns the same JSON:
 | `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
 | `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |
 | `chunk_not_found` | 404 | no | `document_references`: no such passage, or its document is deleted. |
-| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. |
 | `unauthorized` | 401 | no | The key is missing, wrong, expired or revoked. |
 | `insufficient_permission` | 403 | no | The key may not do this on this deployment. |
@@ -20980,8 +21009,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for live corpus folders and navigation. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | Working directory created by `setup`. |
-| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | Where hard-forget manifests are read. |
-| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` | unset | string | Keep hard-forget manifests in this dedicated bucket instead of the manifest root. Never one of the three data buckets. |
+| `REMEMBERSTACK_SELFHOST_FORGET_QUIET_PERIOD_S` | `900` | seconds, at least 0 | How long a forget waits between sweeps; a forget completes after a sweep that follows this wait finds nothing left. Keep it longer than a work lease. |
 | `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | Alembic configuration used by `setup`. |
 
 ## Authentication
@@ -21195,7 +21223,7 @@ A deployment's error body always has one key, `detail`:
 | Form | Example |
 |---|---|
 | String | `{"detail": "body_too_large"}` |
-| Object with `code` | `{"detail": {"code": "forget_in_progress"}}` |
+| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` |
 | Object with `code` and `message` | `{"detail": {"code": "invalid_parameter", "message": "unknown argument(s): limit"}}` |
 | Validation list | `{"detail": [{"type": "less_than_equal", "loc": ["query", "k"], "msg": "Input should be less than or equal to 400", "input": "500", "ctx": {"le": 400}}]}` |
 
@@ -21233,7 +21261,7 @@ their code in `code`. `wait_for_readiness` raises
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
 | `409` | `{"code": "layer_unavailable", …}` | A read needs a [processing layer](https://remember.dev/docs/concepts/pipeline#processing-layers) (`layer`) the deployment does not process. | Use a read of a served layer, or ask the operator to switch the layer on. |
-| `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
+| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that belongs to a forgotten document. | Do not retry; the deployment does not take forgotten content back. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
 | `409` | `{"code": "conflict", "message": …}` | `POST /tags` or `PATCH /tags/{tag_id}` with a name another tag already has, in any letter case. | Use the existing tag, or choose another name. |
@@ -21258,7 +21286,6 @@ their code in `code`. `wait_for_readiness` raises
 | `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](https://remember.dev/docs/reference/http-api#admission-limits), off unless configured). | Wait the `Retry-After` seconds, then retry. |
 | `429` | `{"code": "concurrency_limited", …}` | Too many requests of the credential or the deployment are running at once. | Wait for your other requests to finish (`Retry-After` is `1`), then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. | Report it. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running; the deployment accepts no traffic until it finishes. | Retry later. |
 | `503` | `model provider unavailable` | A search, lookup, resolve or assured-operation call could not embed its query. | Retry with back-off. |
 | `503` | `live graph is busy` | No graph traversal slot was free in time. | Retry with back-off. |
 | `503` | `live graph result unavailable` | A traversal and the rows it pointed at disagreed. | Retry. |
@@ -21355,7 +21382,6 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
-| `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
 | `unauthorized` | 401 | no | The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY. |
 | `insufficient_permission` | 403 | no | The key may not do this here: use a key with the needed permission for this deployment. |
@@ -22563,9 +22589,18 @@ absent from the current release; nothing here has a date.
 
 ## Documents
 
-- **Erasing a document.** Deleting a document removes it from the memory
-  but keeps its claims and stored original as history; the HTTP API, the
-  SDK, the CLI and the MCP tools cannot erase a document's bytes.
+- **Forgetting a document from a client.** The engine can forget (erase) a
+  document, but no HTTP route, SDK method, CLI command or MCP tool requests a
+  forget yet, and `GET /forgets` does not exist. Deleting a document removes it
+  from the memory but keeps its claims and stored original as history. A
+  forgotten document's content cannot be ingested again: there is no
+  `allow_forgotten` option yet.
+- **Rewriting clean authored-page history on forget.** A forget erases the
+  history of compiled knowledge pages that cited the document and of authored
+  pages once their owner removes the citation; an authored page whose current
+  file no longer cites the document but whose older revisions do keeps those
+  revisions, and a page that still cites it gets no review flag yet: the
+  forget's record lists its path while it waits.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
 - **Document filters on fact lookups and SQL functions.** Claim and chunk

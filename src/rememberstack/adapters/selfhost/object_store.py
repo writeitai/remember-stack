@@ -170,6 +170,12 @@ class LocalFSObjectStore:
         self._prune_parents(path.parent, root=self._root)
         self._prune_parents(self._class_path(key=key).parent, root=self._metadata_root)
 
+    def purge_retained_versions_containing(
+        self, *, keys: tuple[ObjectKey, ...], needle: bytes
+    ) -> int:
+        """Local storage keeps no object versions."""
+        return 0
+
     def iter_purge_keys(self) -> Iterator[ObjectKey]:
         """Local storage retains neither object versions nor multipart uploads."""
         yield from self.iter_keys(prefix="")
@@ -181,26 +187,44 @@ class LocalFSObjectStore:
         keys: tuple[ObjectKey, ...],
         prefixes: tuple[ObjectKey, ...],
         before_write: Callable[[], None] | None = None,
-    ) -> None:
-        """Use exact deletion for boundary-safe, idempotent erasure."""
+        keep: tuple[ObjectKey, ...] = (),
+    ) -> int:
+        """Use exact deletion for boundary-safe, idempotent erasure.
+
+        Returns how many objects were removed, so absence reads as zero.
+        ``keep`` names exact keys that are never touched.
+        """
         for key in keys:
             self._path_for(key=key)
+        kept = {key.root for key in keep}
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
+        removed = 0
         for key in keys:
+            if key.root in kept:
+                continue
             if before_write:
                 before_write()
+            if self._path_for(key=key).is_file():
+                removed += 1
             self.delete(key=key)
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
+                if key.root in kept:
+                    continue
                 if before_write:
                     before_write()
                 self.delete(key=key)
+                removed += 1
         # Include orphaned metadata records when object bytes are already absent.
         for key in self._iter_metadata_keys():
+            if key.root in kept:
+                continue
             if any(matches_object_prefix(key.root, prefix=p) for p in boundaries):
                 if before_write:
                     before_write()
                 self.delete(key=key)
+                removed += 1
+        return removed
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]

@@ -67,12 +67,8 @@ def _seed(database, source):
 def consumer(publication: Publication, tmp_path: Path):
     state = publication
     _names(state.engine, state.source)
-    manifests = tmp_path / "intent"
-    manifests.mkdir()
     profile = SelfHostProfile(
-        settings=SelfHostSettings(
-            deployment_id=state.source.deployment_id, forget_manifest_root=manifests
-        ),
+        settings=SelfHostSettings(deployment_id=state.source.deployment_id),
         engine=state.engine,
         raw_store=state.raw,
         artifact_store=state.artifacts,

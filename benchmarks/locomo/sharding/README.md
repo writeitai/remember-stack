@@ -192,7 +192,7 @@ as source-derived data.
 | `LOCOMO_GCP_PROJECT` | **required** | GCP project used by the external-account Storage client |
 | `LOCOMO_BACKUP_STAGING_ROOT` | `/var/lib/rememberstack-locomo-backups` | local staging retained on failure |
 | `LOCOMO_BACKUP_TOOL` | `benchmarks/locomo/sharding/store_backup.py` | backup tool path; use an absolute path only when operating a pinned clean campaign checkout with a newer compatible safety runner |
-| `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
+| `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly three volumes |
 | `LOCOMO_RUNNER_LOCK` | `/var/lock/rememberstack-locomo-shard.lock` | host-wide exclusive runner lock |
 | `LOCOMO_LLM_CONCURRENCY` | `40` | tasks in flight in the `worker-llm` process, which serves every stage except `convert` |
 | `LOCOMO_GCP_CREDENTIALS_FILE` | `/etc/rememberstack/locomo-gcs/credentials.json` | public external-account configuration |

@@ -29,7 +29,9 @@ SUMMARY = (
     "passage every answer came from. `remember` is its Python client, CLI and MCP server "
     "(`pip install remember`)."
 )
-CLOUD_SUMMARY = " remember.dev runs RememberStack for you, one isolated deployment per project."
+CLOUD_SUMMARY = (
+    " remember.dev runs RememberStack for you, one isolated deployment per project."
+)
 AGENT_NOTE = (
     "Agents: resolve entities first (`resolve_entity`), then ask for facts "
     "(`facts_context`, with `time` for history), then claims and sources "
@@ -73,8 +75,7 @@ def navigation() -> list[tuple[str, list[tuple[str, str]]]]:
         items = [
             (json.loads(title), href)
             for title, href in re.findall(
-                r"\{ title: (\"[^\"]+\"), href: \"([^\"]+)\" \}",
-                block.group(2),
+                r"\{ title: (\"[^\"]+\"), href: \"([^\"]+)\" \}", block.group(2)
             )
         ]
         sections.append((json.loads(block.group(1)), items))
@@ -139,7 +140,9 @@ def render(*, cloud: bool) -> tuple[str, str]:
     full = [f"# {name}: full documentation", "", summary, ""]
     for section, items in navigation():
         pages = [(href, page_path(href=href)) for _, href in items]
-        pages = [(href, page) for href, page in pages if cloud or page.name == "page.mdx"]
+        pages = [
+            (href, page) for href, page in pages if cloud or page.name == "page.mdx"
+        ]
         if not pages:
             continue
         index += [f"## {section}", ""]

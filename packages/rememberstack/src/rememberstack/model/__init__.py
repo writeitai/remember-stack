@@ -1,7 +1,7 @@
 """Backward-compatible model namespace forwarding to remember."""
 
-import remember.models as _models
 from remember import Envelope
+import remember.models as _models
 
 __all__ = ["Envelope"]
 

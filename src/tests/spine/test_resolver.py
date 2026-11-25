@@ -38,8 +38,6 @@ from rememberstack.spine import seed_resolver_version
 from rememberstack.spine.clustering import apply_merge
 from rememberstack.spine.document_bindings import DocumentBindingRebuilder
 from rememberstack.spine.entity_registry import normalized_lemma
-from rememberstack.spine.fact_applications import ApplicationInputChanged
-from rememberstack.spine.forget import ForgetCatalog
 from rememberstack.spine.resolver import _CandidateSnapshot
 from rememberstack.spine.resolver import _DecisionOutcome
 from rememberstack.spine.settings import load_database_settings
@@ -1359,8 +1357,10 @@ def test_deleted_source_cannot_publish_completed_resolution(
         assert connection.execute(text("SELECT count(*) FROM mentions")).scalar() == 1
 
 
-def test_forget_barrier_stops_inflight_resolution(database_engine: Engine) -> None:
-    """Native forget admission may run during inference and fences publication."""
+def test_a_hide_during_inference_stops_inflight_resolution(
+    database_engine: Engine,
+) -> None:
+    """D159: a forget's hide (the tombstone) lands while the model answers."""
     _resolver(
         engine=database_engine,
         provider=FakeModelProvider(generate_router=_match_first_router),
@@ -1370,15 +1370,17 @@ def test_forget_barrier_stops_inflight_resolution(database_engine: Engine) -> No
         claim=_claim(),
     )
 
-    def prepare_forget(prompt: str, type_name: str) -> dict[str, object]:
-        """Use real hard-forget admission after the inference input was read."""
-        ForgetCatalog(engine=database_engine).prepare(
-            deployment_id=_DEPLOYMENT_ID, doc_id=_DOC_ID, forget_id=uuid4()
-        )
+    def hide(prompt: str, type_name: str) -> dict[str, object]:
+        """Tombstone the source after the inference input was read."""
+        with database_engine.begin() as connection:
+            connection.execute(
+                text("UPDATE documents SET deleted_at = now() WHERE doc_id = :doc"),
+                {"doc": _DOC_ID},
+            )
         return _match_first_router(prompt, type_name)
 
-    provider = FakeModelProvider(generate_router=prepare_forget)
-    with pytest.raises(ApplicationInputChanged, match="fenced by hard forget"):
+    provider = FakeModelProvider(generate_router=hide)
+    with pytest.raises(LookupError, match="deleted or missing"):
         _resolver(engine=database_engine, provider=provider).resolve(
             deployment_id=_DEPLOYMENT_ID,
             reference=EntityRef(name="Caroline"),

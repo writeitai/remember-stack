@@ -106,8 +106,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for live corpus folders and navigation. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | Working directory created by `setup`. |
-| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | Where hard-forget manifests are read. |
-| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` | unset | string | Keep hard-forget manifests in this dedicated bucket instead of the manifest root. Never one of the three data buckets. |
+| `REMEMBERSTACK_SELFHOST_FORGET_QUIET_PERIOD_S` | `900` | seconds, at least 0 | How long a forget waits between sweeps; a forget completes after a sweep that follows this wait finds nothing left. Keep it longer than a work lease. |
 | `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | Alembic configuration used by `setup`. |
 
 ## Authentication

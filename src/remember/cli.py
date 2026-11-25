@@ -386,6 +386,10 @@ def _run_ops(args: argparse.Namespace) -> int:
             released = operations.resume_no_route(deployment_id=args.deployment)
             print(json.dumps({"released": [str(item) for item in released]}))
             return 0
+        if args.ops_command == "forget-reapply":
+            reapplied = operations.forget_reapply(deployment_id=args.deployment)
+            print(json.dumps({"reapplied": [str(item) for item in reapplied]}))
+            return 0
         if args.ops_command == "replay":
             replayed = operations.replay(
                 deployment_id=args.deployment,
@@ -1172,6 +1176,11 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
             help="release parked conversion covered by current routes",
         )
         resume.add_argument("--deployment", type=UUID, required=True)
+        forget_reapply = ops_commands.add_parser(
+            "forget-reapply",
+            help="re-run every forget's sweeps after restoring a store from backup",
+        )
+        forget_reapply.add_argument("--deployment", type=UUID, required=True)
         replay = ops_commands.add_parser("replay", help="reopen one dead-letter row")
         replay.add_argument("processing_id", type=UUID)
         replay.add_argument("--deployment", type=UUID, required=True)

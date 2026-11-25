@@ -60,7 +60,9 @@ class _MemoryS3:
         self.buckets.add(Bucket)
         return {}
 
-    def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
+    def get_object(
+        self, *, Bucket: str, Key: str, VersionId: str = ""
+    ) -> _GetObjectOutput:
         """Return one streaming body."""
         try:
             payload = self.objects[(Bucket, Key)][0]
@@ -234,7 +236,8 @@ def test_purge_respects_prefix_boundaries_and_verifies() -> None:
     verified = store.verify_objects_purged(
         keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
     )
-    assert purged.multipart_uploads == verified.multipart_uploads == "checked"
+    assert purged == 3  # the exact key and both objects under the prefix
+    assert verified.multipart_uploads == "checked"
 
     assert store.read_bytes(key=ObjectKey("document/sibling")) == b"document/sibling"
     store.write_bytes(
@@ -270,7 +273,7 @@ def _client_error(
 def test_purge_without_upload_listing_reports_provider_managed_cleanup(
     code: str, status: int | None, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Mountable's 501 must not break hard forget or claim uploads were checked."""
+    """Mountable's 501 must not break a forget or claim uploads were checked."""
     client = _MemoryS3()
     client.upload_listing_error = _client_error(
         code=code, status=status, operation="ListMultipartUploads"
@@ -283,16 +286,15 @@ def test_purge_without_upload_listing_reports_provider_managed_cleanup(
     for name in ("exact", "doc/a", "doc/nested/b", "doc-other/control"):
         store.write_bytes(key=ObjectKey(name), content=b"body", storage_class="cold")
 
-    for _ in range(2):
+    for expected in (3, 0):
         purged = store.purge_objects(
             keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
         )
         verified = store.verify_objects_purged(
             keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),)
         )
-        assert (
-            purged.multipart_uploads == verified.multipart_uploads == "provider_managed"
-        )
+        assert purged == expected
+        assert verified.multipart_uploads == "provider_managed"
 
     assert [key.root for key in store.iter_keys(prefix="")] == ["doc-other/control"]
     assert [key.root for key in store.iter_purge_keys()] == ["doc-other/control"]

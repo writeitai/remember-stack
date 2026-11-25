@@ -39,7 +39,7 @@ class PipelineStage(StrEnum):
     LINT_KNOWLEDGE = "lint_knowledge"
     RECONCILE = "reconcile"
     DISPATCH_KNOWLEDGE = "dispatch_knowledge"  # appended by WP-6.6
-    HARD_FORGET = "hard_forget"
+    FORGET = "forget"
     REVIEW_FACT_WINDOWS = "review_fact_windows"  # appended by D140 WP-ET.7
     PUBLISH_CORPUS = "publish_corpus"
     RECONCILE_CORPUS = "reconcile_corpus"

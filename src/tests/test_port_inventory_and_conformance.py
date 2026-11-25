@@ -39,7 +39,6 @@ from rememberstack.ports import SystemOnePort
 from rememberstack.ports import TaskQueuePort
 from rememberstack.ports import TelemetryPort
 import rememberstack.ports.auth as auth_module
-import rememberstack.ports.forget as forget_module
 import rememberstack.ports.git as git_module
 import rememberstack.ports.metering as metering_module
 import rememberstack.ports.model_provider as model_provider_module
@@ -55,7 +54,6 @@ ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
 _PORT_MODULES: tuple[ModuleType, ...] = (
     auth_module,
-    forget_module,
     git_module,
     metering_module,
     model_provider_module,
@@ -69,7 +67,6 @@ _PORT_MODULES: tuple[ModuleType, ...] = (
 )
 _PORT_EXPORTS = {
     "AuthPerimeterPort",
-    "ForgetManifestPort",
     "KGitPurgePort",
     "KGitRemotePort",
     "ModelProviderPort",
@@ -259,11 +256,11 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_eighteen_defined_protocols() -> None:
-    """Keep D61/D74 seams, D147 reads and D155 mutation explicit."""
+def test_inventory_exports_exactly_seventeen_defined_protocols() -> None:
+    """Keep D61/D159 seams, D147 reads and D155 mutation explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 18
+    assert len(_defined_protocols()) == 17
 
 
 def test_immutable_store_does_not_require_mutable_operations() -> None:

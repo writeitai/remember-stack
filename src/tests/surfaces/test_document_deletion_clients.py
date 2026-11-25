@@ -31,7 +31,6 @@ from remember.mcp_tools import OPERATION_TOOL_NAMES
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
-from rememberstack.model import ForgetInProgressError
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.mcp import OperationMcpServer
@@ -40,17 +39,6 @@ _DEPLOYMENT_ID = UUID("57000000-0000-0000-0000-000000000001")
 _DOC = UUID("57000000-0000-0000-0000-000000000002")
 _GONE = UUID("57000000-0000-0000-0000-00000000dead")
 _AT = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
-
-
-class _Boundary:
-    """Open admission and readiness for the one deployment under test."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
 
 
 class _Deletion:
@@ -111,12 +99,9 @@ def surface() -> tuple[MemoryClient, _Deletion, _Inventory]:
     """The real HTTP app with only the document routes composed."""
     deletion = _Deletion()
     inventory = _Inventory()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         documents=inventory,
         deletion=deletion,
     )
@@ -306,45 +291,3 @@ def test_local_mcp_offers_deletion_only_when_composed() -> None:
     assert _payload(done)["claims_retired"] == 4
     gone = server.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
     assert _payload(gone)["code"] == "document_not_found"
-
-
-class _Forgetting:
-    """A deletion port whose deployment is under a hard forget."""
-
-    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
-        raise ForgetInProgressError("forget preparing")
-
-
-def test_local_mcp_reports_a_forget_as_retryable() -> None:
-    """Round 3: the in-process server answers like the route, not internal_error."""
-    server = OperationMcpServer(
-        surface=_StubSurface(),  # type: ignore[arg-type]
-        deletion=_Forgetting(),
-    )
-    error = _payload(
-        server.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
-    )
-    assert error["code"] == "forget_in_progress"
-    assert error["retryable"] is True
-    assert error["status_code"] == 503
-
-
-def test_remember_mcp_reports_a_forget_as_retryable() -> None:
-    """The route's 503 forget_in_progress maps to the same tool error."""
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        assert request.method == "DELETE"
-        return httpx.Response(503, json={"detail": {"code": "forget_in_progress"}})
-
-    client = MemoryClient(
-        client=httpx.Client(
-            base_url="http://memory.test", transport=httpx.MockTransport(respond)
-        )
-    )
-    error = _payload(
-        _remote(client=client).call_tool(
-            name="delete_document", arguments={"doc_id": str(_DOC)}
-        )
-    )
-    assert error["code"] == "forget_in_progress"
-    assert error["retryable"] is True
